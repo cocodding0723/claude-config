@@ -33,7 +33,7 @@ swap_stub() {
   start_stub "$1"
 }
 
-stop_stub() { [ -n "$STUB_PID" ] && kill "$STUB_PID" 2>/dev/null; wait "$STUB_PID" 2>/dev/null; STUB_PID=""; rm -rf "$HUB"; }
+stop_stub() { [ -n "$STUB_PID" ] && kill "$STUB_PID" 2>/dev/null; wait "$STUB_PID" 2>/dev/null; STUB_PID=""; rm -rf "${HUB:?}"; }
 
 # 요청 로그에서 메서드 호출 수
 count() { grep -c "\"method\": \"$1\"" "$LOG" || true; }

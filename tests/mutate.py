@@ -28,11 +28,15 @@ MUTANTS = [
      [('marker = m.get("latest_reply") or f"n{m.get(\'reply_count\')}"', 'marker = m.get("latest_reply")')]),
     ("시간 예산 제거(poll)", "slack_poll.sh", [("if wait >= DEADLINE - time.time():", "if False:")]),
     ("시간 예산 제거(pending)", "slack_pending.sh", [("if wait >= DEADLINE - time.time():", "if False:")]),
-    ("상태 손상 복구 제거", "slack_poll.sh", [("    except ValueError:\n        # 손상 시", "    except KeyError:\n        # 손상 시")]),
+    ("상태 손상 복구 제거", "slack_poll.sh", [("    except ValueError:\n        os.replace(STATE", "    except KeyError:\n        os.replace(STATE")]),
     ("전송 직후 이력 실패 회수 제거", "slack_pending.sh",
      [('call("chat.delete", {"channel": channel, "ts": new_ts})', "pass")]),
     ("수정 전 원문 기록 제거", "slack_pending.sh", [("original_text=orig)", "original_text=None)")]),
-    ("대기 조회 실패 응답 제거", "slack_cmd.sh", [('if [ "$R" -ne 0 ]; then', "if false; then")]),
+    ("대기 조회 실패 응답 제거", "slack_cmd.sh", [('elif [ "$R" -ne 0 ]; then', "elif false; then")]),
+    ("처리 중 안내 제거", "slack_cmd.sh", [('if [ "$R" -eq 75 ]; then', "if false; then")]),
+    ("상태 없음 복원 제거", "slack_poll.sh", [('        return {"seen": seen_from_inbox()}\n    try:', '        return {"seen": {}}\n    try:')]),
+    ("수정 예외 실패 기록 제거", "slack_pending.sh", [('log("update_failed", ts=s["ts"], error=str(e), final=False)', "pass")]),
+    ("총 예산 계산 제거", "slack_poll.sh", [("local v=$((TOTAL - ($(date +%s) - T0)))", "local v=$TOTAL")]),
 ]
 
 
