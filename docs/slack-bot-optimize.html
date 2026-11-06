@@ -42,14 +42,42 @@ details.ref{margin-top:30px;color:var(--muted);font-size:14px}
 <tr><td>manifest</td><td>Slack 앱 설정을 적어 둔 파일</td></tr>
 <tr><td>강비서</td><td>사용자 전용 비서 봇 이름. Slack 목록 이름과 비서 이모지에 쓰인다</td></tr></table>
 
+<h2>✅ 구현 현황 — 2026-11-06</h2>
+<ul class="facts">
+<li>사용자 확정: 결정1 A, 결정2 B, 결정3 A, 그리고 이력 보존</li>
+<li>구현 범위: 폴링 조회 최적화, 대기 목록 재발송과 이력 기록</li>
+<li>만들지 않은 것: 버튼, Socket Mode 리스너</li>
+<li>코드 위치: 이 저장소 <code>lrm-hubs/</code> 사본. 운영 중인 <code>~/.config/lrm-hubs</code> 는 수정하지 않았다</li>
+<li>라이브 반영은 메인 알림 뒤 별도 단계다</li>
+</ul>
+<table><tr><th>기능</th><th>커밋</th><th>검증</th></tr>
+<tr><td>운영 스크립트 사본 추가</td><td><code>9d1195c</code></td><td>복사만, 내용 변경 없음</td></tr>
+<tr><td>🟡 폴링 조회 최적화, 429 회차 즉답 유지</td><td><code>3e00d4c</code></td><td>🔵 <code>bash tests/test_poll.sh</code> — 통과 21, 실패 0</td></tr>
+<tr><td>🟡 대기 목록 이력·재발송, 답한 결정 수정</td><td><code>b1d4df1</code></td><td>🔵 <code>bash tests/test_pending.sh</code> — 통과 37, 실패 0</td></tr></table>
+<ul class="facts">
+<li>문법 검사: <code>bash tests/run.sh</code> 가 모든 스크립트에 <code>bash -n</code> 실행 — 통과</li>
+<li>shellcheck 는 이 맥에 없어 실행하지 못했다. 미확인</li>
+<li>테스트는 가짜 토큰과 로컬 스텁만 쓴다. 실제 Slack 호출 0회</li>
+<li>⚠️ 라이브 반영 1단계 검증 항목 1: 목록 응답에 <code>latest_reply</code> 가 실제로 오는가</li>
+<li>⚠️ 라이브 반영 1단계 검증 항목 2: 반응의 <code>users</code> 가 잘리는가. 잘리면 보강 조회가 자동으로 돈다</li>
+<li>⚠️ 라이브 반영 1단계 검증 항목 3: 이 앱이 분당 1회 제한 대상인가. 대상이면 폴링 30초 주기가 막힌다</li>
+</ul>
+<table><tr><th>라이브 반영 단계</th><th>명령 또는 내용</th></tr>
+<tr><td>1. 백업</td><td><code>cp ~/.config/lrm-hubs/slack_poll.sh ~/.config/lrm-hubs/slack_poll.sh.bak-날짜</code>, 같은 방식으로 <code>slack_pending.sh</code></td></tr>
+<tr><td>2. 복사</td><td><code>cp lrm-hubs/slack_poll.sh lrm-hubs/slack_pending.sh ~/.config/lrm-hubs/</code> 후 실행 권한 확인</td></tr>
+<tr><td>3. 재적재</td><td>스크립트 파일만 바뀌고 plist 는 그대로라 재적재가 필요 없다. 다음 30초 주기에 새 스크립트가 돈다. 바로 시험하려면 <code>launchctl kickstart -k gui/$(id -u)/ai.lrm.slackpoll</code></td></tr>
+<tr><td>4. 검증</td><td><code>slack_poll.sh --once --json</code> 1회, 로그에 새 429 가 안 늘어나는지 확인, 검증 항목 3개 확인</td></tr>
+<tr><td>5. 대기 목록</td><td><code>slack_pending.sh --dry-run</code> 으로 수정 예정 목록을 본 뒤 실제 실행. 첫 실행은 답한 결정 최대 20개를 고치고 나머지는 다음 주기에 이어진다</td></tr>
+<tr><td>되돌리기</td><td>백업 파일을 원래 이름으로 복사한다. 이력 파일은 지우지 않고 둔다</td></tr></table>
+
 <h2 data-check="decision">🙋 결정 필요 — 3개</h2>
 <div class="ask"><b>한 번에 답하기:</b><br>전부 추천대로면 <code>전부 추천</code><br>추천은 <code>결정1 A, 결정2 B, 결정3 A</code> 와 같다<br>버튼을 원하면 <code>결정1 B, 결정2 A, 결정3 A</code></div>
 <div class="ask"><b>금지 조합:</b> <code>결정1 A</code> 와 <code>결정2 A</code> 는 함께 못 쓴다. 버튼 누름을 받을 곳이 없다<br>결정3은 어느 조합에서도 가능하다. 폴링도 반응을 읽은 뒤 메시지를 고칠 수 있다</div>
 <table><tr><th>#</th><th>정할 것</th><th>추천</th></tr>
-<tr><td>결정1</td><td>429를 폴링 조회 최적화로 풀까, Socket Mode로 바꿀까?</td><td>A</td></tr>
-<tr><td>결정2</td><td>결정 메시지에 버튼을 달까?</td><td>B</td></tr>
-<tr><td>결정3</td><td>답한 메시지를 고치고 대기 목록을 새로 보낼까?</td><td>A</td></tr></table>
-<p class="cap">파일 수 합계는 아래 「파일 집계」 표에 조합별로 있다. 추천 조합은 수정 2개, 새 파일 0개다.</p>
+<tr><td>결정1</td><td>429를 폴링 조회 최적화로 풀까, Socket Mode로 바꿀까?</td><td>A 확정</td></tr>
+<tr><td>결정2</td><td>결정 메시지에 버튼을 달까?</td><td>B 확정</td></tr>
+<tr><td>결정3</td><td>답한 메시지를 고치고 대기 목록을 새로 보낼까?</td><td>A 확정</td></tr></table>
+<p class="cap">파일 수 합계는 아래 「파일 집계」 표에 조합별로 있다. 확정 조합은 수정 2개, 새 스크립트 0개, 이력 데이터 파일 1개다.</p>
 
 <section class="decision-card" data-check="dcard">
 <h3>결정1. 429를 폴링 조회 최적화로 풀까?</h3>
@@ -78,10 +106,10 @@ details.ref{margin-top:30px;color:var(--muted);font-size:14px}
 <p><b>지금 문제:</b> 답해도 메시지는 그대로다. 그래서 답한 결정과 안 한 결정이 구분되지 않는다.</p>
 <p data-check="blocks"><b>안 정하면 멈추는 것:</b> 대기 목록이 2시간마다 쌓여 DM이 길어진다.</p>
 <table class="opts"><tr><th>선택지</th><th>고르면</th><th>비용</th><th>위험</th><th>되돌리기</th></tr>
-<tr class="rec" data-check="opt"><td><b>A. 고치기 + 새 대기 메시지</b> ✅ 추천<br><small>대기 목록은 새로 보내고 이전 것은 삭제</small></td><td>알림이 유지되고 DM 길이가 일정하다.</td><td>수정 파일 2개: <code>slack_poll.sh</code>, <code>slack_pending.sh</code>.</td><td>파일 첨부 메시지는 번호가 없어 못 고친다.</td><td>쉬움</td></tr>
+<tr class="rec" data-check="opt"><td><b>A. 고치기 + 새 대기 메시지 + 이력 보존</b> ✅ 확정<br><small>이전 목록은 이력에 남긴 뒤 삭제</small></td><td>알림이 유지되고 지운 목록도 이력에 남는다.</td><td>수정 파일 2개, 이력 데이터 파일 1개.</td><td>이력 기록이 실패하면 삭제를 멈춘다.</td><td>쉬움</td></tr>
 <tr data-check="opt"><td><b>B. 지금대로</b></td><td>변화가 없다.</td><td>수정 파일 0개.</td><td>대기 메시지가 계속 쌓인다.</td><td>쉬움</td></tr></table>
-<p data-check="why-rec"><b>추천 이유:</b> 고정 메시지를 고치기만 하면 알림이 오지 않아 2시간 알림이 사라진다. 그래서 새로 보내고 이전 것을 지운다. <b>감수하는 단점:</b> 삭제 호출이 2시간마다 1회 늘어난다.</p>
-<p class="answer">답: <code>결정3 A</code></p>
+<p data-check="why-rec"><b>추천 이유:</b> 고치기만 하면 알림이 오지 않아 2시간 알림이 사라진다. 그래서 새로 보내고 이전 것을 지우되, 지우기 전에 내용을 이력에 남겨 추적을 잃지 않는다. <b>감수하는 단점:</b> 삭제 호출이 2시간마다 1회 늘어난다.</p>
+<p class="answer">사용자 확정: <code>결정3 A</code></p>
 </section>
 
 <h2>📄 현재 구성 — 사실만</h2>
@@ -109,8 +137,14 @@ details.ref{margin-top:30px;color:var(--muted);font-size:14px}
 
 <h2>🔄 파일 집계 · 끊기지 않는 경로</h2>
 <table><tr><th>조합</th><th>새 파일</th><th>수정 파일</th><th>등록 해제</th></tr>
-<tr><td>추천: 1A + 2B + 3A</td><td>0개</td><td>2개: <code>slack_poll.sh</code> 조회 최적화·고치기, <code>slack_pending.sh</code> 완료 판정·새로 보내고 삭제</td><td>없음</td></tr>
+<tr><td>확정: 1A + 2B + 3A</td><td>스크립트 0개. 데이터 파일 1개: <code>slack-pending-history.jsonl</code>, 실행 중 자동 생성, 추가 전용</td><td>2개: <code>slack_poll.sh</code> 조회 최적화, <code>slack_pending.sh</code> 답한 결정 수정·새로 보내고 삭제·이력 기록</td><td>없음</td></tr>
 <tr><td>버튼: 1B + 2A + 3A</td><td>2개: <code>slack_listen.py</code>, <code>ai.lrm.slacklisten.plist</code></td><td>4개: <code>slack-bot-manifest.yml</code>, <code>slack_notify.sh</code>, <code>slack_pending.sh</code>, <code>slack_poll.sh</code> 공유 상태</td><td>1개: <code>ai.lrm.slackpoll.plist</code> launchd 등록</td></tr></table>
+<table><tr><th>이력 파일 형식</th><th>내용</th></tr>
+<tr><td>위치</td><td><code>~/.config/lrm-hubs/slack-pending-history.jsonl</code>, 한 줄에 사건 하나</td></tr>
+<tr><td>사건 종류</td><td><code>pending_posted</code> 새 목록과 내용, <code>pending_deleted</code> 삭제 직전 기록, <code>delete_done</code>, <code>answered_update</code> 수정 직전 기록</td></tr>
+<tr><td><code>pending_deleted</code> 필드</td><td>삭제한 메시지 번호, 이전 목록 내용, 그 뒤 처리된 결정과 처리 시각, 새 목록 번호</td></tr>
+<tr><td>안전 규칙</td><td>기록이 실패하면 전송·수정·삭제를 하지 않는다. 기록 뒤에 삭제한다</td></tr>
+<tr><td>할 일 목록 연동</td><td>그대로. 허브가 Slack 목록 행을 갱신한다</td></tr></table>
 <table><tr><th>기능</th><th>1A 에서 부르는 쪽</th><th>1B 에서 부르는 쪽</th></tr>
 <tr><td>한글 명령 즉답</td><td>폴러가 <code>slack_cmd.sh</code> 호출. 그대로</td><td>리스너가 기록 직후 비동기로 호출</td></tr>
 <tr><td>2시간 대기 목록</td><td>폴러가 <code>slack_pending.sh</code> 호출. 그대로</td><td>리스너 타이머가 호출</td></tr>
@@ -224,12 +258,13 @@ req = Request(
   'https://slack.com/api/chat.postMessage',
   data=b, headers=...)</code></pre></div>
 <div class="after"><div class="label">after (제안)</div><pre><code>r = post(channel=ch, text=text)   # 새로 보내 알림 유지
-prev = state.get("pending_ts")
-if prev:
-    api("chat.delete", channel=ch, ts=prev)
-state["pending_ts"] = r["ts"]
-# 완료 판정: type=reaction 이면 done
-# 버튼 응답도 reaction 형식이라 그대로 인식</code></pre></div></div>
+log("pending_posted", ts=r["ts"], titles=titles)
+for old in open_posts:            # 이력 먼저, 삭제는 그 뒤
+    log("pending_deleted", ts=old["ts"],
+        prev_titles=old["titles"],
+        answered_since=answered)
+    api("chat.delete", channel=ch, ts=old["ts"])
+# 기록이 실패하면 삭제하지 않음</code></pre></div></div>
 <p class="why" data-check="why"><b>왜:</b> 고치기만 하면 알림이 안 와서 2시간 알림이 사라지므로, 새로 보내고 이전 것을 지워 알림과 짧은 DM을 함께 얻는다.</p></section>
 
 <h2>✅ 그대로인 것 / 없어지는 것</h2>
@@ -277,6 +312,7 @@ state["pending_ts"] = r["ts"]
 <li>반영 4: 대기 목록은 새로 보내고 이전 것 삭제로 알림 유지</li>
 <li>반영 5: 폴링 조회 최적화안을 선택지 A 로 추가하고 추천 재판단. 결정2 도 그에 맞춰 B 추천</li>
 <li>반영 6~14: 한도 등급 정정, 재연결 보정, 중복 이벤트·KeepAlive, 인증서·가상 환경, 파일 첨부 결정 규칙, 금지 조합 정정, 파일 집계, 되돌리기 순서, 비동기 호출</li>
+<li>2026-11-06 구현 반영: 결정 확정 기록, 구현 현황·라이브 반영 단계 추가, 결정3 카드와 파일 집계에 이력 보존 반영. 독자 검수는 미실시</li>
 <li>3차 최종 검수는 사용자 몫</li>
 </ul></details>
 </html>
