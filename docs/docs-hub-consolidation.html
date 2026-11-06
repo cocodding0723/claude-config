@@ -1,0 +1,299 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>문서 코디네이터 정리안</title>
+<style>
+:root{--bg:#fff;--fg:#1f2328;--muted:#59636e;--card:#f6f8fa;--line:#d0d7de;--warn:#fff8c5;--ok:#dafbe1;--bad:#ffebe9}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--line:#30363d;--warn:#3a2f00;--ok:#0f2e1a;--bad:#3d1214}}
+body{background:var(--bg);color:var(--fg);font:16px/1.7 -apple-system,"Apple SD Gothic Neo",sans-serif;margin:0 auto;max-width:1040px;padding:16px;word-break:keep-all}
+h1{font-size:25px;margin:8px 0}h2{font-size:20px;margin-top:34px;border-bottom:2px solid var(--line);padding-bottom:4px}h3{font-size:17px;margin:18px 0 6px}
+.summary{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 18px;font-size:16.5px}
+.decision-card{border:2px solid #d4a72c;border-radius:12px;padding:12px 16px;margin:12px 0}.opts tr.rec td{background:var(--ok)}.answer code{font-size:15px}
+.ask{background:var(--warn);border-radius:12px;padding:12px 16px;border:1px solid var(--line)}
+table{border-collapse:collapse;width:100%;font-size:14.5px}td,th{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}th{background:var(--card)}
+.diagrams{display:grid;grid-template-columns:1fr 1fr;gap:12px}.diagram{background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px;overflow-x:auto}.diagram svg{max-width:100%;height:auto}
+.ba{border:1px solid var(--line);border-radius:12px;padding:12px;margin:14px 0}.ba-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ba pre{margin:0;padding:10px;border-radius:8px;overflow-x:auto;font:13px/1.5 ui-monospace,Menlo,monospace}.before pre{background:var(--bad)}.after pre{background:var(--ok)}
+.why{margin-top:8px}.label{font-size:13px;color:var(--muted);margin-bottom:4px}
+details.ref{margin-top:30px;color:var(--muted);font-size:14px}
+@media (max-width:760px){.diagrams,.ba-grid{grid-template-columns:1fr}}
+.badge{display:inline-block;border-radius:8px;padding:0 6px;font-size:13px;white-space:nowrap}
+.tag-ok{background:var(--ok)}.tag-warn{background:var(--warn)}.tag-bad{background:var(--bad)}
+.diagrams.one{grid-template-columns:1fr}.cap{margin:6px 0 0;color:var(--muted);font-size:14.5px}
+ul.facts{margin:6px 0;padding-left:20px}ul.facts li{margin:2px 0}
+.meta{color:var(--muted);font-size:14px}
+</style>
+<h1>문서 코디네이터 정리안 — 규칙 통합 · 허브 이전</h1>
+<p class="meta">2026-11-06 · 조사 전용 · 이 문서 외에는 아무것도 바꾸지 않았다 · 이전은 승인 뒤, 진행 작업 종료 후</p>
+<div class="summary" data-check="summary"><b>3줄 요약</b><br>① <b>지금 문제</b> — 문서 규칙이 스킬·메모리·역할 파일에 겹쳐 있고 허브는 한 프로젝트에 묶여 있다.<br>② <b>그래서</b> — 규칙을 스킬 하나로 모으고 허브를 개인 설정 저장소로 옮기는 안을 만들었다.<br>③ <b>그러면</b> — 아래 결정 4개에 답하면 되고 이전은 진행 작업이 끝난 뒤에 한다.</div>
+
+<h2 data-check="decision">🙋 결정 필요 — 4개</h2>
+<div class="ask"><b>한 번에 답하기:</b> 전부 추천대로면 <code>전부 추천</code><br>골라서면 <code>결정1 A, 결정2 B</code></div>
+<table><tr><th>#</th><th>정할 것(질문 한 문장)</th><th>추천</th></tr>
+<tr><td>결정1</td><td>문서 스킬 5개를 doc-kit 하나로 합칠까?</td><td>A</td></tr>
+<tr><td>결정2</td><td>문서 메모리 15개를 스킬로 옮기고 지울까?</td><td>A</td></tr>
+<tr><td>결정3</td><td>문서 허브를 claude-config 워크스페이스로 옮길까?</td><td>A</td></tr>
+<tr><td>결정4</td><td>기존 하위 워크스페이스 23개를 새 허브 밑으로 옮길까?</td><td>A</td></tr></table>
+
+<section class="decision-card" data-check="dcard">
+<h3>결정1. 문서 스킬 5개를 doc-kit 하나로 합칠까?</h3>
+<p><b>지금 문제:</b> 같은 규칙이 스킬 3~4곳에 복사돼 있어서 하나를 고치면 나머지가 낡는다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 통합 스킬을 쓰지 못하고, 메모리 정리도 시작하지 못한다.</p>
+<table class="opts"><tr><th>선택지</th><th>고르면</th><th>되돌리기</th></tr>
+<tr class="rec" data-check="opt"><td><b>A. 합친다 ✅ 추천</b><br><small>구조안·해설·기록·보고서·공동작성 5개 → 1개</small></td><td>규칙이 한 곳이므로 수정이 한 번에 끝난다. 옛 이름 참조 13곳을 고쳐야 한다.</td><td>보통</td></tr>
+<tr data-check="opt"><td><b>B. 공통 규칙 파일만 뽑는다</b><br><small>스킬 7개는 그대로</small></td><td>이름이 그대로라 참조는 안 깨진다. 안내 문구 중복은 다시 생긴다.</td><td>쉬움</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> 같은 문장이 여러 스킬에 있어서 고칠 때마다 누락이 생기므로, A 가 규칙을 한 곳에 둔다. <b>감수하는 단점:</b> 옛 이름을 쓰는 전역 규칙·역할 파일을 같이 고쳐야 한다.</p>
+<p class="answer">답: <code>결정1 A</code></p>
+</section>
+<section class="decision-card" data-check="dcard">
+<h3>결정2. 문서 메모리 15개를 스킬로 옮기고 지울까?</h3>
+<p><b>지금 문제:</b> 메모리는 프로젝트별 폴더에 있어서 연애혁명 밖 세션은 문서 규칙을 읽지 못한다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 옮길 규칙의 출처가 둘이라 doc-kit 내용을 확정하지 못한다.</p>
+<table class="opts"><tr><th>선택지</th><th>고르면</th><th>되돌리기</th></tr>
+<tr class="rec" data-check="opt"><td><b>A. 옮기고 백업 후 삭제 ✅ 추천</b><br><small>15개 흡수, 1개는 허브 규칙으로 유지</small></td><td>규칙이 모든 프로젝트에서 읽힌다. 백업 폴더가 하나 생긴다.</td><td>쉬움, 백업에서 복원</td></tr>
+<tr data-check="opt"><td><b>B. 메모리 유지</b><br><small>스킬은 링크만</small></td><td>출처가 계속 둘이라 서로 어긋난다. 이미 4쌍이 겹쳐 있다.</td><td>쉬움</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> 같은 규칙이 쌍으로 있어서 표현이 갈렸으므로, 스킬에서 독자별로 한 번에 정리한다. <b>감수하는 단점:</b> 삭제한 메모리를 되살리려면 백업에서 복사해야 한다.</p>
+<p class="answer">답: <code>결정2 A</code></p>
+</section>
+<section class="decision-card" data-check="dcard">
+<h3>결정3. 문서 허브를 claude-config 의 Orca 워크스페이스로 옮길까?</h3>
+<p><b>지금 문제:</b> 허브가 연애혁명 저장소 워크트리라서 그 프로젝트 규칙 22KB 를 문서 작업에도 읽는다. 그래서 다른 프로젝트 문서를 맡기 어렵다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 역할 파일·인계 문서 이전 준비를 시작하지 못한다. 실제 이전은 승인과 진행 작업 종료 뒤에 한다.</p>
+<table class="opts"><tr><th>선택지</th><th>고르면</th><th>되돌리기</th></tr>
+<tr class="rec" data-check="opt"><td><b>A. 옮긴다 ✅ 추천</b><br><small>승인 뒤 · 진행 작업 종료 후</small></td><td>프로젝트에 안 묶이고 규칙 원본과 같은 저장소에 산다. 재시작 스크립트 경로를 고쳐야 한다.</td><td>보통</td></tr>
+<tr data-check="opt"><td><b>B. 그대로 둔다</b><br><small>연애혁명 워크트리 유지</small></td><td>규칙은 통합돼도 허브는 한 프로젝트에 묶인 채 남는다.</td><td>쉬움</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> 규칙이 프로젝트와 무관해졌으므로 허브도 같은 저장소에 있어야 한다. <b>감수하는 단점:</b> 메인 코디네이터의 허브 목록을 한 번 갱신해야 한다.</p>
+<p class="answer">답: <code>결정3 A</code></p>
+</section>
+<section class="decision-card" data-check="dcard">
+<h3>결정4. 기존 하위 워크스페이스 23개를 새 허브 밑으로 옮길까?</h3>
+<p><b>지금 문제:</b> 하위 워크스페이스에 사용자가 아직 확인할 산출물이 있다. 그래서 부모를 바꾸면 경로가 달라질 수 있다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 이전 때 하위를 어느 부모 밑에 둘지 몰라 자동 정리 규칙이 흔들린다.</p>
+<table class="opts"><tr><th>선택지</th><th>고르면</th><th>되돌리기</th></tr>
+<tr class="rec" data-check="opt"><td><b>A. 그대로 두고 신규만 새 허브 밑 ✅ 추천</b><br><small>옛 하위는 자동 정리로 소멸</small></td><td>이동이 없으므로 진행 중 산출물이 안 깨진다. 한동안 부모가 둘이다.</td><td>쉬움</td></tr>
+<tr data-check="opt"><td><b>B. 전부 새 허브 밑으로</b><br><small>부모 일괄 변경</small></td><td>부모가 하나가 된다. 이동 중 진행 작업이 끊길 수 있다.</td><td>보통</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> 옛 하위는 자동 정리 규칙으로 줄고 있으므로, 옮기지 않아도 부모 둘 상태는 곧 끝난다. <b>감수하는 단점:</b> 정리가 끝날 때까지 부모가 둘이다.</p>
+<p class="answer">답: <code>결정4 A</code></p>
+</section>
+
+<h2>📄 도식 3장</h2>
+<h3>1. 이전 구조</h3>
+<div class="diagrams one"><div class="diagram" data-check="diagram"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" data-diagram-type="DESCRIPTION" style="width:711px;height:422px;background:#FFFFFF;" width="711px" height="422px" viewBox="0 0 711 422" zoomAndPan="magnify" preserveAspectRatio="none" contentStyleType="text/css"><?plantuml 1.2026.8?><defs/><g font-family="sans-serif" lengthAdjust="spacing"><g class="title" data-source-line="5"><text x="194.357" y="22.6" fill="#000" font-size="14" textLength="315.336" font-weight="700" font-family="'Apple SD Gothic Neo'">이전: 문서 규칙은 여러 곳에, 허브는 연애혁명 저장소 안에</text></g><!--cluster 규칙이 사는 곳--><g class="cluster" data-qualified-name="... .. ." id="ent0001" data-source-line="7"><path d="M11,43.9 L75.592,43.9 A7.5,7.5 0 0 1 80.592,48.9 L87.592,64.3 L171.51,64.3 A5,5 0 0 1 176.51,69.3 L176.51,402.9 A5,5 0 0 1 171.51,407.9 L11,407.9 A5,5 0 0 1 6,402.9 L6,48.9 A5,5 0 0 1 11,43.9" style="stroke:#000;stroke-width:1.5;" fill="none"/><line x1="6" y1="64.3" x2="87.592" y2="64.3" style="stroke:#000;stroke-width:1.5;"/><text x="10" y="56.7" fill="#000" font-size="12" textLength="68.592" font-weight="700" font-family="'Apple SD Gothic Neo'">규칙이 사는 곳</text></g><!--cluster 연애혁명 저장소--><g class="cluster" data-qualified-name=".... ..." id="ent0006" data-source-line="13"><path d="M209.51,85.9 L281.326,85.9 A7.5,7.5 0 0 1 286.326,90.9 L293.326,106.3 L547.24,106.3 A5,5 0 0 1 552.24,111.3 L552.24,261.9 A5,5 0 0 1 547.24,266.9 L209.51,266.9 A5,5 0 0 1 204.51,261.9 L204.51,90.9 A5,5 0 0 1 209.51,85.9" style="stroke:#000;stroke-width:1.5;" fill="none"/><line x1="204.51" y1="106.3" x2="293.326" y2="106.3" style="stroke:#000;stroke-width:1.5;"/><text x="208.51" y="98.7" fill="#000" font-size="12" textLength="75.816" font-weight="700" font-family="'Apple SD Gothic Neo'">연애혁명 저장소</text></g><!--cluster 산출물--><g class="cluster" data-qualified-name="..." id="ent0010" data-source-line="18"><path d="M585.24,79.9 L612.38,79.9 A7.5,7.5 0 0 1 617.38,84.9 L624.38,100.3 L691.05,100.3 A5,5 0 0 1 696.05,105.3 L696.05,295.9 A5,5 0 0 1 691.05,300.9 L585.24,300.9 A5,5 0 0 1 580.24,295.9 L580.24,84.9 A5,5 0 0 1 585.24,79.9" style="stroke:#000;stroke-width:1.5;" fill="none"/><line x1="580.24" y1="100.3" x2="624.38" y2="100.3" style="stroke:#000;stroke-width:1.5;"/><text x="584.24" y="92.7" fill="#000" font-size="12" textLength="31.14" font-weight="700" font-family="'Apple SD Gothic Neo'">산출물</text></g><!--entity SK--><g class="entity" data-qualified-name="... .. ..SK" id="ent0002" data-source-line="8"><rect x="22" y="328.3" width="138.512" height="63.2" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="32" y="349.1" fill="#000" font-size="12" textLength="40.176" font-family="'Apple SD Gothic Neo'">스킬 7개</text><text x="32" y="363.5" fill="#000" font-size="12" textLength="118.512" font-family="'Apple SD Gothic Neo'">(구조안·해설·기록·보고서</text><text x="32" y="377.9" fill="#000" font-size="12" textLength="85.284" font-family="'Apple SD Gothic Neo'">·공동작성·QA·PR)</text></g><!--entity MEM--><g class="entity" data-qualified-name="... .. ..MEM" id="ent0003" data-source-line="9"><rect x="26.2" y="244.5" width="130.112" height="48.8" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="36.2" y="265.3" fill="#000" font-size="12" textLength="55.608" font-family="'Apple SD Gothic Neo'">메모리 16개</text><text x="36.2" y="279.7" fill="#000" font-size="12" textLength="110.112" font-family="'Apple SD Gothic Neo'">연애혁명 프로젝트 전용</text></g><!--entity ROLE--><g class="entity" data-qualified-name="... .. ..ROLE" id="ent0004" data-source-line="10"><rect x="37.38" y="160.5" width="107.744" height="48.8" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="47.38" y="181.3" fill="#000" font-size="12" textLength="44.676" font-family="'Apple SD Gothic Neo'">역할 파일</text><text x="47.38" y="195.7" fill="#000" font-size="12" textLength="87.744" font-family="'Apple SD Gothic Neo'">/.config/lrm-hubs</text></g><!--entity HO--><g class="entity" data-qualified-name="... .. ..HO" id="ent0005" data-source-line="11"><rect x="45.98" y="76.5" width="90.548" height="48.8" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="55.98" y="97.3" fill="#000" font-size="12" textLength="44.676" font-family="'Apple SD Gothic Neo'">인계 문서</text><text x="55.98" y="111.7" fill="#000" font-size="12" textLength="70.548" font-family="'Apple SD Gothic Neo'">HANDOFF.md</text></g><!--entity HUB--><g class="entity" data-qualified-name=".... ....HUB" id="ent0007" data-source-line="14"><rect x="226.2" y="202.5" width="104.6" height="48.8" fill="#DDEBFF" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="236.2" y="223.3" fill="#000" font-size="12" textLength="44.676" font-family="'Apple SD Gothic Neo'">문서 허브</text><text x="236.2" y="237.7" fill="#000" font-size="12" textLength="84.6" font-family="'Apple SD Gothic Neo'">(sparse 워크트리)</text></g><!--entity KIDS--><g class="entity" data-qualified-name=".... ....KIDS" id="ent0008" data-source-line="15"><rect x="396.49" y="166.5" width="139.748" height="48.8" fill="#DDEBFF" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="406.49" y="187.3" fill="#000" font-size="12" textLength="119.748" font-family="'Apple SD Gothic Neo'">개인-* 하위 워크스페이스</text><text x="406.49" y="201.7" fill="#000" font-size="12" textLength="23.208" font-family="'Apple SD Gothic Neo'">23개</text></g><!--entity PD--><g class="entity" data-qualified-name=".... ....PD" id="ent0009" data-source-line="16"><rect x="220.51" y="118.5" width="115.976" height="48.8" fill="#DDEBFF" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="230.51" y="139.3" fill="#000" font-size="12" textLength="95.976" font-family="'Apple SD Gothic Neo'">프로젝트 문서 docs/</text><text x="230.51" y="153.7" fill="#000" font-size="12" textLength="48.504" font-family="'Apple SD Gothic Neo'">60개 파일</text></g><!--entity O1--><g class="entity" data-qualified-name="....O1" id="ent0011" data-source-line="19"><rect x="605.67" y="250.7" width="64.94" height="34.4" fill="#EEE" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="615.67" y="271.5" fill="#000" font-size="12" textLength="44.94" font-family="'Apple SD Gothic Neo'">허브 out/</text></g><!--entity O2--><g class="entity" data-qualified-name="....O2" id="ent0012" data-source-line="20"><rect x="596.24" y="181.7" width="83.816" height="34.4" fill="#EEE" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="606.24" y="202.5" fill="#000" font-size="12" textLength="63.816" font-family="'Apple SD Gothic Neo'">90_정리기록/</text></g><!--entity O3--><g class="entity" data-qualified-name="....O3" id="ent0013" data-source-line="21"><rect x="597.3" y="112.7" width="81.68" height="34.4" fill="#EEE" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="607.3" y="133.5" fill="#000" font-size="12" textLength="61.68" font-family="'Apple SD Gothic Neo'">저장소 docs/</text></g><!--link SK to HUB--><g class="link" data-entity-1="ent0002" data-entity-2="ent0007" id="lnk14" data-source-line="23" data-link-type="dependency"><path d="M157.48,327.86 C166.78,322.56 176.05,316.83 184.51,310.9 C209.81,293.17 232.092,272.773 250.092,255.003" style="stroke:#181818;stroke-width:1;" fill="none" id="SK-to-HUB"/><polygon points="253.65,251.49,244.435,254.966,250.092,255.003,250.055,260.659,253.65,251.49" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link MEM to HUB--><g class="link" data-entity-1="ent0003" data-entity-2="ent0007" id="lnk15" data-source-line="24" data-link-type="dependency"><path d="M156.79,254.27 C179.34,249.16 199.474,244.596 220.854,239.746" style="stroke:#181818;stroke-width:1;" fill="none" id="MEM-to-HUB"/><polygon points="225.73,238.64,216.068,236.73,220.854,239.746,217.838,244.532,225.73,238.64" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link ROLE to HUB--><g class="link" data-entity-1="ent0004" data-entity-2="ent0007" id="lnk16" data-source-line="25" data-link-type="dependency"><path d="M145.34,196.94 C170.68,202.68 196.003,208.426 221.133,214.116" style="stroke:#181818;stroke-width:1;" fill="none" id="ROLE-to-HUB"/><polygon points="226.01,215.22,218.116,209.331,221.133,214.116,216.349,217.134,226.01,215.22" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link HO to HUB--><g class="link" data-entity-1="ent0005" data-entity-2="ent0007" id="lnk17" data-source-line="26" data-link-type="dependency"><path d="M136.67,112.34 C153.75,118.77 172.11,128.5 184.51,142.9 C197.18,157.61 184.22,169.87 196.51,184.9 C204.33,194.46 210.515,199.697 221.445,205.687" style="stroke:#181818;stroke-width:1;" fill="none" id="HO-to-HUB"/><polygon points="225.83,208.09,219.86,200.257,221.445,205.687,216.015,207.272,225.83,208.09" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link HUB to KIDS--><g class="link" data-entity-1="ent0007" data-entity-2="ent0008" id="lnk18" data-source-line="27" data-link-type="dependency"><path d="M331.27,216.87 C351.36,212.98 369.751,209.42 391.241,205.26" style="stroke:#181818;stroke-width:1;" fill="none" id="HUB-to-KIDS"/><polygon points="396.15,204.31,386.554,202.093,391.241,205.26,388.074,209.948,396.15,204.31" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link HUB to O1--><g class="link" data-entity-1="ent0007" data-entity-2="ent0011" id="lnk19" data-source-line="28" data-link-type="dependency"><path d="M331.12,232.82 C406.18,241.42 538.253,256.56 600.233,263.67" style="stroke:#181818;stroke-width:1;" fill="none" id="HUB-to-O1"/><polygon points="605.2,264.24,596.715,259.24,600.233,263.67,595.803,267.188,605.2,264.24" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link KIDS to O2--><g class="link" data-entity-1="ent0008" data-entity-2="ent0012" id="lnk20" data-source-line="29" data-link-type="dependency"><path d="M536.42,194.15 C556.62,195.11 573.056,195.885 590.946,196.725" style="stroke:#181818;stroke-width:1;" fill="none" id="KIDS-to-O2"/><polygon points="595.94,196.96,587.138,192.542,590.946,196.725,586.762,200.533,595.94,196.96" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link KIDS to O3--><g class="link" data-entity-1="ent0008" data-entity-2="ent0013" id="lnk21" data-source-line="30" data-link-type="dependency"><path d="M536.42,166.09 C556.98,158.7 574.124,152.539 592.204,146.049" style="stroke:#181818;stroke-width:1;" fill="none" id="KIDS-to-O3"/><polygon points="596.91,144.36,587.088,143.636,592.204,146.049,589.791,151.165,596.91,144.36" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><?plantuml-src TL9TQzfW5BxFhpZOcstCMYthFYu6jZ7hw5gxokw4aMdKK7qZIMJGqT5ADeh8Fg2YtKmNmOsrPE3GJWUzykVaFVaFUnEjLUgyEl5zpdFEypn7svL9KLJ50gIbZ5ZAwu92z2sn844WMYpc9KZmy4JHSt8AjYGbm6aJl9OJqyfhcMGX8-OrQUf5LKealQQeH58Xl3JrC3KY8Uz948vmkgop8MZsq38U0RK7Q3J1wJVnxmcQ1u1rctwpmUbsiVxfBhZr8pgeqienU-XWpN8RX_Jy7Q1rWAVVyNqLi7R4W5nUokYWAw3AsPmEQLcLKhgi4AuefdR5BDDsDQ47MBOzFZOX06yu00ygaYnRAe2LjbksuRxJQIR9BUV2nXORUZJikxKU6krXtnbqQCiSzcctvtGjjdcIi3-x5_JZ2Pv-HkFtiFyyEknlxzmEWAX1OWCM145ui7PlTWuzEwRdF-aF6y8h_gmPSUwnGLjDj4otCc1A3VnovhDjnZRdqs7zbrkpmArMqRnCahUXnPH2Cd8sb5SBmLpfbUQtxyIVnVxJRmwShZ7E8adMerjyN10M2sc_Rpq-wTg_zdD-73SS7USxYf5vgh6xq5ZyNwlkeStqCGz6Lgs_M8K5de-j2i8i0_E7xHUy0swjWKrZtEebzQ7XNL6bdIIHPORoQJQUyedvF3EkZjTAAoajb2GhIwnzR9_FiirFEAObbplufqdjonigH_90AUaXlpyUXeMO_vl5FLnwYLQDQHxTqHWScG--ld5_pH5sUOBTvzXr1OEFFUSuxpIkQZ_dgmyMtgHa3dkrPz7a8nxcVClyEZ9LB_y3?></g></svg></div></div>
+<p class="cap">규칙 4곳이 허브 하나로 모이고, 허브는 연애혁명 저장소 안에 있다.</p>
+<h3>2. 문제 위치 ⚠️</h3>
+<div class="diagrams one"><div class="diagram" data-check="diagram"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" data-diagram-type="DESCRIPTION" style="width:676px;height:421px;background:#FFFFFF;" width="676px" height="421px" viewBox="0 0 676 421" zoomAndPan="magnify" preserveAspectRatio="none" contentStyleType="text/css"><?plantuml 1.2026.8?><defs/><g font-family="sans-serif" lengthAdjust="spacing"><g class="title" data-source-line="5"><text x="196.173" y="22.6" fill="#000" font-size="14" textLength="277.214" font-weight="700" font-family="'Apple SD Gothic Neo'">문제 위치 ⚠️: 같은 규칙이 겹치고, 프로젝트에 묶임</text></g><!--cluster 규칙이 사는 곳--><g class="cluster" data-qualified-name="... .. ." id="ent0001" data-source-line="7"><path d="M11,43.9 L75.592,43.9 A7.5,7.5 0 0 1 80.592,48.9 L87.592,64.3 L176.65,64.3 A5,5 0 0 1 181.65,69.3 L181.65,401.9 A5,5 0 0 1 176.65,406.9 L11,406.9 A5,5 0 0 1 6,401.9 L6,48.9 A5,5 0 0 1 11,43.9" style="stroke:#000;stroke-width:1.5;" fill="none"/><line x1="6" y1="64.3" x2="87.592" y2="64.3" style="stroke:#000;stroke-width:1.5;"/><text x="10" y="56.7" fill="#000" font-size="12" textLength="68.592" font-weight="700" font-family="'Apple SD Gothic Neo'">규칙이 사는 곳</text></g><!--cluster 연애혁명 저장소--><g class="cluster" data-qualified-name=".... ..." id="ent0006" data-source-line="13"><path d="M214.65,85.9 L286.466,85.9 A7.5,7.5 0 0 1 291.466,90.9 L298.466,106.3 L496.76,106.3 A5,5 0 0 1 501.76,111.3 L501.76,276.9 A5,5 0 0 1 496.76,281.9 L214.65,281.9 A5,5 0 0 1 209.65,276.9 L209.65,90.9 A5,5 0 0 1 214.65,85.9" style="stroke:#000;stroke-width:1.5;" fill="none"/><line x1="209.65" y1="106.3" x2="298.466" y2="106.3" style="stroke:#000;stroke-width:1.5;"/><text x="213.65" y="98.7" fill="#000" font-size="12" textLength="75.816" font-weight="700" font-family="'Apple SD Gothic Neo'">연애혁명 저장소</text></g><!--cluster 산출물--><g class="cluster" data-qualified-name="..." id="ent0010" data-source-line="18"><path d="M534.76,183.9 L561.9,183.9 A7.5,7.5 0 0 1 566.9,188.9 L573.9,204.3 L656.56,204.3 A5,5 0 0 1 661.56,209.3 L661.56,261.9 A5,5 0 0 1 656.56,266.9 L534.76,266.9 A5,5 0 0 1 529.76,261.9 L529.76,188.9 A5,5 0 0 1 534.76,183.9" style="stroke:#000;stroke-width:1.5;" fill="none"/><line x1="529.76" y1="204.3" x2="573.9" y2="204.3" style="stroke:#000;stroke-width:1.5;"/><text x="533.76" y="196.7" fill="#000" font-size="12" textLength="31.14" font-weight="700" font-family="'Apple SD Gothic Neo'">산출물</text></g><!--entity SK--><g class="entity" data-qualified-name="... .. ..SK" id="ent0002" data-source-line="8"><rect x="22.64" y="342.5" width="142.376" height="48.8" fill="#FFC9C9" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="32.64" y="363.3" fill="#000" font-size="12" textLength="55.332" font-family="'Apple SD Gothic Neo'">⚠️ 스킬 7개</text><text x="32.64" y="377.7" fill="#000" font-size="12" textLength="122.376" font-family="'Apple SD Gothic Neo'">같은 문장이 3~4곳에 복사</text></g><!--entity MEM--><g class="entity" data-qualified-name="... .. ..MEM" id="ent0003" data-source-line="9"><rect x="22" y="244.3" width="143.648" height="63.2" fill="#FFC9C9" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="32" y="265.1" fill="#000" font-size="12" textLength="70.764" font-family="'Apple SD Gothic Neo'">⚠️ 메모리 16개</text><text x="32" y="279.5" fill="#000" font-size="12" textLength="75.252" font-family="'Apple SD Gothic Neo'">쌍으로 겹침 4쌍</text><text x="32" y="293.9" fill="#000" font-size="12" textLength="123.648" font-family="'Apple SD Gothic Neo'">다른 프로젝트에선 안 읽힘</text></g><!--entity ROLE--><g class="entity" data-qualified-name="... .. ..ROLE" id="ent0004" data-source-line="10"><rect x="22.22" y="160.5" width="143.216" height="48.8" fill="#FFC9C9" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="32.22" y="181.3" fill="#000" font-size="12" textLength="59.832" font-family="'Apple SD Gothic Neo'">⚠️ 역할 파일</text><text x="32.22" y="195.7" fill="#000" font-size="12" textLength="123.216" font-family="'Apple SD Gothic Neo'">저장소 밖 · 버전 관리 없음</text></g><!--entity HO--><g class="entity" data-qualified-name="... .. ..HO" id="ent0005" data-source-line="11"><rect x="48.55" y="76.5" width="90.548" height="48.8" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="58.55" y="97.3" fill="#000" font-size="12" textLength="44.676" font-family="'Apple SD Gothic Neo'">인계 문서</text><text x="58.55" y="111.7" fill="#000" font-size="12" textLength="70.548" font-family="'Apple SD Gothic Neo'">HANDOFF.md</text></g><!--entity HUB--><g class="entity" data-qualified-name=".... ....HUB" id="ent0007" data-source-line="14"><rect x="225.65" y="202.3" width="125.804" height="63.2" fill="#FFC9C9" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="235.65" y="223.1" fill="#000" font-size="12" textLength="59.832" font-family="'Apple SD Gothic Neo'">⚠️ 문서 허브</text><text x="235.65" y="237.5" fill="#000" font-size="12" textLength="105.804" font-family="'Apple SD Gothic Neo'">연애혁명 규칙 22KB를</text><text x="235.65" y="251.9" fill="#000" font-size="12" textLength="89.352" font-family="'Apple SD Gothic Neo'">문서 작업에도 읽음</text></g><!--entity KIDS--><g class="entity" data-qualified-name=".... ....KIDS" id="ent0008" data-source-line="15"><rect x="411.45" y="209.5" width="74.312" height="48.8" fill="#DDEBFF" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="421.45" y="230.3" fill="#000" font-size="12" textLength="54.312" font-family="'Apple SD Gothic Neo'">개인-* 하위</text><text x="421.45" y="244.7" fill="#000" font-size="12" textLength="23.208" font-family="'Apple SD Gothic Neo'">23개</text></g><!--entity PD--><g class="entity" data-qualified-name=".... ....PD" id="ent0009" data-source-line="16"><rect x="230.56" y="118.5" width="115.976" height="48.8" fill="#DDEBFF" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="240.56" y="139.3" fill="#000" font-size="12" textLength="95.976" font-family="'Apple SD Gothic Neo'">프로젝트 문서 docs/</text><text x="240.56" y="153.7" fill="#000" font-size="12" textLength="78.972" font-family="'Apple SD Gothic Neo'">허브 작업물 아님</text></g><!--entity O1--><g class="entity" data-qualified-name="....O1" id="ent0011" data-source-line="19"><rect x="545.76" y="216.7" width="99.8" height="34.4" fill="#FFC9C9" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="555.76" y="237.5" fill="#000" font-size="12" textLength="79.8" font-family="'Apple SD Gothic Neo'">⚠️ 저장 위치 3곳</text></g><!--link SK to HUB--><g class="link" data-entity-1="ent0002" data-entity-2="ent0007" id="lnk12" data-source-line="21" data-link-type="dependency"><path d="M158.85,342.05 C169.46,336.95 180.1,331.19 189.65,324.9 C215.03,308.17 236.582,288.313 254.982,269.413" style="stroke:#181818;stroke-width:1;" fill="none" id="SK-to-HUB"/><polygon points="258.47,265.83,249.326,269.488,254.982,269.413,255.058,275.069,258.47,265.83" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link MEM to HUB--><g class="link" data-entity-1="ent0003" data-entity-2="ent0007" id="lnk13" data-source-line="22" data-link-type="dependency"><path d="M166.04,260.38 C185.45,256.15 201.435,252.664 220.305,248.554" style="stroke:#181818;stroke-width:1;" fill="none" id="MEM-to-HUB"/><polygon points="225.19,247.49,215.545,245.497,220.305,248.554,217.247,253.314,225.19,247.49" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link ROLE to HUB--><g class="link" data-entity-1="ent0004" data-entity-2="ent0007" id="lnk14" data-source-line="23" data-link-type="dependency"><path d="M165.77,202.94 C185.3,207.9 201.494,212.018 220.494,216.848" style="stroke:#181818;stroke-width:1;" fill="none" id="ROLE-to-HUB"/><polygon points="225.34,218.08,217.603,211.986,220.494,216.848,215.632,219.739,225.34,218.08" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link HO to HUB--><g class="link" data-entity-1="ent0005" data-entity-2="ent0007" id="lnk15" data-source-line="24" data-link-type="dependency"><path d="M139.49,111.72 C157.31,118.1 176.65,127.96 189.65,142.9 C202.39,157.55 189.66,169.63 201.65,184.9 C208.11,193.14 212.251,197.41 221.081,203.44" style="stroke:#181818;stroke-width:1;" fill="none" id="HO-to-HUB"/><polygon points="225.21,206.26,220.033,197.881,221.081,203.44,215.522,204.488,225.21,206.26" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link HUB to KIDS--><g class="link" data-entity-1="ent0007" data-entity-2="ent0008" id="lnk16" data-source-line="25" data-link-type="dependency"><path d="M351.57,233.9 C371.8,233.9 388.6,233.9 406.31,233.9" style="stroke:#181818;stroke-width:1;" fill="none" id="HUB-to-KIDS"/><polygon points="411.31,233.9,402.31,229.9,406.31,233.9,402.31,237.9,411.31,233.9" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link KIDS to O1--><g class="link" data-entity-1="ent0008" data-entity-2="ent0011" id="lnk17" data-source-line="26" data-link-type="dependency"><path d="M486.21,233.9 C504.17,233.9 521.07,233.9 540.47,233.9" style="stroke:#181818;stroke-width:1;" fill="none" id="KIDS-to-O1"/><polygon points="545.47,233.9,536.47,229.9,540.47,233.9,536.47,237.9,545.47,233.9" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><?plantuml-src VLDTRn9H47tVNp6XRqPKe7xK1vFoiM9gmKXyusK32smAkmIsCT7KKB9j6egf9k2YMSYQ55CRJ4YfBIJuua_nSUzi_0lEBXz5GtsRU-_CcNFEp2rlIN9HA0a5I8iPOJklyegineI229xrOZ4lGY8CZnKr9wKW9YeUhZpFB-U4jF9IahEG4V9bSU6bf6pBwP1IaiKI-EuiF2oqI4YlHF3vELLIgGdh3T4q00qDHotuzSdyFJnw25R_8xOhO5qQEABe7Aop4RrR0_Ccs0sDVJRGRDkr8Uhl2E42EngN5pCgg0gKf6nEXRHK4bEgfCXSKKXj2LaITGM6rHwhDS0Q33pmcWDmKWKvIsmy4mA0jMExseFxLjz8obCo3jDErwaFl5cbMhVtu3k1UK0eGs83LdW-j1PQMuh8lZROwGdxqWFVFHSLws_H69EIYROJMAMRfCmEZrbt-Az8r4p0vW5W-uVTQRdzDYER_ss8-ZUxQO9ThsDxJEtCYiD-lmwi_m5-NW8xqz3Km3glEAHGtyTstGL-7dyQMOwCxQ4rq5mZD58GNO-5upn_gv1sww9nfuf_4BhBxLovZdeVcwRTscMdUp0dSPtl4sYmzGCsh1FfnUB9_C3ltmYoBYcQvcBdFUfxv14xqXn_PZAYBuBBLP3x9CHx0-ncYzOkAVi3TENMR3m99s0b78u4UVxleiLvp5YcbLJvTbAUa9toOBqn3KfZXvCXFGlFuHOzgVRnmg3KQzVFzMdsAGBkeX9Qt3TNjCFHldczZnoPdBCAizYTtkn08vc7P8SJEn8vLwTpYll-0000?></g></svg></div></div>
+<p class="cap">빨강이 문제다. 규칙 복제 · 프로젝트 종속 · 저장 위치 3곳.</p>
+<h3>3. 변경 후 구조</h3>
+<div class="diagrams one"><div class="diagram" data-check="diagram"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" data-diagram-type="DESCRIPTION" style="width:803px;height:305px;background:#FFFFFF;" width="803px" height="305px" viewBox="0 0 803 305" zoomAndPan="magnify" preserveAspectRatio="none" contentStyleType="text/css"><?plantuml 1.2026.8?><defs/><g font-family="sans-serif" lengthAdjust="spacing"><g class="title" data-source-line="5"><text x="166.258" y="22.6" fill="#000" font-size="14" textLength="464.394" font-weight="700" font-family="'Apple SD Gothic Neo'">변경 후: 개인 설정 저장소가 규칙·허브를 모두 가짐 (초록=추가 노랑=변경 빨강=삭제)</text></g><!--cluster 개인 설정 저장소 (claude-config)--><g class="cluster" data-qualified-name=".. .. ... .claude-config." id="ent0001" data-source-line="7"><path d="M198.02,43.9 L356.632,43.9 A7.5,7.5 0 0 1 361.632,48.9 L368.632,64.3 L783.91,64.3 A5,5 0 0 1 788.91,69.3 L788.91,219.9 A5,5 0 0 1 783.91,224.9 L198.02,224.9 A5,5 0 0 1 193.02,219.9 L193.02,48.9 A5,5 0 0 1 198.02,43.9" style="stroke:#000;stroke-width:1.5;" fill="none"/><line x1="193.02" y1="64.3" x2="368.632" y2="64.3" style="stroke:#000;stroke-width:1.5;"/><text x="197.02" y="56.7" fill="#000" font-size="12" textLength="162.612" font-weight="700" font-family="'Apple SD Gothic Neo'">개인 설정 저장소 (claude-config)</text></g><!--entity DK--><g class="entity" data-qualified-name=".. .. ... .claude-config..DK" id="ent0002" data-source-line="8"><rect x="209.02" y="160.5" width="159.632" height="48.8" fill="#DAFBE1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="219.02" y="181.3" fill="#000" font-size="12" textLength="97.084" font-family="'Apple SD Gothic Neo'">🟢 doc-kit 스킬 1개</text><text x="219.02" y="195.7" fill="#000" font-size="12" textLength="139.632" font-family="'Apple SD Gothic Neo'">공통 규칙 한 곳 + 유형별 참고</text></g><!--entity KEEP--><g class="entity" data-qualified-name=".. .. ... .claude-config..KEEP" id="ent0003" data-source-line="9"><rect x="225.84" y="76.5" width="125.988" height="48.8" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="235.84" y="97.3" fill="#000" font-size="12" textLength="105.988" font-family="'Apple SD Gothic Neo'">🟡 PR 스킬 · QA 스킬</text><text x="235.84" y="111.7" fill="#000" font-size="12" textLength="104.784" font-family="'Apple SD Gothic Neo'">doc-kit 규칙을 참조만</text></g><!--entity HUB--><g class="entity" data-qualified-name=".. .. ... .claude-config..HUB" id="ent0004" data-source-line="10"><rect x="429.65" y="159.5" width="149.268" height="48.8" fill="#DAFBE1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="439.65" y="180.3" fill="#000" font-size="12" textLength="129.268" font-family="'Apple SD Gothic Neo'">🟢 문서 허브 워크스페이스</text><text x="439.65" y="194.7" fill="#000" font-size="12" textLength="116.904" font-family="'Apple SD Gothic Neo'">역할 파일·인계 문서 포함</text></g><!--entity OUT--><g class="entity" data-qualified-name=".. .. ... .claude-config..OUT" id="ent0005" data-source-line="11"><rect x="653.74" y="158.5" width="119.168" height="48.8" fill="#DAFBE1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="663.74" y="179.3" fill="#000" font-size="12" textLength="77.368" font-family="'Apple SD Gothic Neo'">🟢 산출물 한 곳</text><text x="663.74" y="193.7" fill="#000" font-size="12" textLength="99.168" font-family="'Apple SD Gothic Neo'">docs/out/날짜-주제/</text></g><!--entity OLD1--><g class="entity" data-qualified-name="OLD1" id="ent0006" data-source-line="13"><rect x="16.04" y="108.3" width="99.932" height="63.2" fill="#FFC9C9" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="26.04" y="129.1" fill="#000" font-size="12" textLength="59.44" font-family="'Apple SD Gothic Neo'">🔴 스킬 5개</text><text x="26.04" y="143.5" fill="#000" font-size="12" textLength="79.932" font-family="'Apple SD Gothic Neo'">구조안·해설·기록</text><text x="26.04" y="157.9" fill="#000" font-size="12" textLength="79.932" font-family="'Apple SD Gothic Neo'">·보고서·공동작성</text></g><!--entity OLD2--><g class="entity" data-qualified-name="OLD2" id="ent0007" data-source-line="14"><rect x="7" y="206.5" width="118.02" height="48.8" fill="#FFC9C9" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="17" y="227.3" fill="#000" font-size="12" textLength="98.02" font-family="'Apple SD Gothic Neo'">🔴 문서 메모리 15개</text><text x="17" y="241.7" fill="#000" font-size="12" textLength="55.056" font-family="'Apple SD Gothic Neo'">스킬로 흡수</text></g><!--entity KIDS--><g class="entity" data-qualified-name="KIDS" id="ent0008" data-source-line="15"><rect x="639.92" y="242.5" width="146.804" height="48.8" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="649.92" y="263.3" fill="#000" font-size="12" textLength="99.832" font-family="'Apple SD Gothic Neo'">🟡 개인-* 하위 23개</text><text x="649.92" y="277.7" fill="#000" font-size="12" textLength="126.804" font-family="'Apple SD Gothic Neo'">그대로 두고 신규만 새 허브</text></g><!--link DK to HUB--><g class="link" data-entity-1="ent0002" data-entity-2="ent0004" id="lnk9" data-source-line="16" data-link-type="dependency"><path d="M369.01,184.53 C388.71,184.44 404.75,184.363 424.19,184.273" style="stroke:#181818;stroke-width:1;" fill="none" id="DK-to-HUB"/><polygon points="429.19,184.25,420.172,180.292,424.19,184.273,420.209,188.292,429.19,184.25" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link KEEP to HUB--><g class="link" data-entity-1="ent0003" data-entity-2="ent0004" id="lnk10" data-source-line="17" data-link-type="dependency"><path d="M352.15,125.13 C379.59,135.8 407.14,146.507 434.75,157.247" style="stroke:#181818;stroke-width:1;" fill="none" id="KEEP-to-HUB"/><polygon points="439.41,159.06,432.472,152.069,434.75,157.247,429.572,159.525,439.41,159.06" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link HUB to OUT--><g class="link" data-entity-1="ent0004" data-entity-2="ent0005" id="lnk11" data-source-line="18" data-link-type="dependency"><path d="M579.15,183.54 C603.54,183.43 625.33,183.326 648.44,183.206" style="stroke:#181818;stroke-width:1;" fill="none" id="HUB-to-OUT"/><polygon points="653.44,183.18,644.419,179.227,648.44,183.206,644.461,187.227,653.44,183.18" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link HUB to KIDS--><g class="link" data-entity-1="ent0004" data-entity-2="ent0008" id="lnk12" data-source-line="19" data-link-type="dependency"><path d="M567.12,208.69 C593.46,219.25 619.468,229.681 645.808,240.231" style="stroke:#181818;stroke-width:1;" fill="none" id="HUB-to-KIDS"/><polygon points="650.45,242.09,643.583,235.03,645.808,240.231,640.608,242.457,650.45,242.09" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link OLD1 to DK--><g class="link" data-entity-1="ent0006" data-entity-2="ent0002" id="lnk13" data-source-line="20" data-link-type="dependency"><path d="M116.29,149.94 C143.5,155.49 173.031,161.501 203.891,167.791" style="stroke:#181818;stroke-width:1;stroke-dasharray:7,7;" fill="none" id="OLD1-to-DK"/><polygon points="208.79,168.79,200.77,163.073,203.891,167.791,199.172,170.912,208.79,168.79" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="156.02" y="154.17" fill="#000" font-size="12" textLength="20.76" font-family="'Apple SD Gothic Neo'">흡수</text></g><!--link OLD2 to DK--><g class="link" data-entity-1="ent0007" data-entity-2="ent0002" id="lnk14" data-source-line="21" data-link-type="dependency"><path d="M125.32,218.75 C150.87,213.43 176.365,208.12 203.915,202.38" style="stroke:#181818;stroke-width:1;stroke-dasharray:7,7;" fill="none" id="OLD2-to-DK"/><polygon points="208.81,201.36,199.183,199.28,203.915,202.38,200.815,207.112,208.81,201.36" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="156.02" y="205.08" fill="#000" font-size="12" textLength="20.76" font-family="'Apple SD Gothic Neo'">흡수</text></g><?plantuml-src TL9TIzjG6BxFhtYfDxfHNHt252feQxVXS6xEkzw4Dgt1cfGsPR0nwBfEoXQcGeCLKqsThcvKo9RMHEXk-dDoti1-mawIfhYfT-Vp-NoBcxoGPmli5gIv35lAIGbHa5ROBGv22_byZeErE3mMfGq-1IkS66AAe_V53JOjlkQ5B6JON96xTbCGIq8w9XO4hW2H1zSkhb6iyMyuY4mp4YzH4cAKxL-_mJcipe6jgzYq0Akdg2c0MXcFpd1RjlKosAQALmS3qzcl4KicPtqWFyx9tYxzKyRsBenZjqPQpIXUrjtdvAD5ZlQYGt1oTMxhIXGh5wYf4qoEoqWWYL3WiniIfFa2bv9uKM3oR6gJpLBxT-Y0yLIEBQMvS4eKCdns8WHl6G3tDojagPNGd-FZ4qYBgV0cBm5-EdKg7OXGiAHW6prdkpTq0OwYWcqOS1zGrPo6Gemge6xPXXO2jWZnPHYBBoGMbo8tu5km-Z907fZmOc6uIGe1hK-1JGyHMpffonxeyjBIAemb4eb7iPbRL9EEXLKL_7W13sNdVSU5_jB0PfSkaWBkNpYA1euiOxC_C6b0DfKT_DlfECgvH_HaVV5E-IU05HqlLTBf1o5uoejJOacQ8XKDsseOl_PfJLCUsFFrLoEmTym_OFLk4CIC7t6lG-sYKgD3edHfTmFJjdGw4qbXO1AZIzEbIkcXqICx1tYqXzMVFiUpUCHD9ZORcxr1CVH7ljVTUVj6-_JPV6hIejQRBQmr0gJfsv5eSVvGXUzHumrKgp3zq9TjMaGkkq1qcgb6mCyQxP3M1lYXDYp4R_1fV6tK89sHS7ZU3PlncWqsRlhkcWOtMhiV6S_bvEIyErrpGz6C9_Y_mxy0?></g></svg></div></div>
+<p class="cap">초록은 추가, 노랑은 변경, 빨강은 삭제다.</p>
+
+<h2>🔍 조사 결과</h2>
+<h3>허브가 프로젝트에 묶인 근거</h3>
+<ul class="facts">
+<li>🔴 허브는 연애혁명 저장소의 sparse 워크트리다. 프로젝트 ID 도 그 저장소다.</li>
+<li>⚠️ 허브 CLAUDE.md 는 약 22KB 이고 내용이 연애혁명 전용이다. 문서 작업에도 로드된다.</li>
+<li>🟡 허브 docs/ 60개 파일은 프로젝트 문서다. 허브 작업물이 아니다.</li>
+<li>🟡 허브 작업물(인계 문서·결정 기록·out/)은 git 추적 밖이다.</li>
+<li>🟡 하위 워크스페이스는 연애혁명 워크스페이스 폴더에 23개 있다.</li>
+<li>🟡 재시작 스크립트에 연애혁명 워크스페이스 경로가 박혀 있다.</li>
+<li>🟡 역할 파일은 ~/.config 아래라 저장소 밖이고 버전 관리가 없다.</li>
+<li>🟢 claude-config 는 README 와 .gitignore 뿐이고 구조는 승인 뒤에 채우게 돼 있다.</li>
+</ul>
+<h3>충돌하는 규칙</h3>
+<table><tr><th>충돌</th><th>양쪽</th><th>doc-kit 에서</th></tr>
+<tr><td>⚠️ 문체</td><td>house-style 은 평서 ~다. 11-05 지시는 명사형 압축·서술 단락 금지</td><td>제목·표·목록은 명사형. 서술이 필요한 칸만 ~다</td></tr>
+<tr><td>⚠️ 고유명사</td><td>기획자용은 금지. 개발자 리뷰용은 클래스명 허용</td><td>문서마다 독자를 정하고 규칙을 갈라 적용</td></tr>
+<tr><td>⚠️ 저장 위치</td><td>구조안 스킬은 90_정리기록, 기록 스킬은 저장소 docs/, 허브는 out/</td><td>허브 docs/out/날짜-주제/ 한 곳. 영상·대용량은 추적 제외</td></tr></table>
+<p class="cap">저장 위치 한 곳은 내가 둔 기본값이다. 다르게 원하면 알려 달라.</p>
+
+<h2>🧩 겹침표 — 스킬</h2>
+<table><tr><th>스킬</th><th>줄 수</th><th>맡은 일</th><th>겹치는 것</th><th>처리</th></tr>
+<tr><td><code>structure-change-doc</code></td><td>96</td><td>구조 제안 HTML + 검사 스크립트</td><td>읽기 규칙·한 줄 한 사실·도식 3장·결정 카드·3단계 검수</td><td><span class="badge tag-warn">🟡</span> doc-kit '구조안' 유형 + 스크립트 이관</td></tr>
+<tr><td><code>work-report</code></td><td>141</td><td>결과 보고서</td><td>결정 카드·인과·길이·한 줄 한 사실·도식 3장·3단계 검수. 템플릿은 구조안 스킬 것을 빌려 씀</td><td><span class="badge tag-warn">🟡</span> doc-kit '보고서' 유형</td></tr>
+<tr><td><code>explain-diff</code></td><td>198</td><td>변경 해설(도식+화면)</td><td>도식 3장. 문체는 기록 스킬의 house-style 참조</td><td><span class="badge tag-warn">🟡</span> doc-kit '해설' 유형. 퀴즈는 참고 파일</td></tr>
+<tr><td><code>tech-record</code></td><td>53</td><td>설계 기록·계획·계약 + house-style</td><td>house-style 을 다른 스킬 4개가 참조</td><td><span class="badge tag-warn">🟡</span> doc-kit '기록' 유형. house-style 은 공통 규칙으로 승격</td></tr>
+<tr><td><code>doc-coauthoring</code></td><td>18</td><td>README·가이드 일반 원칙</td><td>첫 줄에서 기록 스킬로 넘김. 독자 분기 없음</td><td><span class="badge tag-bad">🔴</span> 삭제. 한국어 작성 기준 참고 파일만 이관</td></tr>
+<tr><td><code>qa-checklist</code></td><td>71</td><td>QA 체크리스트</td><td>문체만 겹침. 독자(QA)가 달라 분리 가능</td><td><span class="badge tag-ok">🟢</span> 유지. 공통 규칙 참조만</td></tr>
+<tr><td><code>create-pr</code></td><td>94</td><td>PR 본문·GitHub 등록</td><td>문체만 겹침. 게시 승인 흐름이 따로 있음</td><td><span class="badge tag-ok">🟢</span> 유지. 공통 규칙 참조만</td></tr></table>
+<ul class="facts">
+<li>🟢 문장 편집·화면 흐름·퀴즈·Jira·인수 요약 스킬은 문서 규칙이 아니라 도구라 그대로 둔다.</li>
+<li>⚠️ 옛 이름 참조: 전역 CLAUDE.md·WORKFLOW.md·역할 파일 4·공통 규칙 2·다른 스킬 5, 총 13곳.</li>
+<li>⚠️ 메모리 최소 8개와 허브 인계 문서도 옛 이름을 적고 있다.</li>
+<li>⚠️ 검사 스크립트는 구조안 스킬 폴더에 있고 보고서 스킬이 그 경로를 부른다. 이관 시 경로가 바뀐다.</li>
+</ul>
+
+<h2>🧩 겹침표 — 메모리</h2>
+<ul class="facts">
+<li>📄 위치: ~/.claude/projects 아래 연애혁명 프로젝트 폴더, 메모리 126개 중 문서 규칙 16개.</li>
+<li>📄 프로필 홈 memory 폴더에는 문서 규칙이 없다. 파일 0개.</li>
+<li>⚠️ 다른 프로젝트 4곳에도 PR 문체 메모리가 따로 있다. create-pr 후속 정리 대상이다.</li>
+</ul>
+<table><tr><th>메모리</th><th>같은 내용이 있는 곳</th><th>처리</th></tr>
+<tr><td><code>docs-as-html</code></td><td>user-docs-as-html 와 쌍. 구조안 스킬에도 있음</td><td><span class="badge tag-bad">🔴</span> doc-kit '형식: 자체 완결 HTML'</td></tr>
+<tr><td><code>user-docs-as-html</code></td><td>docs-as-html 와 쌍</td><td><span class="badge tag-bad">🔴</span> 위와 같이 흡수</td></tr>
+<tr><td><code>doc-three-stage-review</code></td><td>structure-doc-review-3stage 와 쌍. 구조안 스킬 검수표</td><td><span class="badge tag-bad">🔴</span> doc-kit '검수 3단계'</td></tr>
+<tr><td><code>structure-doc-review-3stage</code></td><td>위와 쌍. 결정 카드·보고서 내용도 포함</td><td><span class="badge tag-bad">🔴</span> 위와 같이 흡수</td></tr>
+<tr><td><code>doc-one-fact-per-line</code></td><td>compressed-headline-style 추가분과 같은 문장. 스킬 3곳에도 있음</td><td><span class="badge tag-bad">🔴</span> doc-kit '문장 규칙'</td></tr>
+<tr><td><code>compressed-headline-style</code></td><td>위와 쌍. dev-review-doc-style 갱신분과도 같은 문장</td><td><span class="badge tag-bad">🔴</span> 위와 같이 흡수</td></tr>
+<tr><td><code>dev-review-doc-style</code></td><td>user-html-no-proper-nouns 와 충돌(클래스명 허용 vs 금지)</td><td><span class="badge tag-warn">🟡</span> 독자 2종(개발자·기획자)으로 갈라 흡수</td></tr>
+<tr><td><code>user-html-no-proper-nouns</code></td><td>slack-plain-language 의 쉬운 말과 같은 취지</td><td><span class="badge tag-bad">🔴</span> 독자 규칙으로 흡수</td></tr>
+<tr><td><code>slack-plain-language</code></td><td>쉬운 말·내부 기호 금지. 구조안 스킬 글쓰기 규칙에도 있음</td><td><span class="badge tag-bad">🔴</span> 독자 규칙으로 흡수</td></tr>
+<tr><td><code>diagram-before-problem-after</code></td><td>doc-diagrams-and-shot-diff 와 쌍. 스킬 3곳에도 있음</td><td><span class="badge tag-bad">🔴</span> doc-kit '도식 3장'</td></tr>
+<tr><td><code>doc-diagrams-and-shot-diff</code></td><td>위와 쌍</td><td><span class="badge tag-bad">🔴</span> 위와 같이 흡수</td></tr>
+<tr><td><code>decision-card-format</code></td><td>구조안·보고서 스킬에 이미 전문이 있음</td><td><span class="badge tag-bad">🔴</span> doc-kit '결정 카드'</td></tr>
+<tr><td><code>slack-report-html-format</code></td><td>허브 역할 파일의 HTML 양식 문단과 같음</td><td><span class="badge tag-bad">🔴</span> doc-kit '형식'</td></tr>
+<tr><td><code>visual-change-doc-for-jeongo</code></td><td>역할 파일에도 같은 구성이 있음</td><td><span class="badge tag-warn">🟡</span> doc-kit '비주얼 변경' 유형</td></tr>
+<tr><td><code>doc-writing-skills</code></td><td>스킬 3개만 적힌 낡은 목록(10-08)</td><td><span class="badge tag-bad">🔴</span> 삭제</td></tr>
+<tr><td><code>hub-html-subject-format</code></td><td>전달 제목 규칙이라 문서 양식이 아님</td><td><span class="badge tag-ok">🟢</span> 허브 인계 문서로 이전</td></tr></table>
+<p class="cap">🔴 13 · 🟡 2 · 🟢 1. 쌍으로 겹친 것은 4쌍이다.</p>
+
+<h2>🔄 주제별 before / after</h2>
+<section class="ba" data-check="ba"><h3>같은 규칙 복제 → 한 곳</h3>
+<div class="ba-grid"><div class="before"><div class="label">before (지금, 실제 제목 줄)</div><pre><code>structure-change-doc/SKILL.md:88  ## 한 줄 한 사실 (11-05 사용자)
+structure-change-doc/SKILL.md:93  ## 도식 3장 + UI 샷 (11-05 사용자)
+work-report/SKILL.md:133          ## 한 줄 한 사실 (11-05 사용자)
+work-report/SKILL.md:138          ## 도식 3장 + UI 샷 (11-05 사용자)
+explain-diff/SKILL.md:195         ## 도식 3장 + UI 샷 (11-05 사용자)
+memory/doc-one-fact-per-line.md   (같은 규칙)
+memory/doc-diagrams-and-shot-diff.md (같은 규칙)
+memory/diagram-before-problem-after.md (같은 규칙)</code></pre></div>
+<div class="after"><div class="label">after (제안)</div><pre><code>doc-kit/SKILL.md
+  ## 공통 규칙   ← 한 줄 한 사실, 도식 3장, 결정 카드,
+                    인과·길이, 검수 3단계. 여기서만 고침
+  ## 유형 표     ← 구조안 | 해설 | 기록 | 보고서 | 비주얼
+doc-kit/references/&lt;유형&gt;.md   ← 유형별 골격만
+doc-kit/scripts/               ← check.py 등 이관
+create-pr, qa-checklist        ← "doc-kit 공통 규칙 따름" 한 줄</code></pre></div></div>
+<p class="why" data-check="why"><b>왜:</b> 같은 규칙이 8곳에 있어서 한 곳만 고치면 나머지가 낡으므로, 출처를 하나로 줄인다.</p></section>
+<section class="ba" data-check="ba"><h3>허브 경로 박힘 → 설정 한 곳</h3>
+<div class="ba-grid"><div class="before"><div class="label">before (지금, restart_hub.sh)</div><pre><code>HUB="/Users/gangchanhyeong/orca/workspaces/\
+LoveRevolutionMaker/$2"
+ROLE="$HOME/.config/lrm-hubs/roles/role-$3.txt"
+# 허브 경로가 연애혁명 폴더 고정
+# 역할 파일이 저장소 밖</code></pre></div>
+<div class="after"><div class="label">after (제안)</div><pre><code>HUB_ROOT="${HUB_ROOT:-$HOME/orca/workspaces/claude-config}"
+HUB="$HUB_ROOT/$2"
+ROLE="$HUB/role.txt"      # 허브 폴더 안, git 추적
+# 다른 허브는 HUB_ROOT 만 바꿔 호출</code></pre></div></div>
+<p class="why" data-check="why"><b>왜:</b> 경로와 역할 파일이 한 프로젝트에 박혀 있어서 문서 허브만 옮기기 어려우므로, 기준 폴더를 설정으로 뺀다.</p></section>
+
+<h2>✅ 그대로인 것 / 없어지는 것</h2>
+<table><tr><th>그대로</th><th>없어짐</th></tr>
+<tr><td>🟢 PR 스킬·QA 스킬</td><td>🔴 문서 스킬 5개(합쳐짐)</td></tr>
+<tr><td>🟢 검사 스크립트 기능(경로만 이관)</td><td>🔴 문서 메모리 15개(백업 후)</td></tr>
+<tr><td>🟢 결정 카드·3단계 검수·HTML 양식</td><td>🔴 규칙 복제본</td></tr>
+<tr><td>🟢 문장 편집·화면 흐름·Jira 스킬</td><td>🔴 저장 위치 3곳 중 2곳</td></tr>
+<tr><td>🟢 옛 하위 워크스페이스와 산출물</td><td>—</td></tr></table>
+
+<h2>🔄 진행 순서 (승인 뒤)</h2>
+<ol>
+<li>이전 조건 확인 — <small>검증: 진행 중 워커 0, 사용자 3차 검수 대기 건 처리, 인계 문서 최신</small></li>
+<li>doc-kit 초안 작성(옛 스킬 유지) — <small>검증: 옛 5개 규칙이 빠짐없이 들어갔는지 줄 단위 대조</small></li>
+<li>검사 스크립트 이관 후 샘플 문서 1건 통과 — <small>검증: 검사 통과</small></li>
+<li>옛 이름 참조 13곳 갱신 — <small>검증: grep 으로 옛 이름 0건</small></li>
+<li>메모리 15개 백업 후 삭제 — <small>검증: 백업 파일 수 15개 일치</small></li>
+<li>새 허브 워크스페이스 생성, 역할 파일·인계 문서 이전 — <small>검증: 새 터미널이 인계 문서를 읽고 보고</small></li>
+<li>메인 코디네이터 허브 목록 갱신, 옛 허브 종료 — <small>검증: 메인이 새 허브로 메시지 도달 확인</small></li>
+<li>옛 스킬 5개 삭제 — <small>검증: 새 스킬로 문서 1건 재생성</small></li>
+</ol>
+<ul class="facts">
+<li>⚠️ 위험: 옛 이름을 부르는 역할 파일이 한 곳이라도 남으면 허브가 없는 스킬을 찾는다.</li>
+<li>🔵 테스트: 이전 후 샘플 문서 1건을 새 스킬로 만들어 검사까지 통과시킨다.</li>
+<li>🟡 허브 진행 작업 상태는 11-06 12:33 파일 기준이다. 이전 시점에 다시 확인한다.</li>
+</ul>
+
+<details class="ref" data-check="ref"><summary>참고 (파일·근거)</summary>
+<ul>
+<li>허브: /Users/gangchanhyeong/orca/workspaces/LoveRevolutionMaker/coord-docs-hub (sparse: docs, .claude, CLAUDE.md, AGENTS.md)</li>
+<li>허브 인계: HANDOFF.md, 결정 기록: decisions.tsv (읽기만 함)</li>
+<li>역할 파일: ~/.config/lrm-hubs/roles/role-docs.txt</li>
+<li>스킬: ~/.claude/skills/{structure-change-doc,work-report,explain-diff,tech-record,doc-coauthoring,qa-checklist,create-pr}</li>
+<li>메모리: ~/.claude/projects/-Users-gangchanhyeong-orca-LoveRevolutionMaker/memory</li>
+<li>이전 대상 저장소: ~/orca/claude-config (README 와 .gitignore 만 있음)</li>
+<li>읽지 않은 것: .env·토큰·state·cache·history·sessions</li>
+</ul>
+<details class="ref"><summary>도식 원문 (PlantUML)</summary>
+<pre><code>@startuml
+skinparam defaultFontName &quot;Apple SD Gothic Neo&quot;
+skinparam shadowing false
+skinparam roundCorner 10
+skinparam defaultFontSize 12
+title 이전: 문서 규칙은 여러 곳에, 허브는 연애혁명 저장소 안에
+left to right direction
+package &quot;규칙이 사는 곳&quot; {
+  rectangle &quot;스킬 7개\n(구조안·해설·기록·보고서\n·공동작성·QA·PR)&quot; as SK #FFF8C5
+  rectangle &quot;메모리 16개\n연애혁명 프로젝트 전용&quot; as MEM #FFF8C5
+  rectangle &quot;역할 파일\n~/.config/lrm-hubs&quot; as ROLE #FFF8C5
+  rectangle &quot;인계 문서\nHANDOFF.md&quot; as HO #FFF8C5
+}
+package &quot;연애혁명 저장소&quot; {
+  rectangle &quot;문서 허브\n(sparse 워크트리)&quot; as HUB #DDEBFF
+  rectangle &quot;개인-* 하위 워크스페이스\n23개&quot; as KIDS #DDEBFF
+  rectangle &quot;프로젝트 문서 docs/\n60개 파일&quot; as PD #DDEBFF
+}
+package &quot;산출물&quot; {
+  rectangle &quot;허브 out/&quot; as O1 #EEEEEE
+  rectangle &quot;90_정리기록/&quot; as O2 #EEEEEE
+  rectangle &quot;저장소 docs/&quot; as O3 #EEEEEE
+}
+SK --&gt; HUB
+MEM --&gt; HUB
+ROLE --&gt; HUB
+HO --&gt; HUB
+HUB --&gt; KIDS
+HUB --&gt; O1
+KIDS --&gt; O2
+KIDS --&gt; O3
+@enduml
+</code></pre><pre><code>@startuml
+skinparam defaultFontName &quot;Apple SD Gothic Neo&quot;
+skinparam shadowing false
+skinparam roundCorner 10
+skinparam defaultFontSize 12
+title 문제 위치 ⚠️: 같은 규칙이 겹치고, 프로젝트에 묶임
+left to right direction
+package &quot;규칙이 사는 곳&quot; {
+  rectangle &quot;⚠️ 스킬 7개\n같은 문장이 3~4곳에 복사&quot; as SK #FFC9C9
+  rectangle &quot;⚠️ 메모리 16개\n쌍으로 겹침 4쌍\n다른 프로젝트에선 안 읽힘&quot; as MEM #FFC9C9
+  rectangle &quot;⚠️ 역할 파일\n저장소 밖 · 버전 관리 없음&quot; as ROLE #FFC9C9
+  rectangle &quot;인계 문서\nHANDOFF.md&quot; as HO #FFF8C5
+}
+package &quot;연애혁명 저장소&quot; {
+  rectangle &quot;⚠️ 문서 허브\n연애혁명 규칙 22KB를\n문서 작업에도 읽음&quot; as HUB #FFC9C9
+  rectangle &quot;개인-* 하위\n23개&quot; as KIDS #DDEBFF
+  rectangle &quot;프로젝트 문서 docs/\n허브 작업물 아님&quot; as PD #DDEBFF
+}
+package &quot;산출물&quot; {
+  rectangle &quot;⚠️ 저장 위치 3곳&quot; as O1 #FFC9C9
+}
+SK --&gt; HUB
+MEM --&gt; HUB
+ROLE --&gt; HUB
+HO --&gt; HUB
+HUB --&gt; KIDS
+KIDS --&gt; O1
+@enduml
+</code></pre><pre><code>@startuml
+skinparam defaultFontName &quot;Apple SD Gothic Neo&quot;
+skinparam shadowing false
+skinparam roundCorner 10
+skinparam defaultFontSize 12
+title 변경 후: 개인 설정 저장소가 규칙·허브를 모두 가짐 (초록=추가 노랑=변경 빨강=삭제)
+left to right direction
+package &quot;개인 설정 저장소 (claude-config)&quot; {
+  rectangle &quot;🟢 doc-kit 스킬 1개\n공통 규칙 한 곳 + 유형별 참고&quot; as DK #DAFBE1
+  rectangle &quot;🟡 PR 스킬 · QA 스킬\ndoc-kit 규칙을 참조만&quot; as KEEP #FFF8C5
+  rectangle &quot;🟢 문서 허브 워크스페이스\n역할 파일·인계 문서 포함&quot; as HUB #DAFBE1
+  rectangle &quot;🟢 산출물 한 곳\ndocs/out/날짜-주제/&quot; as OUT #DAFBE1
+}
+rectangle &quot;🔴 스킬 5개\n구조안·해설·기록\n·보고서·공동작성&quot; as OLD1 #FFC9C9
+rectangle &quot;🔴 문서 메모리 15개\n스킬로 흡수&quot; as OLD2 #FFC9C9
+rectangle &quot;🟡 개인-* 하위 23개\n그대로 두고 신규만 새 허브&quot; as KIDS #FFF8C5
+DK --&gt; HUB
+KEEP --&gt; HUB
+HUB --&gt; OUT
+HUB --&gt; KIDS
+OLD1 ..&gt; DK : 흡수
+OLD2 ..&gt; DK : 흡수
+@enduml
+</code></pre></details></details>
+<details class="ref" data-check="review"><summary>검수 기록</summary>2026-11-06 작성자 자체 점검: 검사 스크립트 통과 확인. 1차 독자 검수와 2차 교차 검수는 아직 안 했다. 3차는 사용자 몫이다.</details>
+</html>
