@@ -88,6 +88,17 @@ bash "$PEND" >/dev/null
 check "최종 오류 뒤 재시도 0회" 0 "$(count chat.update)"
 stop_stub
 
+echo "[수정 호출 예외] 429 로 수정이 끝나도 재시도 가능 표시를 남겨 다음 실행에 다시 수정"
+new_hub; seed
+start_stub "{$PERMA,\"chat.update\":[{\"_status\":429,\"_headers\":{\"Retry-After\":\"0\"},\"ok\":false}],$DEL,$ORIG,$POST1}"
+bash "$PEND" >/dev/null 2>&1; RC=$?
+check "종료 코드 1" 1 "$RC"
+check "이력: 일시 실패 표시" 1 "$(grep '"update_failed"' "$(H_FILE)" | grep -c '"final": false')"
+swap_stub "{$PERMA,$UPD,$DEL,$ORIG,$POST1}"
+bash "$PEND" >/dev/null 2>&1
+check "다음 실행에서 수정 재시도 1회" 1 "$(count chat.update)"
+stop_stub
+
 echo "[빈 목록] 전부 답함 → 새 메시지 없이 이전 목록만 정리"
 new_hub; seed; answer 1.1; answer 1.3
 seed_posted
@@ -177,7 +188,7 @@ echo "[중복 실행] 잠금이 있으면 호출 없이 종료"
 new_hub; seed; mkdir "$HUB/.slack-pending.lock"
 start_stub "{$PERMA}"
 bash "$PEND" >/dev/null; RC=$?
-check "종료 코드" 0 "$RC"
+check "종료 코드 75(잠금으로 건너뜀)" 75 "$RC"
 check "API 호출 0회" 0 "$(wc -l < "$LOG" | tr -d ' ')"
 stop_stub
 

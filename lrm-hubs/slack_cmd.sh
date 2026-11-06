@@ -13,7 +13,9 @@ for l in sys.stdin:
   if d.get("type") in ("command","note") and not d.get("parent_ts"): print((d.get("text") or d.get("command") or "").strip())' | while read -r t; do
   case "$t" in
     대기|미승인|"승인 대기") O=$("$H/slack_pending.sh" 2>>"$H/slack-poll.log"); R=$?; echo "$O" >>"$H/slack-poll.log"
-      if [ "$R" -ne 0 ]; then "$H/slack_notify.sh" "⚠️ 대기 목록 확인 불가 — slack-poll.log 확인" >/dev/null
+      # 75 는 대기 목록이 이미 처리 중이라 건너뜀(잠금). 실패와 구분해 안내
+      if [ "$R" -eq 75 ]; then "$H/slack_notify.sh" "⏳ 대기 목록을 지금 처리 중 — 잠시 뒤 다시 보내 주세요" >/dev/null
+      elif [ "$R" -ne 0 ]; then "$H/slack_notify.sh" "⚠️ 대기 목록 확인 불가 — slack-poll.log 확인" >/dev/null
       elif [ "$O" = "대기 0" ]; then "$H/slack_notify.sh" "✅ 답을 기다리는 결정 없음" >/dev/null; fi ;;
     PR|pr|"초안 PR") L=$(cd "$HOME/orca/LoveRevolutionMaker" && gh pr list --state open --author @me --json number,title,url,isDraft --jq '.[] | "• <\(.url)|#\(.number)> \(.title)\(if .isDraft then " (초안)" else "" end)"' 2>/dev/null); "$H/slack_notify.sh" "📋 *열린 내 PR*
 ${L:-없음}" >/dev/null ;;

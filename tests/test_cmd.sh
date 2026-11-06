@@ -18,19 +18,25 @@ echo "[대기 조회 실패] 결정 없음이 아니라 확인 불가로 응답"
 setup 'echo "실패: 이력" >&2; exit 1'
 bash "$CMD"
 check "확인 불가 응답" "⚠️ 대기 목록 확인 불가 — slack-poll.log 확인" "$(notified)"
-rm -rf "$HUB"
+rm -rf "${HUB:?}"
+
+echo "[잠금으로 건너뜀] 무응답이 아니라 처리 중 안내"
+setup 'echo "이미 실행 중 — 건너뜀"; exit 75'
+bash "$CMD"
+check "처리 중 안내" "⏳ 대기 목록을 지금 처리 중 — 잠시 뒤 다시 보내 주세요" "$(notified)"
+rm -rf "${HUB:?}"
 
 echo "[빈 목록] 결정 없음 응답"
 setup 'echo "대기 0"'
 bash "$CMD"
 check "결정 없음 응답" "✅ 답을 기다리는 결정 없음" "$(notified)"
-rm -rf "$HUB"
+rm -rf "${HUB:?}"
 
 echo "[정상 목록] 목록은 대기 스크립트가 보내므로 추가 응답 없음"
 setup 'echo "ok 2"'
 bash "$CMD"
 check "추가 응답 없음" "" "$(notified)"
 check "읽은 줄 갱신" 1 "$(tr -d ' ' < "$HUB/.cmd-read")"
-rm -rf "$HUB"
+rm -rf "${HUB:?}"
 
 summary

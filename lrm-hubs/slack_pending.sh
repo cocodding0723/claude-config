@@ -13,7 +13,8 @@ set -a; . "$DIR/slack-bot.env"; set +a
 # 동시 실행 방지. 10분 넘은 잠금은 죽은 실행의 잔재로 보고 제거
 LOCK="$DIR/.slack-pending.lock"
 [ -d "$LOCK" ] && [ -n "$(find "$LOCK" -maxdepth 0 -mmin +10 2>/dev/null)" ] && rmdir "$LOCK" 2>/dev/null
-mkdir "$LOCK" 2>/dev/null || { echo "이미 실행 중 — 건너뜀"; exit 0; }
+# 잠금으로 건너뛰면 exit 75. 호출한 쪽(slack_cmd.sh)이 "처리 중" 안내와 실패를 구분하게 함
+mkdir "$LOCK" 2>/dev/null || { echo "이미 실행 중 — 건너뜀"; exit 75; }
 trap 'rmdir "$LOCK"' EXIT
 python3 -I - "$DIR" "$@" <<'PY'
 import json, os, sys, time, urllib.error, urllib.parse, urllib.request
@@ -132,7 +133,12 @@ def main():
             continue
         log("answered_update", ts=s["ts"], title=s["title"], action=action,
             answered_at=r.get("received_at"), original_text=orig)
-        res = call("chat.update", {"channel": s["channel"], "ts": s["ts"], "text": text})
+        try:
+            res = call("chat.update", {"channel": s["channel"], "ts": s["ts"], "text": text})
+        except Fail as e:
+            # 429·예산 소진 예외에도 재시도 가능 표시를 남겨야 수정 사건만 있고 영구 미수정이 되는 일이 없음
+            log("update_failed", ts=s["ts"], error=str(e), final=False)
+            raise
         if not res.get("ok"):
             log("update_failed", ts=s["ts"], error=res.get("error"), final=res.get("error") in FINAL_UPDATE_ERRORS)
 
