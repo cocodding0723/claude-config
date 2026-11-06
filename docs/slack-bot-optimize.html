@@ -54,10 +54,13 @@ details.ref{margin-top:30px;color:var(--muted);font-size:14px}
 <tr><td>운영 스크립트 사본 추가</td><td><code>9d1195c</code>, <code>6f42b64</code></td><td>복사만, 내용 변경 없음</td></tr>
 <tr><td>🟡 폴링 조회 최적화, 429 회차 즉답 유지</td><td><code>3e00d4c</code></td><td>🔵 초기 구현</td></tr>
 <tr><td>🟡 대기 목록 이력·재발송, 답한 결정 수정</td><td><code>b1d4df1</code></td><td>🔵 초기 구현</td></tr>
-<tr><td>🟡 독립 리뷰 반영: 폴링 반응 범위 복원·상태 손상 복구·재시도 예산</td><td><code>aba9e03</code></td><td>🔵 <code>bash tests/test_poll.sh</code> — 통과 36, 실패 0</td></tr>
-<tr><td>🟡 독립 리뷰 반영: 수정 전 원문 보존·전송 직후 회수·재시도 예산</td><td><code>edc084e</code></td><td>🔵 <code>bash tests/test_pending.sh</code> — 통과 57, 실패 0</td></tr>
-<tr><td>🟡 독립 리뷰 반영: 대기 조회 실패는 확인 불가로 응답</td><td><code>915fa9a</code></td><td>🔵 <code>bash tests/test_cmd.sh</code> — 통과 4, 실패 0</td></tr>
-<tr><td>🔵 변이 검증 스크립트</td><td><code>4ce8e5e</code></td><td><code>python3 tests/mutate.py</code> — 13종 모두 검출</td></tr></table>
+<tr><td>🟡 독립 리뷰 반영: 폴링 반응 범위 복원·상태 손상 복구·재시도 예산</td><td><code>aba9e03</code></td><td>🔵 <code>bash tests/test_poll.sh</code> — 통과 44, 실패 0</td></tr>
+<tr><td>🟡 독립 리뷰 반영: 수정 전 원문 보존·전송 직후 회수·재시도 예산</td><td><code>edc084e</code></td><td>🔵 <code>bash tests/test_pending.sh</code> — 통과 60, 실패 0</td></tr>
+<tr><td>🟡 독립 리뷰 반영: 대기 조회 실패는 확인 불가로 응답</td><td><code>915fa9a</code></td><td>🔵 <code>bash tests/test_cmd.sh</code> — 통과 5, 실패 0</td></tr>
+<tr><td>🔵 변이 검증 스크립트</td><td><code>4ce8e5e</code></td><td>초기 13종</td></tr>
+<tr><td>🟡 재검수 반영: 상태 없음 경로 복원, 회차 총 시간 예산</td><td><code>140cac4</code></td><td>🔵 <code>bash tests/test_poll.sh</code> — 통과 44, 실패 0</td></tr>
+<tr><td>🟡 재검수 반영: 수정 호출 예외 표시, 대기 명령 처리 중 안내</td><td><code>8d793aa</code></td><td>🔵 <code>bash tests/test_pending.sh</code> — 통과 60, <code>bash tests/test_cmd.sh</code> — 통과 5</td></tr>
+<tr><td>🔵 변이 검증 17종, 삭제 가드</td><td><code>c5da652</code></td><td><code>python3 tests/mutate.py</code> — 17종 모두 검출</td></tr></table>
 <ul class="facts">
 <li>문법 검사: <code>bash tests/run.sh</code> 가 모든 스크립트에 <code>bash -n</code> 실행 — 통과. 기본 bash 3.2 에서 실행</li>
 <li>shellcheck 는 이 맥에 없어 실행하지 못했다. 미확인</li>
@@ -68,7 +71,7 @@ details.ref{margin-top:30px;color:var(--muted);font-size:14px}
 <li>한계: 원문 조회가 실패하면 그 메시지는 수정하지 않고 다음 주기로 미룬다</li>
 <li>한계: 새 대기 메시지를 보낸 직후 이력 기록이 실패하면 방금 보낸 메시지를 삭제한다. 그 삭제도 실패하면 고아가 남는다</li>
 <li>한계: 상태 파일이 손상되면 백업 뒤 초기화하고 중복 방지 키를 inbox 에서 복원한다</li>
-<li>재시도 시간 예산: 폴링 90초, 대기 목록 120초. 5분 잠금 만료 전에 끝나게 한 값이다</li>
+<li>재시도 시간 예산: 수집 90초, 대기 목록 120초, 회차 총 270초. 앞 단계가 쓴 만큼 뒤 단계가 줄어 5분 잠금 만료 전에 끝난다</li>
 <li>⚠️ 라이브 반영 1단계 검증 항목 1: 목록 응답에 <code>latest_reply</code> 가 오는가. 공식 응답 예시에는 없어서 <code>reply_count</code> 비교가 기본 경로다. <code>latest_reply</code> 가 오면 그것을 쓴다</li>
 <li>⚠️ 라이브 반영 1단계 검증 항목 2: 반응의 <code>users</code> 가 잘리는가. 잘리면 보강 조회가 자동으로 돈다</li>
 <li>⚠️ 라이브 반영 1단계 검증 항목 3: 이 앱이 분당 1회 제한 대상인가. 대상이면 폴링 30초 주기가 막힌다</li>
@@ -84,14 +87,28 @@ details.ref{margin-top:30px;color:var(--muted);font-size:14px}
 <tr><td>상태 손상 복구 제거</td><td>검출</td></tr>
 <tr><td>전송 직후 이력 실패 회수 제거</td><td>검출</td></tr>
 <tr><td>수정 전 원문 기록 제거</td><td>검출</td></tr>
-<tr><td>대기 조회 실패 응답 제거</td><td>검출</td></tr></table>
-<table><tr><th>라이브 반영 단계</th><th>명령 또는 내용</th></tr>
-<tr><td>1. 백업</td><td><code>cp ~/.config/lrm-hubs/slack_poll.sh ~/.config/lrm-hubs/slack_poll.sh.bak-날짜</code>, 같은 방식으로 <code>slack_pending.sh</code>, <code>slack_cmd.sh</code></td></tr>
-<tr><td>2. 복사</td><td><code>cp lrm-hubs/slack_poll.sh lrm-hubs/slack_pending.sh lrm-hubs/slack_cmd.sh ~/.config/lrm-hubs/</code> 후 실행 권한 확인. 대상은 3개다</td></tr>
-<tr><td>3. 재적재</td><td>스크립트 파일만 바뀌고 plist 는 그대로라 재적재가 필요 없다. 다음 30초 주기에 새 스크립트가 돈다. 바로 시험하려면 <code>launchctl kickstart -k gui/$(id -u)/ai.lrm.slackpoll</code></td></tr>
-<tr><td>4. 검증</td><td><code>slack_poll.sh --once --json</code> 1회, 로그에 새 429 가 안 늘어나는지 확인, 검증 항목 3개 확인</td></tr>
-<tr><td>5. 대기 목록</td><td><code>slack_pending.sh --dry-run</code> 으로 수정 예정 목록을 본 뒤 실제 실행. 첫 실행은 답한 결정 최대 20개를 고치고 나머지는 다음 주기에 이어진다</td></tr>
-<tr><td>되돌리기</td><td>백업 파일을 원래 이름으로 복사한다. 이력 파일은 지우지 않고 둔다</td></tr></table>
+<tr><td>대기 조회 실패 응답 제거</td><td>검출</td></tr>
+<tr><td>처리 중 안내 제거</td><td>검출</td></tr>
+<tr><td>상태 없음 복원 제거</td><td>검출</td></tr>
+<tr><td>수정 예외 실패 기록 제거</td><td>검출</td></tr>
+<tr><td>총 예산 계산 제거</td><td>검출</td></tr></table>
+<table><tr><th>라이브 반영 단계</th><th>정확한 명령</th><th>기대값</th></tr>
+<tr><td>1. 백업</td><td><code>D=~/.config/lrm-hubs; T=$(date +%Y%m%d-%H%M); for f in slack_poll.sh slack_pending.sh slack_cmd.sh; do cp -p "$D/$f" "$D/$f.bak-$T"; done</code></td><td><code>ls $D | grep bak-$T</code> 에 3개가 보인다</td></tr>
+<tr><td>2. 폴링 정지</td><td><code>launchctl bootout gui/$(id -u)/ai.lrm.slackpoll</code></td><td>오류 없이 끝나고 <code>launchctl list | grep slackpoll</code> 결과가 비어 있다. 새 주기가 낡은 스크립트로 돌지 않는다</td></tr>
+<tr><td>3. 실행 중 잠금 확인</td><td><code>ls -d $D/.slack-poll.lock</code></td><td>"No such file" 이다. 남아 있으면 진행 중인 실행이 끝날 때까지 기다린다</td></tr>
+<tr><td>4. 복사</td><td><code>cp lrm-hubs/slack_poll.sh lrm-hubs/slack_pending.sh lrm-hubs/slack_cmd.sh $D/; chmod +x $D/slack_poll.sh $D/slack_pending.sh $D/slack_cmd.sh; for f in slack_poll.sh slack_pending.sh slack_cmd.sh; do bash -n "$D/$f"; done</code></td><td><code>bash -n</code> 이 아무것도 출력하지 않는다</td></tr>
+<tr><td>5. 수동 1회</td><td><code>$D/slack_poll.sh --once --json</code> 다음 <code>$D/slack_pending.sh --dry-run</code></td><td>첫 줄이 <code>{"ok": true, "added": N}</code>, 종료 코드 0. 대기 목록은 목록 본문과 "수정 예정" 줄만 나오고 이력 파일은 생기지 않는다</td></tr>
+<tr><td>6. 로그 확인</td><td><code>tail -20 $D/slack-poll.log; grep -c 429 $D/slack-poll.log</code></td><td>새 줄에 429 실패가 없거나 1회 이하다. 앞 단계 전후 숫자를 비교한다</td></tr>
+<tr><td>7. 재적재</td><td><code>launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.lrm.slackpoll.plist</code></td><td><code>launchctl list | grep slackpoll</code> 에 항목이 보이고 30초 안에 로그에 "새 항목" 줄이 생긴다</td></tr>
+<tr><td>되돌리기</td><td><code>launchctl bootout gui/$(id -u)/ai.lrm.slackpoll; for f in slack_poll.sh slack_pending.sh slack_cmd.sh; do cp -p "$D/$f.bak-$T" "$D/$f"; done; launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.lrm.slackpoll.plist</code></td><td>백업 날짜 <code>T</code> 를 1단계 값으로 지정한다. 이력 파일은 지우지 않고 둔다</td></tr></table>
+<ul class="facts">
+<li>첫 회차는 상태 파일에 스레드별 마지막 답글 기록이 없어 최근 7일 스레드를 한 번씩 조회한다. 보낸 메시지 중 답글이 달린 부모는 inbox 기준 20개, 기록상 최대 74개다</li>
+<li>이 조회에서 429 가 1번 날 수 있다. 회차 재시도 시간 예산 안에서 Retry-After 만큼 쉬고 다시 시도해 흡수한다</li>
+<li>첫 대기 목록 실행은 답한 결정 최대 20개를 고치고 나머지는 다음 2시간 주기에 이어진다</li>
+<li>사용자 공지 문구: "대기" 명령의 응답이 바뀐다. 지금은 대기가 0이면 응답이 없지만 새 스크립트는 "✅ 답을 기다리는 결정 없음"을 보낸다. 의도된 변화다</li>
+<li>대기 목록을 다른 실행이 처리 중일 때 "대기" 명령은 "⏳ 대기 목록을 지금 처리 중"으로 답한다</li>
+<li>회차 전체 시간 예산은 270초다. 수집 최대 90초, 대기 목록 최대 120초, 즉답 안의 대기 목록 재호출은 남은 시간만큼이다. 합이 5분 잠금 만료 전에 끝난다</li>
+</ul>
 
 <h2 data-check="decision">🙋 결정 필요 — 3개</h2>
 <div class="ask"><b>한 번에 답하기:</b><br>전부 추천대로면 <code>전부 추천</code><br>추천은 <code>결정1 A, 결정2 B, 결정3 A</code> 와 같다<br>버튼을 원하면 <code>결정1 B, 결정2 A, 결정3 A</code></div>
@@ -335,6 +352,7 @@ for old in open_posts:            # 이력 먼저, 삭제는 그 뒤
 <li>반영 4: 대기 목록은 새로 보내고 이전 것 삭제로 알림 유지</li>
 <li>반영 5: 폴링 조회 최적화안을 선택지 A 로 추가하고 추천 재판단. 결정2 도 그에 맞춰 B 추천</li>
 <li>반영 6~14: 한도 등급 정정, 재연결 보정, 중복 이벤트·KeepAlive, 인증서·가상 환경, 파일 첨부 결정 규칙, 금지 조합 정정, 파일 집계, 되돌리기 순서, 비동기 호출</li>
+<li>2026-11-06 재검수 반영: 경미 6건 중 6건 반영. 상태 없음 복원, 수정 예외 표시, 총 예산, 처리 중 안내, 라이브 반영 순서·되돌리기 명령. 변이 17종 검출. 독자 검수는 미실시</li>
 <li>2026-11-06 독립 리뷰 반영: 지적 9건 반영. 반응 범위 복원, 원문 보존, 변이 13종 검출 확인. 독자 검수는 미실시</li>
 <li>2026-11-06 구현 반영: 결정 확정 기록, 구현 현황·라이브 반영 단계 추가, 결정3 카드와 파일 집계에 이력 보존 반영. 독자 검수는 미실시</li>
 <li>3차 최종 검수는 사용자 몫</li>
