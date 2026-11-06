@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Global pre-rebase: refuse to rebase a shared branch (main/master/dev/develop/release/*).
+# "서로 공유하는 브랜치의 커밋 그래프는 함부로 변경하지 않습니다"
+# $1 = upstream, $2 = branch being rebased (empty = current branch). Escape hatch: ALLOW_SHARED_REBASE=1
+HOOK_NAME=pre-rebase "$(dirname "$0")/_chain" "$@" || exit $?
+[ "${ALLOW_SHARED_REBASE:-}" = 1 ] && exit 0
+br=${2:-$(git symbolic-ref --short -q HEAD 2>/dev/null)}
+case "$br" in
+  main|master|dev|develop|release/*)
+    echo "pre-rebase: 공유 브랜치 '$br' 은 rebase 하지 않습니다 (히스토리 공유 중). 작업 브랜치(feat/ fix/)로 이동해서 rebase 하세요." >&2
+    echo "            정말 필요하면: ALLOW_SHARED_REBASE=1 git rebase …" >&2
+    exit 1 ;;
+esac
+exit 0

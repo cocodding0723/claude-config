@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Global pre-commit: repo-local pre-commit first, then the scoped-test gate (tests only the staged files).
+# Runs *after* Claude Code's permission prompt, so tests start only once the commit is confirmed.
+HOOK_NAME=pre-commit "$(dirname "$0")/_chain" "$@" || exit $?
+[ -f "$(git rev-parse --git-path MERGE_HEAD)" ] && exit 0          # merge commits: skip
+exec "${CLAUDE_HOOKS_DIR:-$HOME/.claude/hooks}/scoped-test.sh" --gate   # 위치 옮기면 CLAUDE_HOOKS_DIR 또는 이 줄만 변경
