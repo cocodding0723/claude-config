@@ -50,7 +50,9 @@ import json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 DIR, DAYS, AS_JSON = sys.argv[1], int(sys.argv[2]), sys.argv[3] == "1"
 TOKEN, ME = os.environ["SLACK_BOT_TOKEN"], os.environ["SLACK_USER_ID"]
 BASE = os.environ.get("SLACK_API_BASE", "https://slack.com/api")
-RETRY_CAP = float(os.environ.get("LRM_RETRY_CAP", "20"))  # 다음 30초 주기와 겹치지 않도록 대기 상한
+RETRY_CAP = float(os.environ.get("LRM_RETRY_CAP", "20"))  # 429 한 번당 대기 상한
+# 회차 전체 재시도 시간 예산. 5분 잠금 만료 전에 끝나야 동시 실행·이중 기록이 안 생김
+DEADLINE = time.time() + float(os.environ.get("LRM_POLL_BUDGET", "90"))
 RETRIES = 2
 PAGE_LIMIT = 200
 MAX_PAGES = 5
@@ -70,20 +72,25 @@ class ApiError(Exception):
 def api(method, **params):
     q = urllib.parse.urlencode(params)
     for attempt in range(RETRIES + 1):
+        left = DEADLINE - time.time()
+        if left <= 0:
+            raise ApiError(f"{method}: 재시도 시간 예산 초과")
         req = urllib.request.Request(f"{BASE}/{method}?{q}", headers={"Authorization": f"Bearer {TOKEN}"})
         try:
-            with urllib.request.urlopen(req, timeout=15) as r:
+            with urllib.request.urlopen(req, timeout=min(15, left)) as r:
                 d = json.load(r)
             break
         except urllib.error.HTTPError as e:
-            # 429 는 Retry-After 만큼 쉬고 재시도. 한도 소진 시 ApiError 로 올려 회차를 실패 처리
+            # 429 는 Retry-After 만큼 쉬고 재시도. 횟수·시간 예산 소진 시 ApiError 로 올려 회차를 실패 처리
             if e.code != 429 or attempt == RETRIES:
                 raise ApiError(f"{method}: HTTP {e.code}")
             try:
-                wait = float(e.headers.get("Retry-After", "1"))
+                wait = min(float(e.headers.get("Retry-After", "1")), RETRY_CAP)
             except ValueError:
                 wait = 1.0
-            time.sleep(min(wait, RETRY_CAP))
+            if wait >= DEADLINE - time.time():
+                raise ApiError(f"{method}: HTTP 429, 대기 {wait:g}초가 남은 예산을 넘김")
+            time.sleep(wait)
     if not d.get("ok"):
         raise ApiError(f"{method}: {d.get('error')}")
     return d
@@ -111,6 +118,24 @@ def classify(text):
             return "command", name, args
     return "note", None, []
 
+def load_state():
+    if not os.path.exists(STATE):
+        return {"seen": {}}
+    try:
+        with open(STATE, encoding="utf-8") as f:
+            state = json.load(f)
+        if not isinstance(state, dict):
+            raise ValueError("상태 파일 형식 오류")
+        return state
+    except ValueError:
+        # 손상 시 백업 후 초기화. seen 은 inbox 에서 복원해야 이미 기록한 항목이 다시 쌓이지 않음
+        os.replace(STATE, f"{STATE}.corrupt-{int(time.time())}")
+        seen = {}
+        for d in load_jsonl(INBOX):
+            key = f"react:{d.get('parent_ts')}:{d.get('emoji')}" if d.get("type") == "reaction" else f"msg:{d.get('ts')}"
+            seen[key] = int(time.time())
+        return {"seen": seen}
+
 def fetch_history(ch, oldest):
     msgs, cursor = [], None
     for _ in range(MAX_PAGES):
@@ -125,10 +150,7 @@ def fetch_history(ch, oldest):
     return msgs
 
 def main():
-    state = {"seen": {}}
-    if os.path.exists(STATE):
-        with open(STATE, encoding="utf-8") as f:
-            state = json.load(f)
+    state = load_state()
     seen = state.setdefault("seen", {})
     latest = state.setdefault("latest", {})  # 스레드 부모 ts → 마지막으로 읽은 latest_reply
     ch = api("conversations.open", users=ME)["channel"]["id"]
@@ -155,9 +177,10 @@ def main():
             if cmd:
                 item.update({"command": cmd, "args": args})
             add(f"msg:{ts}", item)
-        if mine:
+        # 반응·답글은 slack_notify.sh 가 기록한 메시지만. 대기 목록 같은 다른 봇 메시지의 반응이 결정 답으로 오판되지 않게 함
+        if mine or ts not in sent:
             continue
-        rec = sent.get(ts, {})
+        rec = sent[ts]
         meta = {"parent_ts": ts, "title": rec.get("title", ""), "tag": rec.get("tag", "")}
         reactions = m.get("reactions", [])
         # 응답의 users 는 잘릴 수 있어 본인 반응이 안 보이고 개수가 더 많으면 그 메시지만 reactions.get 으로 보강
@@ -168,8 +191,9 @@ def main():
                 name = r["name"]
                 add(f"react:{ts}:{name}", {"type": "reaction", "emoji": name,
                                            "action": REACTION_ACTION.get(name, name), **meta})
-        # 답글이 바뀐 스레드만 조회. latest_reply 가 같으면 이미 읽은 스레드
-        if m.get("reply_count") and m.get("latest_reply") != latest.get(ts):
+        # 답글이 바뀐 스레드만 조회. latest_reply 가 응답에 없을 수 있어 없으면 reply_count 로 비교
+        marker = m.get("latest_reply") or f"n{m.get('reply_count')}"
+        if m.get("reply_count") and marker != latest.get(ts):
             for rp in api("conversations.replies", channel=ch, ts=ts, limit=200).get("messages", []):
                 if rp["ts"] != ts and rp.get("user") == ME and not rp.get("subtype"):
                     kind, cmd, args = classify(rp.get("text", ""))
@@ -177,7 +201,7 @@ def main():
                     if cmd:
                         item.update({"command": cmd, "args": args})
                     add(f"msg:{rp['ts']}", item)
-            latest[ts] = m.get("latest_reply")
+            latest[ts] = marker
 
     # 30일 지난 중복 방지 키 정리, 기간 밖 스레드 기록 정리
     for k in [k for k, v in seen.items() if v < now - 30 * 86400]:

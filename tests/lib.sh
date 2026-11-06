@@ -1,6 +1,8 @@
 #!/bin/bash
 # 셸 테스트 공통 도구. 가짜 토큰·로컬 스텁만 사용하고 실제 Slack·운영 폴더는 건드리지 않음.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# 검사 대상 스크립트 폴더. 변이 검증이 변형 사본을 가리킬 때 덮어씀
+SCRIPTS="${LRM_SCRIPT_DIR:-$ROOT/lrm-hubs}"
 PASS=0 FAIL=0
 STUB_PID=""
 
@@ -28,6 +30,9 @@ stop_stub() { [ -n "$STUB_PID" ] && kill "$STUB_PID" 2>/dev/null; wait "$STUB_PI
 
 # 요청 로그에서 메서드 호출 수
 count() { grep -c "\"method\": \"$1\"" "$LOG" || true; }
+
+# 밀리초 시각. Retry-After 대기 시간 검증용
+now_ms() { python3 -c 'import time;print(int(time.time()*1000))'; }
 
 # check <설명> <기대값> <실제값>
 check() {

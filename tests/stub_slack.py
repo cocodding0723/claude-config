@@ -3,9 +3,11 @@
 
 사용: stub_slack.py <script.json> <request-log.jsonl> <port-file>
 script.json: {"메서드": [응답, ...]}. 응답은 JSON 객체 또는 {"_status": 429, "_headers": {...}}.
+_chmod 키가 있으면 응답 직전 그 파일을 읽기 전용으로 바꿈(전송 직후 이력 쓰기 실패 재현).
 마지막 응답은 소진 후에도 반복. 요청은 로그에 한 줄씩 기록(메서드·쿼리·본문).
 """
 import json
+import os
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -23,6 +25,8 @@ class Handler(BaseHTTPRequestHandler):
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         q = QUEUES.get(method, [{"ok": False, "error": "unscripted"}])
         resp = q.pop(0) if len(q) > 1 else q[0]
+        if resp.get("_chmod"):
+            os.chmod(resp["_chmod"], 0o444)
         status = resp.get("_status", 200)
         data = json.dumps({k: v for k, v in resp.items() if not k.startswith("_")}).encode()
         self.send_response(status)
