@@ -23,8 +23,26 @@ tests/install/run.sh               # 결과: PASS n, FAIL 0
 mkdir -p ~/.config/claude-config
 cp values.env.example ~/.config/claude-config/values.env
 chmod 600 ~/.config/claude-config/values.env
-# 편집기로 OWNER_NAME·PERSON_FULL·PERSON_SHORT·DM_CHANNEL 값을 채운다 (값을 화면·로그에 출력하지 않는다)
+# 편집기로 OWNER_NAME·PERSON_FULL·PERSON_SHORT·DM_CHANNEL 값을 채운다 (따옴표 없이 KEY=값, 값을 화면·로그에 출력하지 않는다)
 ```
+
+**값을 가져올 곳.** 값은 라이브 파일에 이미 들어 있다. 자리표시 위치는 아래로 찾고, 같은 줄의 라이브 파일에서 해당 문구(이름·채널 ID)를 옮겨 적는다. 값 자체는 이 문서나 저장소에 쓰지 않는다.
+
+```sh
+grep -n '__[A-Z_]*__' hubs/roles/role-docs.txt.tmpl skills/orca-hub-create/references/common-rules.txt.tmpl
+# 각 줄을 ~/.config/lrm-hubs/roles/role-docs.txt, ~/.claude/skills/orca-hub-create/references/common-rules.txt 의 같은 줄과 나란히 열어
+# __OWNER_NAME__ → 본인 이름, __PERSON_FULL__ / __PERSON_SHORT__ → 리뷰어 성명·이름만, __DM_CHANNEL__ → DM 채널 ID
+```
+
+잘못 옮기면 아래 렌더 확인에서 `RENDER` 로 드러난다.
+
+**라이브 우선 점검(중단 조건).** 저장소 원본과 라이브 대상을 내용으로 비교한다. 라이브가 더 최신인 파일이 있으면 링크 전환이 그것을 구버전으로 되돌리므로 전환하지 않는다. 의도된 경로 치환(`live-diff.tsv`)만 차이로 치지 않는다. 설치와 `--dry-run` 도 같은 점검을 먼저 하고 중단한다.
+
+```sh
+./install.sh --diff-live      # 기대: 라이브가 앞선 항목 없음 (LIVE-NEWER·LIVE-ONLY 0줄, 종료 코드 0)
+```
+
+`LIVE-NEWER`·`LIVE-ONLY` 가 나오면 **중단**한다. 해당 라이브 변경을 저장소(`hubs/scripts/` 등)로 옮겨 커밋·리뷰한 뒤 다시 한다. `chore/slack-bot-optimize` 처럼 다른 브랜치가 라이브를 먼저 바꾼 경우가 대표적이다.
 
 **렌더 결과가 라이브 파일과 같은지 확인.** 값 파일로 채운 5개 파일(역할 3개, 스킬 파일 2개)이 현재 라이브 파일과 바이트 단위로 같아야 한다. 다르면 `RENDER` 로 표시된다.
 
@@ -56,6 +74,7 @@ cp -a  ~/.claude/skills  "$B"/skills       # 약 12MB. 링크 2개는 링크 그
 cp -a  ~/.claude/meat-proxy "$B"/meat-proxy
 cp -a  ~/.config/lrm-hubs "$B"/lrm-hubs    # slack-bot.env 포함, 권한 600 유지
 cp -a  ~/.config/git     "$B"/git
+mkdir -p "$B"/claude-config && cp -p ~/.config/claude-config/values.env "$B"/claude-config/   # 값 파일(권한 600 유지). install.sh 백업 대상이 아님
 cp -p  ~/.gitconfig      "$B"/gitconfig
 cp -p  ~/Library/LaunchAgents/ai.lrm.slackpoll.plist "$B"/
 echo "$B" > ~/.claude-config-backup/LAST-PRE-LIVE
@@ -106,6 +125,8 @@ diff -r -x state ~/.claude/hooks "$(cat ~/.claude-config-backup/LAST-PRE-LIVE)"/
 
 복원은 백업 원본을 복사해 되돌리므로 두 번 실행해도 안전하다. 중간에 멈췄다면 같은 명령을 다시 실행한다. 백업 원본이 하나라도 없으면 아무것도 지우지 않고 중단한다. 설치가 새로 만든 빈 폴더(`.config/git/hooks` 등)는 복원 때 비어 있으면 함께 지운다.
 
+값 파일(`~/.config/claude-config/values.env`)은 `install.sh` 가 만들거나 지우는 파일이 아니라 복원 대상이 아니다. 잃어버렸다면 2번 백업의 `"$B"/claude-config/values.env` 를 `cp -p` 로 되돌리고 권한을 600 으로 맞춘다. 값 파일이 없으면 `install.sh` 는 중단한다.
+
 `install.sh` 로 복원이 안 될 때의 수동 경로는 2번 백업 폴더(`$B`)다. 링크를 지우고(`rm ~/.claude/skills/<이름>`) `cp -a "$B"/skills/<이름> ~/.claude/skills/` 처럼 되돌린다. `state`·`synced`·외부 링크는 전환 중에도 제자리에 있었으므로 복원 대상이 아니다.
 
 ## 6. 승인 전 확인 사항
@@ -113,3 +134,4 @@ diff -r -x state ~/.claude/hooks "$(cat ~/.claude-config-backup/LAST-PRE-LIVE)"/
 - 전환 중 몇 초간 훅·스킬 경로가 비는 구간이 있다. 진행 중인 Claude·Orca 세션이 없는 때에 한다.
 - 폴링(`launchctl bootout`)을 멈추는 동안 슬랙 명령 수신이 끊긴다. 재적재 뒤 `slack-poll.log` 에 새 줄이 생겨야 정상이다.
 - 이후 `settings.json` 을 직접 고치면 다음 `install.sh` 때 저장소 기본값 기준으로 덮어쓴다(백업은 남는다). 설정을 바꿀 땐 `claude/settings.base.json` 을 같이 고친다.
+- render 5개 파일(역할 3개, 스킬 파일 2개)과 `settings.json` 은 링크가 아니라 생성된 파일이다. `.tmpl`·값 파일·`settings.base.json` 을 고쳐도 `./install.sh` 를 다시 실행하기 전에는 라이브에 반영되지 않는다. 반영 여부는 `./install.sh --check` 의 `DRIFT` 로 본다.
