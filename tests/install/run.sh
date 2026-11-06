@@ -135,6 +135,16 @@ st=$(bash -c 'source "$HOME/.claude/hooks/lib/common.sh"; printf "%s" "$STATE_DI
 [ "$st" = "$SB/.claude/hooks/state" ] && ok "링크 경로로 읽은 STATE_DIR = 홈 쪽" || ko "STATE_DIR" "$st"
 [ ! -e "$REPO/claude/hooks/state" ] && ok "common.sh 실행 뒤에도 저장소에 state 없음" || ko "저장소 state" "생김"
 
+# ---- 5b. git 훅이 링크 경로로 동작 -------------------------------------------
+GT=$(mktemp -d "${TMPDIR:-/tmp}/cc-gittest.XXXXXX")
+(cd "$GT" && git init -q -b main . && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m "초기" >/dev/null 2>&1)
+git -C "$GT" rev-parse -q --verify HEAD >/dev/null 2>&1 && ok "git 훅 링크 상태에서 커밋 가능" || ko "git 커밋" "훅이 커밋을 막음"
+(cd "$GT" && git -c user.name=t -c user.email=t@t commit -q --allow-empty -m "둘째" >/dev/null 2>&1)
+if (cd "$GT" && git rebase --force-rebase HEAD~1 >/dev/null 2>&1); then ko "pre-rebase 보호" "main 에서 rebase 가 통과함"; else
+  if (cd "$GT" && ALLOW_SHARED_REBASE=1 git rebase --force-rebase HEAD~1 >/dev/null 2>&1); then ok "pre-rebase 가 공유 브랜치 rebase 차단(우회 변수로는 통과)"; else ko "pre-rebase" "훅이 아닌 다른 이유로 실패"; fi
+fi
+rm -rf "$GT"
+
 # ---- 6. 되돌리기 -----------------------------------------------------------
 "$INSTALL" --restore "$BK" >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && ok "복원 종료 코드 0" || ko "복원" "rc=$rc"
