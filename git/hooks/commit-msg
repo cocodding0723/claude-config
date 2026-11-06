@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Global commit-msg: optional ticket-id check. Active only when the repo sets
+#   git config hooks.ticketPattern '^[A-Z]+-[0-9]+ '     (ERE, matched against the subject line)
+# Merge / fixup! / squash! commits are exempt. Escape hatch: git commit --no-verify
+HOOK_NAME=commit-msg "$(dirname "$0")/_chain" "$@" || exit $?
+pat=$(git config --get hooks.ticketPattern 2>/dev/null); [ -n "$pat" ] || exit 0
+subject=$(grep -v '^#' "$1" | sed '/^[[:space:]]*$/d' | head -1)
+case "$subject" in "Merge "*|"fixup! "*|"squash! "*|"Revert "*) exit 0;; esac
+printf '%s' "$subject" | grep -Eq "$pat" && exit 0
+echo "commit-msg: 제목이 티켓 규칙 '$pat' 에 맞지 않습니다: \"$subject\"" >&2
+echo "            예) BFM-100 로그인 화면 레이아웃 생성   (해제: git config --unset hooks.ticketPattern)" >&2
+exit 1

@@ -1,0 +1,4 @@
+interface:
+  display_name: "커밋 전 사용자 검수"
+  short_description: "변경 파일과 동작, 검증 결과를 사용자에게 제시하고 승인 범위를 확인한 뒤 커밋을 진행한다. 코드 변경을"
+  default_prompt: "$review-before-commit 스킬로 요청한 작업을 진행해줘."

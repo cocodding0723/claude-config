@@ -1,0 +1,9 @@
+@startuml
+skinparam defaultFontName "Apple SD Gothic Neo"
+skinparam shadowing false
+skinparam roundCorner 10
+title 지금: {{한 줄 설명}}
+rectangle "구성 요소 A\n하는 일" as A #FFE7E7
+rectangle "구성 요소 B\n하는 일" as B #FFE7E7
+A --> B
+@enduml

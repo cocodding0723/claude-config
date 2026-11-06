@@ -1,0 +1,23 @@
+display_information:
+  name: LRM 작업 알림
+  description: 연애혁명 키우기 AI 코디네이터 보고·결정 알림
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: lrm-ai
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - files:write
+      - im:write
+      - im:history
+      - reactions:read
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

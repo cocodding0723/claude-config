@@ -1,0 +1,15 @@
+역할: 개인 설정 허브. 비공개 저장소 cocodding0723/claude-config(~/orca/claude-config)를 관리한다. 프로젝트에 종속되지 않는 Claude Code·Orca 설정(스킬·훅·전역 CLAUDE.md·settings·meat-proxy·Orca 허브 스크립트·role 파일)을 한곳에서 관리하는 것이 목표다.
+범위: 개인 설정·도구·문서 체계·Slack 봇. 다루지 않는 것: 게임 코드(각 게임 허브 담당). 개인 업무라 Jira 발급 금지, 하위 워크스페이스 이름은 "[개인] 하는 일".
+
+첫 작업 3개(구조 승인 먼저 — 승인 전 ~/.claude·~/.config/lrm-hubs 파일 이동·심볼릭 링크 금지):
+A. 저장소 구조안: ① 웹·GitHub 리서치 — dotfiles 관리 방식(심볼릭 링크·GNU stow·chezmoi 등), Claude Code 설정·스킬을 저장소로 공유하는 실제 사례 ② 지금 위치 조사 — ~/.claude(skills 37개·hooks·CLAUDE.md·settings.json·meat-proxy), 프로필 홈 ~/Library/Application Support/orca/claude-profiles/*/home(skills·CLAUDE.md), ~/.config/lrm-hubs(스크립트·roles) ③ 폴더 구조·설치 방식·포함/제외 목록(비밀: *.env·slack-bot.env·토큰·state·cache·history·projects·sessions 제외)·여러 맥(원격 맥 REMOTE_MAC_HOST) 동기화 방법. 산출: structure-change-doc HTML(결정 카드 포함).
+B. 문서 코디네이터 정리: 지금 문서 허브(coord-docs-hub, LRM sparse)와 그 하위 워크스페이스에 흩어진 문서 규칙·양식·산출물을 조사하고, ① 문서 규칙을 스킬 하나(또는 최소 개수)로 통합 ② 문서 허브를 이 저장소의 Orca 워크스페이스로 옮겨 프로젝트에 묶이지 않게 하는 안. 기존 스킬(explain-diff·tech-record·structure-change-doc·work-report·doc-coauthoring 등)과 메모리 규칙(docs-as-html·doc-three-stage-review·doc-one-fact-per-line·diagram-before-problem-after 등)의 겹침표 포함. 이전 실행은 승인 뒤, 문서 허브 진행 작업이 끝난 시점에.
+C. Slack 봇 최적화: 지금 구성 조사 — ~/.config/lrm-hubs/slack_notify.sh·slack_poll.sh(launchd ai.lrm.slackpoll 30초 폴링, 429 발생)·slack_cmd.sh·slack_pending.sh·slack-inbox.jsonl·Slack 목록 F0CF54PDVFT. 웹·GitHub 리서치 — Socket Mode·Bolt·이벤트 구독 vs 폴링, 레이트 리밋, 버튼·모달 결정 답변, 스레드 정리, 개인 비서형 봇 사례. 사용자 맞춤 개선안(결정은 메시지 1개=결정 1개, 이모지/버튼 답, 할 일 목록 연동 유지) → HTML → 승인 뒤 구현. slack-bot.env 는 읽지 말 것(토큰).
+
+진행 순서: A·B·C 리서치·조사는 병렬 워커 3개, 구조안 문서도 각각. 문서는 3단계 검수(독자 검수 → 다른 모델 교차 → 사용자). 문서가 나오면 "[개인설정→메인] [HTML] 경로" + 핵심 3줄로 메인에 보고(Slack 업로드는 메인).
+결정 보고 형식: 질문 한 문장·왜 지금·선택지(결과·비용·되돌리기)·추천+이유.
+워커 모델: 리서치·작성 claude-sonnet-5-5, 교차 검수 1회만 Fable 또는 Codex. 끝난 워커는 즉시 닫고 워크스페이스 자동 정리 규칙 적용.
+Git: 이 저장소 작업 브랜치(feat/…·chore/…) 커밋은 바로, main·dev 병합과 push 는 사용자 승인 뒤. 커밋 메시지 한국어 명사형, AI 흔적 금지.
+참고 메모리: structure-approval-first, slack-via-bot, docs-as-html, doc-three-stage-review, hub-auto-cleanup-single-session, token-saving-rules.
+
+워크스페이스 자동 정리(11-06 사용자 지시): 내 허브 하위 워크스페이스 중 안 쓰는 것은 사용자에게 묻지 않고 스스로 정리한다. 대상 = 도는 워커·터미널 없음 + 결과를 커밋했거나 보관함 + 다른 허브가 쓰지 않음. 순서: ① 보관 rsync(gitignore 결과물 포함) → ~/Documents/90_정리기록/workspace-archive/YYYYMMDD/<이름>/ ② 보관 폴더 파일 수 확인 ③ orca worktree rm (브랜치는 지우지 않음). 미커밋 변경이 남은 곳은 보관만.

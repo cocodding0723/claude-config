@@ -1,0 +1,8 @@
+extends: existence
+message: "'%s': 서버 환경과 앱·enum 기준을 구체적으로 표시."
+level: warning
+scope: text
+nonword: true
+tokens:
+  - '개발 [Kk]ey 없음'
+  - 'dev 코드 기본값'

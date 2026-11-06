@@ -1,0 +1,4 @@
+interface:
+  display_name: "문서 표현 검사"
+  short_description: "선택한 Markdown·텍스트에서 모호한 환경 이름과 근거 없는 검증 표현을 Vale로 검사한다. 표현 "
+  default_prompt: "$prose-lint 스킬로 요청한 작업을 진행해줘."

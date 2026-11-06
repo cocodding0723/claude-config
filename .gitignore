@@ -1,9 +1,52 @@
-# 비밀·개인 상태는 커밋 금지
+# 비밀·계정 값
 *.env
 *.pem
 *.p8
 *.key
 *.keystore
 *.jks
+.credentials.json
+*policy-limits*
+*remote-settings*
+
+# 이 맥에서만 쓰는 상태·기록·캐시
 **/state/
 **/cache/
+**/logs/
+*.log
+history*
+**/projects/
+**/sessions/
+**/file-history/
+**/paste-cache/
+**/shell-snapshots/
+**/plugins/
+.last-*
+
+# 백업·생성물·잠금
+*.bak
+*.bak-*
+*.bak.*
+__pycache__/
+*.pyc
+.DS_Store
+*.lock
+
+# 허브 작업물(문서 허브 브랜치 규칙)
+HANDOFF.md
+MAIN-HANDOFF.md
+decisions.tsv
+slack-inbox.jsonl
+slack-sent.jsonl
+slack-poll-state.json
+slack-done.txt
+slack-list-map.tsv
+
+# 외부 도구가 관리하는 스킬
+skills/synced/
+
+# 허브 실행 상태(slack-bot 폴링)
+.cmd-read
+.pending-last
+.main-read-lines
+todo.md

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Global hooksPath shim: run the repo-local hook of the same name if present, so core.hooksPath
+# does not silently disable per-repo hooks. (Repos that set core.hooksPath themselves, e.g. husky,
+# bypass this file entirely.)
+# Called directly via symlink (name = basename $0) or from a wrapper hook that sets HOOK_NAME.
+name=${HOOK_NAME:-$(basename "$0")}
+local_hook="$(git rev-parse --git-common-dir 2>/dev/null)/hooks/$name"
+if [ -x "$local_hook" ] && [ "$(cd "$(dirname "$local_hook")" && pwd -P)/$name" != "$(cd "$(dirname "$0")" && pwd -P)/$name" ]; then
+  "$local_hook" "$@" || exit $?
+fi
+exit 0
