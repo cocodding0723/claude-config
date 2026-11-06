@@ -24,7 +24,7 @@
 1. `templates/doc.html` 을 복사해 자리표시(`{{…}}`)를 채운다.
 2. PUML 은 `templates/before.puml`·`after.puml` 을 고쳐 `plantuml -tsvg` 로 렌더하고 SVG 를 문서에 내장한다. 외부 파일 참조는 금지다.
 3. before/after 블록은 템플릿의 `<section class="ba">` 를 주제 수만큼 복제한다.
-4. 검사: `python3 <doc-kit 경로>/scripts/check.py <문서.html>`. 실패 항목이 0개일 때만 완성으로 보고한다.
+4. 검사: `python3 <doc-kit 경로>/scripts/check.py [--project <이름>] <문서.html>`. 프로젝트는 설정 읽기 규칙(config.md)으로 정한다. 실패 항목이 0개일 때만 완성으로 보고한다.
 5. 저장·전달은 SKILL.md «저장·전달».
 
 ## 검사 항목 (check.py)
@@ -34,7 +34,7 @@
 - 내장 SVG 2개 이상(지금/바뀌면)
 - before/after 블록 1개 이상, 각 블록에 before·after 코드와 "왜" 한 줄
 - 외부 스크립트·스타일 참조 없음(자체 완결)
-- 본문(코드·참고 제외)에 고유명사 패턴(PascalCase 클래스명, 커밋 해시) 없음. 설정 `ticket_pattern` 이 있으면 티켓 키도 검사
+- 본문(코드·참고 제외)에 고유명사 패턴(PascalCase 클래스명, 커밋 해시) 없음. 기획자 독자(설정 `audience` 또는 `--audience 기획자`)일 때만 검사한다. 설정 `ticket_pattern` 이 있으면 티켓 키도 본문에서 검사한다
 - 내부 기호(P1·P2·P3, fixup, ctx_) 없음
 - 결정 카드마다 인과 연결어(때문·그래서·그러면·하면·~면·므로·탓에·덕분) 1개 이상
 - 결정 카드 본문 450자 초과는 경고, `--strict` 에서는 실패

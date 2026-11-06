@@ -1,0 +1,56 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{제목}}</title>
+<style>
+:root{--bg:#fff;--fg:#1f2328;--muted:#59636e;--card:#f6f8fa;--line:#d0d7de;--warn:#fff8c5;--ok:#dafbe1;--bad:#ffebe9}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--line:#30363d;--warn:#3a2f00;--ok:#0f2e1a;--bad:#3d1214}}
+body{background:var(--bg);color:var(--fg);font:16px/1.7 -apple-system,"Apple SD Gothic Neo",sans-serif;margin:0 auto;max-width:1040px;padding:16px;word-break:keep-all}
+h1{font-size:25px;margin:8px 0}h2{font-size:20px;margin-top:34px;border-bottom:2px solid var(--line);padding-bottom:4px}h3{font-size:17px;margin:18px 0 6px}
+.summary{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 18px;font-size:16.5px}
+.decision-card{border:2px solid #d4a72c;border-radius:12px;padding:12px 16px;margin:12px 0}.opts tr.rec td{background:var(--ok)}.answer code{font-size:15px}
+.ask{background:var(--warn);border-radius:12px;padding:12px 16px;border:1px solid var(--line)}
+table{border-collapse:collapse;width:100%;font-size:14.5px}td,th{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}th{background:var(--card)}
+.diagrams{display:grid;grid-template-columns:1fr 1fr;gap:12px}.diagram{background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px;overflow-x:auto}.diagram svg{max-width:100%;height:auto}
+.ba{border:1px solid var(--line);border-radius:12px;padding:12px;margin:14px 0}.ba-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ba pre{margin:0;padding:10px;border-radius:8px;overflow-x:auto;font:13px/1.5 ui-monospace,Menlo,monospace}.before pre{background:var(--bad)}.after pre{background:var(--ok)}
+.why{margin-top:8px}.label{font-size:13px;color:var(--muted);margin-bottom:4px}
+details.ref{margin-top:30px;color:var(--muted);font-size:14px}
+@media (max-width:760px){.diagrams,.ba-grid{grid-template-columns:1fr}}
+</style>
+<h1>{{제목}}</h1>
+<div class="summary" data-check="summary"><b>3줄 요약</b><br>① <b>지금 문제</b> — {{원인 한 문장}}<br>② <b>그래서</b> — {{조치 한 문장}}<br>③ <b>그러면</b> — {{달라지는 것·사용자가 할 일 한 문장}}</div>
+<!-- 요약 합계 180자 이하. 한 줄 한 문장, 괄호 금지 -->
+
+<h2 data-check="decision">🙋 결정 필요 — {{N}}개</h2>
+<div class="ask"><b>한 번에 답하기:</b> 전부 추천대로면 <code>전부 추천</code> · 골라서면 <code>결정1 A, 결정2 B</code></div>
+<table><tr><th>#</th><th>정할 것(질문 한 문장)</th><th>추천</th></tr><tr><td>결정1</td><td>{{}}</td><td>A</td></tr></table>
+
+<section class="decision-card" data-check="dcard">
+<!-- 인과형: 지금 문제 → 그래서 → 그러면. 카드 본문 450자 이하 -->
+<h3>결정1. {{A/B 로 답할 질문 한 문장. 예: 개발용 저장 공간을 따로 만들까?}}</h3>
+<p><b>지금 문제:</b> {{예: 개발과 출시가 한 저장 공간을 쓴다. 그래서 개발 중 실수가 바로 출시판에 반영된다.}}</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> {{예: 개발 앱을 어디에 등록할지 몰라 설정을 시작하지 못한다.}}</p>
+<table class="opts"><tr><th>선택지</th><th>고르면</th><th>되돌리기</th></tr>
+<tr class="rec" data-check="opt"><td><b>A. {{예: 따로 만든다}} ✅ 추천</b></td><td>{{예: 저장 공간이 갈리므로 개발 실수가 출시 데이터에 닿지 않는다. 4.5일이 더 든다.}}</td><td>{{예: 보통}}</td></tr>
+<tr data-check="opt"><td><b>B. {{예: 하나로 둔다}}</b></td><td>{{예: 그대로 두면 테스트 계정과 설정 실수가 출시에 섞인다.}}</td><td>{{예: 쉬움, 출시 전까지만}}</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> {{예: 실수가 새는 원인이 같은 저장 공간이므로, 나누면 그 길이 사라진다. 사용자가 없는 지금 옮기는 비용이 가장 낮다.}} <b>감수하는 단점:</b> {{예: 설정을 두 곳에서 관리한다.}}</p>
+<p class="answer">답: <code>결정1 A</code></p>
+</section>
+
+<h2>📄 지금 구조 / 바뀌는 구조</h2>
+<div class="diagrams"><div class="diagram" data-check="diagram">{{before.svg 내용}}</div><div class="diagram" data-check="diagram">{{after.svg 내용}}</div></div>
+
+<h2>🔄 주제별 before / after</h2>
+<section class="ba" data-check="ba"><h3>{{주제 1}}</h3>
+<div class="ba-grid"><div class="before"><div class="label">before (지금)</div><pre><code>{{실제 코드 10~20줄}}</code></pre></div>
+<div class="after"><div class="label">after (제안)</div><pre><code>{{제안 코드 10~20줄}}</code></pre></div></div>
+<p class="why" data-check="why"><b>왜:</b> {{무엇이 왜 달라지나 한 줄}}</p></section>
+
+<h2>✅ 그대로인 것 / 없어지는 것</h2>
+<table><tr><th>그대로</th><th>없어짐</th></tr><tr><td>{{}}</td><td>{{}}</td></tr></table>
+
+<h2>🔄 진행 순서</h2>
+<ol><li>{{단계}} — <small>검증: {{기준}}</small></li></ol>
+
+<details class="ref" data-check="ref"><summary>참고 (파일·티켓·커밋)</summary>{{}}</details>
+<details class="ref" data-check="review"><summary>검수 기록</summary>{{1차·2차 검수 한 줄씩: 날짜, 모델, 지적 수, 반영 수. 지적 목록은 이 안에}}</details>
+</html>
