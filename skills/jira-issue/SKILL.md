@@ -13,6 +13,7 @@ description: "버그·작업을 다른 사람이 티켓만 보고 재현·착수
 - 사이트 `basakansoft.atlassian.net`, cloudId `a59b16fd-c171-4342-97ca-1f4ae9841192`
 - 프로젝트 `LRM`. 유형은 `버그` 또는 `작업`(영문 Bug·Task 아님)
 - 담당자: 사용자 본인(`atlassianUserInfo` 의 accountId). 누락 금지
+- 기한(끝나는 날짜): 발급 때 반드시 넣는다(11-06 사용자). 작업 크기로 추정하고 근거를 설명에 한 줄
 - 우선순위: 진행 막힘·데이터 손실·재화 오류는 `High` 이상, 표시·문구는 `Medium` 이하. 근거를 `영향` 섹션에 적는다
 - 도구 목록에 없는 작업 이름은 atlassian `discover` 로 찾아 `executeRead`/`executeWrite` 로 실행
 - 다른 프로젝트·유형이면 `getVisibleJiraProjects`·`getJiraProjectIssueTypesMetadata` 로 실제 이름 확인
