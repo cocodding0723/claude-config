@@ -1,0 +1,17 @@
+# 시험용 설정. 값은 모두 가짜다.
+[default]
+audience = "개발자"
+out_dir = "docs/out"
+name_rule = "{날짜}-{주제}"
+
+[project."시험A"]
+match = ["시험저장소A"]
+audience = "기획자"
+recipients = ["시험수신자|구현 담당|직접전달 안 함"]
+channel = "DM:시험채널값"
+ticket_pattern = 'TST-\d+'
+base_branch = "dev"
+
+[project."시험B"]
+match = ["시험저장소B"]
+channel = "DM:다른채널값"
