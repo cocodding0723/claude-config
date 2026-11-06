@@ -1,0 +1,203 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Slack 봇 최적화안</title>
+<style>
+:root{--bg:#fff;--fg:#1f2328;--muted:#59636e;--card:#f6f8fa;--line:#d0d7de;--warn:#fff8c5;--ok:#dafbe1;--bad:#ffebe9}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--line:#30363d;--warn:#3a2f00;--ok:#0f2e1a;--bad:#3d1214}}
+body{background:var(--bg);color:var(--fg);font:16px/1.7 -apple-system,"Apple SD Gothic Neo",sans-serif;margin:0 auto;max-width:1040px;padding:16px;word-break:keep-all}
+h1{font-size:25px;margin:8px 0}h2{font-size:20px;margin-top:34px;border-bottom:2px solid var(--line);padding-bottom:4px}h3{font-size:17px;margin:18px 0 6px}
+.summary{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 18px;font-size:16.5px}
+.decision-card{border:2px solid #d4a72c;border-radius:12px;padding:12px 16px;margin:12px 0}.opts tr.rec td{background:var(--ok)}.answer code{font-size:15px}
+.ask{background:var(--warn);border-radius:12px;padding:12px 16px;border:1px solid var(--line)}
+table{border-collapse:collapse;width:100%;font-size:14.5px}td,th{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}th{background:var(--card)}
+.diagrams{display:grid;grid-template-columns:1fr;gap:12px}.diagram{background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px;overflow-x:auto;color:#222}.diagram svg{max-width:100%;height:auto}
+.cap{font-size:14px;color:var(--muted);margin:2px 0 0}
+.ba{border:1px solid var(--line);border-radius:12px;padding:12px;margin:14px 0}.ba-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ba pre{margin:0;padding:10px;border-radius:8px;overflow-x:auto;font:12.5px/1.5 ui-monospace,Menlo,monospace}.before pre{background:var(--bad)}.after pre{background:var(--ok)}
+.why{margin-top:8px}.label{font-size:13px;color:var(--muted);margin-bottom:4px}
+ul.facts{margin:6px 0;padding-left:20px}ul.facts li{margin:2px 0}
+details.ref{margin-top:30px;color:var(--muted);font-size:14px}
+@media (max-width:760px){.ba-grid{grid-template-columns:1fr}}
+</style>
+<h1>Slack 봇 최적화안</h1>
+<div class="summary" data-check="summary"><b>쉬운 말 3줄 요약</b><br>① <b>지금 문제</b> — 30초마다 Slack을 240번 두드려 24%가 429로 실패한다.<br>② <b>그래서</b> — Slack이 답을 밀어주는 방식과 버튼으로 바꾼다.<br>③ <b>그러면</b> — 버튼 한 번으로 답하고, 사용자는 아래 결정 3개에 답하면 된다.</div>
+
+<h2 data-check="decision">🙋 결정 필요 — 3개</h2>
+<div class="ask"><b>한 번에 답하기:</b><br>전부 추천대로면 <code>전부 추천</code><br>골라서 답하면 <code>결정1 A, 결정2 A, 결정3 A</code></div>
+<table><tr><th>#</th><th>정할 것</th><th>추천</th></tr>
+<tr><td>결정1</td><td>답을 받는 방식을 Slack이 밀어주는 방식으로 바꿀까?</td><td>A</td></tr>
+<tr><td>결정2</td><td>결정 메시지에 버튼을 달까?</td><td>A</td></tr>
+<tr><td>결정3</td><td>답한 결정 메시지를 결과 한 줄로 고칠까?</td><td>A</td></tr></table>
+<p class="cap">비용 단위: 파일 수는 새로 만들거나 고치는 스크립트·설정 파일 개수다.</p>
+
+<section class="decision-card" data-check="dcard">
+<h3>결정1. 답을 받는 방식을 Socket Mode로 바꿀까?</h3>
+<p><b>지금 문제:</b> 30초 폴링이 한 번에 240회를 호출해 429가 난다. 그래서 답이 늦거나 빠진다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 버튼 답은 받는 쪽이 따로 있어야 하므로 결정2·3이 시작되지 못한다.</p>
+<table class="opts"><tr><th>선택지</th><th>고르면</th><th>비용·위험</th><th>되돌리기</th></tr>
+<tr class="rec" data-check="opt"><td><b>A. Socket Mode 리스너</b> ✅ 추천<br><small>Slack이 열린 연결로 답을 바로 밀어줌</small></td><td>답이 오면 즉시 받으므로 조회 호출이 0이 된다.</td><td>새 파일 1개, 수정 2개. 앱 토큰 발급 1회. 연결이 끊기면 못 받은 답이 생겨 하루 1회 보정 조회를 둔다.</td><td>쉬움. 폴링 스크립트를 남겨 둔다.</td></tr>
+<tr data-check="opt"><td><b>B. Events API</b><br><small>Slack이 공개 주소로 답을 보냄</small></td><td>답이 즉시 오지만 공개 주소가 필요하다.</td><td>이 Mac은 공개 주소가 없어 터널을 열어야 한다. 파일 3개 이상.</td><td>보통</td></tr>
+<tr data-check="opt"><td><b>C. 폴링 유지, 5분 간격</b><br><small>지금 방식에서 횟수만 줄임</small></td><td>429는 줄지만 답이 최대 5분 늦는다.</td><td>수신 서버가 없어 버튼 답이 불가하다.</td><td>쉬움</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> 지금은 메시지가 늘수록 호출이 비례해 늘어 한도를 더 넘는다. A는 조회 자체를 없앤다. <b>감수하는 단점:</b> 상시 프로세스 1개를 관리한다.</p>
+<p class="answer">답: <code>결정1 A</code></p>
+</section>
+
+<section class="decision-card" data-check="dcard">
+<h3>결정2. 결정 메시지에 버튼을 달까?</h3>
+<p><b>지금 문제:</b> 이모지 답은 이모지 이름을 외워야 해서 오답이 난다. 그래서 답 누락이 생긴다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 답 대기 16개가 쌓인 채로 이모지 답을 하나씩 찾아 눌러야 한다.</p>
+<table class="opts"><tr><th>선택지</th><th>고르면</th><th>비용·위험</th><th>되돌리기</th></tr>
+<tr class="rec" data-check="opt"><td><b>A. 버튼 + 이모지 병행</b> ✅ 추천<br><small>버튼은 메시지 아래 누르는 칸</small></td><td>한 번 눌러 답하므로 오답이 없다. 이모지도 남아 기존 습관이 유지된다.</td><td>수정 1개. 버튼 누름은 3초 안에 응답해야 한다.</td><td>쉬움</td></tr>
+<tr data-check="opt"><td><b>B. 이모지만 유지</b></td><td>지금과 같아 변화가 없다.</td><td>오답·누락이 그대로 남는다.</td><td>쉬움</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> 이모지는 이름 하나만 틀려도 답으로 읽히지 않는다. 버튼은 고를 수 있는 값만 보여 그 틀림을 없앤다. <b>감수하는 단점:</b> 자유 문장 답은 여전히 답글로 한다.</p>
+<p class="answer">답: <code>결정2 A</code></p>
+</section>
+
+<section class="decision-card" data-check="dcard">
+<h3>결정3. 답한 결정 메시지를 결과 한 줄로 고칠까?</h3>
+<p><b>지금 문제:</b> 답해도 메시지가 그대로이고 2시간마다 대기 목록이 새로 올라온다. 그래서 DM이 길어져 안 답한 것을 찾기 어렵다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 답한 결정과 안 한 결정이 구분되지 않아 정리 기준이 서지 않는다.</p>
+<table class="opts"><tr><th>선택지</th><th>고르면</th><th>비용·위험</th><th>되돌리기</th></tr>
+<tr class="rec" data-check="opt"><td><b>A. 메시지를 고친다</b> ✅ 추천<br><small>답하면 버튼이 사라지고 선택 결과가 보임</small></td><td>안 한 결정만 버튼이 남으므로 한눈에 찾는다. 대기 목록도 한 메시지를 고쳐 쓴다.</td><td>수정 1개. 원문은 고친 뒤에도 남긴다.</td><td>쉬움</td></tr>
+<tr data-check="opt"><td><b>B. 답글로만 확인</b></td><td>원문이 그대로라 이력이 완전하다.</td><td>버튼이 남아 중복 답이 생기고 DM이 계속 길어진다.</td><td>쉬움</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> 버튼이 남으면 이미 답한 결정에 또 눌러 기록이 두 번 쌓인다. 고치면 눌린 즉시 버튼이 사라져 그 일이 막힌다. <b>감수하는 단점:</b> 메시지 고치기 호출이 답마다 1회 늘어난다.</p>
+<p class="answer">답: <code>결정3 A</code></p>
+</section>
+
+<h2>📄 현재 구성 — 사실만</h2>
+<table><tr><th>대상</th><th>역할</th><th>호출 빈도</th></tr>
+<tr><td><code>slack_notify.sh</code></td><td>봇 DM 전송, 보낸 기록 저장</td><td>결정·보고 때마다</td></tr>
+<tr><td><code>slack_poll.sh</code></td><td>메시지·스레드·반응 수집</td><td>30초마다, 한 번에 약 240회 호출</td></tr>
+<tr><td><code>slack_cmd.sh</code></td><td>대기·PR·할일·CI·문서 즉답</td><td>폴링 성공 때마다</td></tr>
+<tr><td><code>slack_pending.sh</code></td><td>안 답한 결정 목록 전송</td><td>2시간마다 새 메시지</td></tr>
+<tr><td><code>slack-inbox.jsonl</code></td><td>답 기록 79줄: 반응 43, 답글 31, 메모 5</td><td>답이 올 때</td></tr>
+<tr><td>Slack 목록 <code>F0CF54PDVFT</code></td><td>할 일 체크리스트. 결정 보내면 행 추가, 답 오면 완료</td><td>허브가 Slack 연동으로 갱신</td></tr></table>
+<ul class="facts">
+<li>보낸 메시지 기록: 210건 중 119건만 메시지 번호 보유</li>
+<li>파일 첨부 91건은 번호가 없어 반응·답글을 못 읽는다</li>
+<li>호출 계산: 2 + 119 × 2 = 240회 ÷ 30초 = 분당 약 480회</li>
+<li>429: 로그 873회 중 207회 실패</li>
+<li>실패하면 스크립트가 중간에 끝나 즉답 명령과 대기 목록도 건너뛴다</li>
+<li>429 응답의 대기 시간 지시는 읽지 않고 다음 30초에 같은 호출을 반복한다</li>
+</ul>
+
+<h2>📄 도식 3장</h2>
+<div class="diagrams">
+<div><div class="diagram" data-check="diagram"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" data-diagram-type="DESCRIPTION" style="width:332px;height:611px;background:#FFFFFF;" width="332px" height="611px" viewBox="0 0 332 611" zoomAndPan="magnify" preserveAspectRatio="none" contentStyleType="text/css"><?plantuml 1.2026.8?><defs/><g font-family="sans-serif" lengthAdjust="spacing"><g class="title" data-source-line="5"><text x="56.466" y="22.6" fill="#000" font-size="14" textLength="212.45" font-weight="700" font-family="'Apple SD Gothic Neo'">이전: 30초마다 Slack에 물어보는 구조</text></g><!--entity hub--><g class="entity" data-qualified-name="hub" id="ent0001" data-source-line="6"><rect x="33.66" y="44.8" width="100.024" height="53.6" fill="#F3F3F3" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="43.66" y="67.4" fill="#000" font-size="14" textLength="52.682" font-family="'Apple SD Gothic Neo'">허브·워커</text><text x="43.66" y="84.2" fill="#000" font-size="14" textLength="80.024" font-family="'Apple SD Gothic Neo'">결정 알림 전송</text></g><!--entity notify--><g class="entity" data-qualified-name="notify" id="ent0002" data-source-line="7"><rect x="30.01" y="159.4" width="107.332" height="53.6" fill="#F3F3F3" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="40.01" y="182" fill="#000" font-size="14" textLength="84.098" font-family="'Apple SD Gothic Neo'">slack_notify.sh</text><text x="40.01" y="198.8" fill="#000" font-size="14" textLength="87.332" font-family="'Apple SD Gothic Neo'">DM 전송 + 기록</text></g><!--entity dm--><g class="entity" data-qualified-name="dm" id="ent0003" data-source-line="8"><rect x="7" y="301" width="157.354" height="53.6" fill="#E8F0FF" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="17" y="323.6" fill="#000" font-size="14" textLength="53.76" font-family="'Apple SD Gothic Neo'">Slack DM</text><text x="17" y="340.4" fill="#000" font-size="14" textLength="137.354" font-family="'Apple SD Gothic Neo'">결정 메시지 1개=결정 1개</text></g><!--entity poll--><g class="entity" data-qualified-name="poll" id="ent0004" data-source-line="9"><rect x="193.06" y="159.4" width="91.232" height="53.6" fill="#F3F3F3" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="203.06" y="182" fill="#000" font-size="14" textLength="71.232" font-family="'Apple SD Gothic Neo'">slack_poll.sh</text><text x="203.06" y="198.8" fill="#000" font-size="14" textLength="56.336" font-family="'Apple SD Gothic Neo'">30초 폴링</text></g><!--entity inbox--><g class="entity" data-qualified-name="inbox" id="ent0005" data-source-line="10"><rect x="200.97" y="301" width="117.412" height="53.6" fill="#F3F3F3" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="210.97" y="323.6" fill="#000" font-size="14" textLength="97.412" font-family="'Apple SD Gothic Neo'">slack-inbox.jsonl</text><text x="210.97" y="340.4" fill="#000" font-size="14" textLength="40.012" font-family="'Apple SD Gothic Neo'">답 기록</text></g><!--entity main--><g class="entity" data-qualified-name="main" id="ent0006" data-source-line="11"><rect x="201.77" y="415.6" width="115.816" height="53.6" fill="#F3F3F3" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="211.77" y="438.2" fill="#000" font-size="14" textLength="52.122" font-family="'Apple SD Gothic Neo'">메인 허브</text><text x="211.77" y="455" fill="#000" font-size="14" textLength="95.816" font-family="'Apple SD Gothic Neo'">감시 후 목록 체크</text></g><!--entity list--><g class="entity" data-qualified-name="list" id="ent0007" data-source-line="12"><rect x="215.72" y="544.2" width="87.914" height="53.6" fill="#E8F0FF" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="225.72" y="566.8" fill="#000" font-size="14" textLength="57.736" font-family="'Apple SD Gothic Neo'">Slack 목록</text><text x="225.72" y="583.6" fill="#000" font-size="14" textLength="67.914" font-family="'Apple SD Gothic Neo'">강비서 할 일</text></g><!--link hub to notify--><g class="link" data-entity-1="ent0001" data-entity-2="ent0002" id="lnk8" data-source-line="13" data-link-type="dependency"><path d="M83.68,98.72 C83.68,116.91 83.68,136.07 83.68,154.23" style="stroke:#181818;stroke-width:1;" fill="none" id="hub-to-notify"/><polygon points="83.68,159.23,87.68,150.23,83.68,154.23,79.68,150.23,83.68,159.23" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link notify to dm--><g class="link" data-entity-1="ent0002" data-entity-2="ent0003" id="lnk9" data-source-line="14" data-link-type="dependency"><path d="M81.67,213.25 C80.66,229.79 79.81,251.66 80.68,271 C81.11,280.72 81.502,286.382 82.382,295.742" style="stroke:#181818;stroke-width:1;" fill="none" id="notify-to-dm"/><polygon points="82.85,300.72,85.99,291.385,82.382,295.742,78.025,292.134,82.85,300.72" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="81.68" y="260.4" fill="#000" font-size="11" textLength="19.03" font-family="'Apple SD Gothic Neo'">전송</text></g><!--link poll to dm--><g class="link" data-entity-1="ent0004" data-entity-2="ent0003" id="lnk10" data-source-line="15" data-link-type="dependency"><path d="M201.57,213.27 C189.47,222.27 176.18,232.69 164.68,243 C144.42,261.14 126.717,279.928 111.457,297.048" style="stroke:#181818;stroke-width:1;" fill="none" id="poll-to-dm"/><polygon points="108.13,300.78,117.105,296.723,111.457,297.048,111.133,291.4,108.13,300.78" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="165.68" y="253.9" fill="#000" font-size="11" textLength="73.931" font-family="'Apple SD Gothic Neo'">메시지 119개마다</text><text x="166.23" y="267.1" fill="#000" font-size="11" textLength="72.831" font-family="'Apple SD Gothic Neo'">스레드·반응 조회</text></g><!--link poll to inbox--><g class="link" data-entity-1="ent0004" data-entity-2="ent0005" id="lnk11" data-source-line="16" data-link-type="dependency"><path d="M242.63,213.46 C246.38,238.42 251.258,270.795 254.998,295.715" style="stroke:#181818;stroke-width:1;" fill="none" id="poll-to-inbox"/><polygon points="255.74,300.66,258.36,291.166,254.998,295.715,250.449,292.353,255.74,300.66" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="252.06" y="260.4" fill="#000" font-size="11" textLength="43.846" font-family="'Apple SD Gothic Neo'">새 답 추가</text></g><!--link inbox to main--><g class="link" data-entity-1="ent0005" data-entity-2="ent0006" id="lnk12" data-source-line="17" data-link-type="dependency"><path d="M259.68,354.92 C259.68,373.11 259.68,392.27 259.68,410.43" style="stroke:#181818;stroke-width:1;" fill="none" id="inbox-to-main"/><polygon points="259.68,415.43,263.68,406.43,259.68,410.43,255.68,406.43,259.68,415.43" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link main to list--><g class="link" data-entity-1="ent0006" data-entity-2="ent0007" id="lnk13" data-source-line="18" data-link-type="dependency"><path d="M259.68,469.63 C259.68,491.36 259.68,517.08 259.68,538.8" style="stroke:#181818;stroke-width:1;" fill="none" id="main-to-list"/><polygon points="259.68,543.8,263.68,534.8,259.68,538.8,255.68,534.8,259.68,543.8" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="260.68" y="510.1" fill="#000" font-size="11" textLength="40.953" font-family="'Apple SD Gothic Neo'">완료 체크</text></g><?plantuml-src TLB1Qjj05BphAnxEiJXOvD86MWXrrLDoyTLGDhOSRoFl6grCsfuIAeg81KsftRID3JOrDIa-Y5HfNEfJFaUx-eVkheGhQ88kg_VUp9kPNNQ8IHUvg0DDkuLwZcTHuksXZWsbdMxNiQ5MXUVKQ-C6xDcqPB3rF6kZ9Zt2v01Qo65seUFI7ca-fIwnNJ0hXSQEwz8ZjQ26tzXWceQ7FRb2Z6CnyRTXgoBYWCy3tfz1pK6DGt5-1don4fzY_ZFcfmD8hXTY6XcktV0GEP3GKdeUy6LuUoCkGl5dLYV9LIGcGn33a7zVWQGLxwObG0pQlNtOiBRKLyGpjUS5eHvklTvaxJgfxkOeU039CkBJiOPd4tSnQALGtLtlvfS3qH-9-J6OIJHwd5VLMJCrEx3nxA5LiQp_TNIfusWLEWf8tyTyVg9HgdEl_Z8c-_JLvaj6YLCdl7zTLAvxTq6Lpl4IiWIb-kXCoeRqmWV-urAYGLp5wSb2atGG9lURp-OLnP3_zeKlMOOJUQqhZNKmyzQMrJMKoq_oF8qyLbMHkMpdqHlQxRfO2DHy96FCdaYTYDCPdmJyu-ZsXaUVnVW3oCUHVWt_mJFlalPj02eMyMkGHCT6LbO3ofUXpQa_hLHEV_7vjp2t_nS0?></g></svg></div><p class="cap">① 이전 구조. 폴러가 메시지마다 스레드·반응을 따로 조회한다.</p></div>
+<div><div class="diagram" data-check="diagram"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" data-diagram-type="DESCRIPTION" style="width:455px;height:498px;background:#FFFFFF;" width="455px" height="498px" viewBox="0 0 455 498" zoomAndPan="magnify" preserveAspectRatio="none" contentStyleType="text/css"><?plantuml 1.2026.8?><defs/><g font-family="sans-serif" lengthAdjust="spacing"><g class="title" data-source-line="5"><text x="116.373" y="22.6" fill="#000" font-size="14" textLength="216.006" font-weight="700" font-family="'Apple SD Gothic Neo'">문제 위치: 폴링 호출량이 한도를 넘는다</text></g><!--entity notify--><g class="entity" data-qualified-name="notify" id="ent0001" data-source-line="6"><rect x="7" y="181.8" width="104.098" height="36.8" fill="#F3F3F3" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="17" y="204.4" fill="#000" font-size="14" textLength="84.098" font-family="'Apple SD Gothic Neo'">slack_notify.sh</text></g><!--entity dm--><g class="entity" data-qualified-name="dm" id="ent0002" data-source-line="7"><rect x="34.17" y="310.4" width="73.76" height="36.8" fill="#E8F0FF" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="44.17" y="333" fill="#000" font-size="14" textLength="53.76" font-family="'Apple SD Gothic Neo'">Slack DM</text></g><!--entity poll--><g class="entity" data-qualified-name="poll" id="ent0003" data-source-line="8"><rect x="239.38" y="44.8" width="121.346" height="53.6" fill="#FFD6D6" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="249.38" y="67.4" fill="#000" font-size="14" textLength="71.232" font-family="'Apple SD Gothic Neo'">slack_poll.sh</text><text x="249.38" y="84.2" fill="#000" font-size="14" textLength="101.346" font-family="'Apple SD Gothic Neo'">30초마다 1회 실행</text></g><!--entity calls--><g class="entity" data-qualified-name="calls" id="ent0004" data-source-line="9"><rect x="146.27" y="173.4" width="143.55" height="53.6" fill="#FFD6D6" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="156.27" y="196" fill="#000" font-size="14" textLength="123.55" font-family="'Apple SD Gothic Neo'">한 번에 약 240회 호출</text><text x="156.27" y="212.8" fill="#000" font-size="14" textLength="80.444" font-family="'Apple SD Gothic Neo'">분당 약 480회</text></g><!--entity fail--><g class="entity" data-qualified-name="fail" id="ent0005" data-source-line="10"><rect x="153.69" y="302" width="128.71" height="53.6" fill="#FFD6D6" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="163.69" y="324.6" fill="#000" font-size="14" textLength="89.824" font-family="'Apple SD Gothic Neo'">429 실패 207회</text><text x="163.69" y="341.4" fill="#000" font-size="14" textLength="108.71" font-family="'Apple SD Gothic Neo'">로그 873회 중 24%</text></g><!--entity skip--><g class="entity" data-qualified-name="skip" id="ent0006" data-source-line="11"><rect x="141.98" y="430.6" width="152.146" height="53.6" fill="#FFD6D6" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="151.98" y="453.2" fill="#000" font-size="14" textLength="76.342" font-family="'Apple SD Gothic Neo'">실패한 회차는</text><text x="151.98" y="470" fill="#000" font-size="14" textLength="132.146" font-family="'Apple SD Gothic Neo'">즉답 명령 처리도 건너뜀</text></g><!--entity inbox--><g class="entity" data-qualified-name="inbox" id="ent0007" data-source-line="12"><rect x="324.34" y="181.8" width="117.412" height="36.8" fill="#F3F3F3" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="334.34" y="204.4" fill="#000" font-size="14" textLength="97.412" font-family="'Apple SD Gothic Neo'">slack-inbox.jsonl</text></g><!--link notify to dm--><g class="link" data-entity-1="ent0001" data-entity-2="ent0002" id="lnk8" data-source-line="13" data-link-type="dependency"><path d="M60.74,219.07 C63.03,243.2 66.609,280.962 68.889,305.042" style="stroke:#181818;stroke-width:1;" fill="none" id="notify-to-dm"/><polygon points="69.36,310.02,72.494,300.683,68.889,305.042,64.529,301.437,69.36,310.02" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link poll to calls--><g class="link" data-entity-1="ent0003" data-entity-2="ent0004" id="lnk9" data-source-line="14" data-link-type="dependency"><path d="M283.06,98.83 C268.99,120.56 251.797,147.083 237.737,168.803" style="stroke:#181818;stroke-width:1;" fill="none" id="poll-to-calls"/><polygon points="235.02,173,243.269,167.618,237.737,168.803,236.553,163.271,235.02,173" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="262.51" y="139.3" fill="#000" font-size="11" textLength="32.923" font-family="'Apple SD Gothic Neo'">⚠️ 원인</text></g><!--link calls to dm--><g class="link" data-entity-1="ent0004" data-entity-2="ent0002" id="lnk10" data-source-line="15" data-link-type="dependency"><path d="M187.59,227.43 C158.83,252.2 120.279,285.397 95.339,306.877" style="stroke:#181818;stroke-width:1;" fill="none" id="calls-to-dm"/><polygon points="91.55,310.14,100.98,307.298,95.339,306.877,95.759,301.236,91.55,310.14" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="149.96" y="267.9" fill="#000" font-size="11" textLength="18.062" font-family="'Apple SD Gothic Neo'">429</text></g><!--link calls to fail--><g class="link" data-entity-1="ent0004" data-entity-2="ent0005" id="lnk11" data-source-line="16" data-link-type="dependency"><path d="M218.05,227.43 C218.05,249.16 218.05,274.88 218.05,296.6" style="stroke:#181818;stroke-width:1;" fill="none" id="calls-to-fail"/><polygon points="218.05,301.6,222.05,292.6,218.05,296.6,214.05,292.6,218.05,301.6" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link fail to skip--><g class="link" data-entity-1="ent0005" data-entity-2="ent0006" id="lnk12" data-source-line="17" data-link-type="dependency"><path d="M218.05,356.03 C218.05,377.76 218.05,403.48 218.05,425.2" style="stroke:#181818;stroke-width:1;" fill="none" id="fail-to-skip"/><polygon points="218.05,430.2,222.05,421.2,218.05,425.2,214.05,421.2,218.05,430.2" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="219.05" y="396.5" fill="#000" font-size="11" textLength="11" font-family="'Apple SD Gothic Neo'">⚠️</text></g><!--link poll to inbox--><g class="link" data-entity-1="ent0003" data-entity-2="ent0007" id="lnk13" data-source-line="18" data-link-type="dependency"><path d="M317.25,98.83 C333.49,123.6 354.649,155.878 368.729,177.358" style="stroke:#181818;stroke-width:1;" fill="none" id="poll-to-inbox"/><polygon points="371.47,181.54,369.881,171.82,368.729,177.358,363.191,176.206,371.47,181.54" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><?plantuml-src RP7FInj15CVl-rSy8Zr6DZ_Gr8CWfjjJlUGQADDaOxPEPfQT5TkUMjX2qWXHg6tG5IEaAkAXbTIkqFupFVfcwR_GcTdMBZJiPT-yxto-xtr7R7dC9m7fGTlja6qQEfo56wJdGc7DzwaBZJeyvc7NQy66omkMkDUBBcdp7OzjGeTGuUOw0TzcxNKUC3U0afrhh0K1tz463U-L2wMI5NgXii2hH4vYa74aRySha8vcUFu6qd4YRs8y6SZZ6QG7COuY_FGTC1hZk_Sud5g1sme9srI0Wg2ajVMKyT3hl5mKtG8G0La52qv5VtbrGwkX_iJ8sZrOU5HpRCVv7-XpIXMkoIgsdFNnlAziePGUxe8SJjCF0mFG8kNYr9VgItc46XdmkYy_xe4y-07bggqlPbir6Tv4EBmrdMfDTmohHIWLys3LyaFZkNi1PNjPoHNXDBxxba1jkM86ckuhYmU6qY7Ut8aoW9vBtP2VBrIEJIRF1ZZy2dZv5YTgdkindbsfgE7komoZFiQl3LAzeJyFQN8gUkmPVx7uN716ZThKzyd_UOXYSLM5RPcuz7-swmhyF9pyIaOWZ_RaSM9bfvbMDTNUkIEzc6MsqvMPwU_zVrnZ_Xi0?></g></svg></div><p class="cap">② 문제 위치 ⚠️. 호출량이 한도를 넘어 실패 회차의 즉답 처리까지 멈춘다.</p></div>
+<div><div class="diagram" data-check="diagram"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" data-diagram-type="DESCRIPTION" style="width:237px;height:872px;background:#FFFFFF;" width="237px" height="872px" viewBox="0 0 237 872" zoomAndPan="magnify" preserveAspectRatio="none" contentStyleType="text/css"><?plantuml 1.2026.8?><defs/><g font-family="sans-serif" lengthAdjust="spacing"><g class="title" data-source-line="5"><text x="29.419" y="22.6" fill="#000" font-size="14" textLength="171.682" font-weight="700" font-family="'Apple SD Gothic Neo'">변경 후: Slack이 밀어주는 구조</text></g><!--entity hub--><g class="entity" data-qualified-name="hub" id="ent0001" data-source-line="6"><rect x="41.44" y="44.8" width="100.024" height="53.6" fill="#F3F3F3" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="51.44" y="67.4" fill="#000" font-size="14" textLength="52.682" font-family="'Apple SD Gothic Neo'">허브·워커</text><text x="51.44" y="84.2" fill="#000" font-size="14" textLength="80.024" font-family="'Apple SD Gothic Neo'">결정 알림 전송</text></g><!--entity notify--><g class="entity" data-qualified-name="notify" id="ent0002" data-source-line="7"><rect x="21.44" y="159.4" width="140.036" height="53.6" fill="#FFF3B0" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="31.44" y="182" fill="#000" font-size="14" textLength="84.098" font-family="'Apple SD Gothic Neo'">slack_notify.sh</text><text x="31.44" y="198.8" fill="#000" font-size="14" textLength="120.036" font-family="'Apple SD Gothic Neo'">버튼 달린 메시지 전송</text></g><!--entity dm--><g class="entity" data-qualified-name="dm" id="ent0003" data-source-line="8"><rect x="16.47" y="288" width="149.962" height="70.4" fill="#E8F0FF" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="26.47" y="310.6" fill="#000" font-size="14" textLength="53.76" font-family="'Apple SD Gothic Neo'">Slack DM</text><text x="26.47" y="327.4" fill="#000" font-size="14" textLength="109.452" font-family="'Apple SD Gothic Neo'">결정 1개=메시지 1개</text><text x="26.47" y="344.2" fill="#000" font-size="14" textLength="129.962" font-family="'Apple SD Gothic Neo'">버튼 A·B·추천대로·보류</text></g><!--entity listener--><g class="entity" data-qualified-name="listener" id="ent0004" data-source-line="9"><rect x="15.37" y="433.4" width="152.16" height="53.6" fill="#CFF5D6" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="25.37" y="456" fill="#000" font-size="14" textLength="57.12" font-family="'Apple SD Gothic Neo'">리스너 1개</text><text x="25.37" y="472.8" fill="#000" font-size="14" textLength="132.16" font-family="'Apple SD Gothic Neo'">Socket Mode 상시 연결</text></g><!--entity inbox--><g class="entity" data-qualified-name="inbox" id="ent0005" data-source-line="10"><rect x="32.75" y="562" width="117.412" height="53.6" fill="#F3F3F3" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="42.75" y="584.6" fill="#000" font-size="14" textLength="97.412" font-family="'Apple SD Gothic Neo'">slack-inbox.jsonl</text><text x="42.75" y="601.4" fill="#000" font-size="14" textLength="80.024" font-family="'Apple SD Gothic Neo'">같은 형식 유지</text></g><!--entity main--><g class="entity" data-qualified-name="main" id="ent0006" data-source-line="11"><rect x="33.55" y="676.6" width="115.816" height="53.6" fill="#F3F3F3" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="43.55" y="699.2" fill="#000" font-size="14" textLength="52.122" font-family="'Apple SD Gothic Neo'">메인 허브</text><text x="43.55" y="716" fill="#000" font-size="14" textLength="95.816" font-family="'Apple SD Gothic Neo'">감시 후 목록 체크</text></g><!--entity list--><g class="entity" data-qualified-name="list" id="ent0007" data-source-line="12"><rect x="47.5" y="805.2" width="87.914" height="53.6" fill="#E8F0FF" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="57.5" y="827.8" fill="#000" font-size="14" textLength="57.736" font-family="'Apple SD Gothic Neo'">Slack 목록</text><text x="57.5" y="844.6" fill="#000" font-size="14" textLength="67.914" font-family="'Apple SD Gothic Neo'">강비서 할 일</text></g><!--link hub to notify--><g class="link" data-entity-1="ent0001" data-entity-2="ent0002" id="lnk8" data-source-line="13" data-link-type="dependency"><path d="M91.45,98.72 C91.45,116.91 91.45,136.07 91.45,154.23" style="stroke:#181818;stroke-width:1;" fill="none" id="hub-to-notify"/><polygon points="91.45,159.23,95.45,150.23,91.45,154.23,87.45,150.23,91.45,159.23" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link notify to dm--><g class="link" data-entity-1="ent0002" data-entity-2="ent0003" id="lnk9" data-source-line="14" data-link-type="dependency"><path d="M91.45,213.23 C91.45,234.38 91.45,259.39 91.45,282.57" style="stroke:#181818;stroke-width:1;" fill="none" id="notify-to-dm"/><polygon points="91.45,287.57,95.45,278.57,91.45,282.57,87.45,278.57,91.45,287.57" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="92.45" y="253.9" fill="#000" font-size="11" textLength="19.03" font-family="'Apple SD Gothic Neo'">전송</text></g><!--link dm to listener--><g class="link" data-entity-1="ent0003" data-entity-2="ent0004" id="lnk10" data-source-line="15" data-link-type="dependency"><path d="M29.46,358.73 C15.01,371.45 6,386.83 14.45,403.4 C20.46,415.16 26.237,422.02 36.837,430.01" style="stroke:#181818;stroke-width:1;" fill="none" id="dm-to-listener"/><polygon points="40.83,433.02,36.051,424.408,36.837,430.01,31.235,430.797,40.83,433.02" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="15.45" y="399.3" fill="#000" font-size="11" textLength="107.602" font-family="'Apple SD Gothic Neo'">버튼·반응·답글 즉시 전달</text></g><!--link listener to dm--><g class="link" data-entity-1="ent0004" data-entity-2="ent0003" id="lnk11" data-source-line="16" data-link-type="dependency"><path d="M112.78,432.93 C118.72,424.08 124.39,413.8 127.45,403.4 C131.89,388.33 129.231,376.798 121.601,363.228" style="stroke:#181818;stroke-width:1;" fill="none" id="listener-to-dm"/><polygon points="119.15,358.87,120.074,368.675,121.601,363.228,127.048,364.755,119.15,358.87" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="130.1" y="399.3" fill="#000" font-size="11" textLength="91.421" font-family="'Apple SD Gothic Neo'">메시지를 결과로 고침</text></g><!--link listener to inbox--><g class="link" data-entity-1="ent0004" data-entity-2="ent0005" id="lnk12" data-source-line="17" data-link-type="dependency"><path d="M91.45,487.43 C91.45,509.16 91.45,534.88 91.45,556.6" style="stroke:#181818;stroke-width:1;" fill="none" id="listener-to-inbox"/><polygon points="91.45,561.6,95.45,552.6,91.45,556.6,87.45,552.6,91.45,561.6" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="92.45" y="527.9" fill="#000" font-size="11" textLength="31.438" font-family="'Apple SD Gothic Neo'">답 추가</text></g><!--link inbox to main--><g class="link" data-entity-1="ent0005" data-entity-2="ent0006" id="lnk13" data-source-line="18" data-link-type="dependency"><path d="M91.45,615.92 C91.45,634.11 91.45,653.27 91.45,671.43" style="stroke:#181818;stroke-width:1;" fill="none" id="inbox-to-main"/><polygon points="91.45,676.43,95.45,667.43,91.45,671.43,87.45,667.43,91.45,676.43" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link main to list--><g class="link" data-entity-1="ent0006" data-entity-2="ent0007" id="lnk14" data-source-line="19" data-link-type="dependency"><path d="M91.45,730.63 C91.45,752.36 91.45,778.08 91.45,799.8" style="stroke:#181818;stroke-width:1;" fill="none" id="main-to-list"/><polygon points="91.45,804.8,95.45,795.8,91.45,799.8,87.45,795.8,91.45,804.8" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="92.45" y="771.1" fill="#000" font-size="11" textLength="40.953" font-family="'Apple SD Gothic Neo'">완료 체크</text></g><?plantuml-src RP7DRjf058NtVeehM1E1ebOLKYkHK7ULRDX6gXmOWekPGRPHsguSrQfIOD5Aa105IqP9Q5EniFWfH7KtF8vdU8VEsDHrrSWBspDtldFc7AEkugQYAmseeAhIqaoPOFDGQI185PfD3K6f2A-8MLFBS8X8IZBYUQEcLCYfYa-WgcW6Ikpef8Kh-qJ7I8TSDh5Hq7LoAWHAwdi4kPnagYQNe3ChcFw2pRMTXvAcbElCcGFrB7OnPpS-RVSWM4pOo9DqL3OLVCAFf3QNvtJLNI_PTPVzl3t2mTHZRXzOlql7FZ3NPXz7AL0CgBME8ItlYYTvtX0whp4nrUgx7QDsXEdKthHze9q97Nj0xtkiCsHVhIGgckOqMTxTooPfeMie7iG-Se4tVFuN8dvZYS9wkSUD_-YnwP1sBJeQhfTqDgTtWr2bqe3qosToLfQJ2dGyOUrRQfzlMILIhYCJ3aW50VjmndM0NNfSFMHegc4Y4NzwNvQV59_-T_ECYe_9svqt1i4QD-rTCSU2pQ3FEWwmeSizXvnmwh7unDMS5KGj2C1duO0t2FJxFHrno7I-EPk4a8QYuiSOKMZHl43qwOFDR4xfky0SFxv878UeCfDviUr1sjOXLdXc-MrJ4lyMIt44UOXovo5x0-PyuU_E8bZnPiUVmjXScvSknVCnBwwFtld0amrcFkyAWfdB7hxzEn_bn8zq5i2B3JnBYfR4fhY_58RmnvSmUsNJc-usfjy0?></g></svg></div><p class="cap">③ 변경 후. 🟡 전송 스크립트 변경, 🟢 리스너 추가, 나머지는 그대로다.</p></div>
+</div>
+
+<h2>🔬 리서치 결과</h2>
+<table><tr><th>주제</th><th>확인한 사실</th><th>채택</th></tr>
+<tr><td>호출 한도</td><td>조회 메서드는 Tier 3, 분당 50회 이상이다. 2025-05-29 이후 만든 일반 배포 앱은 분당 1회로 낮췄다. 사내 전용 앱은 영향이 없다고 안내한다.</td><td>이 앱의 해당 여부는 미확인. 분당 480회는 어느 쪽이든 넘는다.</td></tr>
+<tr><td>반응 조회</td><td>한도 등급은 공식 표에서 미확인</td><td>조회를 없애므로 무관</td></tr>
+<tr><td>Socket Mode</td><td>앱이 먼저 연결을 열어 이벤트·버튼 누름을 받는다. 공개 주소가 필요 없다. 앱 토큰이 필요하다.</td><td>✅ 채택</td></tr>
+<tr><td>Events API</td><td>공개 주소로 HTTP를 받는다. 이 Mac은 주소가 없다.</td><td>기각</td></tr>
+<tr><td>Bolt</td><td>Slack 공식 틀. 이벤트·버튼 처리기를 등록하고 3초 안에 응답을 보낸다.</td><td>✅ 채택, 파이썬판</td></tr>
+<tr><td>Block Kit 버튼</td><td>버튼 누름은 <code>block_actions</code> 로 오고, 원 메시지는 <code>chat.update</code> 로 고친다.</td><td>✅ 채택</td></tr>
+<tr><td>모달</td><td>누른 뒤 3초 안에 열어야 한다. 자유 입력용이다.</td><td>이번엔 기각, 필요하면 추가</td></tr>
+<tr><td>스레드 정리</td><td>한 결정=한 메시지, 결과는 같은 메시지에 반영한다.</td><td>✅ 채택</td></tr>
+<tr><td>사례</td><td>Vercel Slack 에이전트 템플릿이 승인 버튼 패턴을 쓴다. Slack 공식 스킬 플러그인이 Block Kit 승인 안내와 Socket Mode 배포 안내를 둔다.</td><td>패턴만 참고</td></tr></table>
+
+<h2>🔄 주제별 before / after</h2>
+<section class="ba" data-check="ba"><h3>1. 답 수집: 조회 → 수신</h3>
+<div class="ba-grid"><div class="before"><div class="label">before (지금, slack_poll.sh 발췌)</div><pre><code>for ts, rec in sent.items():
+    for m in api("conversations.replies",
+                 channel=ch, ts=ts, limit=200
+                 ).get("messages", []):
+        ...  # 답글 분류
+    msg = api("reactions.get",
+              channel=ch, timestamp=ts
+              ).get("message", {})
+    for r in msg.get("reactions", []):
+        ...  # 반응 분류
+# 메시지 119개 x 2회, 30초마다</code></pre></div>
+<div class="after"><div class="label">after (제안, 리스너)</div><pre><code>@app.event("reaction_added")
+def on_reaction(event, ack):
+    write_inbox("reaction", event)
+
+@app.event("message")
+def on_reply(event):
+    if event.get("thread_ts"):
+        write_inbox("thread_reply", event)
+
+# 조회 호출 0회. 같은 형식으로 기록
+SocketModeHandler(app, APP_TOKEN).start()</code></pre></div></div>
+<p class="why" data-check="why"><b>왜:</b> 메시지가 늘수록 호출이 늘던 구조가 답이 올 때만 일하는 구조로 바뀐다.</p></section>
+
+<section class="ba" data-check="ba"><h3>2. 결정 메시지: 글 → 버튼</h3>
+<div class="ba-grid"><div class="before"><div class="label">before (지금, slack_notify.sh 발췌)</div><pre><code>MSG="$(printf '%s' "$MSG" | sed \
+  -e 's/🅰️/:비서-a:/g' \
+  -e 's/🅱️/:비서-b:/g' ...)"
+curl -s -H "Authorization: Bearer ..." \
+  -d "$(python3 -c '
+b={"channel":ch,"text":msg}
+print(json.dumps(b))')" \
+  $API/chat.postMessage
+# 답: 이모지 이름을 눌러야 함</code></pre></div>
+<div class="after"><div class="label">after (제안)</div><pre><code>blocks=[
+ {"type":"section","text":{"type":"mrkdwn",
+   "text":"*결정1* 질문 한 줄"}},
+ {"type":"actions","elements":[
+  btn("A","결정1|A"), btn("B","결정1|B"),
+  btn("추천대로","결정1|rec"),
+  btn("보류","결정1|hold")]}]
+post(channel=ch, text=title, blocks=blocks)
+# 눌림은 리스너가 받아 inbox 에 기록</code></pre></div></div>
+<p class="why" data-check="why"><b>왜:</b> 이모지 이름 대신 값이 박힌 버튼을 누르므로 오답이 없다. 기존 이모지 해석은 그대로 둔다.</p></section>
+
+<section class="ba" data-check="ba"><h3>3. 답한 뒤: 방치 → 결과 한 줄</h3>
+<div class="ba-grid"><div class="before"><div class="label">before (지금, slack_pending.sh 발췌)</div><pre><code>text = "🙋 *답을 기다리는 결정 " \
+       + str(len(rows)) + "개*\n" \
+       + "\n".join(rows)
+b = json.dumps({'channel': ch,
+                'text': text})
+# 2시간마다 새 메시지 전송
+req = Request(
+  'https://slack.com/api/chat.postMessage',
+  data=b, headers=...)</code></pre></div>
+<div class="after"><div class="label">after (제안)</div><pre><code>@app.action(re.compile(r"^decide"))
+def on_click(ack, body, client):
+    ack()                      # 3초 안 응답
+    write_inbox("button", body)
+    client.chat_update(
+        channel=ch, ts=ts,
+        text="✅ 결정1: A 선택됨",
+        blocks=[])             # 버튼 제거
+# 대기 목록은 고정 메시지 1개를 update</code></pre></div></div>
+<p class="why" data-check="why"><b>왜:</b> 답한 결정은 버튼이 사라지고 대기 목록도 새로 쌓이지 않아 DM이 짧게 유지된다.</p></section>
+
+<h2>✅ 그대로인 것 / 없어지는 것</h2>
+<table><tr><th>구분</th><th>내용</th></tr>
+<tr><td>✅ 그대로</td><td>결정 1개 = 메시지 1개, 이모지 답, 한글 명령 <code>결정1 A</code>·<code>전부 추천</code></td></tr>
+<tr><td>✅ 그대로</td><td><code>slack-inbox.jsonl</code> 형식, 허브의 감시, Slack 목록 행 추가·완료 체크, <code>slack-done.txt</code></td></tr>
+<tr><td>🟢 추가</td><td>Socket Mode 리스너, 버튼 달린 전송, 메시지 고치기, 앱 토큰 1개, 앱 설정의 상호작용 켜기</td></tr>
+<tr><td>🟡 변경</td><td><code>slack_notify.sh</code> 전송 형식, 앱 설정 파일의 Socket Mode 켜기와 이벤트 구독</td></tr>
+<tr><td>🔴 삭제</td><td>30초 폴링 launchd 항목, 메시지별 스레드·반응 조회, 2시간마다 새 대기 메시지</td></tr>
+<tr><td>⚠️ 위험</td><td>리스너가 죽으면 그동안의 답이 빠진다. 재시작 감시와 하루 1회 보정 조회로 막는다.</td></tr>
+<tr><td>⚠️ 미확인</td><td>Slack 목록을 리스너가 직접 갱신할 수 있는지. 이번 범위에선 허브가 계속 갱신한다.</td></tr></table>
+
+<h2>🔄 진행 순서 — 승인 뒤 구현</h2>
+<ol>
+<li>🟡 앱 설정 변경: Socket Mode·상호작용·이벤트 켜기, 앱 토큰은 사용자가 발급 — <small>검증: 앱 설정 화면에서 세 항목이 켜짐</small></li>
+<li>🟢 리스너 추가, 반응·답글을 같은 형식으로 기록 — <small>검증: 반응 1개로 inbox 에 1줄이 생김</small></li>
+<li>🔵 폴링과 병행 운영 하루, 두 기록 비교 — <small>검증: 누락 0건</small></li>
+<li>🟡 전송 스크립트에 버튼 추가 — <small>검증: 테스트 결정 1건에서 버튼 누름이 기록됨</small></li>
+<li>🟢 눌린 뒤 메시지 고치기, 대기 목록 1개로 통합 — <small>검증: 눌린 뒤 버튼이 사라짐</small></li>
+<li>🔴 폴링 launchd 항목 제거 — <small>검증: 로그에 429 가 더 생기지 않음</small></li>
+</ol>
+
+<details class="ref"><summary>참고 (파일·근거·미확인)</summary>
+<ul>
+<li>조사 파일: <code>~/.config/lrm-hubs/slack_notify.sh</code>, <code>slack_poll.sh</code>, <code>slack_cmd.sh</code>, <code>slack_pending.sh</code>, <code>ai.lrm.slackpoll.plist</code>, <code>slack-bot-manifest.yml</code>, <code>slack-list-map.tsv</code>, <code>todo.md</code>, <code>MAIN-HANDOFF.md</code></li>
+<li>집계만 읽은 파일: <code>slack-inbox.jsonl</code>, <code>slack-sent.jsonl</code>, <code>slack-poll.log</code> 의 건수와 형식. 본문·상태 파일·인증 파일은 읽지 않음</li>
+<li>현재 scope: <code>chat:write</code>, <code>files:write</code>, <code>im:write</code>, <code>im:history</code>, <code>reactions:read</code></li>
+<li>필요 추가: 앱 토큰 scope <code>connections:write</code>, 이벤트 <code>message.im</code>·<code>reaction_added</code> 구독, 상호작용 켜기</li>
+<li><a href="https://docs.slack.dev/changelog/2025/05/29/rate-limit-changes-for-non-marketplace-apps">호출 한도 변경 공지</a></li>
+<li><a href="https://docs.slack.dev/apis/web-api/rate-limits">호출 한도 문서</a></li>
+<li><a href="https://docs.slack.dev/tools/node-slack-sdk/socket-mode/">Socket Mode 문서</a></li>
+<li>미확인: 이 앱이 새 한도 대상인지, 반응 조회의 등급, 기존 설치분 적용일(공지마다 날짜가 다름)</li>
+<li>조사 방식: 웹 검색 3회. 공식 메서드 표는 직접 열람하지 못했다</li>
+</ul></details>
+<details class="ref" data-check="review"><summary>검수 기록</summary>2026-11-06 작성자 자체 점검만 수행. 1차 독자 검수와 2차 교차 검수는 미실시 — 사용자에게 보내기 전 필요.</details>
+</html>
