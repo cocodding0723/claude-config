@@ -7,14 +7,16 @@
 ```
 claude-config/
 ├─ install.sh           링크·병합·복사 + git 설정 (--dry-run·--check·--restore)
-├─ links.tsv            원본 → 대상($HOME 기준) → 방식(link|merge|copy|seed)
+├─ links.tsv            원본 → 대상($HOME 기준) → 방식(link|merge|copy|render)
 ├─ gitconfig.tsv        git config --global 키 4개
 ├─ merge/               설정 병합 식 (orca-keep.jq, merge.jq)
 ├─ claude/              CLAUDE.md, keybindings.json, settings.base.json, hooks/(+lib), meat-proxy/
 ├─ skills/<이름>/       직접 작성한 스킬 34개 (synced·외부 링크 제외)
 ├─ git/hooks/           전역 git 훅 9개
 ├─ hubs/                scripts/ roles/ launchd/ slack-bot-manifest.yml slack-bot.env.example
+├─ values.env.example   로컬 값 양식(실명·채널 ID). 실제 값은 저장소 밖
 ├─ tests/install/       샌드박스 검증 (run.sh)
+├─ tests/mutate.sh      변이 검증(결함을 심어 run.sh 가 잡는지 확인)
 └─ docs/                구조안, 라이브 전환 계획서
 ```
 
@@ -22,7 +24,7 @@ claude-config/
 - `link` 는 대상을 저장소 원본으로 가리키는 링크로 만든다. 스킬은 폴더째가 아니라 스킬마다 링크해 `skills/synced` 같은 외부 항목이 섞이지 않는다.
 - `merge` 는 `settings.base.json`(내 설정)에 현재 파일의 Orca 훅·상태줄을 얹어 새 파일로 쓴다. 훅 배열은 순서를 유지해 이어붙인다.
 - `copy` 는 `__HOME__` 을 현재 HOME 으로 치환해 복사한다(launchd plist).
-- `seed` 는 대상이 없을 때만 복사한다. 계정 값이 든 역할 파일의 자리표시본(`*.example`)이 이 방식이다.
+- `render` 는 `*.tmpl` 의 `__KEY__` 자리표시를 로컬 값 파일로 채워 실제 파일로 복사한다. 실명·DM 채널 ID 가 든 파일 5개(역할 3개, 스킬 파일 2개)가 이 방식이다. 스킬 2개(`orca-hub-create`, `structure-change-doc`)는 폴더째가 아니라 파일마다 링크한다.
 
 ## 설치·동기화
 
@@ -45,7 +47,11 @@ launchd plist 가 바뀌면 재적재 명령을 안내한다. 실행까지 맡�
 비밀(`*.env`, 토큰, 자격 증명), 이 맥의 기록(`state`·`cache`·`logs`·`history`·`projects`·`sessions`), 백업(`*.bak*`), 캐시(`__pycache__`), 외부 도구 관리분(`skills/synced`, `plugins`), 허브 실행 상태(slack-inbox·sent·poll-state), 문서 허브 작업물(`HANDOFF.md`·`decisions.tsv`)은 `.gitignore` 로 막는다. 로컬 값 두 가지는 자리표시본으로만 둔다.
 
 - `hubs/slack-bot.env.example`: 값 없는 양식. 실제 값은 `~/.config/lrm-hubs/slack-bot.env`(권한 600)에만 둔다.
-- `hubs/roles/role-docs.txt.example`: DM 채널·이름을 자리표시로 바꾼 사본. 실제 `role-docs.txt` 는 로컬 파일로 유지한다.
+- `values.env.example`: 값 없는 양식. 실제 값은 `~/.config/claude-config/values.env`(권한 600, `*.env` 라 미추적)에 둔다. 키는 `OWNER_NAME`·`PERSON_FULL`·`PERSON_SHORT`·`DM_CHANNEL`. 값 파일이 없거나 키가 비면 `install.sh` 는 아무것도 바꾸기 전에 중단한다.
+
+### 실명·채널 ID 처리 방식과 이유
+
+저장소(커밋)에는 `__PERSON_FULL__` 같은 자리표시만 두고, 설치기가 값 파일로 채워 복사한다(render). 대안이던 seed(대상이 있으면 건드리지 않음)는 새 맥에서 자리표시가 그대로 남아 허브가 이름·채널을 모르고, 기존 파일이 저장소와 어긋나도 점검이 안 된다. render 는 ① 라이브 파일이 항상 값이 채워진 상태로 재생성되고 ② `--check` 가 값·템플릿 변경을 DRIFT 로 알리고 ③ 값 파일만 있으면 새 맥도 같은 결과가 나온다. 비용은 값 파일을 먼저 만들어야 한다는 점이며, 없으면 중단하므로 라이브 파일이 자리표시로 바뀌는 사고는 없다. 실제 파일 내용은 라이브 파일과 같게 나오도록 확인했다(바이트 비교).
 
 ## 하드코딩 경로 치환
 
@@ -68,13 +74,23 @@ SETTINGS_SAMPLE=<settings.json 사본> tests/install/run.sh  # 실제 설정 사
 
 dry-run 무변경 → 설치 → 재설치 멱등 → 설정 병합(훅 보존·순서·바이트 동일) → state 위치 → git 훅 동작 → 백업 불가 시 중단 → 복원 → 비밀 패턴 0건을 확인한다. shellcheck 가 설치돼 있으면 함께 돌린다.
 
+```sh
+tests/mutate.sh   # 병합 식·복원·STATE_DIR·render 등에 결함 12개를 심어 모두 검출되는지 확인(수 분)
+```
+
 ## 병행 브랜치와 겹칠 수 있는 경로
+
+2026-11-06 기준으로 두 브랜치를 읽기만 해 확인한 내용이다.
 
 | 브랜치 | 겹치는 경로 | 처리 |
 |---|---|---|
-| `chore/slack-bot-optimize` | `lrm-hubs/slack_poll.sh`, `lrm-hubs/slack_pending.sh` | 이 저장소의 위치는 `hubs/scripts/`. 병합 시 그쪽 변경분을 `hubs/scripts/` 로 옮기고 `lrm-hubs/` 사본은 지운다. git 은 경로가 달라 충돌 대신 중복으로 보인다. |
-| 같은 브랜치 | `tests/run.sh`, `tests/lib.sh` | 이 브랜치는 `tests/install/` 아래만 써서 겹치지 않는다. |
-| `chore/docs-hub-consolidation` | `skills/doc-kit/`(신규), 통합 대상 스킬의 삭제·이름 변경 | 이 브랜치가 `skills/explain-diff`·`tech-record`·`create-pr`·`doc-coauthoring`·`structure-change-doc` 사본을 이미 갖고 있어, 먼저 병합된 쪽 기준으로 삭제·이름 변경 충돌이 난다. `links.tsv` 의 해당 줄도 같이 고쳐야 한다. |
-| 위와 동일 | `docs/out/`, `.gitignore`, `README.md` | `docs/out/` 은 허브 전용 브랜치에서만 추적한다. `.gitignore` 의 `HANDOFF.md`·`decisions.tsv` 줄은 양쪽이 같은 취지라 합치면 된다. |
+| `chore/slack-bot-optimize` | `lrm-hubs/slack_poll.sh`, `lrm-hubs/slack_pending.sh`, `lrm-hubs/slack_cmd.sh` (3개 수정·사본) | 이 저장소의 위치는 `hubs/scripts/`. git 은 경로가 달라 충돌 대신 같은 파일의 중복으로 보인다. 병합 시 그쪽 변경분을 `hubs/scripts/` 로 옮기고 `lrm-hubs/` 사본은 지운다. |
+| 위와 동일 | `tests/run.sh`, `tests/lib.sh`, `tests/mutate.py`, `tests/test_*.sh`, `tests/stub_slack.py` | 이 브랜치의 테스트는 `tests/install/` 와 `tests/mutate.sh` 만 쓴다. 파일 이름이 겹치지 않는다. |
+| `chore/docs-hub-consolidation` | 현재는 `docs/docs-hub-consolidation.html` 1개뿐이라 겹치는 경로 없음 | 그 문서가 설계하는 `skills/doc-kit/`·`docs/out/` 이동은 아직 그 브랜치에 구현돼 있지 않다. 구현되면 통합 대상 스킬(`explain-diff`·`tech-record`·`create-pr`·`doc-coauthoring`·`structure-change-doc`)의 삭제·이름 변경이 이 저장소의 스킬 사본·`links.tsv` 와 충돌한다. |
+| 위와 동일(예정) | `.gitignore`, `README.md`, `docs/out/` | `docs/out/` 은 허브 전용 브랜치에서만 추적한다. `.gitignore` 의 `HANDOFF.md`·`decisions.tsv` 줄은 같은 취지라 합치면 된다. |
+
+## 복원의 한계
+
+`--restore` 는 백업 원본을 보존한 채 복사해서 되돌리므로 여러 번 실행해도 안전하다(백업 원본이 없으면 아무것도 지우지 않고 중단). 설치가 새로 만든 폴더(`.config/git/hooks`, `Library/LaunchAgents`, 스킬 하위 폴더 등)는 manifest 에 기록해 두었다가 복원 때 비어 있을 때만 제거한다. 설치 뒤 사용자가 그 안에 파일을 더했다면 폴더는 남긴다.
 
 병합·리베이스는 하지 않았다.
