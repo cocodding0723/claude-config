@@ -21,21 +21,22 @@ details.ref{margin-top:30px;color:var(--muted);font-size:14px}
 ul.facts{margin:6px 0;padding-left:20px}ul.facts li{margin:2px 0}
 .meta{color:var(--muted);font-size:14px}
 </style>
-<h1>문서 코디네이터 정리안 — 규칙 통합 · 허브 이전</h1>
-<p class="meta">2026-11-06 · 조사 전용 · 이 문서 외에는 아무것도 바꾸지 않았다 · 이전은 승인 뒤, 진행 작업 종료 후</p>
-<div class="ask" data-top="changed"><b>🔁 이번에 바뀐 점 (사용자 지시: 문서는 개인용, 프로젝트에 종속되지 않음)</b><br>① 전달·책임 규칙 7개는 프로젝트 메모리가 아니라 전역 규칙으로 옮긴다(결정2).<br>② 허브는 연애혁명 메모리를 복사하지 않고, 없어도 동작하는지 이전 전에 시험한다(결정3).<br>③ 받는 사람·채널·이름 규칙 같은 고유값은 프로젝트별 설정 파일 한 개로 뺀다(새 설계).</div>
-<div class="summary" data-check="summary"><b>3줄 요약</b><br>① <b>지금 문제</b> — 문서 작성 규칙이 여러 곳에 겹치고 프로젝트 고유값이 섞여 있으며 담당 창구는 한 프로젝트에 묶여 있다.<br>② <b>그래서</b> — 규칙을 지침 파일과 전역 규칙으로 모으고 고유값은 설정 파일로 빼며 창구를 옮기는 안을 만들었다.<br>③ <b>그러면</b> — 아래 결정 5개에 답하면 되고 이전은 진행 작업이 끝난 뒤에 한다.</div>
+<h1>문서 코디네이터 정리안 — 규칙 통합 · 새 허브</h1>
+<p class="meta">2026-11-06 · 조사 전용 · 이 문서 외에는 아무것도 바꾸지 않았다 · 저장소 구조안 결정1~4 는 사용자가 승인했고 이 안은 그 결정에 의존한다</p>
+<div class="ask" data-top="changed"><b>🔁 이번에 바뀐 점</b><br>① 🔁 옛 보고서·하위 워크스페이스 23개·연애혁명 메모리는 옮기지 않는다. 규칙과 새 허브만 새 저장소로 간다(사용자 지시).<br>② 🔁 결정은 5개에서 4개가 됐다. 하위 이관 결정을 없앴고 허브는 "새 허브 생성"(결정3)으로 좁혔다.<br>③ 🔁 전달 규칙 7개는 전부 전역이 아니라 규칙별로 나눠 둔다(결정2). 고유값 목록은 전수 재조사했고 시험은 새 허브 만들기 앞으로 옮겼다.</div>
+<div class="summary" data-check="summary"><b>3줄 요약</b><br>① <b>지금 문제</b> — 문서 작성 규칙이 여러 곳에 겹치고 프로젝트 고유값이 섞여 있으며 문서 담당 창구는 한 프로젝트에 묶여 있다.<br>② <b>그래서</b> — 규칙만 지침 파일 하나와 설정 틀로 모으고 새 창구를 만드는 안을 냈다. 옛 문서는 그대로 둔다.<br>③ <b>그러면</b> — 아래 결정 4개에 답하면 된다.</div>
 
 <h2>📖 용어 풀이</h2>
 <ul class="facts">
 <li>스킬 = Claude 에게 작업 방법을 알려 주는 지침 파일. 폴더 하나가 스킬 하나다.</li>
 <li>메모리 = Claude 가 프로젝트별로 기억해 두는 규칙 메모. 프로젝트 폴더마다 따로 있다.</li>
 <li>허브(문서 코디네이터) = 문서 작업을 받아 워커에게 나눠 주는 담당 창구. 터미널 세션 하나다.</li>
+<li>옛 허브 = 연애혁명 저장소 안에 있는 기존 문서 허브. 새 허브 = claude-config 에 만들 허브.</li>
 <li>워크스페이스 = 저장소를 복사해 작업하는 별도 폴더(git 워크트리).</li>
 <li>sparse 워크트리 = 저장소 일부 폴더만 꺼내 둔 워크스페이스.</li>
 <li>HANDOFF.md = 허브가 다음 세션에 일을 넘기는 인계 문서.</li>
 <li>decisions.tsv = 허브가 스스로 내린 판단을 한 줄씩 남기는 기록 파일.</li>
-<li>개인-* = 허브 밑에 만든 개인 업무용 하위 워크스페이스.</li>
+<li>개인-* = 옛 허브 밑에 만든 개인 업무용 하위 워크스페이스.</li>
 <li>3차 검수 = 1차 다른 Claude, 2차 교차 모델, 3차 사용자가 보는 마지막 확인.</li>
 <li>구조안 = 구조 변경 제안 문서 유형. 해설·기록·보고서도 문서 유형 이름이다.</li>
 <li>detached HEAD = 브랜치 없이 특정 커밋에 붙은 상태. 여기서 만든 커밋은 이력에 안 남는다.</li>
@@ -43,22 +44,21 @@ ul.facts{margin:6px 0;padding-left:20px}ul.facts li{margin:2px 0}
 <li>전역 CLAUDE.md = 모든 프로젝트 세션이 매번 읽는 개인 규칙 파일(~/.claude/CLAUDE.md).</li>
 <li>프로젝트별 설정 = 받는 사람·채널·이름 규칙처럼 프로젝트마다 다른 값을 적는 파일 한 개.</li>
 <li>doc-kit = 이 안에서 새로 만들자는 통합 문서 스킬의 임시 이름.</li>
-<li>🟢 추가·유지 · 🟡 변경 · 🔴 삭제 · 🔵 테스트 · ⚠️ 위험 · 파랑 도식 칸 = 그대로.</li>
+<li>🟢 추가·유지 · 🟡 변경 · 🔴 삭제 · 🔵 테스트 · ⚠️ 위험 · ⚪ 해당 없음 · 파랑 도식 칸 = 그대로.</li>
 </ul>
 
-<h2 data-check="decision">🙋 결정 필요 — 5개</h2>
+<h2 data-check="decision">🙋 결정 필요 — 4개</h2>
 <div class="ask"><b>한 번에 답하기:</b> 전부 추천대로면 <code>전부 추천</code><br>골라서면 <code>결정1 A, 결정2 B</code></div>
 <table><tr><th>#</th><th>정할 것(질문 한 문장)</th><th>추천</th></tr>
 <tr><td>결정1</td><td>문서 스킬 5개를 doc-kit 하나로 합칠까?</td><td>A</td></tr>
-<tr><td>결정2</td><td>🔁 전달·책임 규칙 7개를 전역 CLAUDE.md 에 둘까, doc-kit 에 둘까?</td><td>A</td></tr>
-<tr><td>결정3</td><td>🔁 문서 허브를 claude-config 워크스페이스로 옮길까?</td><td>A</td></tr>
-<tr><td>결정4</td><td>이전 전에 하위 워크스페이스 23개의 부모를 새 허브로 바꿀까?</td><td>A</td></tr>
-<tr><td>결정5</td><td>개인 HTML 보고를 허브 전용 브랜치의 docs/out/ 한 곳에 모을까?</td><td>A</td></tr></table>
+<tr><td>결정2</td><td>🔁 전달·책임 규칙 7개를 규칙별로 나눠 둘까, 전부 전역 CLAUDE.md 에 둘까?</td><td>A</td></tr>
+<tr><td>결정3</td><td>🔁 새 문서 허브를 claude-config 의 Orca 워크스페이스로 만들까?</td><td>A</td></tr>
+<tr><td>결정4</td><td>🔁 앞으로 만드는 문서를 새 허브 전용 브랜치의 docs/out/ 한 곳에 모을까?</td><td>A</td></tr></table>
 
 <section class="decision-card" data-check="dcard">
 <h3>결정1. 문서 스킬 5개를 doc-kit 하나로 합칠까?</h3>
-<p><b>지금 문제:</b> 문서 작성 규칙을 담은 지침 파일(스킬) 5개에 같은 문장이 3~4곳씩 복사돼 있다. 그래서 하나를 고치면 나머지가 낡는다.</p>
-<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 통합 스킬을 쓰지 못하고, 메모리 정리도 시작하지 못한다.</p>
+<p><b>지금 문제:</b> 문서 규칙을 담은 지침 파일(스킬) 5개에 같은 문장이 3~4곳씩 복사돼 있다. 그래서 하나를 고치면 나머지가 낡는다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 통합 스킬을 쓰지 못한다.</p>
 <table class="opts"><tr><th>선택지</th><th>고르면</th><th>되돌리기</th></tr>
 <tr class="rec" data-check="opt"><td><b>A. 합친다 ✅ 추천</b><br><small>doc-kit 1개 = 문서 규칙 통합 스킬</small></td><td>규칙이 한 곳이므로 수정이 한 번에 끝난다. 옛 이름 참조 13곳을 고쳐야 한다.</td><td>보통</td></tr>
 <tr data-check="opt"><td><b>B. 공통 규칙 파일만 뽑는다</b><br><small>스킬 7개는 그대로</small></td><td>이름이 그대로라 참조는 안 깨진다. 안내 문구 중복은 다시 생긴다.</td><td>쉬움</td></tr></table>
@@ -66,45 +66,58 @@ ul.facts{margin:6px 0;padding-left:20px}ul.facts li{margin:2px 0}
 <p class="answer">답: <code>결정1 A</code></p>
 </section>
 <section class="decision-card" data-check="dcard">
-<h3><span class="badge tag-warn">🔁 바뀐 결정</span> 결정2. 전달·책임 규칙 7개를 전역 CLAUDE.md 에 둘까, doc-kit 에 둘까?</h3>
-<p><b>지금 문제:</b> 문서 규칙 16개가 연애혁명 프로젝트 메모리에 있어서 다른 프로젝트 세션은 읽지 못한다. 양식 9개는 doc-kit 으로 정리하고, 남은 전달·책임 7개를 어디에 둘지가 문제다.</p>
-<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 프로젝트 메모리를 비우지 못하고 doc-kit 범위도 확정하지 못한다.</p><p><b>범위:</b> 받는 사람·채널 값은 전역 절에 쓰지 않고 프로젝트별 설정에서 읽는다. 이 문서는 안만 쓴다.</p>
+<h3><span class="badge tag-warn">🔁 바뀐 결정</span> 결정2. 전달·책임 규칙 7개를 규칙별로 나눠 둘까, 전부 전역 CLAUDE.md 에 둘까?</h3>
+<p><b>지금 문제:</b> 7개 중 허브와 메인 사이의 전달 규칙까지 전역 파일에 넣으면 문서를 안 만드는 세션도 매번 읽는다. 전역 파일은 11.8KB 이고 7개 원문은 10.2KB 라서 거의 두 배가 된다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 전역 파일 수정 범위와 doc-kit 범위를 확정하지 못한다.</p><p><b>범위:</b> 연애혁명 메모리 원본은 지우지 않는다. 전역 파일 수정은 승인 뒤에 한다.</p>
 <table class="opts"><tr><th>선택지</th><th>고르면</th><th>되돌리기</th></tr>
-<tr class="rec" data-check="opt"><td><b>A. 전역 CLAUDE.md 「문서 작성」 절 ✅ 추천</b><br><small>49행 절에 추가</small></td><td>전역 파일도 매 세션 읽히므로 메모리와 같은 효과를 프로젝트 밖에서 얻는다. 파일이 길어진다(분량 미확인).</td><td>쉬움, 백업에서 복원</td></tr>
-<tr data-check="opt"><td><b>B. doc-kit 본문 '전달' 절</b><br><small>스킬 한 곳에 모음</small></td><td>규칙이 스킬 한 곳에 모인다. 호출 때만 읽혀서 문서를 안 만드는 메인 세션이 규칙을 잃는다.</td><td>쉬움</td></tr></table>
-<p data-check="why-rec"><b>추천 이유:</b> 전달 규칙은 문서를 안 만드는 세션에도 필요하므로 매 세션 읽히는 전역 파일에 둔다. <b>감수하는 단점:</b> 전역 파일이 길어지고 수정에 사용자 승인이 필요하다.</p>
+<tr class="rec" data-check="opt"><td><b>A. 규칙별로 나눈다 ✅ 추천</b><br><small>전역 1개·doc-kit·허브 규칙·설정 값(아래 배치표)</small></td><td>전역은 쉬운 말 규칙 3~4줄만 늘어난다. 규칙이 4곳에 나뉘어 찾을 때 표가 필요하다.</td><td>쉬움</td></tr>
+<tr data-check="opt"><td><b>B. 전부 전역 CLAUDE.md</b><br><small>7개를 한 절로</small></td><td>한 곳에 모인다. Unity·Flutter 세션도 채널·제목 규칙을 읽는다.</td><td>쉬움, 백업에서 복원</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> 허브 규칙은 허브만 읽으면 되고 모든 세션에 필요한 건 쉬운 말 규칙 하나뿐이므로, 나눠 두면 다른 세션의 읽기량이 거의 안 늘어난다. <b>감수하는 단점:</b> 규칙이 여러 곳에 있어 고칠 때 배치표를 봐야 한다.</p>
 <p class="answer">답: <code>결정2 A</code></p>
 </section>
 <section class="decision-card" data-check="dcard">
-<h3><span class="badge tag-warn">🔁 바뀐 결정</span> 결정3. 문서 허브를 claude-config 의 Orca 워크스페이스로 옮길까?</h3>
-<p><b>지금 문제:</b> 허브가 연애혁명 저장소 워크트리라서 그 프로젝트 규칙 22KB 를 문서 작업에도 읽는다. 그래서 다른 프로젝트 문서를 맡기 어렵다.</p>
-<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 역할 파일·인계 문서 이전 준비를 시작하지 못한다.</p><p><b>실행 시점:</b> 승인 뒤, 허브 진행 작업이 끝난 시점. 선택과 무관한 조건이다.</p>
+<h3><span class="badge tag-warn">🔁 바뀐 결정</span> 결정3. 새 문서 허브를 claude-config 의 Orca 워크스페이스로 만들까?</h3>
+<p><b>지금 문제:</b> 옛 허브는 연애혁명 저장소 워크트리라서 그 프로젝트 규칙 22KB 를 문서 작업에도 읽는다. 그래서 다른 프로젝트 문서를 맡기 어렵다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 새 허브의 역할 틀·인계 문서 틀을 쓰지 못한다.</p><p><b>실행 시점:</b> 승인 뒤, 옛 허브 진행 작업이 끝난 시점. 선택과 무관한 조건이다.</p>
 <table class="opts"><tr><th>선택지</th><th>고르면</th><th>되돌리기</th></tr>
-<tr class="rec" data-check="opt"><td><b>A. 옮긴다 ✅ 추천</b><br><small>허브·역할 파일·인계 문서를 새 워크스페이스로</small></td><td>프로젝트에 안 묶인다. 재시작 스크립트 경로와 메인의 허브 목록을 고친다.</td><td>보통</td></tr>
-<tr data-check="opt"><td><b>B. 그대로 둔다</b><br><small>연애혁명 워크트리 유지</small></td><td>규칙은 통합돼도 허브는 한 프로젝트에 묶인 채 남는다.</td><td>쉬움</td></tr></table>
-<p data-check="why-rec"><b>추천 이유:</b> 허브가 읽을 규칙은 전부 doc-kit·전역 규칙에 있어야 하므로, 프로젝트 파일에 기대지 않는 위치로 옮긴다. <b>감수하는 단점:</b> 이전 전에 시험 1건이 든다. 연애혁명 메모리 없이 샘플 문서가 검사를 통과하는지 본다.</p>
+<tr class="rec" data-check="opt"><td><b>A. 새 허브를 만든다 ✅ 추천</b><br><small>규칙 틀만 새로 쓰고 옛 허브·옛 산출물·하위 23개는 그대로</small></td><td>프로젝트에 안 묶인 허브가 생긴다. 역할 파일과 인계 문서를 새로 쓰고 메인의 허브 목록에 1줄 추가한다.</td><td>쉬움, 새 허브만 삭제</td></tr>
+<tr data-check="opt"><td><b>B. 만들지 않는다</b><br><small>옛 허브만 사용</small></td><td>규칙은 통합돼도 문서 허브는 한 프로젝트에 묶인 채 남는다.</td><td>쉬움</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> 앞으로 만드는 문서가 프로젝트에 안 묶이려면 읽는 규칙 위치도 달라야 하므로, 새 허브가 doc-kit·전역 규칙만 읽게 한다. <b>감수하는 단점:</b> 허브 두 개가 한동안 같이 있어 세션이 하나 더 든다.</p>
 <p class="answer">답: <code>결정3 A</code></p>
 </section>
 <section class="decision-card" data-check="dcard">
-<h3>결정4. 이전 전에 하위 워크스페이스 23개의 부모를 새 허브로 바꿀까?</h3>
-<p><b>지금 문제:</b> 하위 정리는 부모 허브가 하는 일이다. 그래서 옛 허브를 닫으면 하위가 고아가 돼 아무도 정리하지 않는다.</p>
-<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 옛 허브를 언제 닫을지 정하지 못한다.</p><p><b>담당:</b> 새 허브가 이전 직후 1회 훑고, 보관만 남는 하위는 사용자에게 목록으로 보고한다.</p>
+<h3><span class="badge tag-warn">🔁 바뀐 결정</span> 결정4. 앞으로 만드는 문서를 새 허브 전용 브랜치의 docs/out/ 한 곳에 모을까?</h3>
+<p><b>지금 문제:</b> 개인 보고 HTML 이 90_정리기록과 허브 out/ 에 나뉜다. 옛 허브는 detached HEAD 라서 커밋해도 이력에 안 남는다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> doc-kit 의 저장 위치·브랜치 규칙을 쓰지 못한다.</p><p><b>범위:</b> 앞으로 만드는 개인 HTML 보고만. 옛 산출물은 제자리에 둔다. 저장소에 커밋하는 기술 문서는 각 저장소 docs/ 관례를 따른다.</p>
 <table class="opts"><tr><th>선택지</th><th>고르면</th><th>되돌리기</th></tr>
-<tr class="rec" data-check="opt"><td><b>A. 새 허브로 재연결 ✅ 추천</b><br><small>새 허브가 같은 규칙으로 정리·보관</small></td><td>정리 담당이 끊기지 않는다. 폴더 경로가 안 바뀌는지는 시험 1건이 필요하다(미확인).</td><td>보통</td></tr>
-<tr data-check="opt"><td><b>B. 옛 허브를 기한까지 유지</b><br><small>하위 정리가 끝날 때까지</small></td><td>허브 두 개가 같이 돈다. 기한이 길어지면 세션이 계속 남는다.</td><td>쉬움</td></tr></table>
-<p data-check="why-rec"><b>추천 이유:</b> 자동 정리 규칙(11-06 사용자 지시)이 허브별 하위만 대상으로 하므로 부모를 넘겨야 규칙이 이어진다. <b>감수하는 단점:</b> 미커밋이 남은 하위는 규칙상 영구 보관만 한다. 예: 성능 보고서 하위는 미커밋 946건이다.</p>
-<p class="answer">답: <code>결정4 A</code></p>
-</section>
-<section class="decision-card" data-check="dcard">
-<h3>결정5. 개인 HTML 보고를 허브 전용 브랜치의 docs/out/ 한 곳에 모을까?</h3>
-<p><b>지금 문제:</b> 개인 보고 HTML 이 90_정리기록과 허브 out/ 에 나뉜다. 새 허브는 detached HEAD 라서 커밋해도 이력에 안 남는다.</p>
-<p data-check="blocks"><b>안 정하면 멈추는 것:</b> doc-kit 의 저장 위치·브랜치 규칙을 쓰지 못한다.</p><p><b>범위:</b> 개인 HTML 보고만. 저장소에 커밋하는 기술 문서(데이터 명세·기술 기록·해설 md)는 각 저장소 docs/ 관례를 따른다.</p>
-<table class="opts"><tr><th>선택지</th><th>고르면</th><th>되돌리기</th></tr>
-<tr class="rec" data-check="opt"><td><b>A. 허브 전용 브랜치 + docs/out/ ✅ 추천</b><br><small>HTML 만 추적, main 직접 커밋 금지</small></td><td>이력이 남고 찾는 곳이 하나다. 브랜치 이름은 전역 규칙 확인이 필요하다.</td><td>쉬움</td></tr>
+<tr class="rec" data-check="opt"><td><b>A. 전용 브랜치 + docs/out/ ✅ 추천</b><br><small>브랜치 이름 chore/docs-hub, HTML 만 추적</small></td><td>이력이 남고 찾는 곳이 하나다. main 직접 커밋은 막는다.</td><td>쉬움</td></tr>
 <tr data-check="opt"><td><b>B. 현행 유지</b><br><small>저장 2곳, 이력 없음</small></td><td>규칙은 안 바뀐다. 이력이 안 남는다.</td><td>쉬움</td></tr></table>
 <p data-check="why-rec"><b>추천 이유:</b> 이력이 안 남는 곳에 산출물을 두면 사라지므로 브랜치 위에서 한 곳에 모은다. <b>감수하는 단점:</b> 90_정리기록 에 두던 습관을 바꿔야 한다.</p>
-<p class="answer">답: <code>결정5 A</code></p>
+<p class="answer">답: <code>결정4 A</code></p>
 </section>
+
+<h3>결정2 배치표 — 전달·책임 규칙 7개가 가는 곳</h3>
+<table><tr><th>규칙(메모리)</th><th>남는 내용</th><th>가는 곳</th></tr>
+<tr><td><code>docs-as-html</code></td><td>사용자 검토용 문서는 자체 완결 HTML</td><td>doc-kit '형식'</td></tr>
+<tr><td></td><td>HTML 경로를 메인에 보내면 메인이 채널에 올림</td><td>허브 공통 규칙. 채널 값은 설정 channel</td></tr>
+<tr><td><code>user-docs-as-html</code></td><td>HTML·쉬운 말·결정 카드·이모지 헤더</td><td>doc-kit(대부분 이미 중복)</td></tr>
+<tr><td></td><td>PR 직전 검수</td><td>전역 「커밋·리뷰 흐름」에 이미 있어 추가 없음</td></tr>
+<tr><td><code>slack-report-html-format</code></td><td>제작은 문서 허브, 업로드는 메인</td><td>허브 역할 파일. 남는 전역 문장 없음</td></tr>
+<tr><td></td><td>HTML 양식(결론 3줄·도식·강조)</td><td>doc-kit '형식'</td></tr>
+<tr><td><code>visual-change-doc-for-jeongo</code></td><td>비주얼 변경 문서 구성(구조도→전후 비교→흐름)</td><td>doc-kit '비주얼 변경' 유형</td></tr>
+<tr><td></td><td>받는 사람, 직접 전달 금지, 채널</td><td>프로젝트별 설정 recipients·channel</td></tr>
+<tr><td></td><td>허브 신설 경위</td><td>허브 역할 파일. 남는 전역 문장 없음</td></tr>
+<tr><td><code>slack-plain-language</code></td><td>쉬운 말, 내부 기호 금지, 결정 요청 형식</td><td>전역 쉬운 말 규칙 3~4줄(유일한 전역) + doc-kit 상세</td></tr>
+<tr><td><code>compressed-headline-style</code></td><td>명사형 압축·배지·한 줄 한 사실</td><td>doc-kit '문장 규칙'. 전역 「한국어 텍스트 규칙」과 겹침</td></tr>
+<tr><td><code>hub-html-subject-format</code></td><td>허브→메인 제목 형식</td><td>허브 공통 규칙(orca-hub-create 의 references)</td></tr></table>
+<p class="cap">전역으로 가는 것은 1개다. 크기는 전역 파일 11,817바이트(ls), 7개 원문 합계 10,235바이트(wc -c)다.</p>
+<h3>7개 본문의 바깥 링크</h3>
+<table><tr><th>메모리</th><th>가리키는 곳</th><th>처리</th></tr>
+<tr><td>slack-report-html-format</td><td>coordinator-completion-flow</td><td>링크 없이 필요한 문장만 본문에 넣음</td></tr>
+<tr><td>visual-change-doc-for-jeongo</td><td>ui-prefab-layout-rules</td><td>같음</td></tr>
+<tr><td>hub-html-subject-format</td><td>hub-decision-to-main</td><td>같음</td></tr>
+<tr><td>compressed-headline-style</td><td>compressed-korean</td><td>같음. 대상 메모리 파일이 없다(ls 확인)</td></tr></table>
+<p class="cap">바깥 링크는 4개다. 메모리 원본은 지우지 않으므로 기존 링크는 그대로 유효하다. 새 위치에는 링크를 쓰지 않는다.</p>
 
 <h2>📄 도식 3장</h2>
 <h3>1. 이전 구조</h3>
@@ -112,45 +125,54 @@ ul.facts{margin:6px 0;padding-left:20px}ul.facts li{margin:2px 0}
 <p class="cap">규칙 4곳이 허브 하나로 모이고, 허브는 연애혁명 저장소 안에 있다.</p>
 <h3>2. 문제 위치 ⚠️</h3>
 <div class="diagrams one"><div class="diagram" data-check="diagram"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" data-diagram-type="DESCRIPTION" style="width:701px;height:465px;background:#FFFFFF;" width="701px" height="465px" viewBox="0 0 701 465" zoomAndPan="magnify" preserveAspectRatio="none" contentStyleType="text/css"><?plantuml 1.2026.8?><defs/><g font-family="sans-serif" lengthAdjust="spacing"><g class="title" data-source-line="5"><text x="208.493" y="22.6" fill="#000" font-size="14" textLength="277.214" font-weight="700" font-family="'Apple SD Gothic Neo'">문제 위치 ⚠️: 같은 규칙이 겹치고, 프로젝트에 묶임</text></g><!--cluster 규칙이 사는 곳--><g class="cluster" data-qualified-name="... .. ." id="ent0001" data-source-line="7"><path d="M11,43.9 L75.592,43.9 A7.5,7.5 0 0 1 80.592,48.9 L87.592,64.3 L201.28,64.3 A5,5 0 0 1 206.28,69.3 L206.28,445.9 A5,5 0 0 1 201.28,450.9 L11,450.9 A5,5 0 0 1 6,445.9 L6,48.9 A5,5 0 0 1 11,43.9" style="stroke:#000;stroke-width:1.5;" fill="none"/><line x1="6" y1="64.3" x2="87.592" y2="64.3" style="stroke:#000;stroke-width:1.5;"/><text x="10" y="56.7" fill="#000" font-size="12" textLength="68.592" font-weight="700" font-family="'Apple SD Gothic Neo'">규칙이 사는 곳</text></g><!--cluster 연애혁명 저장소--><g class="cluster" data-qualified-name=".... ..." id="ent0006" data-source-line="13"><path d="M239.28,92.9 L311.096,92.9 A7.5,7.5 0 0 1 316.096,97.9 L323.096,113.3 L521.4,113.3 A5,5 0 0 1 526.4,118.3 L526.4,283.9 A5,5 0 0 1 521.4,288.9 L239.28,288.9 A5,5 0 0 1 234.28,283.9 L234.28,97.9 A5,5 0 0 1 239.28,92.9" style="stroke:#000;stroke-width:1.5;" fill="none"/><line x1="234.28" y1="113.3" x2="323.096" y2="113.3" style="stroke:#000;stroke-width:1.5;"/><text x="238.28" y="105.7" fill="#000" font-size="12" textLength="75.816" font-weight="700" font-family="'Apple SD Gothic Neo'">연애혁명 저장소</text></g><!--cluster 산출물--><g class="cluster" data-qualified-name="..." id="ent0010" data-source-line="18"><path d="M559.4,190.9 L586.54,190.9 A7.5,7.5 0 0 1 591.54,195.9 L598.54,211.3 L681.2,211.3 A5,5 0 0 1 686.2,216.3 L686.2,268.9 A5,5 0 0 1 681.2,273.9 L559.4,273.9 A5,5 0 0 1 554.4,268.9 L554.4,195.9 A5,5 0 0 1 559.4,190.9" style="stroke:#000;stroke-width:1.5;" fill="none"/><line x1="554.4" y1="211.3" x2="598.54" y2="211.3" style="stroke:#000;stroke-width:1.5;"/><text x="558.4" y="203.7" fill="#000" font-size="12" textLength="31.14" font-weight="700" font-family="'Apple SD Gothic Neo'">산출물</text></g><!--entity SK--><g class="entity" data-qualified-name="... .. ..SK" id="ent0002" data-source-line="8"><rect x="22" y="371.3" width="168.284" height="63.2" fill="#FFC9C9" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="32" y="392.1" fill="#000" font-size="12" textLength="55.332" font-family="'Apple SD Gothic Neo'">⚠️ 스킬 7개</text><text x="32" y="406.5" fill="#000" font-size="12" textLength="122.376" font-family="'Apple SD Gothic Neo'">같은 문장이 3~4곳에 복사</text><text x="32" y="420.9" fill="#000" font-size="12" textLength="148.284" font-family="'Apple SD Gothic Neo'">고유값이 본문에 섞임(6개 스킬)</text></g><!--entity MEM--><g class="entity" data-qualified-name="... .. ..MEM" id="ent0003" data-source-line="9"><rect x="34.32" y="243.9" width="143.648" height="92" fill="#FFC9C9" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="44.32" y="264.7" fill="#000" font-size="12" textLength="70.764" font-family="'Apple SD Gothic Neo'">⚠️ 메모리 16개</text><text x="44.32" y="279.1" fill="#000" font-size="12" textLength="103.368" font-family="'Apple SD Gothic Neo'">양식·전달 규칙이 섞임</text><text x="44.32" y="293.5" fill="#000" font-size="12" textLength="54.492" font-family="'Apple SD Gothic Neo'">쌍 겹침 4쌍</text><text x="44.32" y="307.9" fill="#000" font-size="12" textLength="108.768" font-family="'Apple SD Gothic Neo'">고유값 7개 파일에 섞임</text><text x="44.32" y="322.3" fill="#000" font-size="12" textLength="123.648" font-family="'Apple SD Gothic Neo'">다른 프로젝트에선 안 읽힘</text></g><!--entity ROLE--><g class="entity" data-qualified-name="... .. ..ROLE" id="ent0004" data-source-line="10"><rect x="34.53" y="160.5" width="143.216" height="48.8" fill="#FFC9C9" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="44.53" y="181.3" fill="#000" font-size="12" textLength="59.832" font-family="'Apple SD Gothic Neo'">⚠️ 역할 파일</text><text x="44.53" y="195.7" fill="#000" font-size="12" textLength="123.216" font-family="'Apple SD Gothic Neo'">저장소 밖 · 버전 관리 없음</text></g><!--entity HO--><g class="entity" data-qualified-name="... .. ..HO" id="ent0005" data-source-line="11"><rect x="60.87" y="76.5" width="90.548" height="48.8" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="70.87" y="97.3" fill="#000" font-size="12" textLength="44.676" font-family="'Apple SD Gothic Neo'">인계 문서</text><text x="70.87" y="111.7" fill="#000" font-size="12" textLength="70.548" font-family="'Apple SD Gothic Neo'">HANDOFF.md</text></g><!--entity HUB--><g class="entity" data-qualified-name=".... ....HUB" id="ent0007" data-source-line="14"><rect x="250.28" y="209.3" width="125.804" height="63.2" fill="#FFC9C9" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="260.28" y="230.1" fill="#000" font-size="12" textLength="59.832" font-family="'Apple SD Gothic Neo'">⚠️ 문서 허브</text><text x="260.28" y="244.5" fill="#000" font-size="12" textLength="105.804" font-family="'Apple SD Gothic Neo'">연애혁명 규칙 22KB를</text><text x="260.28" y="258.9" fill="#000" font-size="12" textLength="89.352" font-family="'Apple SD Gothic Neo'">문서 작업에도 읽음</text></g><!--entity KIDS--><g class="entity" data-qualified-name=".... ....KIDS" id="ent0008" data-source-line="15"><rect x="436.09" y="216.5" width="74.312" height="48.8" fill="#DDEBFF" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="446.09" y="237.3" fill="#000" font-size="12" textLength="54.312" font-family="'Apple SD Gothic Neo'">개인-* 하위</text><text x="446.09" y="251.7" fill="#000" font-size="12" textLength="23.208" font-family="'Apple SD Gothic Neo'">23개</text></g><!--entity PD--><g class="entity" data-qualified-name=".... ....PD" id="ent0009" data-source-line="16"><rect x="255.2" y="125.5" width="115.976" height="48.8" fill="#DDEBFF" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="265.2" y="146.3" fill="#000" font-size="12" textLength="95.976" font-family="'Apple SD Gothic Neo'">프로젝트 문서 docs/</text><text x="265.2" y="160.7" fill="#000" font-size="12" textLength="78.972" font-family="'Apple SD Gothic Neo'">허브 작업물 아님</text></g><!--entity O1--><g class="entity" data-qualified-name="....O1" id="ent0011" data-source-line="19"><rect x="570.4" y="223.7" width="99.8" height="34.4" fill="#FFC9C9" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="580.4" y="244.5" fill="#000" font-size="12" textLength="79.8" font-family="'Apple SD Gothic Neo'">⚠️ 저장 위치 3곳</text></g><!--link SK to HUB--><g class="link" data-entity-1="ent0002" data-entity-2="ent0007" id="lnk12" data-source-line="21" data-link-type="dependency"><path d="M187.44,370.84 C196.84,365.75 206.02,360.09 214.28,353.9 C244.62,331.18 269.23,301.65 287.33,277.01" style="stroke:#181818;stroke-width:1;" fill="none" id="SK-to-HUB"/><polygon points="290.29,272.98,281.738,277.865,287.33,277.01,288.186,282.601,290.29,272.98" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link MEM to HUB--><g class="link" data-entity-1="ent0003" data-entity-2="ent0007" id="lnk13" data-source-line="22" data-link-type="dependency"><path d="M178.28,272.9 C201.65,267.32 222.557,262.322 245.197,256.912" style="stroke:#181818;stroke-width:1;" fill="none" id="MEM-to-HUB"/><polygon points="250.06,255.75,240.377,253.951,245.197,256.912,242.236,261.732,250.06,255.75" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link ROLE to HUB--><g class="link" data-entity-1="ent0004" data-entity-2="ent0007" id="lnk14" data-source-line="23" data-link-type="dependency"><path d="M177.99,204.25 C201.38,210.64 222.377,216.372 245.067,222.572" style="stroke:#181818;stroke-width:1;" fill="none" id="ROLE-to-HUB"/><polygon points="249.89,223.89,242.263,217.659,245.067,222.572,240.154,225.376,249.89,223.89" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link HO to HUB--><g class="link" data-entity-1="ent0005" data-entity-2="ent0007" id="lnk15" data-source-line="24" data-link-type="dependency"><path d="M151.82,108.44 C173.56,114.33 198.37,124.7 214.28,142.9 C229.05,159.78 212.78,174 226.28,191.9 C232.69,200.4 236.911,204.83 245.871,210.95" style="stroke:#181818;stroke-width:1;" fill="none" id="HO-to-HUB"/><polygon points="250,213.77,244.824,205.391,245.871,210.95,240.312,211.997,250,213.77" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link HUB to KIDS--><g class="link" data-entity-1="ent0007" data-entity-2="ent0008" id="lnk16" data-source-line="25" data-link-type="dependency"><path d="M376.2,240.9 C396.44,240.9 413.24,240.9 430.95,240.9" style="stroke:#181818;stroke-width:1;" fill="none" id="HUB-to-KIDS"/><polygon points="435.95,240.9,426.95,236.9,430.95,240.9,426.95,244.9,435.95,240.9" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link KIDS to O1--><g class="link" data-entity-1="ent0008" data-entity-2="ent0011" id="lnk17" data-source-line="26" data-link-type="dependency"><path d="M510.85,240.9 C528.81,240.9 545.7,240.9 565.1,240.9" style="stroke:#181818;stroke-width:1;" fill="none" id="KIDS-to-O1"/><polygon points="570.1,240.9,561.1,236.9,565.1,240.9,561.1,244.9,570.1,240.9" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><?plantuml-src VLDHJzDW57tlhxWPBsf4tK0K7qnWes8GPbnysqkpbT6mjSjMOgB182c4i1d4C3PDkzG439APB1IX9FZ2J_6ntsty2zwltKOruDlzUkyzzvnpRwkBYbgMAb89ylAyj5JKHKtLvwII3B69ShaeGoO5JpHzGSd1dAp5XEgWlheWvRLNYbg0UQbObIEPYhQavfDQHPKh4ByNIKH6P9JNCiGJWgxeD8HrNBHDGDF0inRy-cp_ThSUWTVzXDOAUAScdb5q3DxH6UKznxuD_ex1lfXeM_wcYyqFX722RKCeolCww1fKbCA23dcb8kTqHLE5ifHRb0eawX8CLpjiSmSynud16m60bqfgWTZ4GWA0ctl-QWSUU5qpg_R8SARjVTu_ydQKUeFPpWy2enB7HjFskXzvcZakhwKq6csYTcECO7gGDsCWLI4p0qEYc1nFZbyvdNtROOS7x6i7ucC10zpTnffrSOgsmMgTY2tX02gelmyjEe1HYYE40WtWr-jedLzIoggijiVstN_DHCC6R6m0MZ_zTYlWEZir-r-osFpkD-pU169Yht2Nrkl0khjmSGhio23Qu1slS47ON4Uh7W2_I3-RkXePBTTpZC1mWzHFJyobqg9ufvGF-gRJl4jycBmlB5zk5vjTRDX-wnqxN8C1YUls6qA3tznWRfr8Hvj3To6Hc9ba-wIeLuljRMokaKTio-3-z6LClvoyMWNvJaA6Ru7VQD5vPzN427qAUcQUfZ8mb4fDJOhYtqtHVVHPvhLSzMvM3SdsUB3EEIsAhY5SqlFK02xgoMeNJqmglVRC0v_wFzz8y4CGMZe-KBGiqAqE3p_cCWL-2lqus5x_GIiPX6G7Zxb48T39N-du7m00?></g></svg></div></div>
-<p class="cap">빨강이 문제다. 규칙 복제 · 프로젝트 종속 · 저장 위치 3곳.</p>
+<p class="cap">빨강이 문제다. 규칙 복제 · 고유값 혼입 · 프로젝트 종속 · 저장 위치 3곳.</p>
 <h3>3. 변경 후 구조</h3>
-<div class="diagrams one"><div class="diagram" data-check="diagram"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" data-diagram-type="DESCRIPTION" style="width:883px;height:321px;background:#FFFFFF;" width="883px" height="321px" viewBox="0 0 883 321" zoomAndPan="magnify" preserveAspectRatio="none" contentStyleType="text/css"><?plantuml 1.2026.8?><defs/><g font-family="sans-serif" lengthAdjust="spacing"><g class="title" data-source-line="5"><text x="170.294" y="22.6" fill="#000" font-size="14" textLength="536.102" font-weight="700" font-family="'Apple SD Gothic Neo'">변경 후: 개인 설정 저장소가 규칙·허브를 모두 가짐 (초록=추가 노랑=변경 빨강=삭제 파랑=그대로)</text></g><!--cluster 개인 설정 저장소 (claude-config)--><g class="cluster" data-qualified-name=".. .. ... .claude-config." id="ent0001" data-source-line="7"><path d="M266.86,43.9 L425.472,43.9 A7.5,7.5 0 0 1 430.472,48.9 L437.472,64.3 L863.69,64.3 A5,5 0 0 1 868.69,69.3 L868.69,219.9 A5,5 0 0 1 863.69,224.9 L266.86,224.9 A5,5 0 0 1 261.86,219.9 L261.86,48.9 A5,5 0 0 1 266.86,43.9" style="stroke:#000;stroke-width:1.5;" fill="none"/><line x1="261.86" y1="64.3" x2="437.472" y2="64.3" style="stroke:#000;stroke-width:1.5;"/><text x="265.86" y="56.7" fill="#000" font-size="12" textLength="162.612" font-weight="700" font-family="'Apple SD Gothic Neo'">개인 설정 저장소 (claude-config)</text></g><!--entity DK--><g class="entity" data-qualified-name=".. .. ... .claude-config..DK" id="ent0002" data-source-line="8"><rect x="277.86" y="160.5" width="159.632" height="48.8" fill="#DAFBE1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="287.86" y="181.3" fill="#000" font-size="12" textLength="97.084" font-family="'Apple SD Gothic Neo'">🟢 doc-kit 스킬 1개</text><text x="287.86" y="195.7" fill="#000" font-size="12" textLength="139.632" font-family="'Apple SD Gothic Neo'">공통 규칙 한 곳 + 유형별 참고</text></g><!--entity KEEP--><g class="entity" data-qualified-name=".. .. ... .claude-config..KEEP" id="ent0003" data-source-line="9"><rect x="294.68" y="76.5" width="125.988" height="48.8" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="304.68" y="97.3" fill="#000" font-size="12" textLength="105.988" font-family="'Apple SD Gothic Neo'">🟡 PR 스킬 · QA 스킬</text><text x="304.68" y="111.7" fill="#000" font-size="12" textLength="104.784" font-family="'Apple SD Gothic Neo'">doc-kit 규칙을 참조만</text></g><!--entity HUB--><g class="entity" data-qualified-name=".. .. ... .claude-config..HUB" id="ent0004" data-source-line="10"><rect x="516.21" y="160.5" width="149.268" height="48.8" fill="#DAFBE1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="526.21" y="181.3" fill="#000" font-size="12" textLength="129.268" font-family="'Apple SD Gothic Neo'">🟢 문서 허브 워크스페이스</text><text x="526.21" y="195.7" fill="#000" font-size="12" textLength="116.904" font-family="'Apple SD Gothic Neo'">역할 파일·인계 문서 포함</text></g><!--entity OUT--><g class="entity" data-qualified-name=".. .. ... .claude-config..OUT" id="ent0005" data-source-line="11"><rect x="733.53" y="158.5" width="119.168" height="48.8" fill="#DAFBE1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="743.53" y="179.3" fill="#000" font-size="12" textLength="77.368" font-family="'Apple SD Gothic Neo'">🟢 산출물 한 곳</text><text x="743.53" y="193.7" fill="#000" font-size="12" textLength="99.168" font-family="'Apple SD Gothic Neo'">docs/out/날짜-주제/</text></g><!--entity OLD1--><g class="entity" data-qualified-name="OLD1" id="ent0006" data-source-line="13"><rect x="20.61" y="62.3" width="143.916" height="63.2" fill="#FFC9C9" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="30.61" y="83.1" fill="#000" font-size="12" textLength="123.916" font-family="'Apple SD Gothic Neo'">🔴 스킬 5개 (현재 7개 중)</text><text x="30.61" y="97.5" fill="#000" font-size="12" textLength="79.932" font-family="'Apple SD Gothic Neo'">구조안·해설·기록</text><text x="30.61" y="111.9" fill="#000" font-size="12" textLength="79.932" font-family="'Apple SD Gothic Neo'">·보고서·공동작성</text></g><!--entity OLD2--><g class="entity" data-qualified-name="OLD2" id="ent0007" data-source-line="14"><rect x="7" y="160.5" width="171.14" height="48.8" fill="#FFC9C9" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="17" y="181.3" fill="#000" font-size="12" textLength="143.356" font-family="'Apple SD Gothic Neo'">🔴 프로젝트 메모리 16개 제거</text><text x="17" y="195.7" fill="#000" font-size="12" textLength="151.14" font-family="'Apple SD Gothic Neo'">8개 흡수·1개 삭제·7개 전역 이전</text></g><!--entity KIDS--><g class="entity" data-qualified-name="KIDS" id="ent0008" data-source-line="15"><rect x="726.48" y="242.3" width="133.268" height="63.2" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="736.48" y="263.1" fill="#000" font-size="12" textLength="99.832" font-family="'Apple SD Gothic Neo'">🟡 개인-* 하위 23개</text><text x="736.48" y="277.5" fill="#000" font-size="12" textLength="113.268" font-family="'Apple SD Gothic Neo'">부모를 새 허브로 재연결</text><text x="736.48" y="291.9" fill="#000" font-size="12" textLength="113.208" font-family="'Apple SD Gothic Neo'">(경로 그대로, 시험 필요)</text></g><!--entity GL--><g class="entity" data-qualified-name="GL" id="ent0009" data-source-line="16"><rect x="260.14" y="244.5" width="195.068" height="48.8" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="270.14" y="265.3" fill="#000" font-size="12" textLength="117.892" font-family="'Apple SD Gothic Neo'">🟡 전역 CLAUDE.md 절</text><text x="270.14" y="279.7" fill="#000" font-size="12" textLength="175.068" font-family="'Apple SD Gothic Neo'">전달·책임 규칙 7개 (메모리에서 이전)</text></g><!--entity CFG--><g class="entity" data-qualified-name="CFG" id="ent0010" data-source-line="17"><rect x="23.88" y="244.3" width="137.384" height="63.2" fill="#DAFBE1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="33.88" y="265.1" fill="#000" font-size="12" textLength="112.792" font-family="'Apple SD Gothic Neo'">🟢 프로젝트별 설정 1개</text><text x="33.88" y="279.5" fill="#000" font-size="12" textLength="117.384" font-family="'Apple SD Gothic Neo'">받는 사람·채널·이름 규칙</text><text x="33.88" y="293.9" fill="#000" font-size="12" textLength="77.688" font-family="'Apple SD Gothic Neo'">(/.config, git 밖)</text></g><!--link DK to HUB--><g class="link" data-entity-1="ent0002" data-entity-2="ent0004" id="lnk11" data-source-line="18" data-link-type="dependency"><path d="M437.91,184.9 C463.13,184.9 485.93,184.9 510.77,184.9" style="stroke:#181818;stroke-width:1;" fill="none" id="DK-to-HUB"/><polygon points="515.77,184.9,506.77,180.9,510.77,184.9,506.77,188.9,515.77,184.9" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link GL to HUB--><g class="link" data-entity-1="ent0009" data-entity-2="ent0004" id="lnk12" data-source-line="19" data-link-type="dependency"><path d="M427.09,244.04 C456.92,233.2 487.101,222.238 516.901,211.408" style="stroke:#181818;stroke-width:1;" fill="none" id="GL-to-HUB"/><polygon points="521.6,209.7,511.775,209.015,516.901,211.408,514.508,216.534,521.6,209.7" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link CFG to DK--><g class="link" data-entity-1="ent0010" data-entity-2="ent0002" id="lnk13" data-source-line="20" data-link-type="dependency"><path d="M161.67,252.35 C199.43,239.29 241.634,224.684 279.994,211.424" style="stroke:#181818;stroke-width:1;" fill="none" id="CFG-to-DK"/><polygon points="284.72,209.79,274.907,208.95,279.994,211.424,277.521,216.511,284.72,209.79" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link KEEP to HUB--><g class="link" data-entity-1="ent0003" data-entity-2="ent0004" id="lnk14" data-source-line="21" data-link-type="dependency"><path d="M420.93,123.52 C451.95,134.79 484.841,146.742 516.681,158.312" style="stroke:#181818;stroke-width:1;" fill="none" id="KEEP-to-HUB"/><polygon points="521.38,160.02,514.287,153.187,516.681,158.312,511.555,160.706,521.38,160.02" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link HUB to OUT--><g class="link" data-entity-1="ent0004" data-entity-2="ent0005" id="lnk15" data-source-line="22" data-link-type="dependency"><path d="M665.85,184.16 C688.02,183.94 707.03,183.75 728.1,183.54" style="stroke:#181818;stroke-width:1;" fill="none" id="HUB-to-OUT"/><polygon points="733.1,183.49,724.061,179.58,728.1,183.54,724.14,187.579,733.1,183.49" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link HUB to KIDS--><g class="link" data-entity-1="ent0004" data-entity-2="ent0008" id="lnk16" data-source-line="23" data-link-type="dependency"><path d="M647.63,209.69 C672.05,220.54 696.311,231.33 721.771,242.64" style="stroke:#181818;stroke-width:1;" fill="none" id="HUB-to-KIDS"/><polygon points="726.34,244.67,719.739,237.361,721.771,242.64,716.491,244.672,726.34,244.67" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link OLD1 to DK--><g class="link" data-entity-1="ent0006" data-entity-2="ent0002" id="lnk17" data-source-line="24" data-link-type="dependency"><path d="M164.77,118.53 C202.06,131.42 242.875,145.535 280.235,158.465" style="stroke:#181818;stroke-width:1;stroke-dasharray:7,7;" fill="none" id="OLD1-to-DK"/><polygon points="284.96,160.1,277.763,153.376,280.235,158.465,275.147,160.936,284.96,160.1" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="209.14" y="129.75" fill="#000" font-size="12" textLength="20.76" font-family="'Apple SD Gothic Neo'">흡수</text></g><!--link OLD2 to DK--><g class="link" data-entity-1="ent0007" data-entity-2="ent0002" id="lnk18" data-source-line="25" data-link-type="dependency"><path d="M178.63,184.9 C210.46,184.9 241.45,184.9 272.71,184.9" style="stroke:#181818;stroke-width:1;stroke-dasharray:7,7;" fill="none" id="OLD2-to-DK"/><polygon points="277.71,184.9,268.71,180.9,272.71,184.9,268.71,188.9,277.71,184.9" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="209.14" y="180.7" fill="#000" font-size="12" textLength="20.76" font-family="'Apple SD Gothic Neo'">흡수</text></g><?plantuml-src TLDTJzDW5BxlhpYPDqCTE8oV2IQuCJGGlv2xtJHR6GsZ9Lk9YKOpiPe55uLaSrEwsI4AcfeKD-XCy6O_f-zfua_mlEsweCZT-_ayptdESufBih8Y5iHbo4eBucfUIwcATaTSbY0okRAIbs0k2TEgjYXdu8waHeJYy7rnKSogZsGb1mjYlYWTkocegqeseHOKgG3n2ySkZb7CoOybY8yBcgmH2UkKt1-_mDlIhuDh6zZi0UexQDO0pHAsFkEhYckNm7KC_Fc-xtZrCkjLsESZOD_ssEO6_IdXxWP4iLjcxUO47bRvS_QonrgR4mDmzdFFjMiJkFOTJGEyIeNVkKwFLKgiROm8UMb10qs5WfnRr20h5wIC9gkAi29cbiGS-N6AC8Xcyk9gLefbL6L1per4u8a0m7-BIevgY_p--74RicecjYHhWEixtfe5SG9BAsxdm7jrC2WBl9e1RgS3vm0DqslKM4S7j7jknuo0M8Ja39n9JgPkJiLFmBVXteCGkU_0_Sd19gs4j045Ddr4RDjij-A3panDtOCpgLJgQkBIVrGpguSwcUNx3RXLyPvR7FfD0vjTMgGLh7_tQYQt4vj7VOSCSabs-E-jvTNsVA9RypTFbRyDk6RZeS6iez04NtbnJ5tLnjYQYRj633yTKT_6VB2xym-7O4-5ly2gtT28IsGnHBs6ZYqBhl0DxcoEaEa75Xc0jJBbgDQbRlOTjsTJRD9Ats6TBlbDskcmSy3UliVM9khx0UjiCiwzIbnBN3j1wbLrIX6QJM-z1-nhbGVp2_Nviazi6kw-dLQkyetNR6EvqNVY_esVnhuJw3DriXEujQOUKex_dv9w7kGnTfOyQw2Xm_X5FrJiiCJ9QJZmHNdGEf86P0FMRVS7wOZIFF2ZOVhF0xusl7g3e7JyK1q9id4xEJVCnh_a0ws9sSdvvDJeSfOEofG6KsUlBOh1_ajiwM6m_UAYGrEmli734PGPK4tFdaAq_PUn_aG4unSC4BEts7gLNBHOgy9fTQPly1HssPUGdifzDZOQ3ETvoD4mCFjTG9j8JGzpHECLYztWEHL8JRZaB_WwEIFuenAUypZpDILnkEP-2Nv8HaVv3xW-wBNWj_6Vmpy0?></g></svg></div></div>
-<p class="cap">초록은 추가, 노랑은 변경, 빨강은 삭제다.</p>
+<div class="diagrams one"><div class="diagram" data-check="diagram"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" data-diagram-type="DESCRIPTION" style="width:893px;height:557px;background:#FFFFFF;" width="893px" height="557px" viewBox="0 0 893 557" zoomAndPan="magnify" preserveAspectRatio="none" contentStyleType="text/css"><?plantuml 1.2026.8?><defs/><g font-family="sans-serif" lengthAdjust="spacing"><g class="title" data-source-line="5"><text x="165.626" y="22.6" fill="#000" font-size="14" textLength="555.408" font-weight="700" font-family="'Apple SD Gothic Neo'">변경 후: 규칙·새 허브만 새 저장소로, 옛 자료는 제자리 (초록=추가 노랑=변경 빨강=삭제 파랑=그대로)</text></g><!--cluster 개인 설정 저장소 (claude-config)--><g class="cluster" data-qualified-name=".. .. ... .claude-config." id="ent0001" data-source-line="7"><path d="M13.43,109.2 L172.042,109.2 A7.5,7.5 0 0 1 177.042,114.2 L184.042,129.6 L873.66,129.6 A5,5 0 0 1 878.66,134.6 L878.66,285.2 A5,5 0 0 1 873.66,290.2 L13.43,290.2 A5,5 0 0 1 8.43,285.2 L8.43,114.2 A5,5 0 0 1 13.43,109.2" style="stroke:#000;stroke-width:1.5;" fill="none"/><line x1="8.43" y1="129.6" x2="184.042" y2="129.6" style="stroke:#000;stroke-width:1.5;"/><text x="12.43" y="122" fill="#000" font-size="12" textLength="162.612" font-weight="700" font-family="'Apple SD Gothic Neo'">개인 설정 저장소 (claude-config)</text></g><!--cluster 연애혁명 쪽 (그대로, 이동 없음)--><g class="cluster" data-qualified-name=".... . ..... .. ..." id="ent0009" data-source-line="16"><path d="M11,375.2 L155.38,375.2 A7.5,7.5 0 0 1 160.38,380.2 L167.38,395.6 L477.53,395.6 A5,5 0 0 1 482.53,400.6 L482.53,537.2 A5,5 0 0 1 477.53,542.2 L11,542.2 A5,5 0 0 1 6,537.2 L6,380.2 A5,5 0 0 1 11,375.2" style="stroke:#000;stroke-width:1.5;" fill="none"/><line x1="6" y1="395.6" x2="167.38" y2="395.6" style="stroke:#000;stroke-width:1.5;"/><text x="10" y="388" fill="#000" font-size="12" textLength="148.38" font-weight="700" font-family="'Apple SD Gothic Neo'">연애혁명 쪽 (그대로, 이동 없음)</text></g><!--entity DK--><g class="entity" data-qualified-name=".. .. ... .claude-config..DK" id="ent0002" data-source-line="8"><rect x="336.38" y="141.8" width="159.632" height="48.8" fill="#DAFBE1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="346.38" y="162.6" fill="#000" font-size="12" textLength="97.084" font-family="'Apple SD Gothic Neo'">🟢 doc-kit 스킬 1개</text><text x="346.38" y="177" fill="#000" font-size="12" textLength="139.632" font-family="'Apple SD Gothic Neo'">공통 규칙 한 곳 + 유형별 참고</text></g><!--entity KEEP--><g class="entity" data-qualified-name=".. .. ... .claude-config..KEEP" id="ent0003" data-source-line="9"><rect x="353.2" y="225.8" width="125.988" height="48.8" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="363.2" y="246.6" fill="#000" font-size="12" textLength="105.988" font-family="'Apple SD Gothic Neo'">🟡 PR 스킬 · QA 스킬</text><text x="363.2" y="261" fill="#000" font-size="12" textLength="104.784" font-family="'Apple SD Gothic Neo'">doc-kit 규칙을 참조만</text></g><!--entity CFG--><g class="entity" data-qualified-name=".. .. ... .claude-config..CFG" id="ent0004" data-source-line="10"><rect x="24.43" y="141.8" width="145.52" height="48.8" fill="#DAFBE1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="34.43" y="162.6" fill="#000" font-size="12" textLength="108.508" font-family="'Apple SD Gothic Neo'">🟢 프로젝트별 설정 틀</text><text x="34.43" y="177" fill="#000" font-size="12" textLength="125.52" font-family="'Apple SD Gothic Neo'">(실제 값은 /.config, git 밖)</text></g><!--entity HUB--><g class="entity" data-qualified-name=".. .. ... .claude-config..HUB" id="ent0005" data-source-line="11"><rect x="557.01" y="141.8" width="116.144" height="48.8" fill="#DAFBE1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="567.01" y="162.6" fill="#000" font-size="12" textLength="77.368" font-family="'Apple SD Gothic Neo'">🟢 새 문서 허브</text><text x="567.01" y="177" fill="#000" font-size="12" textLength="96.144" font-family="'Apple SD Gothic Neo'">역할 틀·인계 문서 틀</text></g><!--entity OUT--><g class="entity" data-qualified-name=".. .. ... .claude-config..OUT" id="ent0006" data-source-line="12"><rect x="734.16" y="141.8" width="128.508" height="48.8" fill="#DAFBE1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="744.16" y="162.6" fill="#000" font-size="12" textLength="108.508" font-family="'Apple SD Gothic Neo'">🟢 앞으로 만드는 문서</text><text x="744.16" y="177" fill="#000" font-size="12" textLength="99.168" font-family="'Apple SD Gothic Neo'">docs/out/날짜-주제/</text></g><!--entity OH--><g class="entity" data-qualified-name=".... . ..... .. ....OH" id="ent0010" data-source-line="17"><rect x="58.08" y="492" width="78.212" height="34.4" fill="#DDEBFF" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="68.08" y="512.8" fill="#000" font-size="12" textLength="58.212" font-family="'Apple SD Gothic Neo'">옛 문서 허브</text></g><!--entity KIDS--><g class="entity" data-qualified-name=".... . ..... .. ....KIDS" id="ent0011" data-source-line="18"><rect x="365.86" y="466.8" width="100.676" height="48.8" fill="#DDEBFF" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="375.86" y="487.6" fill="#000" font-size="12" textLength="80.676" font-family="'Apple SD Gothic Neo'">개인-* 하위 23개</text><text x="375.86" y="502" fill="#000" font-size="12" textLength="79.452" font-family="'Apple SD Gothic Neo'">옛 산출물·보고서</text></g><!--entity MEM--><g class="entity" data-qualified-name=".... . ..... .. ....MEM" id="ent0012" data-source-line="19"><rect x="22" y="407.8" width="150.38" height="48.8" fill="#DDEBFF" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="32" y="428.6" fill="#000" font-size="12" textLength="100.284" font-family="'Apple SD Gothic Neo'">프로젝트 메모리 16개</text><text x="32" y="443" fill="#000" font-size="12" textLength="130.38" font-family="'Apple SD Gothic Neo'">(규칙 원본, 복사·삭제 안 함)</text></g><!--entity GL--><g class="entity" data-qualified-name="GL" id="ent0007" data-source-line="14"><rect x="354.02" y="44.8" width="124.356" height="48.8" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="364.02" y="65.6" fill="#000" font-size="12" textLength="104.356" font-family="'Apple SD Gothic Neo'">🟡 전역 CLAUDE.md</text><text x="364.02" y="80" fill="#000" font-size="12" textLength="99.948" font-family="'Apple SD Gothic Neo'">쉬운 말 규칙 1개 추가</text></g><!--entity OLD1--><g class="entity" data-qualified-name="OLD1" id="ent0008" data-source-line="15"><rect x="45.51" y="305.8" width="103.356" height="48.8" fill="#FFC9C9" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="55.51" y="326.6" fill="#000" font-size="12" textLength="83.356" font-family="'Apple SD Gothic Neo'">🔴 문서 스킬 5개</text><text x="55.51" y="341" fill="#000" font-size="12" textLength="61.32" font-family="'Apple SD Gothic Neo'">(현재 7개 중)</text></g><!--link OLD1 to DK--><g class="link" data-entity-1="ent0008" data-entity-2="ent0002" id="lnk13" data-source-line="21" data-link-type="dependency"><path d="M145.99,305.47 C205.75,274.55 302.999,224.237 362.819,193.297" style="stroke:#181818;stroke-width:1;stroke-dasharray:7,7;" fill="none" id="OLD1-to-DK"/><polygon points="367.26,191,357.428,191.582,362.819,193.297,361.104,198.688,367.26,191" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="244.38" y="219.73" fill="#000" font-size="12" textLength="20.76" font-family="'Apple SD Gothic Neo'">흡수</text></g><!--link MEM to DK--><g class="link" data-entity-1="ent0012" data-entity-2="ent0002" id="lnk14" data-source-line="22" data-link-type="dependency"><path d="M156.22,407.41 C202.87,384.74 266.92,347 306.38,296.2 C331.73,263.57 309.61,239.67 336.38,208.2 C342.01,201.59 344.775,198.626 352.185,193.706" style="stroke:#181818;stroke-width:1;stroke-dasharray:7,7;" fill="none" id="MEM-to-DK"/><polygon points="356.35,190.94,346.64,192.586,352.185,193.706,351.065,199.251,356.35,190.94" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="220.38" y="292" fill="#000" font-size="12" textLength="68.592" font-family="'Apple SD Gothic Neo'">규칙만 새로 씀</text></g><!--link CFG to DK--><g class="link" data-entity-1="ent0004" data-entity-2="ent0002" id="lnk15" data-source-line="23" data-link-type="dependency"><path d="M170.12,166.2 C219.54,166.2 280.14,166.2 331.04,166.2" style="stroke:#181818;stroke-width:1;" fill="none" id="CFG-to-DK"/><polygon points="336.04,166.2,327.04,162.2,331.04,166.2,327.04,170.2,336.04,166.2" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link DK to HUB--><g class="link" data-entity-1="ent0002" data-entity-2="ent0005" id="lnk16" data-source-line="24" data-link-type="dependency"><path d="M496.43,166.2 C516.62,166.2 532.94,166.2 551.8,166.2" style="stroke:#181818;stroke-width:1;" fill="none" id="DK-to-HUB"/><polygon points="556.8,166.2,547.8,162.2,551.8,166.2,547.8,170.2,556.8,166.2" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link KEEP to HUB--><g class="link" data-entity-1="ent0003" data-entity-2="ent0005" id="lnk17" data-source-line="25" data-link-type="dependency"><path d="M475.47,225.34 C501.1,214.4 526.511,203.562 552.041,192.672" style="stroke:#181818;stroke-width:1;" fill="none" id="KEEP-to-HUB"/><polygon points="556.64,190.71,546.792,190.562,552.041,192.672,549.931,197.92,556.64,190.71" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link GL to HUB--><g class="link" data-entity-1="ent0007" data-entity-2="ent0005" id="lnk18" data-source-line="26" data-link-type="dependency"><path d="M467.64,94.05 C497.15,108.59 529.795,124.67 559.285,139.2" style="stroke:#181818;stroke-width:1;" fill="none" id="GL-to-HUB"/><polygon points="563.77,141.41,557.465,133.844,559.285,139.2,553.929,141.02,563.77,141.41" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link HUB to OUT--><g class="link" data-entity-1="ent0005" data-entity-2="ent0006" id="lnk19" data-source-line="27" data-link-type="dependency"><path d="M673.46,166.2 C692.65,166.2 709.16,166.2 728.8,166.2" style="stroke:#181818;stroke-width:1;" fill="none" id="HUB-to-OUT"/><polygon points="733.8,166.2,724.8,162.2,728.8,166.2,724.8,170.2,733.8,166.2" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link OH to KIDS--><g class="link" data-entity-1="ent0010" data-entity-2="ent0011" id="lnk20" data-source-line="28" data-link-type="dependency"><path d="M136.74,507.01 C194.17,503.75 297.178,497.904 360.478,494.304" style="stroke:#181818;stroke-width:1;" fill="none" id="OH-to-KIDS"/><polygon points="365.47,494.02,356.257,490.537,360.478,494.304,356.712,498.525,365.47,494.02" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="203.38" y="493.34" fill="#000" font-size="12" textLength="102.888" font-family="'Apple SD Gothic Neo'">기존 정리 규칙 그대로</text></g><?plantuml-src VLHTJzDG6BxlhtWpRuOoS1W_4qnW7s14_43kk6csCXf6IxOI4urcpa8GbeYwofHsReg2P2ID6wucSCFFwNcR-1DyJxjDyElkd9xJvtcVvttUav-NbKKn9ov0MfeLbx9QKbMqIN51Wj38uc9MWgauZAdQd9o2IKaD2VdU_VoSc5OVo4e6PiLiNZfnabENb7HCpIbI3gBdJnoSe9YI7qeG7H8qMICIrYouNu_0szAlWTisyVlRupO-MmLlSvKv9RPJ0hx3MW6hdt2bnEfcFs1b2x2wmJwMs5gPpao--To0CBPMMTqQnczbrou0MtPOzULmXu5zttLjOnYB-_G3UAKIFtFR3YiL2BHFo4gp6cWgvEJCd0PfEIUbD5bLX4KnDIzco1JNDj5o0FLjh1c_Ae9mAYikfQL8IbLcvKnV21u90FnlKScGmD2Fz-y_G5fDHUPb3N1jsois84fWCuhRFF1M3ZgomJDCS9jDE0TerhoAmPeweEsupLe8n3p4RyAP-4XoD17z0xuET-vraO_RS7UaivbHkhG11Le-8jPjyjK7lPb8t84poMJoIkpYNwhsoZfvWpNBMtFySWBjtdfXHWdZ-ZPtqhLVeLM09uC3WG7za252Ph_fynbYoR5_rlt1xorhEAYRdORFABYvxnarpa51i4Y-thknNl0XnwT7_mTfLD4yfBA1HBBN9ez80E3RaHzKbxH1LgpXZXd1ZuSaOT17lJrzluVwMFZTOApfL1Z49aQcuuc1XJJL-Ro1xrf4ij5j86yg1Ddp4SScUjQUWYktkeewFRlefo7iLNIiDk2o3xFzCl3lzaGyoc5YLsDNVsKHDsqqA2HFsTuouDuHX7j9fl6mMkp5My3D5RHAV-QHJyyfpmEUSL8VJumcawTl1wcFdALuLj3KOUY2Nwm_WaKRlvciSNZSPiqMvPGWWrJTY4_z7Urae81zAREzNJwuqKk10nqZSMk3DPr-UXiEiDYW60GpYmOz2yPkuCkjnAqUnMF1TsbWu3gVaclWMNLShGZyIkzR0DrvJtWwi5mGU3WZ4Nv3e4jyHTaI_A7eRgY9tINF7LzJKWIoYozzfGJks5XlKKWChgQZejUHdm00?></g></svg></div></div>
+<p class="cap">초록은 추가, 노랑은 변경, 빨강은 삭제, 파랑은 그대로다. 파랑 영역은 옮기지 않는다.</p>
 
 <h2>🔍 조사 결과</h2>
-<h3>허브가 프로젝트에 묶인 근거</h3>
+<h3>옛 자료 처리 (사용자 지시)</h3>
 <ul class="facts">
-<li>🔴 허브는 연애혁명 저장소의 sparse 워크트리다. 프로젝트 ID 도 그 저장소다.</li>
-<li>⚠️ 허브 CLAUDE.md 는 약 22KB 이고 내용이 연애혁명 전용이다. 문서 작업에도 로드된다.</li>
-<li>🟡 허브 docs/ 는 하위 폴더 포함 144개, 최상위 파일 51개다(find 결과). 프로젝트 문서이고 허브 작업물이 아니다.</li>
+<li>🔵 옛 보고서·HTML·하위 워크스페이스 23개·연애혁명 메모리 16개는 옮기지 않는다.</li>
+<li>🟢 옮기는 것은 규칙(doc-kit·전역 규칙·설정 틀)과 새 허브뿐이다.</li>
+<li>🟢 앞으로 만드는 문서만 새 위치 docs/out/ 에 쌓는다.</li>
+<li>🟡 하위 23개는 옛 허브가 계속 있어서 고아가 안 된다. 정리는 역할 파일의 「워크스페이스 자동 정리」 문단(11-06 사용자 지시)대로 그 자리에서 한다.</li>
+<li>⚠️ 미커밋이 남은 하위는 규칙상 보관만 하고 남는다. 예: 성능 보고서 하위는 미커밋 946건이다(git status 결과).</li>
+<li>🟡 옛 허브의 인계 문서·역할 파일은 옛 스킬 이름만 doc-kit 으로 갱신한다.</li>
+<li>⚠️ 판단: 연애혁명 메모리는 옛 허브가 계속 읽으므로 지우지 않는다. 겹친 내용 정리는 옛 허브를 닫을 때 따로 정한다(이번 범위 밖).</li>
+</ul>
+<h3>옛 허브가 프로젝트에 묶인 근거</h3>
+<ul class="facts">
+<li>🔴 옛 허브는 연애혁명 저장소의 sparse 워크트리다. 프로젝트 ID 도 그 저장소다.</li>
+<li>⚠️ 옛 허브 CLAUDE.md 는 약 22KB 이고 내용이 연애혁명 전용이다. 문서 작업에도 로드된다.</li>
+<li>🟡 옛 허브 docs/ 는 하위 폴더 포함 144개, 최상위 파일 51개다(find 결과). 프로젝트 문서이고 허브 작업물이 아니다.</li>
 <li>🟡 허브 작업물(HANDOFF.md·decisions.tsv·out/)은 git 상태에서 미추적(??)이다.</li>
-<li>🟡 개인-* 하위 워크스페이스는 작성 시점 ls 로 23개다. 허브 기록(11-06 12:33)은 삭제 6·보관 22였다. 차이 원인은 미확인이다(Jira 초안 워커 하위 포함 가능성).</li>
-<li>⚠️ 11-06 Jira 초안 워커 2개는 인계 문서·결정 기록에 진행으로 적혀 있다. 이번 조사에서 상태는 미확인이다.</li>
-<li>🟡 옛 허브(coord-docs-hub)의 HEAD 는 detached 다(git 결과 HEAD). 새 허브를 같은 방식으로 만들면 커밋이 이력에 안 남는다.</li>
+<li>🟡 개인-* 하위 워크스페이스는 작성 시점 ls 로 23개다. 허브 기록(11-06 12:33)은 삭제 6·보관 22였다. 차이 원인은 확인하지 못했다.</li>
+<li>⚠️ 11-06 Jira 초안 워커 2개는 인계 문서·결정 기록에 진행으로 적혀 있다. 상태는 이전 조건 확인에서 다시 본다.</li>
+<li>🟡 옛 허브의 HEAD 는 detached 다(git 결과 HEAD).</li>
 <li>🟡 재시작 스크립트에 연애혁명 워크스페이스 경로가 박혀 있다.</li>
 <li>🟡 역할 파일은 ~/.config 아래라 저장소 밖이고 버전 관리가 없다.</li>
-<li>🟢 claude-config 는 README 와 .gitignore 뿐이고 구조는 승인 뒤에 채우게 돼 있다.</li>
+<li>🟢 claude-config 는 README 와 .gitignore 뿐이다. 구조안 결정1~4 는 승인됐다.</li>
 </ul>
 <h3>충돌하는 규칙</h3>
 <table><tr><th>충돌</th><th>양쪽</th><th>doc-kit 에서</th></tr>
 <tr><td>⚠️ 문체</td><td>house-style 은 평서 ~다. 11-05 지시는 명사형 압축·서술 단락 금지</td><td>제목·표·목록은 명사형. 서술이 필요한 칸만 ~다</td></tr>
 <tr><td>⚠️ 고유명사</td><td>기획자용은 금지. 개발자 리뷰용은 클래스명 허용</td><td>문서마다 독자를 정하고 규칙을 갈라 적용</td></tr>
-<tr><td>⚠️ 저장 위치</td><td>구조안 스킬은 90_정리기록, 기록 스킬은 저장소 docs/, 허브는 out/</td><td>허브 docs/out/날짜-주제/ 한 곳(결정5)</td></tr></table>
-<p class="cap">저장 위치는 이 문서를 쓴 워커의 제안이다. 결정5 에서 사용자가 고른다.</p>
+<tr><td>⚠️ 저장 위치</td><td>구조안 스킬은 90_정리기록, 기록 스킬은 저장소 docs/, 허브는 out/</td><td>새 문서는 docs/out/날짜-주제/ 한 곳(결정4)</td></tr></table>
 
 <h2>🧩 겹침표 — 스킬</h2>
 <table><tr><th>스킬</th><th>줄 수</th><th>맡은 일</th><th>겹치는 것</th><th>처리</th></tr>
 <tr><td><code>structure-change-doc</code></td><td>96</td><td>구조 제안 HTML + 검사 스크립트</td><td>읽기 규칙·한 줄 한 사실·도식 3장·결정 카드·3단계 검수</td><td><span class="badge tag-warn">🟡</span> doc-kit '구조안' 유형 + 스크립트 이관</td></tr>
 <tr><td><code>work-report</code></td><td>141</td><td>결과 보고서</td><td>결정 카드·인과·길이·한 줄 한 사실·도식 3장·3단계 검수. 템플릿은 구조안 스킬 것을 빌려 씀</td><td><span class="badge tag-warn">🟡</span> doc-kit '보고서' 유형</td></tr>
 <tr><td><code>explain-diff</code></td><td>198</td><td>변경 해설(도식+화면)</td><td>도식 3장. 문체는 기록 스킬의 house-style 참조</td><td><span class="badge tag-warn">🟡</span> doc-kit '해설' 유형. 퀴즈는 참고 파일</td></tr>
-<tr><td><code>tech-record</code></td><td>53</td><td>설계 기록·계획·계약 + house-style</td><td>house-style 을 다른 스킬 4개가 참조</td><td><span class="badge tag-warn">🟡</span> doc-kit '기록' 유형. house-style 은 공통 규칙으로 승격</td></tr>
+<tr><td><code>tech-record</code></td><td>53</td><td>설계 기록·계획·계약 + house-style</td><td>house-style 을 다른 스킬 4개가 참조</td><td><span class="badge tag-warn">🟡</span> doc-kit '기록' 유형(계약·규약·명세·런북 포함). house-style 은 공통 규칙으로 승격</td></tr>
 <tr><td><code>doc-coauthoring</code></td><td>18</td><td>README·가이드 일반 원칙</td><td>첫 줄에서 기록 스킬로 넘김. 독자 분기 없음</td><td><span class="badge tag-bad">🔴</span> 삭제. 한국어 작성 기준 참고 파일만 이관</td></tr>
 <tr><td><code>qa-checklist</code></td><td>71</td><td>QA 체크리스트</td><td>문체만 겹침. 독자(QA)가 달라 분리 가능</td><td><span class="badge tag-ok">🟢</span> 유지. 공통 규칙 참조만</td></tr>
 <tr><td><code>create-pr</code></td><td>94</td><td>PR 본문·GitHub 등록</td><td>문체만 겹침. 게시 승인 흐름이 따로 있음</td><td><span class="badge tag-ok">🟢</span> 유지. 공통 규칙 참조만</td></tr></table>
 <ul class="facts">
 <li>🟢 문장 편집·화면 흐름·퀴즈·Jira·인수 요약 스킬은 문서 규칙이 아니라 도구라 그대로 둔다.</li>
 <li>⚠️ 옛 5개 이름을 적은 파일은 아래 표대로 13개다. 명령은 참고 칸에 있다.</li>
-<li>⚠️ 메모리 12개와 허브 인계 문서도 옛 이름을 적고 있다(메모리는 grep 개수, 참고 칸).</li>
+<li>⚠️ 메모리 12개와 옛 허브 인계 문서도 옛 이름을 적고 있다. 메모리는 원본 유지라 고치지 않는다.</li>
 <li>🟡 유형 표: 구조안·해설·기록·보고서·비주얼 5칸. 기록 칸 안에 계약·규약·명세·런북 자리를 둔다.</li>
 <li>⚠️ 검사 스크립트는 구조안 스킬 폴더에 있고 보고서 스킬이 그 경로를 부른다. 이관 시 경로가 바뀐다.</li>
 </ul>
@@ -164,59 +186,56 @@ ul.facts{margin:6px 0;padding-left:20px}ul.facts li{margin:2px 0}
 <h3>표 밖 참조</h3>
 <table><tr><th>위치</th><th>내용</th><th>영향</th></tr>
 <tr><td>~/.codex/skills</td><td>심볼릭 링크 6개(ls 결과)</td><td>옛 4개(공동작성·해설·기록·보고서)는 삭제 시 끊김. 구조안 스킬은 링크 없음이라 doc-kit 링크를 새로 만든다. PR·QA 링크 2개는 유지</td></tr>
-<tr><td>role-config.txt 13행</td><td>참고 메모리 이름 6개</td><td>이 중 docs-as-html(전역 이전)·doc-three-stage-review(삭제) 2개의 이름을 고친다</td></tr>
-<tr><td>메모리 [[링크]]</td><td>문서 메모리 16개 이름을 가리키는 메모리 16개(grep 결과, 서로 링크 포함)</td><td>삭제 시 링크가 끊겨 같이 고친다</td></tr></table>
+<tr><td>옛 허브 인계 문서</td><td>옛 스킬 이름을 적은 줄</td><td>이름만 doc-kit 으로 갱신</td></tr></table>
 
 <h2>🧩 겹침표 — 메모리</h2>
 <ul class="facts">
 <li>📄 위치: ~/.claude/projects 아래 연애혁명 프로젝트 폴더, 메모리 126개 중 문서 규칙 16개.</li>
 <li>📄 프로필 홈 projects 아래 memory 파일은 0개다(참고 칸 명령).</li>
 <li>⚠️ 다른 프로젝트 3곳에 PR 문체 메모리 4개가 따로 있다(참고 칸 명령). create-pr 후속 정리 대상이다.</li>
+<li>🟢 16개 = 양식 8 + 반영 안 함 1 + 전달·책임 7. 전달·책임 7개는 위 배치표를 따른다.</li>
 </ul>
-<table><tr><th>메모리</th><th>같은 내용이 있는 곳</th><th>처리</th></tr>
-<tr><td><code>docs-as-html</code></td><td>user-docs-as-html 와 쌍. 구조안 스킬에도 있음</td><td><span class="badge tag-warn">🟡</span> 전역 규칙으로 이전. 전달 규칙: DM 채널·즉시 업로드</td></tr>
-<tr><td><code>user-docs-as-html</code></td><td>docs-as-html 와 쌍</td><td><span class="badge tag-warn">🟡</span> 전역 규칙으로 이전. 전달·워커 지시 규칙</td></tr>
-<tr><td><code>doc-three-stage-review</code></td><td>structure-doc-review-3stage 와 쌍. 구조안 스킬 검수표</td><td><span class="badge tag-bad">🔴</span> doc-kit '검수 3단계'</td></tr>
-<tr><td><code>structure-doc-review-3stage</code></td><td>위와 쌍. 결정 카드·보고서 내용도 포함</td><td><span class="badge tag-bad">🔴</span> 위와 같이 흡수</td></tr>
-<tr><td><code>doc-one-fact-per-line</code></td><td>compressed-headline-style 추가분과 같은 문장. 스킬 3곳에도 있음</td><td><span class="badge tag-bad">🔴</span> doc-kit '문장 규칙'</td></tr>
-<tr><td><code>compressed-headline-style</code></td><td>위와 쌍. dev-review-doc-style 갱신분과도 같은 문장</td><td><span class="badge tag-warn">🟡</span> 전역 규칙으로 이전. 채팅 보고 규칙 포함</td></tr>
-<tr><td><code>dev-review-doc-style</code></td><td>user-html-no-proper-nouns 와 충돌(클래스명 허용 vs 금지)</td><td><span class="badge tag-warn">🟡</span> 독자 2종(개발자·기획자)으로 갈라 흡수</td></tr>
-<tr><td><code>user-html-no-proper-nouns</code></td><td>slack-plain-language 의 쉬운 말과 같은 취지</td><td><span class="badge tag-bad">🔴</span> 독자 규칙으로 흡수</td></tr>
-<tr><td><code>slack-plain-language</code></td><td>쉬운 말·내부 기호 금지. 구조안 스킬 글쓰기 규칙에도 있음</td><td><span class="badge tag-warn">🟡</span> 전역 규칙으로 이전. Slack·채팅 보고 규칙</td></tr>
-<tr><td><code>diagram-before-problem-after</code></td><td>doc-diagrams-and-shot-diff 와 쌍. 스킬 3곳에도 있음</td><td><span class="badge tag-bad">🔴</span> doc-kit '도식 3장'</td></tr>
-<tr><td><code>doc-diagrams-and-shot-diff</code></td><td>위와 쌍</td><td><span class="badge tag-bad">🔴</span> 위와 같이 흡수</td></tr>
-<tr><td><code>decision-card-format</code></td><td>구조안·보고서 스킬에 이미 전문이 있음</td><td><span class="badge tag-bad">🔴</span> doc-kit '결정 카드'</td></tr>
-<tr><td><code>slack-report-html-format</code></td><td>허브 역할 파일의 HTML 양식 문단과 같음</td><td><span class="badge tag-warn">🟡</span> 전역 규칙으로 이전. 제작 허브·업로드 메인 책임</td></tr>
-<tr><td><code>visual-change-doc-for-jeongo</code></td><td>역할 파일에도 같은 구성이 있음</td><td><span class="badge tag-warn">🟡</span> 전역 규칙으로 이전. 정오님께 직접 전달 금지). 구성만 doc-kit 이 참조</td></tr>
-<tr><td><code>doc-writing-skills</code></td><td>스킬 3개만 적힌 낡은 목록(10-08)</td><td><span class="badge tag-bad">🔴</span> 삭제</td></tr>
-<tr><td><code>hub-html-subject-format</code></td><td>전달 제목 규칙이라 문서 양식이 아님</td><td><span class="badge tag-warn">🟡</span> 전역 규칙으로 이전. 허브→메인 제목 규칙</td></tr></table>
-<p class="cap">프로젝트 메모리에서 16개 모두 백업 후 뺀다 = 양식 흡수 8 + 흡수 없이 삭제 1 + 전역 이전 7. 🔴 8 · 🟡 8. 쌍으로 겹친 것은 4쌍이다. 전역 이전 7개는 파일 본문 전체를 대조하지 않았다(검수 분류 따름).</p>
+<table><tr><th>양식 메모리</th><th>같은 내용이 있는 곳</th><th>규칙 반영 위치(원본은 그대로)</th></tr>
+<tr><td><code>doc-three-stage-review</code></td><td>structure-doc-review-3stage 와 쌍. 구조안 스킬 검수표</td><td><span class="badge tag-ok">🟢</span> doc-kit '검수 3단계'</td></tr>
+<tr><td><code>structure-doc-review-3stage</code></td><td>위와 쌍. 결정 카드·보고서 내용도 포함</td><td><span class="badge tag-ok">🟢</span> 위와 같음</td></tr>
+<tr><td><code>doc-one-fact-per-line</code></td><td>compressed-headline-style 추가분과 같은 문장. 스킬 3곳에도 있음</td><td><span class="badge tag-ok">🟢</span> doc-kit '문장 규칙'</td></tr>
+<tr><td><code>dev-review-doc-style</code></td><td>user-html-no-proper-nouns 와 충돌(클래스명 허용 vs 금지)</td><td><span class="badge tag-warn">🟡</span> 독자 2종(개발자·기획자)으로 갈라 doc-kit 에 반영</td></tr>
+<tr><td><code>user-html-no-proper-nouns</code></td><td>slack-plain-language 의 쉬운 말과 같은 취지</td><td><span class="badge tag-ok">🟢</span> doc-kit '독자 규칙'</td></tr>
+<tr><td><code>diagram-before-problem-after</code></td><td>doc-diagrams-and-shot-diff 와 쌍. 스킬 3곳에도 있음</td><td><span class="badge tag-ok">🟢</span> doc-kit '도식 3장'</td></tr>
+<tr><td><code>doc-diagrams-and-shot-diff</code></td><td>위와 쌍</td><td><span class="badge tag-ok">🟢</span> 위와 같음</td></tr>
+<tr><td><code>decision-card-format</code></td><td>구조안·보고서 스킬에 이미 전문이 있음</td><td><span class="badge tag-ok">🟢</span> doc-kit '결정 카드'</td></tr>
+<tr><td><code>doc-writing-skills</code></td><td>스킬 3개만 적힌 낡은 목록(10-08)</td><td><span class="badge ">⚪</span> 반영하지 않음</td></tr></table>
 
-<h2>⚙️ 프로젝트별 설정 설계 (새 안)</h2>
-<h3>고유값이 지금 들어 있는 곳</h3>
+<h2>⚙️ 프로젝트별 설정 설계</h2>
+<h3>고유값이 들어 있는 곳 (2026-11-06 기준 줄 번호, 전수 재grep)</h3>
 <table><tr><th>위치(파일:줄)</th><th>값 요약</th><th>옮길 곳</th></tr>
 <tr><td>structure-change-doc/SKILL.md:3, 66</td><td>받는 사람(기획·구현 담당 1명)</td><td>설정 recipients</td></tr>
 <tr><td>structure-change-doc/SKILL.md:36</td><td>사실 대조 기준 브랜치 이름</td><td>설정 base_branch</td></tr>
-<tr><td>structure-change-doc/SKILL.md:45</td><td>저장 위치 90_정리기록, Slack DM 전달</td><td>설정 out_dir·channel</td></tr>
+<tr><td>structure-change-doc/SKILL.md:45</td><td>저장 위치 90_정리기록, 채널 전달</td><td>설정 out_dir·channel</td></tr>
 <tr><td>structure-change-doc/SKILL.md:54, scripts/check.py:144</td><td>티켓 키 패턴(고유명사 검사)</td><td>설정 ticket_pattern</td></tr>
-<tr><td>explain-diff/SKILL.md:24, 130, 135, references/md-spec.md:3</td><td>선례 저작자·프로젝트 이름</td><td>설정 precedent</td></tr>
-<tr><td>tech-record/SKILL.md:3, 6, 36 · references/house-style.md:1, 3, 97, 103 · references/sources.md:3, 9~14</td><td>선례 저작자·프로젝트 이름, 프로젝트별 문서 폴더</td><td>설정 precedent·docs_dir. 선례 목록은 참고 파일로</td></tr>
+<tr><td>explain-diff/SKILL.md:24, 130, 135 · references/md-spec.md:3</td><td>선례 저작자·프로젝트 이름</td><td>설정 precedent</td></tr>
+<tr><td>tech-record/SKILL.md:3, 6, 36</td><td>선례 저작자·프로젝트 이름, 프로젝트별 문서 폴더</td><td>설정 precedent·docs_dir</td></tr>
+<tr><td>tech-record/references/house-style.md:1, 3, 97, 103</td><td>선례 저작자·프로젝트 이름</td><td>설정 precedent</td></tr>
+<tr><td>tech-record/references/sources.md:3, 8~11, 14, 15, 18, 32, 41, 43, 49</td><td>선례 목록(저작자·프로젝트)</td><td>참고 파일로 분리, 설정 precedent 가 가리킴</td></tr>
+<tr><td>tech-record/references/templates.md:3, 141</td><td>선례 저작자·프로젝트 이름</td><td>설정 precedent</td></tr>
 <tr><td>create-pr/SKILL.md:18, 65, 66 · doc-coauthoring/SKILL.md:8</td><td>선례 저작자·프로젝트 이름</td><td>설정 precedent</td></tr>
-<tr><td>메모리 docs-as-html.md:13, slack-report-html-format.md:3·8, visual-change-doc-for-jeongo.md:3·8</td><td>개인 DM 채널 ID, 받는 사람, 티켓 키</td><td>설정 channel·recipients (규칙 문장은 전역 절로)</td></tr>
-<tr><td>메모리 doc-three-stage-review.md:9, structure-doc-review-3stage.md:7, dev-review-doc-style.md:11</td><td>받는 사람 전용 검수 규칙</td><td>설정 recipients.audience</td></tr>
-<tr><td>메모리 doc-writing-skills.md:3, 8</td><td>선례 저작자 이름</td><td>삭제 대상(결정2 밖, 흡수 없음)</td></tr>
-<tr><td>역할 파일 role-docs.txt:1, 3, 4</td><td>받는 사람, DM 채널, 티켓 키 목록</td><td>역할 파일에 남김(허브 전용, git 밖). 값만 설정 참조로 바꿈</td></tr></table>
-<p class="cap">값은 요약만 적었다. 근거 명령은 참고 칸에 있다. work-report·qa-checklist 는 고유값이 없었다.</p>
+<tr><td>메모리 docs-as-html:13</td><td>개인 채널 ID</td><td>설정 channel</td></tr>
+<tr><td>메모리 slack-report-html-format:3, 8, 11</td><td>받는 사람, 허브 이름</td><td>설정 recipients, 허브 역할 파일</td></tr>
+<tr><td>메모리 visual-change-doc-for-jeongo:3, 8, 11, 16</td><td>받는 사람, 채널 ID, 허브 이름, 프로젝트 이름</td><td>설정 recipients·channel, 허브 역할 파일</td></tr>
+<tr><td>메모리 doc-three-stage-review:9 · structure-doc-review-3stage:7 · dev-review-doc-style:11</td><td>받는 사람 전용 검수 규칙</td><td>설정 audience·recipients</td></tr>
+<tr><td>메모리 doc-writing-skills:3, 8, 10, 11</td><td>선례 저작자 이름</td><td>반영하지 않음</td></tr>
+<tr><td>역할 파일 role-docs.txt:1, 3, 4</td><td>받는 사람, 채널, 티켓 키 목록</td><td>옛 허브 전용이라 그대로. 새 허브는 설정을 참조</td></tr>
+<tr><td>orca-hub-create/references/common-rules.txt:1, 2</td><td>받는 사람·프로젝트 이름</td><td>새 허브용 공통 규칙에서 설정 참조로</td></tr></table>
+<p class="cap">값은 요약만 적었다. work-report·qa-checklist 는 고유값이 없었다. 완료 검증의 "고유값 0건"은 이 표 전체 위치가 기준이다.</p>
 <h3>설정 파일 설계</h3>
 <ul class="facts">
 <li>🟢 이름: projects.toml 하나. 프로젝트마다 섹션을 나눈다.</li>
 <li>🟢 실제 값 위치: ~/.config/doc-kit/projects.toml. git 밖이라 개인 값이 저장소에 안 들어간다.</li>
-<li>🟢 자리표시본 위치: claude-config 의 skills/doc-kit/projects.example.toml. 구조안 문서의 skills 폴더와 *.example 방식을 따른다.</li>
-<li>🟢 형식: TOML. 파이썬 3.13 에 읽기 모듈이 들어 있다(이 맥의 pyc 파일명으로 확인).</li>
-<li>🟢 환경 변수 DOC_KIT_CONFIG 로 다른 경로를 지정할 수 있다.</li>
+<li>🟢 틀 위치: claude-config 의 skills/doc-kit/projects.example.toml. 구조안의 skills 폴더와 *.example 방식을 따른다.</li>
+<li>🟢 환경 변수 DOC_KIT_CONFIG 로 다른 경로를, DOC_KIT_PROJECT 로 프로젝트를 강제로 지정한다.</li>
 </ul>
 <table><tr><th>항목</th><th>뜻</th><th>기본값(설정 없을 때)</th></tr>
-<tr><td>match</td><td>프로젝트 판별용 저장소 폴더 이름·원격 주소 조각</td><td>없음, [default] 사용</td></tr>
+<tr><td>match</td><td>프로젝트 판별용 원격 주소 조각·폴더 이름</td><td>없음, [default] 사용</td></tr>
 <tr><td>audience</td><td>독자 유형(개발자·기획자). 고유명사 허용 여부가 갈린다</td><td>개발자</td></tr>
 <tr><td>recipients</td><td>받는 사람 이름·역할·직접 전달 허용 여부</td><td>없음, 사용자 본인에게만</td></tr>
 <tr><td>channel</td><td>전달 채널 ID</td><td>없음, 파일 경로만 보고</td></tr>
@@ -234,7 +253,7 @@ name_rule = "{날짜}-{주제}.html"
 [project.예시A]
 match = ["예시저장소A"]
 audience = "기획자"
-recipients = [{ name = "받는사람1", role = "구현 담당", direct = false }]
+recipients = ["받는사람1|구현 담당|직접전달 안 함"]
 channel = "DM:채널ID자리표시"
 ticket_pattern = 'ABC-\d+'
 base_branch = "dev"</code></pre>
@@ -242,14 +261,16 @@ base_branch = "dev"</code></pre>
 <ul class="facts">
 <li>1. 설정 파일을 찾는다. 환경 변수, 없으면 ~/.config/doc-kit/projects.toml.</li>
 <li>2. 파일이 없으면 기본값표 그대로 진행하고 "설정 없음 — 기본값" 한 줄을 보고에 적는다.</li>
-<li>3. 있으면 현재 저장소 폴더 이름·원격 주소를 각 섹션 match 와 대조한다.</li>
-<li>4. 첫 일치 섹션 값을 [default] 위에 덮어쓴다. 일치가 없으면 [default] 만 쓴다.</li>
-<li>5. 본문 규칙은 값을 직접 쓰지 않고 항목 이름만 부른다. 예: "받는 사람(recipients)에게는 직접 보내지 않는다".</li>
-<li>6. check.py 는 같은 파일에서 ticket_pattern 을 읽어 고유명사 검사에 쓴다. 없으면 티켓 검사를 건너뛴다.</li>
+<li>3. 프로젝트 판별: DOC_KIT_PROJECT 가 있으면 그 섹션을 쓴다.</li>
+<li>4. 없으면 git 원격 주소(origin)를 각 섹션 match 와 대조한다. 허브·하위 워크트리는 폴더 이름이 달라도 원격 주소가 같아서 같은 프로젝트로 잡힌다.</li>
+<li>5. 원격이 없거나 안 맞으면 저장소 폴더 이름으로 한 번 더 대조하고, 그래도 없으면 [default] 만 쓴다.</li>
+<li>6. 일치한 섹션 값을 [default] 위에 덮어쓴다. 본문 규칙은 값 대신 항목 이름만 부른다.</li>
+<li>7. check.py 는 같은 파일에서 ticket_pattern 한 값만 읽는다. 없으면 티켓 검사를 건너뛴다.</li>
 </ul>
 <ul class="facts">
-<li>🟡 실제 값 파일을 만드는 일은 승인 뒤 3단계에서 한다. 지금은 설계만 있다.</li>
-<li>🟡 구조안 문서의 .gitignore 에 projects.toml 은 이미 저장소 밖이라 따로 추가가 필요 없다.</li>
+<li>🟡 파이썬 요건: PATH 의 python3 는 3.13.15 라서 TOML 읽기 모듈이 있다. /usr/bin/python3 는 3.9.6 이라 모듈이 없다(실행 확인).</li>
+<li>🟡 대체: check.py 는 모듈이 없으면 내장 간이 읽기로 ticket_pattern 문자열 한 줄만 읽는다. 그 외 항목은 Claude 가 파일을 그대로 읽는다.</li>
+<li>🟡 실제 값 파일 생성은 승인 뒤 3단계에서 한다. 지금은 설계만 있다.</li>
 </ul>
 
 <h2>🔄 주제별 before / after</h2>
@@ -270,58 +291,61 @@ doc-kit/references/&lt;유형&gt;.md   ← 유형별 골격만
 doc-kit/scripts/               ← check.py 등 이관
 create-pr, qa-checklist        ← "doc-kit 공통 규칙 따름" 한 줄</code></pre></div></div>
 <p class="why" data-check="why"><b>왜:</b> 같은 규칙이 8곳에 있어서 한 곳만 고치면 나머지가 낡으므로, 출처를 하나로 줄인다.</p></section>
-<section class="ba" data-check="ba"><h3>허브 경로 박힘 → 설정 한 곳</h3>
+<section class="ba" data-check="ba"><h3>허브 시작 스크립트: 옛 허브 유지 + 새 허브 지원</h3>
 <div class="ba-grid"><div class="before"><div class="label">before (지금, restart_hub.sh)</div><pre><code>HUB="/Users/gangchanhyeong/orca/workspaces/\
 LoveRevolutionMaker/$2"
 ROLE="$HOME/.config/lrm-hubs/roles/role-$3.txt"
 # 허브 경로가 연애혁명 폴더 고정
 # 역할 파일이 저장소 밖</code></pre></div>
-<div class="after"><div class="label">after (제안)</div><pre><code>HUB_ROOT="${HUB_ROOT:-$HOME/orca/workspaces/claude-config}"
+<div class="after"><div class="label">after (제안)</div><pre><code>HUB_ROOT="${HUB_ROOT:-$HOME/orca/workspaces/LoveRevolutionMaker}"
 HUB="$HUB_ROOT/$2"
-ROLE="$HUB/role.txt"      # 허브 전용 브랜치 위에서만 이력에 남음(결정5)
-# 다른 허브는 HUB_ROOT 만 바꿔 호출</code></pre></div></div>
-<p class="why" data-check="why"><b>왜:</b> 경로와 역할 파일이 한 프로젝트에 박혀 있어서 문서 허브만 옮기기 어려우므로, 기준 폴더를 설정으로 뺀다.</p></section>
+ROLE="${ROLE_FILE:-$HOME/.config/lrm-hubs/roles/role-$3.txt}"
+# 옛 허브는 기본값 그대로 동작
+# 새 허브: HUB_ROOT=claude-config 쪽, ROLE_FILE=$HUB/role.txt
+#   (전용 브랜치 위에서만 이력에 남음, 결정4)</code></pre></div></div>
+<p class="why" data-check="why"><b>왜:</b> 옛 허브를 계속 쓰므로 기본값은 그대로 두고, 새 허브만 환경 변수로 다른 경로를 쓰게 해서 둘이 같은 스크립트를 쓴다.</p></section>
 
 <h2>✅ 그대로인 것 / 없어지는 것</h2>
-<table><tr><th>그대로</th><th>없어짐</th></tr>
-<tr><td>🟢 PR 스킬·QA 스킬</td><td>🔴 문서 스킬 5개(합쳐짐)</td></tr>
-<tr><td>🟢 검사 스크립트 기능(경로만 이관, 티켓 패턴은 설정에서 읽음)</td><td>🔴 스킬 본문의 프로젝트 고유값</td></tr>
-<tr><td>🟡 전달·책임 규칙 7개(내용 유지, 위치만 전역으로)</td><td>🔴 프로젝트 메모리 16개(백업 후)</td></tr>
+<table><tr><th>그대로</th><th>없어짐·바뀜</th></tr>
+<tr><td>🔵 옛 허브, 하위 워크스페이스 23개, 옛 보고서·HTML</td><td>🔴 문서 스킬 5개(합쳐짐)</td></tr>
+<tr><td>🔵 연애혁명 메모리 16개(원본)</td><td>🔴 규칙 복제본</td></tr>
+<tr><td>🟢 PR 스킬·QA 스킬</td><td>🔴 스킬 본문의 프로젝트 고유값(설정으로 이동)</td></tr>
+<tr><td>🟢 검사 스크립트 기능(경로만 이관, 티켓 패턴은 설정에서 읽음)</td><td>🔴 새 문서 기준 저장 위치 3곳 중 2곳(결정4 A 일 때)</td></tr>
+<tr><td>🟢 결정 카드·3단계 검수·HTML 양식</td><td>🟡 전역 CLAUDE.md 에 쉬운 말 규칙 1개 추가</td></tr>
 <tr><td>🟢 계약·규약·명세·런북 유형(유형 표에 자리 추가)</td><td>🟡 합칠 때 안 넣을 후보: 해설 마크다운 규격, 보고서 노션·git 이원화·무결성 규칙·골격 A/B/C, 기록 선례 목록, 공동작성 에이전트 설정. 남길지는 작성 때 줄 단위 대조로 확정</td></tr>
-<tr><td>🟢 결정 카드·3단계 검수·HTML 양식</td><td>🔴 규칙 복제본</td></tr>
-<tr><td>🟢 문장 편집·화면 흐름·Jira 스킬</td><td>🔴 저장 위치 3곳 중 2곳(결정5 A 일 때)</td></tr>
-<tr><td>🟢 옛 하위 워크스페이스 23개와 산출물</td><td>—</td></tr></table>
+<tr><td>🟢 문장 편집·화면 흐름·Jira 스킬</td><td>—</td></tr></table>
 
-<h2>🔄 진행 순서 (승인 뒤)</h2>
+<h2>🔄 진행 순서 (승인 뒤, 10단계)</h2>
 <ol>
-<li>이전 조건 확인 — <small>검증: 진행 중 워커 0(Jira 초안 워커 2개 상태 재확인 포함), 사용자 3차 검수 대기 건 처리, 인계 문서 최신</small></li>
-<li>doc-kit 초안 작성(옛 스킬 유지). 프로젝트 고유값은 본문에 쓰지 않음 — <small>검증: 옛 5개 규칙 줄 단위 대조, 고유값 grep 0건</small></li>
-<li>프로젝트별 설정 예시 파일 작성, 실제 값 파일 생성, check.py 가 티켓 패턴을 설정에서 읽도록 수정 — <small>검증: 설정 없이 기본값으로 1건, 설정 있이 1건 통과</small></li>
-<li>전역 CLAUDE.md 「문서 작성」 절에 전달 규칙 추가(사용자 승인 뒤, 백업 먼저) — <small>검증: 7개 규칙이 빠짐없이 들어갔는지 대조</small></li>
-<li>옛 이름 참조 13곳과 표 밖 참조 갱신 — <small>검증: grep 으로 옛 이름 0건, codex 링크 정상</small></li>
-<li>프로젝트 메모리 문서 규칙 16개 백업 후 제거(흡수 8·삭제 1·전역 이전 7), 깨진 [[링크]] 16개 수정 — <small>검증: 백업 파일 수 16개 일치</small></li>
-<li>이전 전 시험: 허브가 연애혁명 메모리 없이 doc-kit·전역 규칙만으로 샘플 문서를 만들어 검사 통과 — <small>검증: 새 터미널에서 샘플 1건 통과. 실패하면 빠진 규칙을 doc-kit·전역에 보강</small></li>
-<li>새 허브 워크스페이스 생성(허브 전용 브랜치), 역할 파일·인계 문서 이전 — <small>검증: 새 터미널이 인계 문서를 읽고 보고</small></li>
-<li>하위 23개 부모를 새 허브로 재연결, 경로 불변 확인, 보관만 남는 하위 목록 보고 — <small>검증: 재연결 뒤 하위 폴더 경로 동일</small></li>
-<li>메인 코디네이터 허브 목록 갱신, 옛 허브 종료 — <small>검증: 메인이 새 허브로 메시지 도달 확인</small></li>
+<li>이전 조건 확인 — <small>검증: 옛 허브 진행 중 워커 0(Jira 초안 워커 2개 상태 재확인 포함), 3차 검수 대기 건 처리, 인계 문서 최신</small></li>
+<li>doc-kit 초안 작성(옛 스킬 유지). 고유값은 본문에 쓰지 않음 — <small>검증: 옛 5개 규칙 줄 단위 대조, 고유값 표 전체 위치에서 grep 0건</small></li>
+<li>설정 틀 작성, 실제 값 파일 생성, check.py 가 ticket_pattern 을 읽도록 수정 — <small>검증: 설정 없음·설정 있음·파이썬 3.9 로 각 1건 통과</small></li>
+<li>전역 CLAUDE.md 에 쉬운 말 규칙 1개 추가(사용자 승인 뒤, 백업 먼저) — <small>검증: 추가 줄 수 3~4줄, 나머지 6개는 전역에 없음</small></li>
+<li>허브 공통 규칙에 전달 규칙 반영(docs-as-html 전달부·slack-report·hub-html-subject·visual 허브 메모) — <small>검증: 7개 배치표 항목별 대조</small></li>
+<li>옛 이름 참조 13곳, 옛 허브 인계 문서, codex 링크 갱신 — <small>검증: grep 으로 옛 이름 0건, codex 링크 정상</small></li>
+<li>이전 전 시험: claude-config 워크트리(연애혁명 메모리를 읽지 않는 위치)에서 새 터미널로 샘플 문서 1건 작성 — <small>검증: check.py 통과 + 전달 규칙 체크 4개(채널을 설정에서 읽음·제목 형식 맞음·직접 전달 금지 지킴·업로드는 메인에 넘김). 하나라도 실패하면 8단계로 가지 않고 doc-kit·허브 규칙을 보강</small></li>
+<li>새 허브 워크스페이스 생성(전용 브랜치), 역할 틀·인계 문서 틀 배치 — <small>검증: 새 터미널이 인계 문서를 읽고 보고</small></li>
+<li>메인 코디네이터 허브 목록에 새 허브 추가(옛 허브 유지) — <small>검증: 메인이 새 허브로 메시지 도달 확인</small></li>
 <li>스킬 폴더 백업 후 옛 스킬 5개 삭제 — <small>검증: 백업 복사본 열림, 새 스킬로 문서 1건 재생성</small></li>
 </ol>
 <ul class="facts">
 <li>⚠️ 위험: 옛 이름을 부르는 역할 파일이 한 곳이라도 남으면 허브가 없는 스킬을 찾는다.</li>
-<li>⚠️ 스킬 폴더는 git 밖이라 삭제하면 되돌릴 방법이 백업뿐이다. 그래서 11단계 전에 백업한다.</li>
-<li>🟡 의존: 구조안 문서(chore/config-repo-structure)의 결정1(설치를 링크 스크립트로)·결정3(허브 스크립트·역할 파일을 저장소에 편입) 승인 여부가 doc-kit 과 역할 파일을 어디에 두는지 정한다. 미승인이면 지금 위치에 둔다.</li>
-<li>🔵 테스트: 이전 후 샘플 문서 1건을 새 스킬로 만들어 검사까지 통과시킨다.</li>
-<li>🟡 허브 진행 작업 상태는 11-06 12:33 파일 기준이다. 이전 시점에 다시 확인한다.</li>
+<li>⚠️ 스킬 폴더는 git 밖이라 삭제하면 되돌릴 방법이 백업뿐이다. 그래서 10단계 전에 백업한다.</li>
+<li>🟡 의존(승인됨): 구조안 결정1(설치는 링크 스크립트)·결정3(허브 스크립트·역할 파일을 저장소에 편입)이 doc-kit·역할 틀·시작 스크립트의 위치를 정한다. 시작 스크립트의 역할 파일 경로 변수는 결정4 A 와 함께 쓴다.</li>
+<li>🔵 브랜치 이름 chore/docs-hub 는 작업 브랜치 접두사 규칙 밖이라 첫 생성 때 확인 요청이 뜬다. 8단계에서 처리한다.</li>
+<li>🟡 옛 허브 진행 작업 상태는 11-06 12:33 파일 기준이다. 1단계에서 다시 확인한다.</li>
 </ul>
 
 <details class="ref" data-check="ref"><summary>참고 (파일·근거)</summary>
 <ul>
-<li>허브: /Users/gangchanhyeong/orca/workspaces/LoveRevolutionMaker/coord-docs-hub (sparse: docs, .claude, CLAUDE.md, AGENTS.md)</li>
+<li>옛 허브: /Users/gangchanhyeong/orca/workspaces/LoveRevolutionMaker/coord-docs-hub (sparse: docs, .claude, CLAUDE.md, AGENTS.md)</li>
 <li>허브 인계: HANDOFF.md, 결정 기록: decisions.tsv (읽기만 함)</li>
 <li>역할 파일: ~/.config/lrm-hubs/roles/role-docs.txt</li>
 <li>스킬: ~/.claude/skills/{structure-change-doc,work-report,explain-diff,tech-record,doc-coauthoring,qa-checklist,create-pr}</li>
 <li>메모리: ~/.claude/projects/-Users-gangchanhyeong-orca-LoveRevolutionMaker/memory (126개 중 문서 규칙 16개는 파일명 직접 선별)</li>
-<li>자동 정리 규칙 출처: ~/.config/lrm-hubs/roles/role-docs.txt 6행(11-06 사용자 지시), role-config.txt 15행도 동일. 메모리 hub-auto-cleanup-single-session 에 요약</li>
+<li>자동 정리 규칙 출처: ~/.config/lrm-hubs/roles/role-docs.txt 의 「워크스페이스 자동 정리」 문단(11-06 사용자 지시), role-config.txt 에도 동일. 메모리 hub-auto-cleanup-single-session 에 요약</li>
+<li>새 저장소: ~/orca/claude-config (README 와 .gitignore 만 있음)</li>
+<li>읽지 않은 것: .env·토큰·state·cache·history·sessions</li>
 <li>근거 명령(읽기 전용)
 <pre><code>find coord-docs-hub/docs -type f | wc -l            # 144
 find coord-docs-hub/docs -maxdepth 1 -type f | wc -l # 51
@@ -329,15 +353,18 @@ ls ~/orca/workspaces/LoveRevolutionMaker | grep -c '^개인'  # 23
 grep -lE 'structure-change-doc|explain-diff|work-report|tech-record' $LRM_MEMORY/*.md | wc -l  # 12
 ls ~/.claude/projects/*/memory/ | grep -E '^pr-'    # 다른 3곳 4개 + 연애혁명 2개
 find $PROFILE_HOME/projects -path '*/memory/*.md' | wc -l  # 0
-grep -lE '옛 5개 이름' $전역설정 $역할 $공통규칙 $스킬 | grep -v '자기 폴더'  # 13개
 ls -la ~/.codex/skills | grep -E 'structure|work-report|explain|tech-record|doc-co|qa|create-pr'  # 링크 6개
-grep -lE '\[\[(정리 대상 11개 이름)\]\]' $LRM_MEMORY/*.md | wc -l  # 14
 git -C 개인-11-04-성능-보고서 status --short | wc -l  # 946
 git -C coord-docs-hub rev-parse --abbrev-ref HEAD  # HEAD(detached)
-grep -rnE '정오|LRM-[0-9]+|machamy|JobMaker|origin/dev|90_정리기록' ~/.claude/skills/{structure-change-doc,explain-diff,tech-record,create-pr,doc-coauthoring} --exclude='*.bak*' | cut -d: -f1,2   # 고유값 목록(값은 요약)
-grep -nE '정오|D0C14|LRM-[0-9]+' $LRM_MEMORY/{docs-as-html,slack-report-html-format,visual-change-doc-for-jeongo,doc-three-stage-review,structure-doc-review-3stage,dev-review-doc-style,doc-writing-skills}.md ~/.config/lrm-hubs/roles/role-docs.txt | cut -d: -f1,2</code></pre></li>
-<li>이전 대상 저장소: ~/orca/claude-config (README 와 .gitignore 만 있음)</li>
-<li>읽지 않은 것: .env·토큰·state·cache·history·sessions</li>
+git -C coord-docs-hub remote -v  # 원격 주소(허브·하위 워크트리 공통)
+python3 --version; /usr/bin/python3 --version  # 3.13.15 ; 3.9.6
+wc -c $LRM_MEMORY/{docs-as-html,user-docs-as-html,slack-report-html-format,visual-change-doc-for-jeongo,slack-plain-language,compressed-headline-style,hub-html-subject-format}.md | tail -1  # 10235
+wc -c ~/.claude/CLAUDE.md  # 11817 (102줄)
+# 고유값 재grep: 패턴 = 정오|D0C14|coord-docs-hub|연애혁명|LoveRevolution|LRM-[0-9]+|machamy|JobMaker|강찬형|origin/dev
+grep -rnE "$PATTERN" ~/.claude/skills/{structure-change-doc,explain-diff,tech-record,create-pr,doc-coauthoring,work-report,qa-checklist} --exclude='*.bak*' --exclude='*.pyc' --exclude='*.html' | cut -d: -f1,2
+grep -nE "$PATTERN" $LRM_MEMORY/{문서 규칙 16개}.md ~/.config/lrm-hubs/roles/role-docs.txt ~/.claude/skills/orca-hub-create/references/common-rules.txt | cut -d: -f1,2
+grep -n 'LRM-' ~/.claude/skills/structure-change-doc/scripts/check.py  # 144 (정규식이라 위 패턴으로는 안 잡혀 따로 확인)
+grep -o '\[\[[^]]*\]\]' $LRM_MEMORY/{전달·책임 7개}.md   # 바깥 링크 4개</code></pre></li>
 </ul>
 <details class="ref"><summary>도식 원문 (PlantUML)</summary>
 <pre><code>@startuml
@@ -405,28 +432,40 @@ skinparam defaultFontName &quot;Apple SD Gothic Neo&quot;
 skinparam shadowing false
 skinparam roundCorner 10
 skinparam defaultFontSize 12
-title 변경 후: 개인 설정 저장소가 규칙·허브를 모두 가짐 (초록=추가 노랑=변경 빨강=삭제 파랑=그대로)
+title 변경 후: 규칙·새 허브만 새 저장소로, 옛 자료는 제자리 (초록=추가 노랑=변경 빨강=삭제 파랑=그대로)
 left to right direction
 package &quot;개인 설정 저장소 (claude-config)&quot; {
   rectangle &quot;🟢 doc-kit 스킬 1개\n공통 규칙 한 곳 + 유형별 참고&quot; as DK #DAFBE1
   rectangle &quot;🟡 PR 스킬 · QA 스킬\ndoc-kit 규칙을 참조만&quot; as KEEP #FFF8C5
-  rectangle &quot;🟢 문서 허브 워크스페이스\n역할 파일·인계 문서 포함&quot; as HUB #DAFBE1
-  rectangle &quot;🟢 산출물 한 곳\ndocs/out/날짜-주제/&quot; as OUT #DAFBE1
+  rectangle &quot;🟢 프로젝트별 설정 틀\n(실제 값은 ~/.config, git 밖)&quot; as CFG #DAFBE1
+  rectangle &quot;🟢 새 문서 허브\n역할 틀·인계 문서 틀&quot; as HUB #DAFBE1
+  rectangle &quot;🟢 앞으로 만드는 문서\ndocs/out/날짜-주제/&quot; as OUT #DAFBE1
 }
-rectangle &quot;🔴 스킬 5개 (현재 7개 중)\n구조안·해설·기록\n·보고서·공동작성&quot; as OLD1 #FFC9C9
-rectangle &quot;🔴 프로젝트 메모리 16개 제거\n8개 흡수·1개 삭제·7개 전역 이전&quot; as OLD2 #FFC9C9
-rectangle &quot;🟡 개인-* 하위 23개\n부모를 새 허브로 재연결\n(경로 그대로, 시험 필요)&quot; as KIDS #FFF8C5
-rectangle &quot;🟡 전역 CLAUDE.md 절\n전달·책임 규칙 7개 (메모리에서 이전)&quot; as GL #FFF8C5
-rectangle &quot;🟢 프로젝트별 설정 1개\n받는 사람·채널·이름 규칙\n(~/.config, git 밖)&quot; as CFG #DAFBE1
-DK --&gt; HUB
-GL --&gt; HUB
-CFG --&gt; DK
-KEEP --&gt; HUB
-HUB --&gt; OUT
-HUB --&gt; KIDS
+rectangle &quot;🟡 전역 CLAUDE.md\n쉬운 말 규칙 1개 추가&quot; as GL #FFF8C5
+rectangle &quot;🔴 문서 스킬 5개\n(현재 7개 중)&quot; as OLD1 #FFC9C9
+package &quot;연애혁명 쪽 (그대로, 이동 없음)&quot; {
+  rectangle &quot;옛 문서 허브&quot; as OH #DDEBFF
+  rectangle &quot;개인-* 하위 23개\n옛 산출물·보고서&quot; as KIDS #DDEBFF
+  rectangle &quot;프로젝트 메모리 16개\n(규칙 원본, 복사·삭제 안 함)&quot; as MEM #DDEBFF
+}
 OLD1 ..&gt; DK : 흡수
-OLD2 ..&gt; DK : 흡수
+MEM ..&gt; DK : 규칙만 새로 씀
+CFG --&gt; DK
+DK --&gt; HUB
+KEEP --&gt; HUB
+GL --&gt; HUB
+HUB --&gt; OUT
+OH --&gt; KIDS : 기존 정리 규칙 그대로
 @enduml
 </code></pre></details></details>
-<details class="ref" data-check="review"><summary>검수 기록</summary>2026-11-06 작성자 자체 점검: 검사 스크립트 통과. 1차 독자 검수(Sonnet) 지적 11건 반영: 용어 풀이, 개수 통일, 자동 정리 근거, 수치 정정, 근거 명령, 색 수정, 결정5 추가. 2026-11-06 2차 교차 검수(Fable) 지적 10건 반영: 메모리 접근 비용, 양식·전달 규칙 분리(정리 15→9개), 하위 고아 처리와 순서 재배치, 저장 범위·브랜치 정책(결정5), 없어지는 것 표, 표 밖 참조, 스킬 백업·의존 기록, 하위 개수 기준 시각, Jira 워커 상태, 역할 파일 추적 조건. 2026-11-06 사용자 지시 반영(문서는 개인용, 프로젝트에 종속 안 됨): 전달·책임 규칙 7개를 전역 이전으로 변경(결정2), 허브 이전의 메모리 복사 전제 제거와 이전 전 시험 추가(결정3), 프로젝트별 설정 설계 추가, 숫자·도식·참조 재정리. 이 변경분은 1·2차 검수를 아직 안 받았다. 3차는 사용자 몫이다.</details>
+<details class="ref" data-check="review"><summary>검수 기록</summary>
+<ul>
+<li>2026-11-06 작성자 자체 점검: 검사 스크립트 통과.</li>
+<li>2026-11-06 1차 독자 검수(Sonnet) 지적 11건 반영.</li>
+<li>2026-11-06 2차 교차 검수(Fable) 지적 10건 반영.</li>
+<li>2026-11-06 사용자 지시 반영 1차: 문서는 개인용이라 프로젝트에 종속되지 않는다. 프로젝트별 설정 설계 추가.</li>
+<li>2026-11-06 사용자 지시 U1~U3 반영: 옛 문서·하위 23개·연애혁명 메모리는 이동하지 않고 규칙과 새 허브만 옮긴다. 하위 이관 결정 삭제, 허브 결정을 새 허브 생성으로 축소, 결정 5개를 4개로 재번호, 진행 순서 10단계, 도식·숫자 재정리.</li>
+<li>2026-11-06 2차 교차 검수(Fable) 지적 10건 반영: 전달 규칙 7개 규칙별 배치와 선택지 재작성, 7개·스킬 고유값 전수 재grep, 시험을 새 허브 생성 앞으로 이동하고 전달 규칙 체크 추가, 바깥 링크 4개 집계와 처리, 설정 match 보강과 파이썬 요건, 시작 스크립트 의존, 줄번호 참조를 절 제목으로 교체, 표 오타 수정, 카드 안 미확인 표시 제거.</li>
+<li>이번 변경분은 1·2차 검수를 아직 안 받았다. 3차는 사용자 몫이다.</li>
+</ul></details>
 </html>
