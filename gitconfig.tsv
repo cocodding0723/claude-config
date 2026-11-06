@@ -1,0 +1,5 @@
+# git config --global 키	값
+core.hooksPath	~/.config/git/hooks
+merge.ff	false
+pull.rebase	true
+rebase.autostash	true
