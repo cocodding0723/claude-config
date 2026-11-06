@@ -1,0 +1,243 @@
+<title>{{보드 이름}}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+:root {
+  --canvas: #eceef2;
+  --paper: #ffffff;
+  --ink: #1b2130;
+  --muted: #5f6878;
+  --line: #1b2130;
+  --hair: #d6dae2;
+  --flow: #e0268f;
+  --flow-soft: #fde7f3;
+  --chip-real: #e3f1ea; --chip-real-ink: #1f6b45;
+  --chip-mock: #ece8fb; --chip-mock-ink: #5a3fc0;
+  --chip-new: #fff1d6;  --chip-new-ink: #8a5a00;
+  --chip-wire: #e8e9ed; --chip-wire-ink: #3d4350;
+  --chip-warn: #fde8e6; --chip-warn-ink: #a1332a;
+  --ph: #f5f6f9;
+  --sans: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --canvas: #17181c; --paper: #22242a; --ink: #e8eaef; --muted: #9ba2b0; --line: #c9ced8; --hair: #383c45;
+    --flow: #ff58b5; --flow-soft: #3a1f30;
+    --chip-real: #1c3529; --chip-real-ink: #8fd6b0;
+    --chip-mock: #2c2548; --chip-mock-ink: #c1b2ff;
+    --chip-new: #3a2f14;  --chip-new-ink: #f3c36a;
+    --chip-wire: #2e3138; --chip-wire-ink: #c9ced8;
+    --chip-warn: #40211e; --chip-warn-ink: #ffaba2;
+    --ph: #2a2d34;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: #17181c; --paper: #22242a; --ink: #e8eaef; --muted: #9ba2b0; --line: #c9ced8; --hair: #383c45;
+  --flow: #ff58b5; --flow-soft: #3a1f30;
+  --chip-real: #1c3529; --chip-real-ink: #8fd6b0;
+  --chip-mock: #2c2548; --chip-mock-ink: #c1b2ff;
+  --chip-new: #3a2f14;  --chip-new-ink: #f3c36a;
+  --chip-wire: #2e3138; --chip-wire-ink: #c9ced8;
+  --chip-warn: #40211e; --chip-warn-ink: #ffaba2;
+  --ph: #2a2d34;
+}
+body { background: var(--canvas); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.6; }
+.page { max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 32px 64px; display: grid; gap: 28px; }
+header.top { display: grid; gap: 14px; }
+.eyebrow { font-size: 12px; letter-spacing: .08em; color: var(--muted); font-family: var(--mono); }
+h1 { font-size: 28px; line-height: 1.25; margin: 0; font-weight: 700; text-wrap: balance; }
+h2 { font-size: 19px; margin: 0; font-weight: 700; text-wrap: balance; }
+p { margin: 0; max-width: 68ch; }
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.sum { background: var(--paper); border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; display: grid; gap: 6px; }
+.sum b { font-size: 15px; }
+.sum span { color: var(--muted); font-size: 14px; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; background: var(--paper); border: 1px solid var(--hair); border-radius: 8px; font-size: 14px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12.5px; letter-spacing: .03em; }
+tr:last-child td { border-bottom: 0; }
+code, .mono { font-family: var(--mono); font-size: 13px; }
+.legend { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; font-size: 13px; color: var(--muted); }
+.legend .arrow { display: inline-flex; align-items: center; gap: 6px; }
+.legend .arrow i { width: 34px; height: 2px; background: var(--flow); position: relative; display: inline-block; }
+.legend .arrow i::after { content: ""; position: absolute; right: -1px; top: -4px; border-left: 7px solid var(--flow); border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
+
+.chip { display: inline-block; font-style: normal; font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 99px; white-space: nowrap; line-height: 1.6; }
+.chip.real { background: var(--chip-real); color: var(--chip-real-ink); }
+.chip.mock { background: var(--chip-mock); color: var(--chip-mock-ink); }
+.chip.new { background: var(--chip-new); color: var(--chip-new-ink); }
+.chip.wire { background: var(--chip-wire); color: var(--chip-wire-ink); }
+.chip.warn { background: var(--chip-warn); color: var(--chip-warn-ink); }
+
+/* 보드 — 피그마 캔버스 위의 프레임 */
+section.frame { background: var(--paper); border: 1.5px solid var(--line); display: grid; gap: 10px; padding: 18px 18px 8px; }
+.frame-head { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.frame-name { border: 1px solid var(--hair); border-radius: 6px; padding: 5px 12px; font-weight: 600; font-size: 16px; background: var(--paper); }
+.frame-head p { color: var(--muted); font-size: 14px; }
+.board-wrap { overflow-x: auto; overflow-y: hidden; }
+.stage { position: relative; }
+.board { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.board svg.edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.rowlabel { position: absolute; left: 14px; width: 110px; color: var(--flow); font-weight: 700; font-size: 17px; line-height: 1.3; }
+.rowlabel small { display: block; font-weight: 500; font-size: 12.5px; color: var(--muted); }
+.scr { position: absolute; margin: 0; width: 180px; }
+.scr img, .scr .phbox { width: 180px; height: 400px; display: block; border-radius: 10px; border: 1px solid var(--hair); background: var(--ph); }
+.scr .name { position: absolute; top: -21px; left: 0; font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.scr figcaption { margin-top: 7px; font-size: 12.5px; line-height: 1.45; display: grid; gap: 4px; }
+.scr figcaption .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.phbox { display: grid; place-content: center; text-align: center; gap: 10px; color: var(--muted); font-size: 13px; border-style: dashed !important; }
+/* 목업 — 요소는 360x800 좌표로 놓고 절반으로 줄여 180x400 에 맞춘다. 화면 속 그림이라 테마와 무관한 고정색 */
+.wf { position: relative; width: 180px; height: 400px; overflow: hidden; border-radius: 10px; border: 1px solid var(--hair); background: #3a3d45 center / cover no-repeat; }
+.wf-in { position: absolute; left: 0; top: 0; width: 360px; height: 800px; transform: scale(.5); transform-origin: 0 0; }
+.wf-in.dim { background: rgb(0 0 0 / .5); }
+.mk { position: absolute; display: grid; place-content: center; text-align: center; background: #d6d6d6; color: #111; font-weight: 700; font-size: 20px; line-height: 1.25; }
+.mk.txt { background: none; }
+.mk.slot { background: none; border: 2px solid #111; font-size: 15px; font-weight: 500; }
+.mk-n, .mkno { display: inline-block; min-width: 26px; padding: 0 5px; background: #e0268f; color: #fff; font-weight: 700; font-size: 18px; line-height: 26px; text-align: center; font-style: normal; }
+.mk-n { position: absolute; left: -13px; top: -13px; }
+.mkno { min-width: 20px; font-size: 12.5px; line-height: 20px; }
+table.mkspec td:first-child { width: 48px; }
+.elabel { position: absolute; transform: translate(-50%, -100%); background: var(--paper); border: 1px solid var(--flow); color: var(--flow); font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 5px; white-space: nowrap; margin-top: -4px; }
+.note { position: absolute; background: var(--flow-soft); border-left: 3px solid var(--flow); padding: 12px 14px; font-size: 13.5px; line-height: 1.55; border-radius: 0 6px 6px 0; }
+.note ul { margin: 6px 0 0; padding-left: 18px; }
+.note b { font-weight: 700; }
+
+.asks { background: var(--paper); border: 1px solid var(--hair); border-radius: 8px; padding: 16px 20px; display: grid; gap: 10px; }
+.asks ol { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.asks li span { color: var(--muted); }
+footer { color: var(--muted); font-size: 13px; }
+</style>
+
+<div class="page">
+  <header class="top">
+    <div class="eyebrow">JOBMAKER · {{영역}} · {{YYYY-MM-DD}} · {{브랜치}}</div>
+    <h1>{{보드 이름}}</h1>
+    <p>{{무슨 흐름을 왜 보여 주는지 한두 문장. 누구에게 무슨 피드백을 받으려는지}}</p>
+    <div class="legend">
+      <span class="arrow"><i></i> 누르면 / 조건이 맞으면 이동</span>
+      <span><em class="chip real">실기</em> 기기 캡처</span>
+      <span><em class="chip mock">렌더</em> 실제 프리팹을 Unity에서 그린 것(배경은 합성)</span>
+      <span><em class="chip wire">목업</em> 실제 화면이 없어 회색 박스로 정한 배치안(배경은 실기)</span>
+      <span><em class="chip new">다음 빌드</em> 아직 기기에 없는 동작</span>
+      <span><em class="chip warn">광고</em> 캡처에 광고 배너가 찍혀 있음</span>
+    </div>
+  </header>
+
+  <!-- 보드 하나 = section.frame. 열 x = 150 / 440 / 730 / 1020, 행 y = 90 / 680. 화면은 180x400 -->
+  <section class="frame" id="example">
+    <div class="frame-head"><span class="frame-name">{{Frame · 이름}}</span><p>{{언제 이 흐름이 도는지}}</p></div>
+    <div class="board-wrap"><div class="stage"><div class="board" data-w="1240" data-h="1190">
+      <div class="rowlabel" style="top:250px">{{행 이름}}<small>{{조건}}</small></div>
+      <div class="rowlabel" style="top:840px">{{행 이름}}<small>{{조건}}</small></div>
+      <figure class="scr" id="ex-a" style="left:150px;top:90px">
+        <span class="name">Screen A</span>
+        <img src="img/a.jpg" width="180" height="400" alt="{{화면 설명}}">
+        <figcaption>{{한두 줄 설명}}<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="ex-b" style="left:440px;top:90px">
+        <span class="name">Dialog</span>
+        <img src="img/b.jpg" width="180" height="400" alt="{{화면 설명}}">
+        <figcaption>{{설명}}<span class="chips"><em class="chip mock">렌더</em><em class="chip new">다음 빌드</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="ex-c" style="left:730px;top:90px">
+        <span class="name">Screen C</span>
+        <img src="img/c.jpg" width="180" height="400" alt="{{화면 설명}}">
+        <figcaption>{{설명}}</figcaption>
+      </figure>
+      <figure class="scr" id="ex-d" style="left:440px;top:680px">
+        <span class="name">New Popup</span>
+        <!-- 실제 화면이 없으면 목업. 배경 = 그 팝업이 뜨는 화면의 실기 캡처, 요소 = 360x800 좌표 -->
+        <div class="wf" role="img" aria-label="{{목업 설명}}" style="background-image:url(img/d_bg.jpg)"><div class="wf-in dim">
+          <div class="mk" style="left:30px;top:230px;width:300px;height:280px"><span class="mk-n">1</span></div>
+          <div class="mk txt" style="left:50px;top:250px;width:260px;height:50px;border-bottom:2px solid #111">{{제목}}</div>
+          <div class="mk slot" style="left:130px;top:320px;width:100px;height:100px">{{아이콘}}<span class="mk-n">2</span></div>
+          <div class="mk txt" style="left:50px;top:430px;width:260px;height:64px;font-size:17px;font-weight:500">{{본문 문구}}</div>
+          <div class="mk" style="left:30px;top:524px;width:110px;height:56px">{{나중에}}<span class="mk-n">3</span></div>
+          <div class="mk" style="left:150px;top:524px;width:180px;height:56px">{{받기}}<span class="mk-n">4</span></div>
+        </div></div>
+        <figcaption>{{설명}}<span class="chips"><em class="chip wire">목업</em><em class="chip new">다음 빌드</em></span></figcaption>
+      </figure>
+      <div class="note" style="left:730px;top:700px;width:470px"><b>{{메모 제목}}</b><ul><li>{{메모}}</li></ul></div>
+    </div></div></div>
+    <!-- 목업이 있는 보드만: 번호 표 -->
+    <div class="tablewrap"><table class="mkspec">
+      <tr><th>번호</th><th>요소</th><th>내용 · 누르면</th></tr>
+      <tr><td><span class="mkno">1</span></td><td>{{창}}</td><td>{{언제 뜨는지, 뒤로가기·바깥 탭}}</td></tr>
+      <tr><td><span class="mkno">2</span></td><td>{{아이콘}}</td><td>{{무엇을 보여 주는지}}</td></tr>
+      <tr><td><span class="mkno">3</span></td><td>{{나중에}}</td><td>{{누르면 어디로, 무엇이 남는지}}</td></tr>
+      <tr><td><span class="mkno">4</span></td><td>{{받기}}</td><td>{{누르면 어디로}}</td></tr>
+    </table></div>
+  </section>
+
+  <section class="asks">
+    <h2>피드백 받고 싶은 것</h2>
+    <ol><li><b>{{질문}}</b> <span>{{배경}}</span></li></ol>
+  </section>
+
+  <footer>{{화면 출처 — 어느 빌드·기기 캡처인지, 무엇을 렌더·합성했는지, 무엇을 가렸는지}}</footer>
+</div>
+
+<script>
+(function () {
+  // 화살표는 보드 좌표의 꺾은선. 첫 점이 누르는 곳, 마지막 점이 도착하는 곳. l = 라벨 위치
+  var EDGES = {
+    // section id → 화살표 목록. p: 보드 좌표 꺾은선(첫 점 = 누르는 버튼, 마지막 점 = 도착 화면 가장자리), l: 라벨 위치
+    example: [
+      { p: [[330,290],[440,290]], l: [385,290], label: "조건 A" },
+      { p: [[568,334],[730,334]], l: [675,334], label: "확인" },
+      { p: [[490,334],[405,334],[405,880],[440,880]], l: [405,625], label: "취소" },
+      { p: [[240,90],[240,45],[820,45],[820,90]], l: [530,45], label: "건너뜀" }
+    ]
+  };
+  var NS = "http://www.w3.org/2000/svg";
+
+  function draw(section) {
+    var key = section.id, board = section.querySelector(".board"), list = EDGES[key];
+    if (!list) return;
+    var svg = board.querySelector("svg.edges");
+    if (!svg) {
+      svg = document.createElementNS(NS, "svg"); svg.setAttribute("class", "edges");
+      svg.setAttribute("width", board.dataset.w); svg.setAttribute("height", board.dataset.h);
+      var defs = document.createElementNS(NS, "defs"), m = document.createElementNS(NS, "marker");
+      m.setAttribute("id", "ah-" + key); m.setAttribute("viewBox", "0 0 10 10"); m.setAttribute("refX", "9"); m.setAttribute("refY", "5");
+      m.setAttribute("markerWidth", "7"); m.setAttribute("markerHeight", "7"); m.setAttribute("orient", "auto-start-reverse");
+      var tri = document.createElementNS(NS, "path"); tri.setAttribute("d", "M0,0 L10,5 L0,10 z"); tri.setAttribute("fill", "var(--flow)");
+      m.appendChild(tri); defs.appendChild(m); svg.appendChild(defs); board.appendChild(svg);
+    }
+    list.forEach(function (e) {
+      var p = e.p.map(function (q) { return { x: q[0], y: q[1] }; });
+      var d = "M" + p.map(function (q) { return q.x + "," + q.y; }).join(" L");
+      var path = document.createElementNS(NS, "path");
+      path.setAttribute("d", d); path.setAttribute("fill", "none"); path.setAttribute("stroke", "var(--flow)");
+      path.setAttribute("stroke-width", "2"); path.setAttribute("stroke-linejoin", "round"); path.setAttribute("marker-end", "url(#ah-" + key + ")");
+      svg.appendChild(path);
+      var dot = document.createElementNS(NS, "circle");
+      dot.setAttribute("cx", p[0].x); dot.setAttribute("cy", p[0].y); dot.setAttribute("r", "4.5");
+      dot.setAttribute("fill", "var(--paper)"); dot.setAttribute("stroke", "var(--flow)"); dot.setAttribute("stroke-width", "2");
+      svg.appendChild(dot);
+      var best = { x: e.l[0], y: e.l[1] };
+      var lab = document.createElement("div");
+      lab.className = "elabel"; lab.textContent = e.label; lab.style.left = best.x + "px"; lab.style.top = best.y + "px";
+      board.appendChild(lab);
+    });
+  }
+  function fit() {
+    document.querySelectorAll(".board-wrap").forEach(function (wrap) {
+      var stage = wrap.querySelector(".stage"), board = wrap.querySelector(".board");
+      var bw = +board.dataset.w, bh = +board.dataset.h;
+      var s = Math.max(0.55, Math.min(1, wrap.clientWidth / bw));
+      board.style.width = bw + "px"; board.style.height = bh + "px";
+      board.style.transform = "scale(" + s + ")";
+      stage.style.width = bw * s + "px"; stage.style.height = bh * s + "px";
+    });
+  }
+  document.querySelectorAll("section.frame").forEach(draw);
+  fit();
+  window.addEventListener("resize", fit);
+})();
+</script>

@@ -1,0 +1,499 @@
+<title>추가 데이터 받기 흐름</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+:root {
+  --canvas: #eceef2;
+  --paper: #ffffff;
+  --ink: #1b2130;
+  --muted: #5f6878;
+  --line: #1b2130;
+  --hair: #d6dae2;
+  --flow: #e0268f;
+  --flow-soft: #fde7f3;
+  --chip-real: #e3f1ea; --chip-real-ink: #1f6b45;
+  --chip-mock: #ece8fb; --chip-mock-ink: #5a3fc0;
+  --chip-new: #fff1d6;  --chip-new-ink: #8a5a00;
+  --chip-warn: #fde8e6; --chip-warn-ink: #a1332a;
+  --ph: #f5f6f9;
+  --sans: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --canvas: #17181c; --paper: #22242a; --ink: #e8eaef; --muted: #9ba2b0; --line: #c9ced8; --hair: #383c45;
+    --flow: #ff58b5; --flow-soft: #3a1f30;
+    --chip-real: #1c3529; --chip-real-ink: #8fd6b0;
+    --chip-mock: #2c2548; --chip-mock-ink: #c1b2ff;
+    --chip-new: #3a2f14;  --chip-new-ink: #f3c36a;
+    --chip-warn: #40211e; --chip-warn-ink: #ffaba2;
+    --ph: #2a2d34;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: #17181c; --paper: #22242a; --ink: #e8eaef; --muted: #9ba2b0; --line: #c9ced8; --hair: #383c45;
+  --flow: #ff58b5; --flow-soft: #3a1f30;
+  --chip-real: #1c3529; --chip-real-ink: #8fd6b0;
+  --chip-mock: #2c2548; --chip-mock-ink: #c1b2ff;
+  --chip-new: #3a2f14;  --chip-new-ink: #f3c36a;
+  --chip-warn: #40211e; --chip-warn-ink: #ffaba2;
+  --ph: #2a2d34;
+}
+body { background: var(--canvas); color: var(--ink); font-family: var(--sans); font-size: 15px; line-height: 1.6; }
+.page { max-width: 1240px; margin: 0 auto; padding-inline: 20px; padding-block: 32px 64px; display: grid; gap: 28px; }
+header.top { display: grid; gap: 14px; }
+.eyebrow { font-size: 12px; letter-spacing: .08em; color: var(--muted); font-family: var(--mono); }
+h1 { font-size: 28px; line-height: 1.25; margin: 0; font-weight: 700; text-wrap: balance; }
+h2 { font-size: 19px; margin: 0; font-weight: 700; text-wrap: balance; }
+p { margin: 0; max-width: 68ch; }
+.summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.sum { background: var(--paper); border: 1px solid var(--hair); border-radius: 8px; padding: 14px 16px; display: grid; gap: 6px; }
+.sum b { font-size: 15px; }
+.sum span { color: var(--muted); font-size: 14px; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; background: var(--paper); border: 1px solid var(--hair); border-radius: 8px; font-size: 14px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12.5px; letter-spacing: .03em; }
+tr:last-child td { border-bottom: 0; }
+code, .mono { font-family: var(--mono); font-size: 13px; }
+.legend { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; font-size: 13px; color: var(--muted); }
+.legend .arrow { display: inline-flex; align-items: center; gap: 6px; }
+.legend .arrow i { width: 34px; height: 2px; background: var(--flow); position: relative; display: inline-block; }
+.legend .arrow i::after { content: ""; position: absolute; right: -1px; top: -4px; border-left: 7px solid var(--flow); border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
+
+.chip { display: inline-block; font-style: normal; font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 99px; white-space: nowrap; line-height: 1.6; }
+.chip.real { background: var(--chip-real); color: var(--chip-real-ink); }
+.chip.mock { background: var(--chip-mock); color: var(--chip-mock-ink); }
+.chip.new { background: var(--chip-new); color: var(--chip-new-ink); }
+.chip.warn { background: var(--chip-warn); color: var(--chip-warn-ink); }
+
+/* 보드 — 피그마 캔버스 위의 프레임 */
+section.frame { background: var(--paper); border: 1.5px solid var(--line); display: grid; gap: 10px; padding: 18px 18px 8px; }
+.frame-head { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.frame-name { border: 1px solid var(--hair); border-radius: 6px; padding: 5px 12px; font-weight: 600; font-size: 16px; background: var(--paper); }
+.frame-head p { color: var(--muted); font-size: 14px; }
+.board-wrap { overflow-x: auto; overflow-y: hidden; }
+.stage { position: relative; }
+.board { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.board svg.edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.rowlabel { position: absolute; left: 14px; width: 110px; color: var(--flow); font-weight: 700; font-size: 17px; line-height: 1.3; }
+.rowlabel small { display: block; font-weight: 500; font-size: 12.5px; color: var(--muted); }
+.scr { position: absolute; margin: 0; width: 180px; }
+.scr img, .scr .phbox { width: 180px; height: 400px; display: block; border-radius: 10px; border: 1px solid var(--hair); background: var(--ph); }
+.scr .name { position: absolute; top: -21px; left: 0; font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.scr figcaption { margin-top: 7px; font-size: 12.5px; line-height: 1.45; display: grid; gap: 4px; }
+.scr figcaption .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.phbox { display: grid; place-content: center; text-align: center; gap: 10px; color: var(--muted); font-size: 13px; border-style: dashed !important; }
+.spin { width: 38px; height: 38px; border-radius: 50%; border: 4px solid var(--hair); border-top-color: var(--flow); margin: 0 auto; }
+@media (prefers-reduced-motion: no-preference) { .spin { animation: rot 1.1s linear infinite; } }
+@keyframes rot { to { transform: rotate(360deg); } }
+.elabel { position: absolute; transform: translate(-50%, -100%); background: var(--paper); border: 1px solid var(--flow); color: var(--flow); font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 5px; white-space: nowrap; margin-top: -4px; }
+.note { position: absolute; background: var(--flow-soft); border-left: 3px solid var(--flow); padding: 12px 14px; font-size: 13.5px; line-height: 1.55; border-radius: 0 6px 6px 0; }
+.note ul { margin: 6px 0 0; padding-left: 18px; }
+.note b { font-weight: 700; }
+
+.asks { background: var(--paper); border: 1px solid var(--hair); border-radius: 8px; padding: 16px 20px; display: grid; gap: 10px; }
+.asks ol { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.asks li span { color: var(--muted); }
+footer { color: var(--muted); font-size: 13px; }
+</style>
+
+<div class="page">
+  <header class="top">
+    <div class="eyebrow">JOBMAKER · 에셋 배달 · 2026-09-28 · feature/asset-lazy-download</div>
+    <h1>추가 데이터 받기 흐름</h1>
+    <p>게임 밖에서 받아 와야 하는 데이터(시즌 이벤트, 노벨, 스토리·취경 판)를 받을 때 어떤 창이 뜨고 어디로 이어지는지, 보이는 UI가 달라지는 경우마다 실제 화면으로 이었습니다. UX 피드백용입니다.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>경우</th><th>유저가 보는 것</th><th>보드</th></tr></thead>
+        <tbody>
+          <tr><td>부팅 · 처음 받는 팩</td><td>알림 창 [받기] 하나 → 로딩창 “추가 데이터 다운로드 중 (x / y MB)” <em class="chip new">다음 빌드</em></td><td><a href="#boot">부팅</a></td></tr>
+          <tr><td>부팅 · 받은 적 있음 / 기기에 있음</td><td>창 없이 평소 로딩(오래 걸리면 크기 표시)</td><td><a href="#boot">부팅</a></td></tr>
+          <tr><td>부팅 · 받다가 실패</td><td>재시도 창 [다시 시도] — 받을 때까지 못 들어감. 3번째 실패부터 [문의하기](채널톡)도. 리모트 컨피그로 차단을 끄면 [취소]</td><td><a href="#boot">부팅</a></td></tr>
+          <tr><td>인게임 입장 · 5 MB 이하</td><td>로딩 빙글(10초 넘으면 진행률 창 — 리모트 컨피그)</td><td><a href="#small">작은 받기</a></td></tr>
+          <tr><td>인게임 입장 · 5 MB 초과·크기 모름</td><td>받을지 묻는 창 [나중에] [받기] → 진행률 창(퍼센트·[취소]). 받은 적 있는 팩은 묻지 않고 빙글 <em class="chip new">다음 빌드</em></td><td><a href="#large">큰 받기</a></td></tr>
+          <tr><td>인게임 입장 · 받다가 실패</td><td>재시도 창 [취소] [다시 시도]. 3번 이상 실패하고 [취소]하면 문의 안내 창 [닫기] [문의하기]</td><td><a href="#large">큰 받기</a></td></tr>
+          <tr><td>판 시작 · 이어하기</td><td>크기 상관없이 묻지 않고 로딩 빙글(10초 넘으면 진행률 창)</td><td><a href="#game">판 시작</a></td></tr>
+          <tr><td>Android 셀룰러 + Play “Wi-Fi에서만”</td><td>Google Play 시트가 먼저 받을지 묻는다. 닫으면 Wi-Fi 대기 재시도 창</td><td><a href="#game">판 시작</a></td></tr>
+          <tr><td>노벨 29화(연미정)</td><td>다른 화와 같음. 노벨 팩이 없으면 받을지 묻는 창 → 진행률 창. [나중에]·[취소]면 29화만 안 열림</td><td><a href="#novel">노벨</a></td></tr>
+          <tr><td>창 없는 받기</td><td>아무것도 안 뜸 — 자격증 그림은 대체 그림, 엔딩 BGM은 무음</td><td><a href="#silent">창 없음</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>리모트 컨피그</th><th>기본값</th><th>뜻</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">assetPack_bootRequiredPacks</td><td>[]</td><td>열린 시즌 이벤트 팩에 더해 부팅에서 꼭 받을 팩 이름 목록. 예: <span class="mono">["PackCompetition"]</span></td></tr>
+          <tr><td class="mono">assetPack_bootBlockOnFailure</td><td>true</td><td>부팅 받기가 실패하면 [다시 시도]만. false 면 [취소]로 로비에 들어가고 그 콘텐츠만 막힘 — 스토어 장애 때 푸는 레버</td></tr>
+          <tr><td class="mono">assetPack_bootQuietMaxMb</td><td>0</td><td>부팅에서 이 크기(MB) 이하 받기는 알림 창도 크기 표시도 없이. 0 = 늘 알린다. 올리면 iOS 심사 위험</td></tr>
+          <tr><td class="mono">assetPack_entryQuietMaxMb</td><td>5</td><td>인게임 입장에서 이 크기(MB) 이하는 묻지 않고 로딩 빙글, 넘으면 받을지 묻는 창</td></tr>
+          <tr><td class="mono">assetPack_spinnerToProgressSeconds</td><td>10</td><td>로딩 빙글이 이 초를 넘기면 진행률 창(퍼센트·취소)으로 바뀐다. 0 이면 바로 진행률 창</td></tr>
+          <tr><td class="mono">assetPack_supportAfterFailures</td><td>3</td><td>받기가 이 횟수 이상 실패하면 문의하기(채널톡)를 권한다. 0 이면 권하지 않음</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="legend">
+      <span class="arrow"><i></i> 누르면 / 조건이 맞으면 이동</span>
+      <span><em class="chip real">실기</em> AVD 1.1.10(293) 캡처</span>
+      <span><em class="chip mock">렌더</em> 실제 프리팹을 Unity에서 그린 것(배경은 합성)</span>
+      <span><em class="chip new">다음 빌드</em> 아직 기기에 없는 동작</span>
+      <span><em class="chip warn">광고</em> 캡처 아래 배너는 이번 수정으로 사라짐</span>
+    </div>
+  </header>
+
+  <section class="frame" id="boot">
+    <div class="frame-head"><span class="frame-name">Boot · 꼭 받는 팩</span><p>로딩 90% 뒤, 열린 시즌 이벤트(렛츠스터디·독서왕·픽업)의 팩이나 리모트 컨피그로 지정한 팩이 기기에 없을 때. 건너뛸 수 없다. 한 번이라도 받은 팩(부팅·입장·뒤에서 받기)은 다시 알리지 않는다</p></div>
+    <div class="board-wrap"><div class="stage"><div class="board" data-w="1240" data-h="1190">
+      <div class="rowlabel" style="top:250px">처음 받을 때<small>받은 적 없는 팩</small></div>
+      <div class="rowlabel" style="top:840px">받다가 실패<small>재시도 · 문의</small></div>
+      <figure class="scr" id="A-load" style="left:150px;top:90px">
+        <span class="name">Loading</span>
+        <img src="img/boot_loading.jpg" width="180" height="400" alt="부팅 로딩 바">
+        <figcaption>로딩 90% — 받을 팩 확인(열린 이벤트 + RC 목록)<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="A-notice" style="left:440px;top:90px">
+        <span class="name">Notice</span>
+        <img src="img/boot_confirm.jpg" width="180" height="400" alt="진행하려면 추가 데이터 약 3.3 MB를 받아야 합니다. 받기">
+        <figcaption>“진행하려면 추가 데이터 약 3.3 MB를 / 받아야 합니다.” [받기] 하나, 뒤로가기 안 됨<span class="chips"><em class="chip mock">렌더</em><em class="chip new">다음 빌드</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="A-dl" style="left:730px;top:90px">
+        <span class="name">Downloading</span>
+        <img src="img/boot_download.jpg" width="180" height="400" alt="추가 데이터 다운로드 중 0.00 / 3.34 MB">
+        <figcaption>로딩창 “추가 데이터 다운로드 중 (x / y MB)”<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="A-ready" style="left:1020px;top:90px">
+        <span class="name">Ready</span>
+        <img src="img/boot_ready.jpg" width="180" height="400" alt="터치해서 게임 시작">
+        <figcaption>“터치해서 게임 시작” → 로비<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="A-retry" style="left:150px;top:680px">
+        <span class="name">Retry</span>
+        <img src="img/boot_retry_block.jpg" width="180" height="400" alt="받지 못했습니다. 다시 시도">
+        <figcaption>1~2번째 실패: [다시 시도] 하나. 누르면 같은 받기를 다시<span class="chips"><em class="chip mock">렌더</em><em class="chip new">다음 빌드</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="A-support" style="left:440px;top:680px">
+        <span class="name">Retry · 3번째부터</span>
+        <img src="img/boot_retry_support.jpg" width="180" height="400" alt="받지 못했습니다. 문의하기, 다시 시도">
+        <figcaption>[문의하기]가 붙는다. 누르면 채널톡이 열리고 이 창은 남는다<span class="chips"><em class="chip mock">렌더</em><em class="chip new">다음 빌드</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="A-retry2" style="left:730px;top:680px">
+        <span class="name">Retry · RC 끔</span>
+        <img src="img/boot_retry.jpg" width="180" height="400" alt="받지 못했습니다. 취소, 다시 시도">
+        <figcaption>리모트 컨피그로 차단을 끈 때만 [취소]가 보인다<span class="chips"><em class="chip mock">렌더</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="A-lobby" style="left:1020px;top:680px">
+        <span class="name">Lobby</span>
+        <img src="img/lobby.jpg" width="180" height="400" alt="로비">
+        <figcaption>로비. 그 이벤트는 들어갈 때 받는다<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+    </div></div></div>
+  </section>
+
+  <section class="frame" id="small">
+    <div class="frame-head"><span class="frame-name">In-game · 작은 받기</span><p>받을 크기가 리모트 컨피그 기준(5 MB) 이하인 입장</p></div>
+    <div class="board-wrap"><div class="stage"><div class="board" data-w="1240" data-h="620">
+      <div class="rowlabel" style="top:250px">5 MB 이하<small>크기를 먼저 조회</small></div>
+      <figure class="scr" id="B-entry" style="left:150px;top:90px">
+        <span class="name">Entry</span>
+        <img src="img/comp_lobby.jpg" width="180" height="400" alt="로비">
+        <figcaption>입장 버튼 — 예: 픽업 배너 3.5 MB, 속보 사진 4.2, 자격증 합격 직후(rank 7~10 모두)<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="B-spin" style="left:440px;top:90px">
+        <span class="name">Spinner</span>
+        <img src="img/spinner.jpg" width="180" height="400" alt="로딩 중 빙글">
+        <figcaption>로딩 빙글. 취소 버튼 없음<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="B-prog" style="left:730px;top:90px">
+        <span class="name">Progress</span>
+        <img src="img/progress_comp.jpg" width="180" height="400" alt="진행률 창 42%">
+        <figcaption>10초가 넘으면 같은 받기를 진행률 창으로(퍼센트 이어서)<span class="chips"><em class="chip mock">렌더</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="B-in" style="left:1020px;top:90px">
+        <span class="name">Entered</span>
+        <div class="phbox" role="img" aria-label="들어간 화면<br>(픽업·속보 등)">들어간 화면<br>(픽업·속보 등)</div>
+        <figcaption>들어간다. 실패하면 오른쪽 아래 “큰 받기”와 같은 재시도 창</figcaption>
+      </figure>
+    </div></div></div>
+  </section>
+
+  <section class="frame" id="large">
+    <div class="frame-head"><span class="frame-name">In-game · 큰 받기</span><p>받을 크기가 기준(5 MB)을 넘거나 크기를 모르는 입장 — 이벤트 입장, 노벨 입구·각 화. 한 번이라도 받은 팩(iOS 에서 켤 때마다 다시 확인하는 경우 포함)은 묻지 않고 빙글. 자격증 합격 직후는 판 도중이라 묻지 않는다</p></div>
+    <div class="board-wrap"><div class="stage"><div class="board" data-w="1240" data-h="1190">
+      <div class="rowlabel" style="top:250px">5 MB 초과<small>크기 모름 포함</small></div>
+      <div class="rowlabel" style="top:840px">받다가 실패<small>재시도 · 문의</small></div>
+      <figure class="scr" id="C-entry" style="left:150px;top:90px">
+        <span class="name">Entry</span>
+        <img src="img/comp_lobby.jpg" width="180" height="400" alt="로비">
+        <figcaption>입장 버튼 — 예: 독서왕 10.3 MB, 렛츠스터디 12.4, 노벨 7.6<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="C-confirm" style="left:440px;top:90px">
+        <span class="name">Confirm</span>
+        <img src="img/entry_confirm.jpg" width="180" height="400" alt="추가 데이터 약 9.8 MB를 지금 받을까요? 나중에 받기">
+        <figcaption>“추가 데이터 약 9.8 MB를 / 지금 받을까요?” [나중에] [받기]<span class="chips"><em class="chip mock">렌더</em><em class="chip new">다음 빌드</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="C-prog" style="left:730px;top:90px">
+        <span class="name">Progress</span>
+        <img src="img/progress_comp.jpg" width="180" height="400" alt="진행률 창 42% 취소">
+        <figcaption>진행률 창 — 퍼센트와 [취소]<span class="chips"><em class="chip mock">렌더</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="C-in" style="left:1020px;top:90px">
+        <span class="name">Entered</span>
+        <div class="phbox" role="img" aria-label="들어간 화면 (독서왕 등)">들어간 화면<br>(독서왕 등)</div>
+        <figcaption>다 받으면 그대로 들어간다</figcaption>
+      </figure>
+      <div class="note" style="left:150px;top:700px;width:250px"><b>[나중에]·[취소]</b><ul><li>들어가지 않고 원래 화면에 남는다.</li><li>재화·스태미나·세이브는 그대로.</li><li>다시 누르면 다시 묻는다.</li></ul></div>
+      <figure class="scr" id="C-retry" style="left:440px;top:680px">
+        <span class="name">Retry</span>
+        <img src="img/entry_retry.jpg" width="180" height="400" alt="받지 못했습니다. 취소, 다시 시도">
+        <figcaption>실패 사유·오류 코드. [취소] [다시 시도]. 1~2번째 [취소]는 그냥 들어가지 않음<span class="chips"><em class="chip mock">렌더</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="C-support" style="left:730px;top:680px">
+        <span class="name">Support</span>
+        <img src="img/support_offer.jpg" width="180" height="400" alt="추가 데이터를 계속 받지 못하고 있습니다. 닫기, 문의하기">
+        <figcaption>3번 이상 실패하고 [취소]하면. [닫기]는 들어가지 않음<span class="chips"><em class="chip mock">렌더</em><em class="chip new">다음 빌드</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="C-ct" style="left:1020px;top:680px">
+        <span class="name">Channel Talk</span>
+        <div class="phbox" role="img" aria-label="채널톡 상담창">채널톡<br>상담창</div>
+        <figcaption>채널톡 상담창</figcaption>
+      </figure>
+    </div></div></div>
+  </section>
+
+  <section class="frame" id="game">
+    <div class="frame-head"><span class="frame-name">Game start · Resume</span><p>스토리 3-1 이후·취경 판 시작과 이어하기 — 크기 상관없이 묻지 않고 빙글. 아래 줄은 Android 셀룰러 + Play “Wi-Fi에서만” 설정일 때 Google Play 시트가 먼저 받을지 묻는 경우. 취소해도 스태미나·이어하기 횟수는 그대로</p></div>
+    <div class="board-wrap"><div class="stage"><div class="board" data-w="1240" data-h="1190">
+      <div class="rowlabel" style="top:250px">판 시작<small>스토리 3-1+ · 취경</small></div>
+      <div class="rowlabel" style="top:840px">이어하기<small>Play “Wi-Fi에서만” + 셀룰러</small></div>
+      <figure class="scr" id="g-lobby" data-x="150" data-y="90" style="left:150px;top:90px">
+        <span class="name">Entry</span>
+        <img src="img/comp_lobby.jpg" width="180" height="400" alt="취업경쟁 로비의 입사준비 버튼">
+        <figcaption>입사준비 · 스테이지 시작<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="g-spin" data-x="440" data-y="90" style="left:440px;top:90px">
+        <span class="name">Spinner</span>
+        <img src="img/spinner.jpg" width="180" height="400" alt="로딩 중 빙글">
+        <figcaption>묻지 않고 빙글(취경 약 15 MB, AVD 8.4초)<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="g-prog" data-x="730" data-y="90" style="left:730px;top:90px">
+        <span class="name">Progress</span>
+        <img src="img/progress_comp.jpg" width="180" height="400" alt="진행률 창">
+        <figcaption>같은 받기를 진행률 창으로 넘김. 퍼센트는 이어서<span class="chips"><em class="chip mock">렌더</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="g-ready" data-x="1020" data-y="90" style="left:1020px;top:90px">
+        <span class="name">Game ready</span>
+        <img src="img/game_ready.jpg" width="180" height="400" alt="게임 준비 창">
+        <figcaption>게임 준비 창으로 저절로<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="r-dialog" data-x="150" data-y="680" style="left:150px;top:680px">
+        <span class="name">Resume</span>
+        <img src="img/resume_dialog.jpg" width="180" height="400" alt="이어하기 창: 플레이 중이던 게임이 있습니다. 나가기, 불러오기">
+        <figcaption>이어하기 창(남은 횟수 3/3)<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="r-sheet" data-x="440" data-y="680" style="left:440px;top:680px">
+        <span class="name">Play sheet</span>
+        <img src="img/resume_sheet.jpg" width="180" height="400" alt="로딩 빙글과 Google Play 추가 파일 다운로드 시트">
+        <figcaption>빙글 + Google Play “Download additional files?” 시트<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="r-retry" data-x="730" data-y="680" style="left:730px;top:680px">
+        <span class="name">Retry</span>
+        <img src="img/retry.jpg" width="180" height="400" alt="Wi-Fi 연결 대기 재시도 창">
+        <figcaption>AP-WIFI 재시도 창<span class="chips"><em class="chip real">실기</em><em class="chip warn">광고</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="r-back" data-x="1020" data-y="680" style="left:1020px;top:680px">
+        <span class="name">In game</span>
+        <img src="img/resume_back.jpg" width="180" height="400" alt="판으로 복귀한 화면">
+        <figcaption>판으로 복귀. 이어하기 횟수는 성공한 1번만 차감<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+    </div></div></div>
+  </section>
+
+  <section class="frame" id="novel">
+    <div class="frame-head"><span class="frame-name">Novel · 29화 (연미정)</span><p>노벨은 1~39화 전부 노벨 팩 하나(7.6 MB, 설치 직후 스토어가 받아 둠)</p></div>
+    <div class="board-wrap"><div class="stage"><div class="board" data-w="1240" data-h="1190">
+      <div class="rowlabel" style="top:250px">노벨 팩 확인<small>29화도 같다</small></div>
+      <div class="rowlabel" style="top:840px">받다가 실패<small>재시도 · 문의</small></div>
+      <figure class="scr" id="F-list" style="left:150px;top:90px">
+        <span class="name">Novel list</span>
+        <img src="img/novel_list.jpg" width="180" height="400" alt="노벨 목록">
+        <figcaption>노벨 목록에서 29화를 누른다(목록·썸네일은 앱 본체라 늘 보임)<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="F-confirm" style="left:440px;top:90px">
+        <span class="name">Confirm</span>
+        <img src="img/novel_confirm2.jpg" width="180" height="400" alt="추가 데이터 약 7.3 MB를 지금 받을까요?">
+        <figcaption>노벨 팩(7.6 MB)이 없을 때만 “약 7.3 MB를 / 지금 받을까요?”<span class="chips"><em class="chip mock">렌더</em><em class="chip new">다음 빌드</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="F-prog" style="left:730px;top:90px">
+        <span class="name">Progress</span>
+        <img src="img/progress_novel.jpg" width="180" height="400" alt="노벨 목록 위 진행률 창">
+        <figcaption>진행률 창<span class="chips"><em class="chip mock">렌더</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="F-ep" style="left:1020px;top:90px">
+        <span class="name">Episode 29</span>
+        <img src="img/novel_ep29.jpg" width="180" height="400" alt="29화 재생">
+        <figcaption>29화 재생 — 어린 연미정 그림 포함<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+      <div class="note" style="left:150px;top:700px;width:420px"><b>29화(연미정)</b><ul><li>연미정 그림(0.07 MB)은 9/28 노벨 팩에 합쳤다. 29화도 다른 화와 같다.</li><li>노벨 팩은 설치 직후 스토어가 받아 두므로 대부분은 창 없이 바로 재생.</li><li>[나중에]·[취소]·실패 뒤 [취소] → 29화만 안 열리고 목록에 남는다. 보상·진행은 그대로. 3번 이상 실패하면 문의 안내 창.</li></ul></div>
+      <figure class="scr" id="F-retry" style="left:730px;top:680px">
+        <span class="name">Retry</span>
+        <img src="img/novel_retry.jpg" width="180" height="400" alt="받지 못했습니다. 취소, 다시 시도">
+        <figcaption>실패 사유·오류 코드. [취소] [다시 시도]<span class="chips"><em class="chip mock">렌더</em></span></figcaption>
+      </figure>
+    </div></div></div>
+  </section>
+
+  <section class="frame" id="silent">
+    <div class="frame-head"><span class="frame-name">Silent · 창 없는 받기</span><p>유저 조작 없이 도는 자리 — 자격증 그림, 엔딩 BGM</p></div>
+    <div class="board-wrap"><div class="stage"><div class="board" data-w="1240" data-h="620">
+      <div class="rowlabel" style="top:250px">창 없음<small>못 받아도 진행</small></div>
+      <figure class="scr" id="G-cert" style="left:150px;top:90px">
+        <span class="name">Certificate</span>
+        <div class="phbox" role="img" aria-label="자격증 그림<br>(대체 그림 → 실제 그림)">자격증 그림<br>(대체 그림 → 실제 그림)</div>
+        <figcaption>자격증 화면 — 그림 팩이 없으면 앱 안의 대체 그림을 먼저 붙이고 조용히 받는다</figcaption>
+      </figure>
+      <figure class="scr" id="G-bgm" style="left:440px;top:90px">
+        <span class="name">Ending credit</span>
+        <div class="phbox" role="img" aria-label="엔딩 크레딧<br>(BGM 없으면 무음)">엔딩 크레딧<br>(BGM 없으면 무음)</div>
+        <figcaption>엔딩 크레딧 — 3초 안에 BGM이 안 오면 무음으로 진행</figcaption>
+      </figure>
+      <div class="note" style="left:730px;top:120px;width:470px"><b>창 없는 받기</b><ul><li>창도, 입력 잠금도, 재시도 질문도 없다.</li><li>못 받아도 화면은 그대로 진행된다(대체 그림·무음). 다음에 들어오면 다시 시도한다.</li><li>Android 동의 시트도 띄우지 않는다.</li></ul></div>
+    </div></div></div>
+  </section>
+
+  <section class="frame" id="ref">
+    <div class="frame-head"><span class="frame-name">참고 · 수험생 키우기 확장팩</span><p>같은 회사 전작. 확장팩 진입 때 총 크기를 묻고 MB 진행을 보인 뒤 저절로 이어 감(AVD 9/27)</p></div>
+    <div class="board-wrap"><div class="stage"><div class="board" data-w="1240" data-h="600">
+      <div class="rowlabel" style="top:250px">확장팩<small>진입할 때</small></div>
+      <figure class="scr" id="s-conf" data-x="150" data-y="90" style="left:150px;top:90px">
+        <span class="name">Confirm</span>
+        <img src="img/sk_confirm.jpg" width="180" height="400" alt="확장팩을 플레이하기 위해 추가 다운로드가 필요합니다. 총 73.7MB. 다운로드, 취소">
+        <figcaption>“총 73.7MB의 데이터를 다운로드 받습니다.”<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+      <figure class="scr" id="s-prog" data-x="440" data-y="90" style="left:440px;top:90px">
+        <span class="name">Progress</span>
+        <img src="img/sk_progress.jpg" width="180" height="400" alt="에셋 파일들을 다운로드 중입니다. 37.4MB / 73.7MB">
+        <figcaption>“37.4MB / 73.7MB 다운로드 중…” 취소 버튼 없음<span class="chips"><em class="chip real">실기</em></span></figcaption>
+      </figure>
+    </div></div></div>
+  </section>
+
+  <section class="asks">
+    <h2>피드백 받고 싶은 것</h2>
+    <ol>
+      <li><b>두 확인 창의 말투.</b> <span>부팅은 “진행하려면 … 받아야 합니다.” [받기](안내), 인게임은 “… 지금 받을까요?” [나중에] [받기](질문). 이유(“이벤트를 즐기려면 …”)를 넣을지, 말투를 맞출지.</span></li>
+      <li><b>문의하기 시점.</b> <span>3번째 실패부터 [문의하기]를 보입니다(리모트 컨피그). 횟수와 안내 문구가 괜찮은지.</span></li>
+      <li><b>재시도 창의 오류 문구.</b> <span>“AP-STALL (PackReadingKing: Stalled)”처럼 내부 팩 이름이 유저에게 보입니다. CS 분류용 코드만 남길지.</span></li>
+      <li><b>진행률 막대.</b> <span>막대 왼쪽 끝에 짙은 얼룩(기본 둥근 사각형 그림을 늘려 쓴 탓). 디자인 리소스로 바꿀지.</span></li>
+    </ol>
+  </section>
+
+  <footer>화면: Android AVD 1.1.10(293) 캡처, “렌더”는 실제 프리팹을 Unity에서 그려 캡처 배경에 합성. 계정 식별자는 가림.</footer>
+</div>
+
+<script>
+(function () {
+  // 화살표는 보드 좌표의 꺾은선. 첫 점이 누르는 곳, 마지막 점이 도착하는 곳. l = 라벨 위치
+  var EDGES = {
+    boot: [
+      { p: [[330,290],[440,290]], l: [385,290], label: "받은 적 없는 팩" },
+      { p: [[530,334],[730,334]], l: [675,334], label: "받기" },
+      { p: [[910,290],[1020,290]], l: [965,290], label: "다 받음" },
+      { p: [[240,90],[240,45],[1110,45],[1110,90]], l: [675,45], label: "기기에 있음 · 받은 적 있음 — 창 없이" },
+      { p: [[730,420],[685,420],[685,620],[240,620],[240,680]], l: [460,620], label: "실패" },
+      { p: [[330,880],[440,880]], l: [385,880], label: "3번째 실패부터" },
+      { p: [[782,928],[782,1060],[990,1060],[990,880],[1020,880]], l: [886,1060], label: "취소(RC 끔일 때만)" }
+    ],
+    small: [
+      { p: [[330,290],[440,290]], l: [385,290], label: "누름" },
+      { p: [[530,90],[530,45],[1110,45],[1110,90]], l: [820,45], label: "다 받으면 그대로 입장" },
+      { p: [[620,330],[730,330]], l: [675,330], label: "10초 넘김" },
+      { p: [[910,290],[1020,290]], l: [965,290], label: "다 받음" },
+      { p: [[820,334],[820,470],[330,470]], l: [385,470], label: "취소" }
+    ],
+    large: [
+      { p: [[330,290],[440,290]], l: [385,290], label: "누름" },
+      { p: [[568,334],[730,334]], l: [675,334], label: "받기" },
+      { p: [[910,290],[1020,290]], l: [965,290], label: "다 받음" },
+      { p: [[492,334],[492,470],[330,470]], l: [385,470], label: "나중에" },
+      { p: [[820,334],[820,60],[240,60],[240,90]], l: [530,60], label: "취소 — 들어가지 않음" },
+      { p: [[730,420],[660,420],[660,780],[620,780]], l: [660,540], label: "실패" },
+      { p: [[568,924],[700,924],[700,470],[730,470]], l: [700,640], label: "다시 시도" },
+      { p: [[492,924],[492,1060],[715,1060],[715,960],[730,960]], l: [603,1060], label: "취소(3번째 실패부터)" },
+      { p: [[858,924],[1020,924]], l: [965,924], label: "문의하기" }
+    ],
+    game: [
+      { p: [[236,454],[440,454]], l: [385,454], label: "시작" },
+      { p: [[530,90],[530,45],[1110,45],[1110,90]], l: [820,45], label: "다 받으면 저절로" },
+      { p: [[620,290],[730,290]], l: [675,290], label: "10초 넘김" },
+      { p: [[910,290],[1020,290]], l: [965,290], label: "다 받음" },
+      { p: [[281,936],[440,936]], l: [385,936], label: "불러오기" },
+      { p: [[620,1000],[730,1000]], l: [675,1000], label: "시트 닫음" },
+      { p: [[782,932],[782,1060],[330,1060]], l: [385,1060], label: "취소 — 이어하기 창 다시" },
+      { p: [[530,680],[530,640],[1110,640],[1110,680]], l: [820,640], label: "Download 허용 → 판 복귀" }
+    ],
+    novel: [
+      { p: [[240,90],[240,45],[1110,45],[1110,90]], l: [675,45], label: "노벨 팩 있음 — 바로 재생(대부분)" },
+      { p: [[330,290],[440,290]], l: [385,290], label: "팩 없음" },
+      { p: [[568,334],[730,334]], l: [675,334], label: "받기" },
+      { p: [[910,290],[1020,290]], l: [965,290], label: "다 받음" },
+      { p: [[492,334],[492,440],[330,440]], l: [385,440], label: "나중에" },
+      { p: [[820,334],[820,480],[330,480]], l: [675,480], label: "취소" },
+      { p: [[910,380],[965,380],[965,940],[910,940]], l: [965,540], label: "실패" },
+      { p: [[858,924],[940,924],[940,460],[910,460]], l: [940,760], label: "다시 시도" }
+    ],
+    silent: [],
+    ref: [
+      { p: [[218,330],[440,330]], l: [385,330], label: "다운로드" }
+    ]
+  };
+  var NS = "http://www.w3.org/2000/svg";
+
+  function draw(section) {
+    var key = section.id, board = section.querySelector(".board"), list = EDGES[key];
+    if (!list) return;
+    var svg = board.querySelector("svg.edges");
+    if (!svg) {
+      svg = document.createElementNS(NS, "svg"); svg.setAttribute("class", "edges");
+      svg.setAttribute("width", board.dataset.w); svg.setAttribute("height", board.dataset.h);
+      var defs = document.createElementNS(NS, "defs"), m = document.createElementNS(NS, "marker");
+      m.setAttribute("id", "ah-" + key); m.setAttribute("viewBox", "0 0 10 10"); m.setAttribute("refX", "9"); m.setAttribute("refY", "5");
+      m.setAttribute("markerWidth", "7"); m.setAttribute("markerHeight", "7"); m.setAttribute("orient", "auto-start-reverse");
+      var tri = document.createElementNS(NS, "path"); tri.setAttribute("d", "M0,0 L10,5 L0,10 z"); tri.setAttribute("fill", "var(--flow)");
+      m.appendChild(tri); defs.appendChild(m); svg.appendChild(defs); board.appendChild(svg);
+    }
+    list.forEach(function (e) {
+      var p = e.p.map(function (q) { return { x: q[0], y: q[1] }; });
+      var d = "M" + p.map(function (q) { return q.x + "," + q.y; }).join(" L");
+      var path = document.createElementNS(NS, "path");
+      path.setAttribute("d", d); path.setAttribute("fill", "none"); path.setAttribute("stroke", "var(--flow)");
+      path.setAttribute("stroke-width", "2"); path.setAttribute("stroke-linejoin", "round"); path.setAttribute("marker-end", "url(#ah-" + key + ")");
+      svg.appendChild(path);
+      var dot = document.createElementNS(NS, "circle");
+      dot.setAttribute("cx", p[0].x); dot.setAttribute("cy", p[0].y); dot.setAttribute("r", "4.5");
+      dot.setAttribute("fill", "var(--paper)"); dot.setAttribute("stroke", "var(--flow)"); dot.setAttribute("stroke-width", "2");
+      svg.appendChild(dot);
+      var best = { x: e.l[0], y: e.l[1] };
+      var lab = document.createElement("div");
+      lab.className = "elabel"; lab.textContent = e.label; lab.style.left = best.x + "px"; lab.style.top = best.y + "px";
+      board.appendChild(lab);
+    });
+  }
+  function fit() {
+    document.querySelectorAll(".board-wrap").forEach(function (wrap) {
+      var stage = wrap.querySelector(".stage"), board = wrap.querySelector(".board");
+      var bw = +board.dataset.w, bh = +board.dataset.h;
+      var s = Math.max(0.55, Math.min(1, wrap.clientWidth / bw));
+      board.style.width = bw + "px"; board.style.height = bh + "px";
+      board.style.transform = "scale(" + s + ")";
+      stage.style.width = bw * s + "px"; stage.style.height = bh * s + "px";
+    });
+  }
+  document.querySelectorAll("section.frame").forEach(draw);
+  fit();
+  window.addEventListener("resize", fit);
+})();
+</script>
