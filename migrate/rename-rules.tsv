@@ -1,0 +1,18 @@
+# 옛 문서 스킬 이름 → doc-kit 치환 규칙. 위에서 아래로 순서대로 적용한다.
+# 열: perl 정규식 <TAB> 치환 문자열(문자 그대로). 줄 단위로 적용하며 이름만 바꾸고 문장은 건드리지 않는다.
+# 1) 경로: 사라지는 참고 파일은 doc-kit 의 대응 파일로
+tech-record/references/house-style\.md	doc-kit/references/style.md
+tech-record/references/sources\.md	doc-kit/references/config.md
+explain-diff/references/md-spec\.md	doc-kit/references/explain.md
+work-report/references/templates\.md	doc-kit/references/report.md
+# 2) 여러 이름을 나열한 구절은 하나로
+`explain-diff`·`tech-record`·`create-pr`·`work-report`	`doc-kit`·`create-pr`
+explain-diff·tech-record·structure-change-doc·work-report·doc-coauthoring	doc-kit
+explain-diff·tech-record	doc-kit
+work-report·structure-change-doc	doc-kit
+tech-record/explain-diff	doc-kit
+# 3) 나머지 이름
+\b(?:structure-change-doc|explain-diff|tech-record|work-report|doc-coauthoring)\b	doc-kit
+# 4) 이름이 겹쳐 생긴 중복
+`doc-kit`(?:[·/]`doc-kit`)+	`doc-kit`
+doc-kit(?:[·/]doc-kit)+	doc-kit
