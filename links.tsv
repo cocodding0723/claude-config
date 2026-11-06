@@ -1,5 +1,5 @@
 # src	dst($HOME 기준)	mode
-# mode: link=링크, merge=설정 병합 복사, copy=__HOME__ 치환 복사, seed=대상이 없을 때만 복사
+# mode: link=링크, merge=설정 병합 복사, copy=__HOME__ 치환 복사, render=값 파일(values.env)로 자리표시를 채워 복사
 claude/CLAUDE.md	.claude/CLAUDE.md	link
 claude/keybindings.json	.claude/keybindings.json	link
 claude/settings.base.json	.claude/settings.json	merge
@@ -27,14 +27,12 @@ skills/jira-issue	.claude/skills/jira-issue	link
 skills/make-mistakes-impossible	.claude/skills/make-mistakes-impossible	link
 skills/manage-issues	.claude/skills/manage-issues	link
 skills/orca-coordinator	.claude/skills/orca-coordinator	link
-skills/orca-hub-create	.claude/skills/orca-hub-create	link
 skills/pr-review-game	.claude/skills/pr-review-game	link
 skills/pretty-code	.claude/skills/pretty-code	link
 skills/prose-lint	.claude/skills/prose-lint	link
 skills/qa-checklist	.claude/skills/qa-checklist	link
 skills/repo-reality-check	.claude/skills/repo-reality-check	link
 skills/review-before-commit	.claude/skills/review-before-commit	link
-skills/structure-change-doc	.claude/skills/structure-change-doc	link
 skills/tech-record	.claude/skills/tech-record	link
 skills/triage	.claude/skills/triage	link
 skills/unity-mcp-skill	.claude/skills/unity-mcp-skill	link
@@ -46,6 +44,20 @@ skills/worktree-gc	.claude/skills/worktree-gc	link
 skills/writing-clearly-and-concisely	.claude/skills/writing-clearly-and-concisely	link
 skills/writing-humanizer	.claude/skills/writing-humanizer	link
 skills/xml-doc-readable	.claude/skills/xml-doc-readable	link
+skills/orca-hub-create/SKILL.md	.claude/skills/orca-hub-create/SKILL.md	link
+skills/orca-hub-create/references/common-rules.txt.tmpl	.claude/skills/orca-hub-create/references/common-rules.txt	render
+skills/orca-hub-create/references/role-prompt.md	.claude/skills/orca-hub-create/references/role-prompt.md	link
+skills/orca-hub-create/scripts/create_hub.sh	.claude/skills/orca-hub-create/scripts/create_hub.sh	link
+skills/orca-hub-create/scripts/create_worker_ws.sh	.claude/skills/orca-hub-create/scripts/create_worker_ws.sh	link
+skills/orca-hub-create/scripts/pick_host.sh	.claude/skills/orca-hub-create/scripts/pick_host.sh	link
+skills/structure-change-doc/SKILL.md.tmpl	.claude/skills/structure-change-doc/SKILL.md	render
+skills/structure-change-doc/scripts/check.py	.claude/skills/structure-change-doc/scripts/check.py	link
+skills/structure-change-doc/scripts/image_diff.py	.claude/skills/structure-change-doc/scripts/image_diff.py	link
+skills/structure-change-doc/scripts/puml_diff.py	.claude/skills/structure-change-doc/scripts/puml_diff.py	link
+skills/structure-change-doc/scripts/screen_flow.sh	.claude/skills/structure-change-doc/scripts/screen_flow.sh	link
+skills/structure-change-doc/templates/after.puml	.claude/skills/structure-change-doc/templates/after.puml	link
+skills/structure-change-doc/templates/before.puml	.claude/skills/structure-change-doc/templates/before.puml	link
+skills/structure-change-doc/templates/doc.html	.claude/skills/structure-change-doc/templates/doc.html	link
 git/hooks/_chain	.config/git/hooks/_chain	link
 git/hooks/commit-msg	.config/git/hooks/commit-msg	link
 git/hooks/post-checkout	.config/git/hooks/post-checkout	link
@@ -71,9 +83,9 @@ hubs/roles/role-data.txt	.config/lrm-hubs/roles/role-data.txt	link
 hubs/roles/role-scrum.txt	.config/lrm-hubs/roles/role-scrum.txt	link
 hubs/roles/role-server.txt	.config/lrm-hubs/roles/role-server.txt	link
 hubs/roles/role-test.txt	.config/lrm-hubs/roles/role-test.txt	link
-hubs/roles/role-tutorial.txt	.config/lrm-hubs/roles/role-tutorial.txt	link
 hubs/roles/role-ui.txt	.config/lrm-hubs/roles/role-ui.txt	link
-hubs/roles/role-vfx.txt	.config/lrm-hubs/roles/role-vfx.txt	link
-hubs/roles/role-docs.txt.example	.config/lrm-hubs/roles/role-docs.txt	seed
 hubs/slack-bot-manifest.yml	.config/lrm-hubs/slack-bot-manifest.yml	link
 hubs/launchd/ai.lrm.slackpoll.plist	Library/LaunchAgents/ai.lrm.slackpoll.plist	copy
+hubs/roles/role-vfx.txt.tmpl	.config/lrm-hubs/roles/role-vfx.txt	render
+hubs/roles/role-tutorial.txt.tmpl	.config/lrm-hubs/roles/role-tutorial.txt	render
+hubs/roles/role-docs.txt.tmpl	.config/lrm-hubs/roles/role-docs.txt	render

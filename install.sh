@@ -6,6 +6,8 @@ set -euo pipefail
 REPO=$(cd "$(dirname "$0")" && pwd -P)
 LINKS="$REPO/links.tsv"
 GITCFG="$REPO/gitconfig.tsv"
+VALUES_EXAMPLE="$REPO/values.env.example"
+VALUES="${CLAUDE_CONFIG_VALUES:-$HOME/.config/claude-config/values.env}"
 BACKUP_ROOT="${CLAUDE_CONFIG_BACKUP_ROOT:-$HOME/.claude-config-backup}"
 export GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL:-$HOME/.gitconfig}"
 
@@ -18,6 +20,9 @@ usage() {
   --check            끊어진 링크·어긋난 설정 점검. 문제가 있으면 종료 코드 1
   --restore <폴더>   그 설치 때 만든 링크·병합 결과를 지우고 백업 원본 복원
   --reload-launchd   plist 가 바뀌면 launchctl 로 재적재(기본은 명령만 안내)
+
+render 항목(실명·채널 ID 가 든 파일)은 로컬 값 파일로 자리표시를 채워 복사한다.
+값 파일: ~/.config/claude-config/values.env (CLAUDE_CONFIG_VALUES 로 변경). 양식은 values.env.example.
 
 환경: HOME 아래만 처리. CLAUDE_CONFIG_BACKUP_ROOT 로 백업 위치 변경(기본 ~/.claude-config-backup).
 예시: ./install.sh --dry-run && ./install.sh && ./install.sh --check
@@ -79,10 +84,23 @@ backup_move() {
 
 mark_new() { ensure_backup; record new "$1"; }
 
+# 상위 폴더를 만들고 새로 만든 폴더만 기록(복원 때 비어 있으면 제거)
+make_parent() {
+  local list="" d
+  d=$(dirname "$HOME/$1")
+  while [ ! -d "$d" ]; do list="$d"$'\n'"$list"; d=$(dirname "$d"); done
+  [ -n "$list" ] || return 0
+  ensure_backup
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    mkdir "$d"; record newdir "${d#"$HOME"/}"
+  done <<< "$list"
+}
+
 # 대상이 있으면 백업, 없으면 새로 만든 항목으로 기록
 prepare_target() {
   local dst="$1" t="$HOME/$1"
-  mkdir -p "$(dirname "$t")"
+  make_parent "$dst"
   if [ -L "$t" ] || [ -e "$t" ]; then backup_move "$dst"; else mark_new "$dst"; fi
 }
 
@@ -135,10 +153,34 @@ do_merge() {
   log "MERGE  $dst (훅 $(hook_count "$out")개)"
 }
 
+# 파일을 바이트 그대로 읽어 __HOME__ 과 값 파일의 __KEY__ 를 치환해 $2 로 씀(끝 개행 유지)
+subst_file() {
+  local src="$1" out="$2" content k v
+  content=$(cat "$src"; printf x); content=${content%x}
+  content=${content//__HOME__/$HOME}
+  if [ "${3:-}" = values ]; then
+    while IFS='=' read -r k v; do
+      case "$k" in ''|'#'*) continue ;; esac
+      content=${content//"__${k}__"/$v}
+    done < "$VALUES"
+  fi
+  printf '%s' "$content" > "$out"
+}
+
+# 값 파일에 values.env.example 의 모든 키가 채워져 있어야 함
+check_values() {
+  local k missing=""
+  [ -f "$VALUES" ] || die "값 파일 없음: $VALUES. values.env.example 을 복사해 채운 뒤 다시 실행 (권한 600 권장)"
+  while IFS='=' read -r k _; do
+    case "$k" in ''|'#'*) continue ;; esac
+    grep -qE "^${k}=.+" "$VALUES" || missing="$missing $k"
+  done < "$VALUES_EXAMPLE"
+  [ -z "$missing" ] || die "값 파일에 빈 키:$missing ($VALUES)"
+}
+
 do_copy() {
-  local src="$1" dst="$2" t="$HOME/$2" out="$TMP/copied" content
-  content=$(< "$REPO/$src")
-  printf '%s\n' "${content//__HOME__/$HOME}" > "$out"
+  local src="$1" dst="$2" t="$HOME/$2" out="$TMP/copied"
+  subst_file "$REPO/$src" "$out"
   if same_file "$out" "$t"; then
     N_SKIP=$((N_SKIP + 1)); say "SKIP   $dst (내용 동일)"; return
   fi
@@ -148,6 +190,19 @@ do_copy() {
   cp "$out" "$t"
   log "COPY   $dst"
   reload_hint "$t"
+}
+
+do_render() {
+  local src="$1" dst="$2" t="$HOME/$2" out="$TMP/rendered"
+  subst_file "$REPO/$src" "$out" values
+  if same_file "$out" "$t"; then
+    N_SKIP=$((N_SKIP + 1)); say "SKIP   $dst (렌더 결과 동일)"; return
+  fi
+  N_COPY=$((N_COPY + 1))
+  if [ "$DRY" = 1 ]; then log "[dry-run] RENDER $dst"; return; fi
+  prepare_target "$dst"
+  cp "$out" "$t"
+  log "RENDER $dst"
 }
 
 # launchd 재적재는 부작용이 커서 플래그가 있을 때만 실행
@@ -164,30 +219,17 @@ reload_hint() {
   fi
 }
 
-do_seed() {
-  local src="$1" dst="$2" t="$HOME/$2"
-  if [ -L "$t" ] || [ -e "$t" ]; then
-    N_SKIP=$((N_SKIP + 1)); say "SKIP   $dst (이미 있음, 로컬 값 유지)"; return
-  fi
-  N_COPY=$((N_COPY + 1))
-  if [ "$DRY" = 1 ]; then log "[dry-run] SEED   $dst"; return; fi
-  mkdir_new "$dst"
-  cp "$REPO/$src" "$t"
-  log "SEED   $dst"
-}
-
-mkdir_new() { mkdir -p "$(dirname "$HOME/$1")"; mark_new "$1"; }
-
 # 실행 전 검증. 하나라도 틀리면 아무것도 바꾸지 않고 중단
 validate() {
   local bad=0 src dst mode
   command -v jq >/dev/null || die "jq 가 필요함: brew install jq"
   while IFS=$'\t' read -r src dst mode; do
-    case "$mode" in link|merge|copy|seed) ;; *) log "목록 오류: mode '$mode' ($src)" >&2; bad=1; continue ;; esac
+    case "$mode" in link|merge|copy|render) ;; *) log "목록 오류: mode '$mode' ($src)" >&2; bad=1; continue ;; esac
     case "$dst" in /*|*..*) log "목록 오류: dst 는 HOME 기준 상대경로여야 함 ($dst)" >&2; bad=1 ;; esac
     [ -e "$REPO/$src" ] || { log "목록 오류: 원본 없음 $src" >&2; bad=1; }
   done < <(entries)
   [ "$bad" = 0 ] || die "links.tsv 검증 실패. 위 항목을 고친 뒤 다시 실행"
+  if entries | cut -f3 | grep -qx render; then check_values; fi
 }
 
 apply_git_config() {
@@ -219,7 +261,7 @@ do_install() {
       link) do_link "$src" "$dst" ;;
       merge) do_merge "$src" "$dst" ;;
       copy) do_copy "$src" "$dst" ;;
-      seed) do_seed "$src" "$dst" ;;
+      render) do_render "$src" "$dst" ;;
     esac
   done < <(entries)
   apply_git_config
@@ -244,10 +286,11 @@ do_check() {
         build_merge "$REPO/$src" "$TMP/merged.json" "$dst"
         same_file "$TMP/merged.json" "$t" || { log "DRIFT  $dst (병합 결과와 다름)"; bad=$((bad + 1)); } ;;
       copy)
-        local content; content=$(< "$REPO/$src"); printf '%s\n' "${content//__HOME__/$HOME}" > "$TMP/copied"
+        subst_file "$REPO/$src" "$TMP/copied"
         same_file "$TMP/copied" "$t" || { log "DRIFT  $dst (복사본과 다름)"; bad=$((bad + 1)); } ;;
-      seed)
-        [ -e "$t" ] || { log "MISSING $dst"; bad=$((bad + 1)); } ;;
+      render)
+        subst_file "$REPO/$src" "$TMP/rendered" values
+        same_file "$TMP/rendered" "$t" || { log "DRIFT  $dst (렌더 결과와 다름)"; bad=$((bad + 1)); } ;;
     esac
   done < <(entries)
   while IFS=$'\t' read -r key val; do
@@ -257,25 +300,53 @@ do_check() {
   if [ "$bad" = 0 ]; then log "점검 통과: 문제 없음"; else log "점검 실패: $bad 건"; return 1; fi
 }
 
+# 복원은 백업을 소모하지 않는다(cp). 백업 원본이 하나라도 없으면 아무것도 지우지 않고 중단하므로
+# 두 번 실행하거나 중간에 실패한 뒤 다시 실행해도 안전함
 do_restore() {
   local dir="$RESTORE_DIR" kind dst stored t
   [ -f "$dir/backup.tsv" ] || die "백업 폴더가 아님: $dir (backup.tsv 없음)"
   while IFS=$'\t' read -r kind dst stored; do
+    case "$kind" in move|copy) [ -e "$stored" ] || [ -L "$stored" ] || die "복원 중단: 백업 원본 없음 $stored ($dst). 아무것도 지우지 않음" ;; esac
+  done < "$dir/backup.tsv"
+  while IFS=$'\t' read -r kind dst stored; do
     t="$HOME/$dst"
-    if [ -L "$t" ] || [ -f "$t" ]; then
-      [ "$DRY" = 1 ] && { log "[dry-run] REMOVE $dst"; } || rm -f "$t"
-    elif [ -e "$t" ]; then
-      die "복원 중단: $t 가 폴더라 지우지 않음. 직접 확인 후 다시 실행"
-    fi
     case "$kind" in
-      move|copy)
-        if [ "$DRY" = 1 ]; then log "[dry-run] RESTORE $dst"; continue; fi
-        mkdir -p "$(dirname "$t")"
-        if [ "$kind" = move ]; then mv "$stored" "$t"; else cp -p "$stored" "$t"; fi
-        log "RESTORE $dst" ;;
-      new) [ "$DRY" = 1 ] || log "REMOVE  $dst (이 설치가 새로 만든 항목)" ;;
+      move|copy) restore_one "$dst" "$stored" ;;
+      new)
+        if [ -L "$t" ] || [ -f "$t" ]; then
+          if [ "$DRY" = 1 ]; then log "[dry-run] REMOVE  $dst"; else rm -f "$t"; log "REMOVE  $dst (이 설치가 새로 만든 항목)"; fi
+        fi ;;
     esac
   done < "$dir/backup.tsv"
+  # 이 설치가 새로 만든 폴더는 비어 있을 때만 안쪽부터 제거
+  while IFS= read -r dst; do
+    [ -n "$dst" ] || continue
+    if [ "$DRY" = 1 ]; then log "[dry-run] RMDIR   $dst (비어 있으면)"; continue; fi
+    if [ -d "$HOME/$dst" ] && rmdir "$HOME/$dst" 2>/dev/null; then log "RMDIR   $dst"
+    elif [ -d "$HOME/$dst" ]; then log "남김    $dst (비어 있지 않음)"; fi
+  done < <(awk -F'\t' '$1=="newdir" {a[NR]=$2} END {for (i=NR; i>0; i--) if (a[i] != "") print a[i]}' "$dir/backup.tsv")
+}
+
+# 임시 이름으로 먼저 복사한 뒤 교체. 이미 같은 내용이면 건너뜀
+restore_one() {
+  local dst="$1" stored="$2" t="$HOME/$1" tmp="$HOME/$1.restore-tmp"
+  if [ -L "$stored" ]; then
+    if [ -L "$t" ] && [ "$(readlink "$t")" = "$(readlink "$stored")" ]; then log "SKIP    $dst (이미 복원됨)"; return; fi
+  elif [ -d "$stored" ]; then
+    if [ -d "$t" ] && [ ! -L "$t" ] && diff -rq "$stored" "$t" >/dev/null 2>&1; then log "SKIP    $dst (이미 복원됨)"; return; fi
+  elif [ -f "$t" ] && [ ! -L "$t" ] && cmp -s "$stored" "$t"; then
+    log "SKIP    $dst (이미 복원됨)"; return
+  fi
+  if [ -d "$t" ] && [ ! -L "$t" ]; then
+    die "복원 중단: $t 가 백업과 다른 실제 폴더라 덮어쓰지 않음. 직접 확인 후 다시 실행"
+  fi
+  if [ "$DRY" = 1 ]; then log "[dry-run] RESTORE $dst"; return; fi
+  mkdir -p "$(dirname "$t")"
+  if [ -e "$tmp" ] || [ -L "$tmp" ]; then rm -rf "${tmp:?}"; fi
+  cp -a "$stored" "$tmp" || die "복원 복사 실패: $stored, 대상은 그대로 둠"
+  if [ -L "$t" ] || [ -f "$t" ]; then rm -f "$t"; fi
+  mv "$tmp" "$t" || die "복원 교체 실패: $t, 임시본 $tmp 가 남아 있음. 다시 실행하면 이어서 복원"
+  log "RESTORE $dst"
 }
 
 case "$ACTION" in
