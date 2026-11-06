@@ -36,7 +36,7 @@ dups=$(echo "$entries" | cut -f2 | sort | uniq -d)
 
 # ---- 샌드박스 준비 ---------------------------------------------------------
 SB=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox.XXXXXX")
-trap 'rm -rf "$SB"' EXIT
+trap 'rm -rf "${SB:?}"' EXIT
 REAL_HOME="$HOME"
 export HOME="$SB"
 mkdir -p "$SB/.claude/skills/comment-lint" "$SB/.claude/skills/synced" "$SB/.claude/hooks/lib" "$SB/.claude/hooks/state/logs" "$SB/.config/lrm-hubs/roles" "$SB/external-skill"
@@ -49,6 +49,8 @@ echo old-rules > "$SB/.claude/CLAUDE.md"
 echo DUMMY=1 > "$SB/.config/lrm-hubs/slack-bot.env"
 echo local-role > "$SB/.config/lrm-hubs/roles/role-docs.txt"
 printf '[user]\n\tname = sandbox\n' > "$SB/.gitconfig"
+mkdir -p "$SB/.config/claude-config"
+printf 'OWNER_NAME=VAL_OWNER\nPERSON_FULL=VAL_PERSON_FULL\nPERSON_SHORT=VAL_PERSON_SHORT\nDM_CHANNEL=VAL_DM_CHANNEL\n' > "$SB/.config/claude-config/values.env"
 
 # 현재 설정 = 기본값 + Orca 훅 15개(이벤트 앞·뒤 섞음) + 상태줄. 기본값 훅 7개와 합쳐 22개
 ORCA_CMD='sh -c "$HOME/.orca/agent-hooks/claude-hook.sh"'
@@ -60,11 +62,17 @@ mk_current() {
         (.; .hooks[$e] = (if ($e|test("^(PreToolUse|Stop)$")) then [{hooks:[{type:"command",command:$c}]}] + ($h[$e] // []) else ($h[$e] // []) + [{hooks:[{type:"command",command:$c}]}] end))
   ' "$REPO/claude/settings.base.json" | sed "s#__HOME__#$SB#g"
 }
-mk_current > "$SB/.claude/settings.json"
+# 같은 계층 안의 순서·중복 제거를 검출하도록 Orca 훅을 더하고 1개는 중복시킴. 내 훅은 저장소 기본값이 기준이라 더하지 않음
+add_extras() {
+  jq --arg c "$ORCA_CMD" '
+    .hooks.PreToolUse += [{hooks:[{type:"command",command:($c + " # b")}]}]
+    | .hooks.PostToolUse += [{hooks:[{type:"command",command:$c}]}, {hooks:[{type:"command",command:$c}]}, {hooks:[{type:"command",command:($c + " # b")}]}]'
+}
+mk_current | add_extras > "$SB/.claude/settings.json"
 CUR_BYTES=$(shasum "$SB/.claude/settings.json" | cut -d' ' -f1)
 cp "$SB/.claude/settings.json" "$SB/settings.original"
 hooks_of() { jq '[.hooks[]?[]] | length' "$1"; }
-[ "$(hooks_of "$SB/.claude/settings.json")" = 22 ] && ok "준비: 현재 설정 훅 22개" || ko "준비" "훅 수 $(hooks_of "$SB/.claude/settings.json")"
+[ "$(hooks_of "$SB/.claude/settings.json")" = 26 ] && ok "준비: 현재 설정 훅 26개(기본 7+Orca 15+추가 3+중복 1)" || ko "준비" "훅 수 $(hooks_of "$SB/.claude/settings.json")"
 SKILLS_BEFORE=$(ls "$SB/.claude/skills" | wc -l | tr -d ' ')
 
 # ---- 1. dry-run: 아무것도 바뀌지 않음 --------------------------------------
@@ -73,7 +81,7 @@ dry=$("$INSTALL" --dry-run 2>&1); rc=$?
 after=$(snapshot "$SB")
 [ "$rc" = 0 ] && [ "$before" = "$after" ] && ok "dry-run 무변경" || ko "dry-run 무변경" "rc=$rc 지문 불일치"
 want=$(echo "$entries" | wc -l | tr -d ' ')
-got=$(echo "$dry" | grep -cE '^\[dry-run\] (LINK|BACKUP\+LINK|MERGE|COPY|SEED|SKIP) ')
+got=$(echo "$dry" | grep -cE '^\[dry-run\] (LINK|BACKUP\+LINK|MERGE|COPY|RENDER|SKIP) ')
 [ "$got" = "$want" ] && ok "dry-run 항목 수 = links.tsv ($want)" || ko "dry-run 항목 수" "출력 $got, 목록 $want"
 [ ! -d "$SB/.claude-config-backup" ] && ok "dry-run 백업 폴더 미생성" || ko "dry-run 백업 폴더" "생성됨"
 
@@ -90,31 +98,30 @@ done <<< "$entries"
 [ -f "$SB/.claude/hooks/state/logs/hook.log" ] && ok "state 폴더 제자리(기존 로그 유지)" || ko "state" "로그 없음"
 [ ! -e "$REPO/claude/hooks/state" ] && ok "저장소에 state 폴더 없음" || ko "저장소 state" "생김"
 [ "$(cat "$SB/.config/lrm-hubs/slack-bot.env")" = "DUMMY=1" ] && [ ! -L "$SB/.config/lrm-hubs/slack-bot.env" ] && ok "비밀 파일 미접촉" || ko "비밀 파일" "바뀜"
-[ "$(cat "$SB/.config/lrm-hubs/roles/role-docs.txt")" = "local-role" ] && ok "seed: 로컬 role-docs 유지" || ko "seed" "덮어씀"
+rend_bad=0
+while IFS=$'\t' read -r src dst mode; do
+  [ "$mode" = render ] || continue
+  if [ -L "$SB/$dst" ] || [ ! -f "$SB/$dst" ] || grep -qE '__(OWNER_NAME|PERSON_FULL|PERSON_SHORT|DM_CHANNEL)__' "$SB/$dst"; then rend_bad=1; ko "render" "$dst"; fi
+done <<< "$entries"
+[ "$rend_bad" = 0 ] && ok "render 항목: 실제 파일·자리표시 전부 치환"
+grep -q 'VAL_DM_CHANNEL' "$SB/.config/lrm-hubs/roles/role-docs.txt" && grep -q 'VAL_PERSON_FULL' "$SB/.config/lrm-hubs/roles/role-tutorial.txt" && ok "render: 값 파일 값이 들어감" || ko "render 값" "누락"
 grep -q "$SB" "$SB/Library/LaunchAgents/ai.lrm.slackpoll.plist" && ! grep -q '__HOME__' "$SB/Library/LaunchAgents/ai.lrm.slackpoll.plist" && ok "plist __HOME__ 치환" || ko "plist 치환" ""
 [ "$(git config --global core.hooksPath)" = "~/.config/git/hooks" ] && [ "$(git config --global pull.rebase)" = true ] && [ "$(git config --global merge.ff)" = false ] && ok "git 설정 4개 키" || ko "git 설정" ""
 grep -q 'name = sandbox' "$SB/.gitconfig" && ok "git 사용자 값 보존" || ko "git 사용자 값" "사라짐"
 BK=$(ls -d "$SB/.claude-config-backup"/*/ | head -1); BK=${BK%/}
 [ "$(ls -d "$SB/.claude-config-backup"/*/ | wc -l | tr -d ' ')" = 1 ] && ok "백업 폴더 1개" || ko "백업 폴더 수" ""
-[ "$(cat "$BK/files/"*/SKILL.md 2>/dev/null | head -1)" = "old-skill" ] && ok "기존 스킬 폴더 백업됨" || ko "스킬 백업" "내용 없음"
+[ -n "$(grep -rl '^old-skill$' "$BK/files" 2>/dev/null | head -1)" ] && ok "기존 스킬 폴더 백업됨" || ko "스킬 백업" "내용 없음"
+[ -n "$(grep -rl '^local-role$' "$BK/files" 2>/dev/null | head -1)" ] && ok "render 대상의 기존 로컬 파일 백업됨" || ko "role 백업" "내용 없음"
 
 # ---- 3. 설정 병합: 훅 보존·순서·바이트 동일 --------------------------------
 merge_checks() {
-  local label="$1" orig="$2" cur="$SB/.claude/settings.json"
-  [ "$(hooks_of "$orig")" = "$(hooks_of "$cur")" ] && ok "$label 훅 수 보존 ($(hooks_of "$cur")개)" || ko "$label 훅 수" "$(hooks_of "$orig") → $(hooks_of "$cur")"
-  # 이벤트별로 원본의 상대 순서가 유지되는지: 원본 순서에서 결과가 부분수열이 되는 경우만 통과(전체 집합 동일 + Orca 순서 유지)
-  local o_orca c_orca
-  o_orca=$(jq -c '[.hooks | to_entries[] | .key as $k | .value[] | select(tostring|contains(".orca/agent-hooks")) | $k] ' "$orig")
-  c_orca=$(jq -c '[.hooks | to_entries[] | .key as $k | .value[] | select(tostring|contains(".orca/agent-hooks")) | $k]' "$cur")
-  [ "$(echo "$o_orca" | jq -c 'sort')" = "$(echo "$c_orca" | jq -c 'sort')" ] && ok "$label Orca 훅 집합 동일" || ko "$label Orca 훅" "집합 다름"
-  local o_mine c_mine
-  o_mine=$(jq -c '[.hooks | to_entries[] | .key as $k | .value[] | select(tostring|contains(".orca/agent-hooks")|not) | [$k, .]]' "$orig")
-  c_mine=$(jq -c '[.hooks | to_entries[] | .key as $k | .value[] | select(tostring|contains(".orca/agent-hooks")|not) | [$k, .]]' "$cur")
-  [ "$(echo "$o_mine" | jq -c 'sort')" = "$(echo "$c_mine" | jq -c 'sort')" ] && ok "$label 내 훅 집합 동일" || ko "$label 내 훅" "집합 다름"
+  local label="$1" orig="$2" cur="$SB/.claude/settings.json" exp
+  local def='def orca: tostring | contains(".orca/agent-hooks"); def dd: reduce .[] as $i ([]; if any(.[]; . == $i) then . else . + [$i] end);'
+  # 기대값: 이벤트마다 [내 훅(순서 유지, 중복 제거)] + [Orca 훅(순서 유지, 중복 제거)]
+  exp=$(jq -S -c "$def"' .hooks | map_values(([.[] | select(orca | not)] | dd) + ([.[] | select(orca)] | dd))' "$orig")
+  [ "$exp" = "$(jq -S -c '.hooks' "$cur")" ] && ok "$label 훅: 이벤트별 [내 훅]+[Orca 훅] 순서 유지·중복 제거" || ko "$label 훅 순서·내용" "기대와 다름"
   [ "$(jq -c '.statusLine' "$orig")" = "$(jq -c '.statusLine' "$cur")" ] && ok "$label 상태줄 보존" || ko "$label 상태줄" "다름"
-  [ "$(jq -c 'del(.hooks,.statusLine)' "$orig")" = "$(jq -c 'del(.hooks,.statusLine)' "$cur")" ] && ok "$label 나머지 설정 동일" || ko "$label 나머지 설정" "다름"
-  # 이벤트별 내 훅 상대 순서: 결과의 내 훅 순서가 저장소 기본값 순서와 일치
-  [ "$(jq -c '[.hooks|to_entries[]|.key as $k|.value[]|select(tostring|contains(".orca/agent-hooks")|not)|$k]' "$cur")" = "$(jq -c '[.hooks|to_entries[]|.key as $k|.value[]|$k]' "$REPO/claude/settings.base.json")" ] && ok "$label 내 훅 순서 = 기본값 순서" || ko "$label 내 훅 순서" "다름"
+  [ "$(jq -S -c 'del(.hooks,.statusLine)' "$orig")" = "$(jq -S -c 'del(.hooks,.statusLine)' "$cur")" ] && ok "$label 나머지 설정 동일" || ko "$label 나머지 설정" "다름"
 }
 merge_checks "병합" "$SB/settings.original"
 h1=$(shasum "$SB/.claude/settings.json" | cut -d' ' -f1)
@@ -143,17 +150,51 @@ git -C "$GT" rev-parse -q --verify HEAD >/dev/null 2>&1 && ok "git 훅 링크 �
 if (cd "$GT" && git rebase --force-rebase HEAD~1 >/dev/null 2>&1); then ko "pre-rebase 보호" "main 에서 rebase 가 통과함"; else
   if (cd "$GT" && ALLOW_SHARED_REBASE=1 git rebase --force-rebase HEAD~1 >/dev/null 2>&1); then ok "pre-rebase 가 공유 브랜치 rebase 차단(우회 변수로는 통과)"; else ko "pre-rebase" "훅이 아닌 다른 이유로 실패"; fi
 fi
-rm -rf "$GT"
+rm -rf "${GT:?}"
 
 # ---- 6. 되돌리기 -----------------------------------------------------------
+# 복원 전 지문: 복원 2회·부분 실패 재실행이 같은 최종 상태에 도달하는지 비교
+cp -a "$BK" "$SB.bk-part"
+head -8 "$BK/backup.tsv" > "$SB.bk-part/backup.tsv"
 "$INSTALL" --restore "$BK" >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && ok "복원 종료 코드 0" || ko "복원" "rc=$rc"
 [ ! -L "$SB/.claude/skills/comment-lint" ] && [ "$(cat "$SB/.claude/skills/comment-lint/SKILL.md")" = "old-skill" ] && ok "복원: 스킬 폴더 실제 폴더로 복귀" || ko "복원 스킬" ""
 [ "$(shasum "$SB/.claude/settings.json" | cut -d' ' -f1)" = "$CUR_BYTES" ] && ok "복원: settings.json 바이트 동일" || ko "복원 settings" "다름"
 [ ! -L "$SB/.claude/hooks/lib" ] && [ "$(cat "$SB/.claude/hooks/lib/common.sh")" = "oldlib" ] && ok "복원: hooks/lib 복귀" || ko "복원 hooks/lib" ""
+[ "$(cat "$SB/.config/lrm-hubs/roles/role-docs.txt")" = "local-role" ] && ok "복원: render 대상 원래 로컬 파일로 복귀" || ko "복원 role-docs" ""
 [ -z "$(find "$SB/.claude" "$SB/.config" -type l ! -name ext-link 2>/dev/null)" ] && ok "복원: 저장소를 가리키는 링크 0개" || ko "복원 링크 잔존" "$(find "$SB/.claude" "$SB/.config" -type l ! -name ext-link | head -3)"
 [ -f "$SB/.claude/hooks/state/logs/hook.log" ] && [ -d "$SB/.claude/skills/synced" ] && [ -L "$SB/.claude/skills/ext-link" ] && ok "복원: state·synced·외부 링크 그대로" || ko "복원 부수 영향" ""
 grep -q 'name = sandbox' "$SB/.gitconfig" && ! git config --global --get core.hooksPath >/dev/null 2>&1 && ok "복원: .gitconfig 원상" || ko "복원 gitconfig" ""
+[ ! -e "$SB/.config/git" ] && [ ! -e "$SB/Library" ] && [ ! -e "$SB/.claude/skills/orca-hub-create" ] && ok "복원: 설치가 새로 만든 빈 폴더 제거" || ko "복원 빈 폴더" "$(ls -d "$SB/.config/git" "$SB/Library" "$SB/.claude/skills/orca-hub-create" 2>/dev/null | tr '\n' ' ')"
+[ -d "$SB/.config/lrm-hubs/roles" ] && [ -d "$SB/.config/claude-config" ] && ok "복원: 원래 있던 폴더는 유지" || ko "복원 폴더 유지" ""
+
+# 복원 2회 연속: 백업이 남아 있어 같은 결과여야 함(1회차가 백업을 소모하면 파일이 사라짐)
+before=$(snapshot "$SB")
+"$INSTALL" --restore "$BK" >/dev/null 2>&1; rc=$?
+after=$(snapshot "$SB")
+[ "$rc" = 0 ] && [ "$before" = "$after" ] && [ "$(cat "$SB/.claude/CLAUDE.md")" = "old-rules" ] && ok "복원 2회 연속: 무변경·CLAUDE.md 보존" || ko "복원 2회" "rc=$rc 지문 $([ "$before" = "$after" ] && echo 같음 || echo 다름)"
+[ -f "$BK/backup.tsv" ] && [ -n "$(grep -rl '^old-rules$' "$BK/files" 2>/dev/null | head -1)" ] && ok "복원 뒤에도 백업 원본 보존" || ko "복원 백업 보존" "소모됨"
+
+# 부분 실패 재실행: 앞 8줄만 복원한 상태에서 전체 복원을 다시 실행
+"$INSTALL" >/dev/null 2>&1
+"$INSTALL" --restore "$SB.bk-part" >/dev/null 2>&1
+"$INSTALL" --restore "$BK" >/dev/null 2>&1; rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$SB/.claude/CLAUDE.md")" = "old-rules" ] && [ "$(cat "$SB/.claude/skills/comment-lint/SKILL.md")" = "old-skill" ] && [ "$(shasum "$SB/.claude/settings.json" | cut -d' ' -f1)" = "$CUR_BYTES" ] && ok "부분 복원 뒤 전체 복원 재실행: 원상" || ko "부분 실패 재실행" "rc=$rc"
+"$INSTALL" >/dev/null 2>&1
+
+# 백업 원본이 사라진 manifest 는 아무것도 지우지 않고 중단
+BK2=$(ls -d "$SB/.claude-config-backup"/*/ | tail -1); BK2=${BK2%/}
+victim=$(awk -F'\t' '$1=="move" {v=$3} END {print v}' "$BK2/backup.tsv")
+if [ -n "$victim" ]; then
+  mv "$victim" "$victim.gone"
+  before=$(snapshot "$SB")
+  "$INSTALL" --restore "$BK2" >/dev/null 2>&1; rc=$?
+  after=$(snapshot "$SB")
+  [ "$rc" != 0 ] && [ "$before" = "$after" ] && ok "백업 원본 없으면 복원 중단·무변경" || ko "백업 누락 복원" "rc=$rc"
+  mv "$victim.gone" "$victim"
+else ko "백업 누락 복원" "move 항목 없음"; fi
+"$INSTALL" --restore "$BK2" >/dev/null 2>&1
+rm -rf "${SB:?}.bk-part"
 
 # ---- 6b. 백업 실패 시 중단 ---------------------------------------------------
 SB2=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox2.XXXXXX")
@@ -163,7 +204,30 @@ HOME="$SB2" CLAUDE_CONFIG_BACKUP_ROOT=/dev/null/blocked "$INSTALL" >/dev/null 2>
 printf '{bad' > "$SB2/.claude/settings.json"; rm -f "$SB2/.claude/CLAUDE.md"
 HOME="$SB2" "$INSTALL" --dry-run >/dev/null 2>&1; rc=$?
 [ "$rc" != 0 ] && ok "깨진 settings.json 이면 중단" || ko "깨진 settings" "rc=$rc"
-rm -rf "$SB2"
+rm -rf "${SB2:?}"
+
+# ---- 6d. 백업 이동(mv) 실패 시 링크 없이 중단 ---------------------------------
+SB4=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox4.XXXXXX")
+mkdir -p "$SB4/.claude/skills/comment-lint" "$SB4/.config/claude-config"
+echo keep > "$SB4/.claude/skills/comment-lint/SKILL.md"
+cp "$SB/.config/claude-config/values.env" "$SB4/.config/claude-config/values.env"
+# 디렉터리 이동은 그 디렉터리의 쓰기 권한이 필요해서, 읽기 전용이면 mv 만 실패함
+chmod 555 "$SB4/.claude/skills/comment-lint"
+out=$(HOME="$SB4" "$INSTALL" 2>&1); rc=$?
+chmod 755 "$SB4/.claude/skills/comment-lint"
+[ "$rc" != 0 ] && echo "$out" | grep -q '백업 이동 실패' && [ -z "$(find "$SB4/.claude/skills/comment-lint" -type l)" ] && [ "$(cat "$SB4/.claude/skills/comment-lint/SKILL.md")" = keep ] && ok "mv 실패 시 '백업 이동 실패'로 링크 없이 중단" || ko "mv 실패 중단" "rc=$rc"
+rm -rf "${SB4:?}"
+
+# ---- 6c. 값 파일 없으면 변경 없이 중단 ---------------------------------------
+SB3=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox3.XXXXXX")
+echo keep > "$SB3/CLAUDE.keep"
+before=$(snapshot "$SB3")
+HOME="$SB3" "$INSTALL" >/dev/null 2>&1; rc=$?
+[ "$rc" != 0 ] && [ "$before" = "$(snapshot "$SB3")" ] && ok "값 파일 없으면 아무것도 바꾸지 않고 중단" || ko "값 파일 없음" "rc=$rc"
+mkdir -p "$SB3/.config/claude-config"; printf 'OWNER_NAME=a\n' > "$SB3/.config/claude-config/values.env"
+HOME="$SB3" "$INSTALL" --dry-run >/dev/null 2>&1; rc=$?
+[ "$rc" != 0 ] && ok "값 파일에 빈 키가 있으면 중단" || ko "값 파일 빈 키" "rc=$rc"
+rm -rf "${SB3:?}"
 
 # ---- 7. 임의 설정 사본 검증(선택) -------------------------------------------
 if [ -n "${SETTINGS_SAMPLE:-}" ] && [ -f "$SETTINGS_SAMPLE" ]; then
@@ -183,6 +247,15 @@ forbidden=$(echo "$tracked" | grep -E '(\.env$|\.bak|__pycache__|/state/|\.pem$|
 [ -z "$forbidden" ] && ok "제외 대상 파일 0개" || ko "제외 대상" "$(echo "$forbidden" | head -5 | tr '\n' ' ')"
 abs=$(echo "$tracked" | sort -u | while read -r f; do [ -f "$f" ] && grep -In '/Users/' "$f" | cut -d: -f1 | sed "s#^#$f:#"; done | grep -v '^tests/' || true)
 [ -z "$abs" ] && ok "하드코딩 홈 경로 0건(tests 제외)" || ko "하드코딩 경로" "$(echo "$abs" | head -5 | tr '\n' ' ')"
+
+# 실명·Slack ID: 원문이 이 스캔에 걸리지 않도록 문자열을 쪼개 둠. 값은 출력하지 않고 파일:줄만 표시
+n1='정''오'; n2='강찬''형'; n3='D0C14''GXPU4F'
+pii=$(echo "$tracked" | sort -u | while read -r f; do [ -f "$f" ] && grep -InE "$n1|$n2|$n3|\b[UDCW]0[A-Z0-9]{8,10}\b" "$f" | cut -d: -f1 | sed "s#^#$f:#"; done)
+[ -z "$pii" ] && ok "실명·Slack ID·채널 패턴 0건(전 파일)" || ko "실명·ID 패턴" "파일:줄 → $(echo "$pii" | head -5 | tr '\n' ' ')"
+# 템플릿의 자리표시는 values.env.example 의 키로만 구성되어야 함
+keys=$(grep -vE '^(#|$)' "$REPO/values.env.example" | cut -d= -f1 | sort -u)
+used=$(echo "$tracked" | grep '\.tmpl$' | while read -r f; do grep -oE '__[A-Z_]+__' "$f"; done | grep -vx '__HOME__' | sed 's/^__//; s/__$//' | sort -u)
+[ -z "$(comm -13 <(echo "$keys") <(echo "$used"))" ] && ok "템플릿 자리표시 ⊆ values.env.example 키" || ko "템플릿 키" "예시에 없는 키 사용"
 
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
