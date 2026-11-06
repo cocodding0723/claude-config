@@ -51,20 +51,43 @@ details.ref{margin-top:30px;color:var(--muted);font-size:14px}
 <li>라이브 반영은 메인 알림 뒤 별도 단계다</li>
 </ul>
 <table><tr><th>기능</th><th>커밋</th><th>검증</th></tr>
-<tr><td>운영 스크립트 사본 추가</td><td><code>9d1195c</code></td><td>복사만, 내용 변경 없음</td></tr>
-<tr><td>🟡 폴링 조회 최적화, 429 회차 즉답 유지</td><td><code>3e00d4c</code></td><td>🔵 <code>bash tests/test_poll.sh</code> — 통과 21, 실패 0</td></tr>
-<tr><td>🟡 대기 목록 이력·재발송, 답한 결정 수정</td><td><code>b1d4df1</code></td><td>🔵 <code>bash tests/test_pending.sh</code> — 통과 37, 실패 0</td></tr></table>
+<tr><td>운영 스크립트 사본 추가</td><td><code>9d1195c</code>, <code>6f42b64</code></td><td>복사만, 내용 변경 없음</td></tr>
+<tr><td>🟡 폴링 조회 최적화, 429 회차 즉답 유지</td><td><code>3e00d4c</code></td><td>🔵 초기 구현</td></tr>
+<tr><td>🟡 대기 목록 이력·재발송, 답한 결정 수정</td><td><code>b1d4df1</code></td><td>🔵 초기 구현</td></tr>
+<tr><td>🟡 독립 리뷰 반영: 폴링 반응 범위 복원·상태 손상 복구·재시도 예산</td><td><code>aba9e03</code></td><td>🔵 <code>bash tests/test_poll.sh</code> — 통과 36, 실패 0</td></tr>
+<tr><td>🟡 독립 리뷰 반영: 수정 전 원문 보존·전송 직후 회수·재시도 예산</td><td><code>edc084e</code></td><td>🔵 <code>bash tests/test_pending.sh</code> — 통과 57, 실패 0</td></tr>
+<tr><td>🟡 독립 리뷰 반영: 대기 조회 실패는 확인 불가로 응답</td><td><code>915fa9a</code></td><td>🔵 <code>bash tests/test_cmd.sh</code> — 통과 4, 실패 0</td></tr>
+<tr><td>🔵 변이 검증 스크립트</td><td><code>4ce8e5e</code></td><td><code>python3 tests/mutate.py</code> — 13종 모두 검출</td></tr></table>
 <ul class="facts">
-<li>문법 검사: <code>bash tests/run.sh</code> 가 모든 스크립트에 <code>bash -n</code> 실행 — 통과</li>
+<li>문법 검사: <code>bash tests/run.sh</code> 가 모든 스크립트에 <code>bash -n</code> 실행 — 통과. 기본 bash 3.2 에서 실행</li>
 <li>shellcheck 는 이 맥에 없어 실행하지 못했다. 미확인</li>
 <li>테스트는 가짜 토큰과 로컬 스텁만 쓴다. 실제 Slack 호출 0회</li>
-<li>⚠️ 라이브 반영 1단계 검증 항목 1: 목록 응답에 <code>latest_reply</code> 가 실제로 오는가</li>
+<li>반응·답글은 <code>slack_notify.sh</code> 가 기록한 메시지만 읽는다. 대기 목록 같은 다른 봇 메시지의 반응은 무시한다</li>
+<li>파일 첨부 메시지는 기록에 번호가 없어 반응을 읽지 못하는 한계가 그대로다</li>
+<li>한계: 수정 전 원문은 <code>conversations.history</code> 로 얻는다. 본문이 없는 메시지는 원문을 <code>null</code> 로 기록한다</li>
+<li>한계: 원문 조회가 실패하면 그 메시지는 수정하지 않고 다음 주기로 미룬다</li>
+<li>한계: 새 대기 메시지를 보낸 직후 이력 기록이 실패하면 방금 보낸 메시지를 삭제한다. 그 삭제도 실패하면 고아가 남는다</li>
+<li>한계: 상태 파일이 손상되면 백업 뒤 초기화하고 중복 방지 키를 inbox 에서 복원한다</li>
+<li>재시도 시간 예산: 폴링 90초, 대기 목록 120초. 5분 잠금 만료 전에 끝나게 한 값이다</li>
+<li>⚠️ 라이브 반영 1단계 검증 항목 1: 목록 응답에 <code>latest_reply</code> 가 오는가. 공식 응답 예시에는 없어서 <code>reply_count</code> 비교가 기본 경로다. <code>latest_reply</code> 가 오면 그것을 쓴다</li>
 <li>⚠️ 라이브 반영 1단계 검증 항목 2: 반응의 <code>users</code> 가 잘리는가. 잘리면 보강 조회가 자동으로 돈다</li>
 <li>⚠️ 라이브 반영 1단계 검증 항목 3: 이 앱이 분당 1회 제한 대상인가. 대상이면 폴링 30초 주기가 막힌다</li>
 </ul>
+<table><tr><th>변이 검증 결과</th><th>검출</th></tr>
+<tr><td>이력 선검사 제거</td><td>검출</td></tr>
+<tr><td>Retry-After 무시(폴링·대기 목록 각각)</td><td>검출</td></tr>
+<tr><td>일시 오류 수정 재시도 제거</td><td>검출</td></tr>
+<tr><td>수정 상한 제거</td><td>검출</td></tr>
+<tr><td>sent 범위 제거</td><td>검출</td></tr>
+<tr><td>latest_reply 폴백 제거</td><td>검출</td></tr>
+<tr><td>시간 예산 제거(폴링·대기 목록 각각)</td><td>검출</td></tr>
+<tr><td>상태 손상 복구 제거</td><td>검출</td></tr>
+<tr><td>전송 직후 이력 실패 회수 제거</td><td>검출</td></tr>
+<tr><td>수정 전 원문 기록 제거</td><td>검출</td></tr>
+<tr><td>대기 조회 실패 응답 제거</td><td>검출</td></tr></table>
 <table><tr><th>라이브 반영 단계</th><th>명령 또는 내용</th></tr>
-<tr><td>1. 백업</td><td><code>cp ~/.config/lrm-hubs/slack_poll.sh ~/.config/lrm-hubs/slack_poll.sh.bak-날짜</code>, 같은 방식으로 <code>slack_pending.sh</code></td></tr>
-<tr><td>2. 복사</td><td><code>cp lrm-hubs/slack_poll.sh lrm-hubs/slack_pending.sh ~/.config/lrm-hubs/</code> 후 실행 권한 확인</td></tr>
+<tr><td>1. 백업</td><td><code>cp ~/.config/lrm-hubs/slack_poll.sh ~/.config/lrm-hubs/slack_poll.sh.bak-날짜</code>, 같은 방식으로 <code>slack_pending.sh</code>, <code>slack_cmd.sh</code></td></tr>
+<tr><td>2. 복사</td><td><code>cp lrm-hubs/slack_poll.sh lrm-hubs/slack_pending.sh lrm-hubs/slack_cmd.sh ~/.config/lrm-hubs/</code> 후 실행 권한 확인. 대상은 3개다</td></tr>
 <tr><td>3. 재적재</td><td>스크립트 파일만 바뀌고 plist 는 그대로라 재적재가 필요 없다. 다음 30초 주기에 새 스크립트가 돈다. 바로 시험하려면 <code>launchctl kickstart -k gui/$(id -u)/ai.lrm.slackpoll</code></td></tr>
 <tr><td>4. 검증</td><td><code>slack_poll.sh --once --json</code> 1회, 로그에 새 429 가 안 늘어나는지 확인, 검증 항목 3개 확인</td></tr>
 <tr><td>5. 대기 목록</td><td><code>slack_pending.sh --dry-run</code> 으로 수정 예정 목록을 본 뒤 실제 실행. 첫 실행은 답한 결정 최대 20개를 고치고 나머지는 다음 주기에 이어진다</td></tr>
@@ -312,6 +335,7 @@ for old in open_posts:            # 이력 먼저, 삭제는 그 뒤
 <li>반영 4: 대기 목록은 새로 보내고 이전 것 삭제로 알림 유지</li>
 <li>반영 5: 폴링 조회 최적화안을 선택지 A 로 추가하고 추천 재판단. 결정2 도 그에 맞춰 B 추천</li>
 <li>반영 6~14: 한도 등급 정정, 재연결 보정, 중복 이벤트·KeepAlive, 인증서·가상 환경, 파일 첨부 결정 규칙, 금지 조합 정정, 파일 집계, 되돌리기 순서, 비동기 호출</li>
+<li>2026-11-06 독립 리뷰 반영: 지적 9건 반영. 반응 범위 복원, 원문 보존, 변이 13종 검출 확인. 독자 검수는 미실시</li>
 <li>2026-11-06 구현 반영: 결정 확정 기록, 구현 현황·라이브 반영 단계 추가, 결정3 카드와 파일 집계에 이력 보존 반영. 독자 검수는 미실시</li>
 <li>3차 최종 검수는 사용자 몫</li>
 </ul></details>
