@@ -1,0 +1,4 @@
+interface:
+  display_name: "Issue 작성·등록"
+  short_description: "버그·기능·작업을 한국어 GitHub Issue로 정리하고 요청된 범위에서 생성·수정한다. 재현 절차, "
+  default_prompt: "$manage-issues 스킬로 요청한 작업을 진행해줘."

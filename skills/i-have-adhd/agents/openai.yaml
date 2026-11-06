@@ -1,0 +1,6 @@
+interface:
+  display_name: "짧고 명확한 응답"
+  short_description: "답과 다음 행동부터 제시하고 한국어 표현을 압축한다. i-have-adhd를 명시적으로 호출하면 대화 동"
+  default_prompt: "$i-have-adhd 스킬로 요청한 작업을 진행해줘."
+policy:
+  allow_implicit_invocation: false
