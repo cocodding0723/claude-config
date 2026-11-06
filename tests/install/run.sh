@@ -34,11 +34,25 @@ missing=0; while IFS=$'\t' read -r src dst mode; do [ -e "$REPO/$src" ] || { ko 
 dups=$(echo "$entries" | cut -f2 | sort | uniq -d)
 [ -z "$dups" ] && ok "links.tsv dst 중복 없음" || ko "links.tsv dst 중복" "$dups"
 
+# bash 5.2+ patsub_replacement 방어(이 맥은 3.2 라 동작 검증은 불가, 구문 존재만 확인)
+grep -q '^shopt -u patsub_replacement' "$REPO/install.sh" && ok "install.sh patsub_replacement 방어" || ko "patsub_replacement" "shopt 줄 없음"
+
+# 역방향: 링크 대상 폴더의 모든 추적 파일이 links.tsv 에 직접 또는 상위 폴더로 있어야 함(파일 추가 시 누락 방지)
+srcs=$(echo "$entries" | cut -f1)
+uncovered=$(cd "$REPO" && git ls-files skills claude hubs git | grep -v -x -F 'hubs/slack-bot.env.example' | while read -r f; do
+  d=$f; hit=0
+  while [ "$d" != "." ] && [ "$d" != "/" ]; do if echo "$srcs" | grep -qx -F "$d"; then hit=1; break; fi; d=$(dirname "$d"); done
+  [ "$hit" = 1 ] || echo "$f"
+done)
+[ -z "$uncovered" ] && ok "links.tsv 역방향: 추적 파일 전부 목록에 포함" || ko "links.tsv 누락" "$(echo "$uncovered" | head -3 | tr '\n' ' ')"
+
 # ---- 샌드박스 준비 ---------------------------------------------------------
 SB=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox.XXXXXX")
 trap 'rm -rf "${SB:?}"' EXIT
 REAL_HOME="$HOME"
 export HOME="$SB"
+# 기존 파일이 저장소와 다른 샌드박스 시나리오가 많아 기본은 허용. 라이브 우선 점검은 6e 에서 환경변수 없이 따로 검증
+export CLAUDE_CONFIG_ALLOW_LIVE_DIFF=1
 mkdir -p "$SB/.claude/skills/comment-lint" "$SB/.claude/skills/synced" "$SB/.claude/hooks/lib" "$SB/.claude/hooks/state/logs" "$SB/.config/lrm-hubs/roles" "$SB/external-skill"
 echo old-skill > "$SB/.claude/skills/comment-lint/SKILL.md"
 echo bundle > "$SB/.claude/skills/synced/bundle.txt"
@@ -50,7 +64,7 @@ echo DUMMY=1 > "$SB/.config/lrm-hubs/slack-bot.env"
 echo local-role > "$SB/.config/lrm-hubs/roles/role-docs.txt"
 printf '[user]\n\tname = sandbox\n' > "$SB/.gitconfig"
 mkdir -p "$SB/.config/claude-config"
-printf 'OWNER_NAME=VAL_OWNER\nPERSON_FULL=VAL_PERSON_FULL\nPERSON_SHORT=VAL_PERSON_SHORT\nDM_CHANNEL=VAL_DM_CHANNEL\n' > "$SB/.config/claude-config/values.env"
+printf 'OWNER_NAME=VAL_OWNER\nPERSON_FULL=VAL_PERSON_FULL\nPERSON_SHORT=VAL_PERSON_SHORT\nDM_CHANNEL=VAL&DM_CHANNEL\n' > "$SB/.config/claude-config/values.env"
 
 # 현재 설정 = 기본값 + Orca 훅 15개(이벤트 앞·뒤 섞음) + 상태줄. 기본값 훅 7개와 합쳐 22개
 ORCA_CMD='sh -c "$HOME/.orca/agent-hooks/claude-hook.sh"'
@@ -104,7 +118,7 @@ while IFS=$'\t' read -r src dst mode; do
   if [ -L "$SB/$dst" ] || [ ! -f "$SB/$dst" ] || grep -qE '__(OWNER_NAME|PERSON_FULL|PERSON_SHORT|DM_CHANNEL)__' "$SB/$dst"; then rend_bad=1; ko "render" "$dst"; fi
 done <<< "$entries"
 [ "$rend_bad" = 0 ] && ok "render 항목: 실제 파일·자리표시 전부 치환"
-grep -q 'VAL_DM_CHANNEL' "$SB/.config/lrm-hubs/roles/role-docs.txt" && grep -q 'VAL_PERSON_FULL' "$SB/.config/lrm-hubs/roles/role-tutorial.txt" && ok "render: 값 파일 값이 들어감" || ko "render 값" "누락"
+grep -qF 'VAL&DM_CHANNEL' "$SB/.config/lrm-hubs/roles/role-docs.txt" && grep -q 'VAL_PERSON_FULL' "$SB/.config/lrm-hubs/roles/role-tutorial.txt" && ok "render: 값 파일 값이 들어감" || ko "render 값" "누락"
 grep -q "$SB" "$SB/Library/LaunchAgents/ai.lrm.slackpoll.plist" && ! grep -q '__HOME__' "$SB/Library/LaunchAgents/ai.lrm.slackpoll.plist" && ok "plist __HOME__ 치환" || ko "plist 치환" ""
 [ "$(git config --global core.hooksPath)" = "~/.config/git/hooks" ] && [ "$(git config --global pull.rebase)" = true ] && [ "$(git config --global merge.ff)" = false ] && ok "git 설정 4개 키" || ko "git 설정" ""
 grep -q 'name = sandbox' "$SB/.gitconfig" && ok "git 사용자 값 보존" || ko "git 사용자 값" "사라짐"
@@ -229,6 +243,32 @@ HOME="$SB3" "$INSTALL" --dry-run >/dev/null 2>&1; rc=$?
 [ "$rc" != 0 ] && ok "값 파일에 빈 키가 있으면 중단" || ko "값 파일 빈 키" "rc=$rc"
 rm -rf "${SB3:?}"
 
+# ---- 6e. 라이브가 저장소보다 앞서면 변경 전 중단 ------------------------------
+SB5=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox5.XXXXXX")
+mkdir -p "$SB5/.config/lrm-hubs" "$SB5/.config/claude-config" "$SB5/.claude"
+cp "$SB/.config/claude-config/values.env" "$SB5/.config/claude-config/values.env"
+# 의도된 치환(restart_hub 경로)만 다른 파일은 통과해야 하고, 내용이 다른 slack_poll 은 걸려야 함
+sed 's#\${HUB_ROOT:-\$HOME/orca/workspaces/LoveRevolutionMaker}#/Users/someone/orca/workspaces/LoveRevolutionMaker#' "$REPO/hubs/scripts/restart_hub.sh" > "$SB5/.config/lrm-hubs/restart_hub.sh"
+echo "# newer live" > "$SB5/.config/lrm-hubs/slack_poll.sh"
+before=$(snapshot "$SB5")
+out=$(env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF HOME="$SB5" "$INSTALL" --diff-live 2>&1); rc=$?
+[ "$rc" = 1 ] && echo "$out" | grep -q 'LIVE-NEWER .config/lrm-hubs/slack_poll.sh' && ! echo "$out" | grep -q 'restart_hub' && ok "--diff-live: 라이브가 앞선 파일만 지적(의도된 치환은 통과)" || ko "diff-live" "rc=$rc $(echo "$out" | head -3 | tr '\n' ' ')"
+env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF HOME="$SB5" "$INSTALL" >/dev/null 2>&1; rc=$?
+[ "$rc" != 0 ] && [ "$before" = "$(snapshot "$SB5")" ] && ok "라이브가 앞서면 설치가 변경 없이 중단" || ko "라이브 우선 중단" "rc=$rc"
+env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF HOME="$SB5" "$INSTALL" --dry-run >/dev/null 2>&1; rc=$?
+[ "$rc" != 0 ] && ok "dry-run 도 라이브 우선이면 중단" || ko "dry-run 라이브 우선" "rc=$rc"
+env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF HOME="$SB5" "$INSTALL" --allow-live-diff >/dev/null 2>&1; rc=$?
+[ "$rc" = 0 ] && [ -L "$SB5/.config/lrm-hubs/slack_poll.sh" ] && ok "--allow-live-diff 로 진행하면 백업 후 링크" || ko "allow-live-diff" "rc=$rc"
+rm -rf "${SB5:?}"
+
+# ---- 6f. 값 파일 공백만 있는 값 ----------------------------------------------
+SB6=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox6.XXXXXX")
+mkdir -p "$SB6/.config/claude-config"
+printf 'OWNER_NAME=a\nPERSON_FULL=b\nPERSON_SHORT=c\nDM_CHANNEL=   \n' > "$SB6/.config/claude-config/values.env"
+HOME="$SB6" "$INSTALL" --dry-run >/dev/null 2>&1; rc=$?
+[ "$rc" != 0 ] && ok "값이 공백뿐이면 중단" || ko "공백 값" "rc=$rc"
+rm -rf "${SB6:?}"
+
 # ---- 7. 임의 설정 사본 검증(선택) -------------------------------------------
 if [ -n "${SETTINGS_SAMPLE:-}" ] && [ -f "$SETTINGS_SAMPLE" ]; then
   sed "s#$REAL_HOME#$SB#g" "$SETTINGS_SAMPLE" > "$SB/.claude/settings.json"; cp "$SB/.claude/settings.json" "$SB/settings.sample"
@@ -245,8 +285,8 @@ hits=$(echo "$tracked" | sort -u | while read -r f; do [ -f "$f" ] && grep -InE 
 [ -z "$hits" ] && ok "비밀 패턴 일치 0건" || ko "비밀 패턴" "파일:줄 → $(echo "$hits" | head -5 | tr '\n' ' ')"
 forbidden=$(echo "$tracked" | grep -E '(\.env$|\.bak|__pycache__|/state/|\.pem$|\.p8$|\.key$|\.keystore$|\.jks$|credentials|slack-(inbox|sent|poll-state)|HANDOFF|decisions\.tsv|skills/synced/)' || true)
 [ -z "$forbidden" ] && ok "제외 대상 파일 0개" || ko "제외 대상" "$(echo "$forbidden" | head -5 | tr '\n' ' ')"
-abs=$(echo "$tracked" | sort -u | while read -r f; do [ -f "$f" ] && grep -In '/Users/' "$f" | cut -d: -f1 | sed "s#^#$f:#"; done | grep -v '^tests/' || true)
-[ -z "$abs" ] && ok "하드코딩 홈 경로 0건(tests 제외)" || ko "하드코딩 경로" "$(echo "$abs" | head -5 | tr '\n' ' ')"
+abs=$(echo "$tracked" | sort -u | while read -r f; do [ -f "$f" ] && grep -In '/Users/' "$f" | cut -d: -f1 | sed "s#^#$f:#"; done | grep -vE '^(tests/|live-diff.tsv)' || true)
+[ -z "$abs" ] && ok "하드코딩 홈 경로 0건(tests·live-diff.tsv 제외)" || ko "하드코딩 경로" "$(echo "$abs" | head -5 | tr '\n' ' ')"
 
 # 실명·Slack ID: 원문이 이 스캔에 걸리지 않도록 문자열을 쪼개 둠. 값은 출력하지 않고 파일:줄만 표시
 n1='정''오'; n2='강찬''형'; n3='D0C14''GXPU4F'

@@ -53,6 +53,11 @@ run_case M9 "render 자리표시 치환 생략" install.sh 's/content=\$\{conten
 run_case M10 "복원이 새로 만든 폴더를 남김" install.sh 's/rmdir "\$HOME\/\$dst" 2>\/dev\/null/false/'
 run_case M11 "복원 대상 백업 manifest 에서 new 항목 누락" install.sh 's/mark_new\(\) \{ ensure_backup; record new "\$1"; \}/mark_new() { :; }/'
 run_case M12 "템플릿에 실명 패턴 혼입" hubs/roles/role-vfx.txt.tmpl 's/\A/정''오 /'
+run_case M13 "값 파일의 공백뿐인 값을 통과시킴" install.sh "s/ \\| tr -d '\\[:space:\\]'//"
+run_case M14 "patsub_replacement 방어 제거" install.sh 's/^shopt -u patsub_replacement.*\n//m'
+run_case M15 "라이브 우선 중단 제거" install.sh 's/\[ "\$ALLOW_LIVE_DIFF" = 1 \] && return 0/return 0/'
+run_case M16 "라이브 비교에서 의도 치환 규칙을 모든 파일에 면제" install.sh 's/! cmp -s "\$r" "\$l"; fi/false; fi/'
+run_case M17 "links.tsv 에서 스킬 파일 1줄 누락" links.tsv 's/^skills\/orca-hub-create\/scripts\/create_worker_ws.sh\t[^\n]*\n//m'
 
 echo
-if [ "$MISSED" = 0 ]; then echo "변이 12개 모두 검출"; else echo "미검출·오류 $MISSED 개"; exit 1; fi
+if [ "$MISSED" = 0 ]; then echo "변이 17개 모두 검출"; else echo "미검출·오류 $MISSED 개"; exit 1; fi
