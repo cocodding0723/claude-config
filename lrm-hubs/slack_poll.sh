@@ -45,7 +45,16 @@ trap 'rmdir "$LOCK"' EXIT
 export SLACK_BOT_TOKEN SLACK_USER_ID
 # 수집 실패(429 포함)여도 아래 즉답·대기 목록 단계는 건너뛰지 않음. 종료 코드만 마지막에 전달
 RC=0
-python3 -I - "$DIR" "$DAYS" "$JSON" <<'PY' || RC=$?
+# 회차 전체 시간 예산(초). 수집·대기 목록·즉답(내부에서 대기 목록 재호출)의 재시도 예산 합이 5분 잠금 만료(300초) 아래여야 동시 실행이 안 생김.
+# 앞 단계가 쓴 만큼 뒤 단계 예산을 줄여 줌
+TOTAL="${LRM_TOTAL_BUDGET:-270}"; T0=$(date +%s)
+cap() {  # cap <단계 상한>: 남은 총 예산과 상한 중 작은 값, 최소 1초
+  local v=$((TOTAL - ($(date +%s) - T0)))
+  [ "$v" -gt "$1" ] && v="$1"
+  [ "$v" -lt 1 ] && v=1
+  echo "$v"
+}
+LRM_POLL_BUDGET="$(cap "${LRM_POLL_BUDGET:-90}")" python3 -I - "$DIR" "$DAYS" "$JSON" <<'PY' || RC=$?
 import json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 DIR, DAYS, AS_JSON = sys.argv[1], int(sys.argv[2]), sys.argv[3] == "1"
 TOKEN, ME = os.environ["SLACK_BOT_TOKEN"], os.environ["SLACK_USER_ID"]
@@ -118,9 +127,17 @@ def classify(text):
             return "command", name, args
     return "note", None, []
 
+def seen_from_inbox():
+    seen = {}
+    for d in load_jsonl(INBOX):
+        key = f"react:{d.get('parent_ts')}:{d.get('emoji')}" if d.get("type") == "reaction" else f"msg:{d.get('ts')}"
+        seen[key] = int(time.time())
+    return seen
+
 def load_state():
+    # 상태 파일이 없거나 손상된 경우 모두 inbox 로 seen 복원. 손상 뒤 회차가 API 실패로 끝나 파일이 안 만들어져도 다음 회차에 중복 기록이 안 생김
     if not os.path.exists(STATE):
-        return {"seen": {}}
+        return {"seen": seen_from_inbox()}
     try:
         with open(STATE, encoding="utf-8") as f:
             state = json.load(f)
@@ -128,13 +145,8 @@ def load_state():
             raise ValueError("상태 파일 형식 오류")
         return state
     except ValueError:
-        # 손상 시 백업 후 초기화. seen 은 inbox 에서 복원해야 이미 기록한 항목이 다시 쌓이지 않음
         os.replace(STATE, f"{STATE}.corrupt-{int(time.time())}")
-        seen = {}
-        for d in load_jsonl(INBOX):
-            key = f"react:{d.get('parent_ts')}:{d.get('emoji')}" if d.get("type") == "reaction" else f"msg:{d.get('ts')}"
-            seen[key] = int(time.time())
-        return {"seen": seen}
+        return {"seen": seen_from_inbox()}
 
 def fetch_history(ch, oldest):
     msgs, cursor = [], None
@@ -229,8 +241,8 @@ PY
 
 # 2시간마다 미답 결정 목록 전송(11-05 사용자 요청). 마지막 전송 시각은 .pending-last
 L="$DIR/.pending-last"; now=$(date +%s); last=$(cat "$L" 2>/dev/null || echo 0)
-if [ $((now - last)) -ge 7200 ]; then echo "$now" > "$L"; "$DIR/slack_pending.sh" >/dev/null 2>&1 || true; fi
+if [ $((now - last)) -ge 7200 ]; then echo "$now" > "$L"; LRM_PENDING_BUDGET="$(cap "${LRM_PENDING_BUDGET:-120}")" "$DIR/slack_pending.sh" >/dev/null 2>&1 || true; fi
 
-# 봇 DM 즉답 명령(대기·PR) 처리
-"$DIR/slack_cmd.sh" >/dev/null 2>&1 || true
+# 봇 DM 즉답 명령(대기·PR) 처리. 대기 명령이 대기 목록을 다시 부르므로 남은 예산을 그대로 물려줌
+LRM_PENDING_BUDGET="$(cap "${LRM_PENDING_BUDGET:-120}")" "$DIR/slack_cmd.sh" >/dev/null 2>&1 || true
 exit "$RC"

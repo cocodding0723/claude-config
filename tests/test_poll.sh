@@ -123,6 +123,41 @@ check "복구 뒤 중복 기록 없음" 3 "$(inbox_lines)"
 check "상태 파일 복원" yes "$(python3 -c 'import json,sys;json.load(open(sys.argv[1]))' "$HUB/slack-poll-state.json" && echo yes || echo no)"
 stop_stub
 
+echo "[상태 없음] 손상 직후 회차가 API 실패로 끝나도 다음 회차에 중복 기록 없음"
+new_hub; seed_sent 1000.1 1000.2
+printf '{"seen":{},"latest":{"1000.2":"1000.8"}}' > "$HUB/slack-poll-state.json"
+start_stub "{$OPEN,$HIST,$REPLIES}"
+bash "$POLL" --once >/dev/null
+check "첫 수집 3줄" 3 "$(inbox_lines)"
+printf '{"seen": {broken' > "$HUB/slack-poll-state.json"
+swap_stub "{$OPEN,\"conversations.history\":[{\"_status\":429,\"_headers\":{\"Retry-After\":\"0\"},\"ok\":false}]}"
+bash "$POLL" --once >/dev/null 2>&1; RC=$?
+check "실패 회차 종료 코드 1" 1 "$RC"
+check "상태 파일 없음(백업만 남음)" no "$([ -e "$HUB/slack-poll-state.json" ] && echo yes || echo no)"
+swap_stub "{$OPEN,$HIST,$REPLIES}"
+bash "$POLL" --once >/dev/null 2>&1; RC=$?
+check "다음 회차 종료 코드" 0 "$RC"
+check "중복 기록 없음" 3 "$(inbox_lines)"
+stop_stub
+
+echo "[총 예산] 앞 단계가 쓴 시간만큼 뒤 단계 예산이 줄어듦"
+new_hub
+echo 0 > "$HUB/.pending-last"
+printf '#!/bin/bash\necho "$LRM_PENDING_BUDGET" >> "%s/pending-budget"\nsleep 3\n' "$HUB" > "$HUB/slack_pending.sh"
+printf '#!/bin/bash\necho "$LRM_PENDING_BUDGET" >> "%s/cmd-budget"\n' "$HUB" > "$HUB/slack_cmd.sh"
+start_stub "{$OPEN,\"conversations.history\":[{\"ok\":true,\"messages\":[]}]}"
+LRM_TOTAL_BUDGET=4 bash "$POLL" --once >/dev/null
+check "대기 목록 단계 예산은 총 예산 이내" yes "$([ "$(cat "$HUB/pending-budget")" -le 4 ] && echo yes || echo no)"
+check "즉답 단계 예산은 남은 시간만큼(최소 1초)" 1 "$(cat "$HUB/cmd-budget")"
+stop_stub
+new_hub
+echo 0 > "$HUB/.pending-last"
+printf '#!/bin/bash\necho "$LRM_PENDING_BUDGET" >> "%s/pending-budget"\n' "$HUB" > "$HUB/slack_pending.sh"
+start_stub "{$OPEN,\"conversations.history\":[{\"ok\":true,\"messages\":[]}]}"
+bash "$POLL" --once >/dev/null
+check "기본 상한 120초" 120 "$(cat "$HUB/pending-budget")"
+stop_stub
+
 echo "[중복 실행] 잠금이 있으면 호출 없이 종료"
 new_hub
 mkdir "$HUB/.slack-poll.lock"
