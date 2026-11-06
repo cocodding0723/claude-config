@@ -1,0 +1,244 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>개인 설정 저장소 구조안</title>
+<style>
+:root{--bg:#fff;--fg:#1f2328;--muted:#59636e;--card:#f6f8fa;--line:#d0d7de;--warn:#fff8c5;--ok:#dafbe1;--bad:#ffebe9}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--line:#30363d;--warn:#3a2f00;--ok:#0f2e1a;--bad:#3d1214}}
+body{background:var(--bg);color:var(--fg);font:16px/1.7 -apple-system,"Apple SD Gothic Neo",sans-serif;margin:0 auto;max-width:1040px;padding:16px;word-break:keep-all}
+h1{font-size:25px;margin:8px 0}h2{font-size:20px;margin-top:34px;border-bottom:2px solid var(--line);padding-bottom:4px}h3{font-size:17px;margin:18px 0 6px}
+.summary{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 18px;font-size:16.5px}
+.decision-card{border:2px solid #d4a72c;border-radius:12px;padding:12px 16px;margin:12px 0}.opts tr.rec td{background:var(--ok)}.answer code{font-size:15px}
+.ask{background:var(--warn);border-radius:12px;padding:12px 16px;border:1px solid var(--line)}
+table{border-collapse:collapse;width:100%;font-size:14.5px}td,th{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}th{background:var(--card)}
+.table-wrap{overflow-x:auto}
+.diagrams{display:grid;grid-template-columns:1fr;gap:12px}.diagram{background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px;overflow-x:auto;text-align:center}.diagram svg{max-width:100%;height:auto}
+.ba{border:1px solid var(--line);border-radius:12px;padding:12px;margin:14px 0}.ba-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ba pre,.tree{margin:0;padding:10px;border-radius:8px;overflow-x:auto;font:13px/1.5 ui-monospace,Menlo,monospace}.before pre{background:var(--bad)}.after pre{background:var(--ok)}.tree{background:var(--card);border:1px solid var(--line)}
+.why{margin-top:8px}.label{font-size:13px;color:var(--muted);margin-bottom:4px}
+.facts{margin:6px 0;padding-left:20px}
+details.ref{margin-top:30px;color:var(--muted);font-size:14px}
+@media (max-width:760px){.ba-grid{grid-template-columns:1fr}}
+</style>
+<h1>개인 설정 저장소 구조안</h1>
+<p class="label">2026-11-06 · 읽기 전용 조사 결과 · 파일 이동·링크 생성은 승인 전까지 하지 않음</p>
+<div class="summary" data-check="summary"><b>3줄 요약</b><br>① <b>지금 문제</b> — 설정이 세 폴더에 흩어져 이력도 백업도 없다.<br>② <b>그래서</b> — 공유할 파일만 저장소에 모으고 설치 스크립트로 링크한다.<br>③ <b>그러면</b> — 맥이 늘어도 pull 한 번으로 같아진다. 아래 결정 4개에 답해 주면 된다.</div>
+
+<h2 data-check="decision">🙋 결정 필요 — 4개</h2>
+<div class="ask"><b>한 번에 답하기:</b> 전부 추천대로면 <code>전부 추천</code> · 골라서면 <code>결정1 A, 결정2 B</code></div>
+<div class="table-wrap"><table><tr><th>#</th><th>정할 것(질문 한 문장)</th><th>추천</th></tr>
+<tr><td>결정1</td><td>설치를 직접 만든 링크 스크립트로 할까?</td><td>A</td></tr>
+<tr><td>결정2</td><td>설정 파일은 링크 대신 병합 복사로 설치할까?</td><td>A</td></tr>
+<tr><td>결정3</td><td>허브 폴더의 스크립트·역할 파일도 저장소에 넣을까?</td><td>A</td></tr>
+<tr><td>결정4</td><td>원격 맥은 직접 pull 해서 맞출까?</td><td>A</td></tr></table></div>
+
+<section class="decision-card" data-check="dcard">
+<h3>결정1. 설치를 직접 만든 링크 스크립트로 할까?</h3>
+<p><b>지금 문제:</b> 스킬 폴더 안에 외부 도구가 관리하는 항목이 섞여 있다. 폴더째 링크하면 그 항목까지 저장소로 들어온다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 저장소 폴더 구조와 설치 파일 형식을 못 정해 저장소를 채우지 못한다.</p>
+<table class="opts"><tr><th>선택지</th><th>고르면</th><th>비용</th><th>되돌리기</th></tr>
+<tr class="rec" data-check="opt"><td><b>A. 링크 스크립트 ✅ 추천</b><br><small>목록에 적은 항목만 링크하는 셸 스크립트</small></td><td>목록 밖 항목은 건드리지 않으므로 외부 도구 폴더가 안전하다.</td><td>스크립트 1개, 약 100줄(추정)</td><td>쉬움 — 링크만 지우면 된다</td></tr>
+<tr data-check="opt"><td><b>B. chezmoi</b><br><small>파일을 복사해 적용하는 dotfiles 도구</small></td><td>템플릿·암호화가 생기므로 맥마다 다른 값을 쓸 때 편하다.</td><td>도구 설치와 학습, 저장소 파일 이름 규칙 변경</td><td>보통 — 복사본이라 원본과 어긋난다</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> 지금은 맥이 두 대이고 맥마다 다른 값이 거의 없다. 그래서 템플릿이 필요 없고, A 는 외부 폴더를 건드리지 않는 쪽이다. <b>감수하는 단점:</b> 스크립트를 직접 유지한다.</p>
+<p class="answer">답: <code>결정1 A</code></p></section>
+
+<section class="decision-card" data-check="dcard">
+<h3>결정2. 설정 파일은 링크 대신 병합 복사로 설치할까?</h3>
+<p><b>지금 문제:</b> Orca 가 설정 파일을 다시 쓴다. 링크로 걸면 Orca 가 실제 파일로 바꿔 저장소와 조용히 끊긴다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 설정 파일을 저장소에 어떤 모양으로 넣을지 몰라 첫 커밋을 못 한다.</p>
+<table class="opts"><tr><th>선택지</th><th>고르면</th><th>비용</th><th>되돌리기</th></tr>
+<tr class="rec" data-check="opt"><td><b>A. 병합 복사 ✅ 추천</b><br><small>저장소 기본값에 Orca 항목을 얹어 새 파일을 만든다</small></td><td>Orca 가 넣은 항목이 보존되므로 덮어써져도 저장소는 영향이 없다.</td><td>병합 스크립트 약 30줄(추정)</td><td>쉬움 — 설치 전 백업본으로 복원</td></tr>
+<tr data-check="opt"><td><b>B. 링크</b><br><small>설정 파일 자체를 저장소로 링크</small></td><td>수정이 곧바로 저장소에 보이지만 Orca 가 끊으면 알림 없이 갈라진다.</td><td>스크립트 없음</td><td>쉬움 — 다만 끊김을 눈치채기 어렵다</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> 설정 파일에는 Orca 훅 주입 줄이 15곳 있고 이는 맥마다 다르다. 그래서 통째로 저장소에 넣으면 다른 맥에 쓸모없는 훅이 따라간다. A 는 내 설정만 저장소에 둔다. <b>감수하는 단점:</b> 설정을 바꾸면 저장소 쪽에도 반영해야 한다.</p>
+<p class="answer">답: <code>결정2 A</code></p></section>
+
+<section class="decision-card" data-check="dcard">
+<h3>결정3. 허브 폴더의 스크립트·역할 파일도 저장소에 넣을까?</h3>
+<p><b>지금 문제:</b> 허브 스크립트 10개와 역할 파일 10개가 토큰·로그와 한 폴더에 있다. 이력이 없어 잘못 고쳐도 되돌릴 수 없다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 저장소 폴더 중 허브 칸을 만들지 말지 몰라 구조가 확정되지 않는다.</p>
+<table class="opts"><tr><th>선택지</th><th>고르면</th><th>비용</th><th>되돌리기</th></tr>
+<tr class="rec" data-check="opt"><td><b>A. 넣는다 ✅ 추천</b><br><small>스크립트·역할·봇 설정 양식만 파일별 링크</small></td><td>이력이 생기므로 잘못 고친 스크립트를 되돌릴 수 있다.</td><td>허용 목록 약 25줄, 설치 뒤 봇 동작 확인 1회</td><td>쉬움 — 링크를 원본 파일로 되돌린다</td></tr>
+<tr data-check="opt"><td><b>B. 넣지 않는다</b><br><small>허브 폴더는 지금처럼 로컬에만 둔다</small></td><td>토큰 유출 위험은 없지만 이력과 맥 간 공유가 계속 없다.</td><td>없음</td><td>쉬움 — 나중에 넣으면 된다</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> 이 스크립트들은 같은 날 고친 백업본이 6개 남을 만큼 자주 바뀐다. 그래서 이력이 없으면 어느 수정이 문제인지 못 찾는다. A 는 허용 목록으로 토큰·상태 파일을 막는다. <b>감수하는 단점:</b> 링크된 스크립트의 위치 계산이 깨지지 않는지 확인해야 한다.</p>
+<p class="answer">답: <code>결정3 A</code></p></section>
+
+<section class="decision-card" data-check="dcard">
+<h3>결정4. 원격 맥은 직접 pull 해서 맞출까?</h3>
+<p><b>지금 문제:</b> 원격 맥 설정은 손으로 맞추고 있어 기준이 없다. 이 맥에서는 접속 시도가 시간 초과로 끝나 상태를 확인하지 못했다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 설치 문서의 동기화 절차를 못 써서 원격 맥 반영이 보류된다.</p>
+<table class="opts"><tr><th>선택지</th><th>고르면</th><th>비용</th><th>되돌리기</th></tr>
+<tr class="rec" data-check="opt"><td><b>A. 직접 pull ✅ 추천</b><br><small>맥에서 pull 후 설치 스크립트 실행</small></td><td>바꾸는 시점을 내가 정하므로 작업 중에 규칙이 바뀌지 않는다.</td><td>명령 2줄을 맥마다 실행</td><td>쉬움 — 이전 커밋으로 pull</td></tr>
+<tr data-check="opt"><td><b>B. 세션 시작 때 자동 pull</b><br><small>훅이 세션을 열 때마다 pull</small></td><td>잊어도 맞춰지지만 세션 도중 규칙 파일이 바뀔 수 있다.</td><td>훅 추가와 충돌 처리 규칙</td><td>보통 — 훅을 빼야 한다</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> 맥이 두 대라 직접 pull 의 번거로움이 작다. 그래서 충돌이 나면 세션이 막히는 자동 pull 의 위험을 질 이유가 없다. A 로 시작해 불편하면 B 를 붙인다. <b>감수하는 단점:</b> pull 을 잊으면 맥끼리 달라진다.</p>
+<p class="answer">답: <code>결정4 A</code></p></section>
+
+<h2>📄 도식 3장</h2>
+<div class="diagrams">
+<div><div class="label">① 이전 구조</div><div class="diagram" data-check="diagram"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" data-diagram-type="DESCRIPTION" style="width:564px;height:407px;background:#FFFFFF;" width="564px" height="407px" viewBox="0 0 564 407" zoomAndPan="magnify" preserveAspectRatio="none" contentStyleType="text/css"><?plantuml 1.2026.8?><defs/><g font-family="sans-serif" lengthAdjust="spacing"><g class="title" data-source-line="4"><text x="174.94" y="22.6" fill="#000" font-size="14" textLength="207.578" font-weight="700" font-family="'Apple SD Gothic Neo'">이전: 설정이 흩어진 채 이력 없이 존재</text></g><!--entity C--><g class="entity" data-qualified-name="C" id="ent0001" data-source-line="5"><rect x="7" y="192.2" width="185.536" height="70.4" fill="#FFE7E7" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="17" y="214.8" fill="#000" font-size="14" textLength="110.712" font-family="'Apple SD Gothic Neo'">/.claude (진짜 파일)</text><text x="17" y="231.6" fill="#000" font-size="14" textLength="165.536" font-family="'Apple SD Gothic Neo'">스킬 37 · 훅 · 전역 규칙 · 설정</text><text x="17" y="248.4" fill="#000" font-size="14" textLength="160.342" font-family="'Apple SD Gothic Neo'">+ 세션·기록·캐시가 같은 폴더</text></g><!--entity P--><g class="entity" data-qualified-name="P" id="ent0002" data-source-line="6"><rect x="24.62" y="44.8" width="150.298" height="70.4" fill="#FFE7E7" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="34.62" y="67.4" fill="#000" font-size="14" textLength="83.132" font-family="'Apple SD Gothic Neo'">Orca 프로필 홈</text><text x="34.62" y="84.2" fill="#000" font-size="14" textLength="130.298" font-family="'Apple SD Gothic Neo'">스킬·훅은 /.claude 링크</text><text x="34.62" y="101" fill="#000" font-size="14" textLength="104.804" font-family="'Apple SD Gothic Neo'">설정·키맵은 복사본</text></g><!--entity H--><g class="entity" data-qualified-name="H" id="ent0003" data-source-line="7"><rect x="209.83" y="44.8" width="155.884" height="70.4" fill="#FFE7E7" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="219.83" y="67.4" fill="#000" font-size="14" textLength="102.368" font-family="'Apple SD Gothic Neo'">/.config/lrm-hubs</text><text x="219.83" y="84.2" fill="#000" font-size="14" textLength="135.884" font-family="'Apple SD Gothic Neo'">스크립트 · 역할 · 봇 토큰</text><text x="219.83" y="101" fill="#000" font-size="14" textLength="119.77" font-family="'Apple SD Gothic Neo'">+ 상태·로그가 한 폴더</text></g><!--entity A--><g class="entity" data-qualified-name="A" id="ent0004" data-source-line="8"><rect x="49.8" y="339.6" width="99.94" height="53.6" fill="#FFE7E7" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="59.8" y="362.2" fill="#000" font-size="14" textLength="79.94" font-family="'Apple SD Gothic Neo'">/agent-config</text><text x="59.8" y="379" fill="#000" font-size="14" textLength="51.94" font-family="'Apple SD Gothic Neo'">(git 아님)</text></g><!--entity R--><g class="entity" data-qualified-name="R" id="ent0005" data-source-line="9"><rect x="401.07" y="53.2" width="149.388" height="53.6" fill="#FFE7E7" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="411.07" y="75.8" fill="#000" font-size="14" textLength="129.388" font-family="'Apple SD Gothic Neo'">원격 맥 REMOTE_MAC_HOST</text><text x="411.07" y="92.6" fill="#000" font-size="14" textLength="52.122" font-family="'Apple SD Gothic Neo'">설정 따로</text></g><!--link P to C--><g class="link" data-entity-1="ent0002" data-entity-2="ent0001" id="lnk6" data-source-line="10" data-link-type="dependency"><path d="M99.77,115.46 C99.77,138.55 99.77,163.84 99.77,186.94" style="stroke:#181818;stroke-width:1;" fill="none" id="P-to-C"/><polygon points="99.77,191.94,103.77,182.94,99.77,186.94,95.77,182.94,99.77,191.94" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="100.77" y="157.9" fill="#000" font-size="13" textLength="56.212" font-family="'Apple SD Gothic Neo'">링크 / 복사</text></g><!--link C to A--><g class="link" data-entity-1="ent0001" data-entity-2="ent0004" id="lnk7" data-source-line="11" data-link-type="dependency"><path d="M99.77,262.97 C99.77,286.75 99.77,312.83 99.77,334.49" style="stroke:#181818;stroke-width:1;stroke-dasharray:7,7;" fill="none" id="C-to-A"/><polygon points="99.77,339.49,103.77,330.49,99.77,334.49,95.77,330.49,99.77,339.49" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="100.77" y="305.3" fill="#000" font-size="13" textLength="67.704" font-family="'Apple SD Gothic Neo'">스킬 1개 링크</text></g><?plantuml-src RPB1Jjj048RlUOfHk82gE51KWZWWePIq9uhADPTjuYHMdNLaE-gjmi7G2gZA8Mw8S50YXKP8GNABaTsglUHnlBFlqBKJQ0uvUUtvv__cdxNnNg4DefCwbEKAQQfcGQFc7gdBaDvfD5GP3bx2AysiAINOaxLqodZI6pLIrZuej0eLeXhoN4NNchISrtGgwx2scZ8LK_XWpyU-lGLe3x7lY3VWlLlyvkF81lnXntNMlm7idCGr7FXuFKxfSiaaj2hQqn-pKaabpR8Cow85HoxmytFi_LafKZmTyjOOrdCm2O1V7SSFmSBE7KI1Yx-woOU4MwJFn2d4uyj948KU6_Gc0Vw-m3CtyWuXyhhOEmJ-rMTVscaW1kHXgL3OpUtcvaTvevS8yBRD1YvtRE3TpuypJ0A1Zot-Jyj65hV6Gf3mXQ0rPAE7MCFk7x0rPlTXGjfVH8fjD5fHgbbLhsTgpNV6b6IDsVU__3HCWdNkkDEFJyp_1FoapoqlYNbayIDt4eWfeo2Cut77dS_sUZ6HL6LgPgRO8bskAYQWOxEpovMaQsTH5rvTH3zlHTORSU6hqiOBwVdwXhIv-HWRM5lisaqCtZuPx4CciorMl3LR4cHdEqdbGPAs1KhyBjExNOiyTwRw1m00?></g></svg></div></div>
+<div><div class="label">② ⚠️ 문제 위치</div><div class="diagram" data-check="diagram"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" data-diagram-type="DESCRIPTION" style="width:728px;height:242px;background:#FFFFFF;" width="728px" height="242px" viewBox="0 0 728 242" zoomAndPan="magnify" preserveAspectRatio="none" contentStyleType="text/css"><?plantuml 1.2026.8?><defs/><g font-family="sans-serif" lengthAdjust="spacing"><g class="title" data-source-line="4"><text x="257.02" y="22.6" fill="#000" font-size="14" textLength="207.578" font-weight="700" font-family="'Apple SD Gothic Neo'">문제 위치: 빨간 곳이 지금 막히는 지점</text></g><!--entity C--><g class="entity" data-qualified-name="C" id="ent0001" data-source-line="5"><rect x="22.78" y="158.4" width="209.84" height="70.4" fill="#FF9C9C" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="32.78" y="181" fill="#000" font-size="14" textLength="46.032" font-family="'Apple SD Gothic Neo'">/.claude</text><text x="32.78" y="197.8" fill="#000" font-size="14" textLength="88.648" font-family="'Apple SD Gothic Neo'">⚠️ git 이력 없음</text><text x="32.78" y="214.6" fill="#000" font-size="14" textLength="189.84" font-family="'Apple SD Gothic Neo'">⚠️ 공유 대상과 비공유 대상이 섞임</text></g><!--entity P--><g class="entity" data-qualified-name="P" id="ent0002" data-source-line="6"><rect x="7" y="44.8" width="241.41" height="53.6" fill="#FF9C9C" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="17" y="67.4" fill="#000" font-size="14" textLength="83.132" font-family="'Apple SD Gothic Neo'">Orca 프로필 홈</text><text x="17" y="84.2" fill="#000" font-size="14" textLength="221.41" font-family="'Apple SD Gothic Neo'">⚠️ 설정·키맵 복사본이 Orca 에 덮어써짐</text></g><!--entity H--><g class="entity" data-qualified-name="H" id="ent0003" data-source-line="7"><rect x="283.89" y="44.8" width="225.632" height="53.6" fill="#FF9C9C" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="293.89" y="67.4" fill="#000" font-size="14" textLength="102.368" font-family="'Apple SD Gothic Neo'">/.config/lrm-hubs</text><text x="293.89" y="84.2" fill="#000" font-size="14" textLength="205.632" font-family="'Apple SD Gothic Neo'">⚠️ 봇 토큰 파일이 스크립트 옆에 있음</text></g><!--entity R--><g class="entity" data-qualified-name="R" id="ent0004" data-source-line="8"><rect x="544.79" y="44.8" width="169.828" height="53.6" fill="#FF9C9C" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="554.79" y="67.4" fill="#000" font-size="14" textLength="40.012" font-family="'Apple SD Gothic Neo'">원격 맥</text><text x="554.79" y="84.2" fill="#000" font-size="14" textLength="149.828" font-family="'Apple SD Gothic Neo'">⚠️ 같은 설정을 손으로 맞춤</text></g><!--link P to C--><g class="link" data-entity-1="ent0002" data-entity-2="ent0001" id="lnk5" data-source-line="9" data-link-type="dependency"><path d="M127.71,98.64 C127.71,116.01 127.71,134.04 127.71,152.96" style="stroke:#181818;stroke-width:1;" fill="none" id="P-to-C"/><polygon points="127.71,157.96,131.71,148.96,127.71,152.96,123.71,148.96,127.71,157.96" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><?plantuml-src RP0zIyDG58Rt_ef3dUl7g8CWaUgaeglBjKtRO9gK9CLDMhtKMYfcyADg4Y9Kgr2acAeHwk9FSSmz5_-2jq6YWklvU9xp7dDRqIh486N8omLILQsihbahf2n3Ug5IKMNOM8GbtIefELYHzNJAJERD4idhEufMX09HJVbNnz2hMbxI3KqsO6OwPIcMuB1-YBu3w51yxSm1UxsB1XIY841t2DYhHM4JME-GUqtMEXaNqBTJXfopY5OKw-dTgScSIgfvULFxkFG_msCeAXQ8PURV09utq6qddIXuGiS7rgxXVZqAHi96_zHY9_NGesaW9aWmaStEIhFIR-6gaIF0JoYxTlWf1NxHJFX8k-YVlh_mlIxhFG4JwBq-2y8nDbx3SnlOqGEU3V7e3djsR5dxppAEfMi5fJYb6kLCgRfb9XOsF03Uy7bz0BpTHdSKNztgydgVtRxnLWZOQOnDw3L5-jYn_9y3h-peyLvyz-RdGuCBT6lVGT2bW0qRdP78AiOyVEx6jFM4jWQPp3n8Nm00?></g></svg></div></div>
+<div><div class="label">③ 변경 후 (🟢추가 🟡변경)</div><div class="diagram" data-check="diagram"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" data-diagram-type="DESCRIPTION" style="width:392px;height:488px;background:#FFFFFF;" width="392px" height="488px" viewBox="0 0 392 488" zoomAndPan="magnify" preserveAspectRatio="none" contentStyleType="text/css"><?plantuml 1.2026.8?><defs/><g font-family="sans-serif" lengthAdjust="spacing"><g class="title" data-source-line="4"><text x="42.967" y="22.6" fill="#000" font-size="14" textLength="299.544" font-weight="700" font-family="'Apple SD Gothic Neo'">변경 후: 저장소가 원본, 설치 스크립트가 링크를 만든다</text></g><!--entity G--><g class="entity" data-qualified-name="G" id="ent0001" data-source-line="5"><rect x="113.1" y="44.8" width="196.204" height="53.6" fill="#E3F7E3" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="123.1" y="67.4" fill="#000" font-size="14" textLength="121.366" font-family="'Apple SD Gothic Neo'">GitHub 비공개 저장소</text><text x="123.1" y="84.2" fill="#000" font-size="14" textLength="176.204" font-family="'Apple SD Gothic Neo'">cocodding0723/claude-config</text></g><!--entity L--><g class="entity" data-qualified-name="L" id="ent0002" data-source-line="6"><rect x="7" y="175.4" width="206.396" height="53.6" fill="#E3F7E3" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="17" y="198" fill="#000" font-size="14" textLength="67.914" font-family="'Apple SD Gothic Neo'">맥 로컬 클론</text><text x="17" y="214.8" fill="#000" font-size="14" textLength="186.396" font-family="'Apple SD Gothic Neo'">원본 (스킬·훅·규칙·허브 스크립트)</text></g><!--entity I--><g class="entity" data-qualified-name="I" id="ent0003" data-source-line="7"><rect x="40.59" y="290" width="139.21" height="53.6" fill="#E3F7E3" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="50.59" y="312.6" fill="#000" font-size="14" textLength="115.514" font-family="'Apple SD Gothic Neo'">install.sh (새로 추가)</text><text x="50.59" y="329.4" fill="#000" font-size="14" textLength="119.21" font-family="'Apple SD Gothic Neo'">링크 생성 + 설정 병합</text></g><!--entity C--><g class="entity" data-qualified-name="C" id="ent0004" data-source-line="8"><rect x="211.8" y="404.6" width="124.804" height="70.4" fill="#FFF4C2" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="221.8" y="427.2" fill="#000" font-size="14" textLength="46.032" font-family="'Apple SD Gothic Neo'">/.claude</text><text x="221.8" y="444" fill="#000" font-size="14" textLength="64.232" font-family="'Apple SD Gothic Neo'">항목별 링크</text><text x="221.8" y="460.8" fill="#000" font-size="14" textLength="104.804" font-family="'Apple SD Gothic Neo'">세션·캐시는 그대로</text></g><!--entity P--><g class="entity" data-qualified-name="P" id="ent0005" data-source-line="9"><rect x="218.13" y="290" width="112.134" height="53.6" fill="#FFF4C2" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="228.13" y="312.6" fill="#000" font-size="14" textLength="83.132" font-family="'Apple SD Gothic Neo'">Orca 프로필 홈</text><text x="228.13" y="329.4" fill="#000" font-size="14" textLength="92.134" font-family="'Apple SD Gothic Neo'">기존 링크 그대로</text></g><!--entity H--><g class="entity" data-qualified-name="H" id="ent0006" data-source-line="10"><rect x="35.9" y="404.6" width="140.596" height="70.4" fill="#FFF4C2" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="45.9" y="427.2" fill="#000" font-size="14" textLength="102.368" font-family="'Apple SD Gothic Neo'">/.config/lrm-hubs</text><text x="45.9" y="444" fill="#000" font-size="14" textLength="64.232" font-family="'Apple SD Gothic Neo'">파일별 링크</text><text x="45.9" y="460.8" fill="#000" font-size="14" textLength="120.596" font-family="'Apple SD Gothic Neo'">토큰·상태는 로컬 전용</text></g><!--entity R--><g class="entity" data-qualified-name="R" id="ent0007" data-source-line="11"><rect x="247.92" y="175.4" width="130.558" height="53.6" fill="#E3F7E3" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="257.92" y="198" fill="#000" font-size="14" textLength="40.012" font-family="'Apple SD Gothic Neo'">원격 맥</text><text x="257.92" y="214.8" fill="#000" font-size="14" textLength="110.558" font-family="'Apple SD Gothic Neo'">git pull 후 install.sh</text></g><!--link G to L--><g class="link" data-entity-1="ent0001" data-entity-2="ent0002" id="lnk8" data-source-line="12" data-link-type="dependency"><path d="M187.673,102.553 C170.153,124.873 151.208,148.977 133.698,171.277" style="stroke:#181818;stroke-width:1;" fill="none" id="G-L"/><polygon points="190.76,98.62,182.057,103.23,187.673,102.553,188.349,108.169,190.76,98.62" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><polygon points="130.61,175.21,139.314,170.602,133.698,171.277,133.022,165.661,130.61,175.21" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="167.75" y="141.1" fill="#000" font-size="13" textLength="57.447" font-family="'Apple SD Gothic Neo'">push / pull</text></g><!--link G to R--><g class="link" data-entity-1="ent0001" data-entity-2="ent0007" id="lnk9" data-source-line="13" data-link-type="dependency"><path d="M231.84,98.62 C249.54,120.94 271.793,148.993 289.483,171.293" style="stroke:#181818;stroke-width:1;" fill="none" id="G-to-R"/><polygon points="292.59,175.21,290.13,165.673,289.483,171.293,283.863,170.645,292.59,175.21" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="269.3" y="141.1" fill="#000" font-size="13" textLength="19.877" font-family="'Apple SD Gothic Neo'">pull</text></g><!--link L to I--><g class="link" data-entity-1="ent0002" data-entity-2="ent0003" id="lnk10" data-source-line="14" data-link-type="dependency"><path d="M110.2,229.32 C110.2,247.51 110.2,266.67 110.2,284.83" style="stroke:#181818;stroke-width:1;" fill="none" id="L-to-I"/><polygon points="110.2,289.83,114.2,280.83,110.2,284.83,106.2,280.83,110.2,289.83" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link I to C--><g class="link" data-entity-1="ent0003" data-entity-2="ent0004" id="lnk11" data-source-line="15" data-link-type="dependency"><path d="M145.78,344.06 C169.71,361.71 197.476,382.203 223.446,401.353" style="stroke:#181818;stroke-width:1;" fill="none" id="I-to-C"/><polygon points="227.47,404.32,222.6,395.759,223.446,401.353,217.852,402.198,227.47,404.32" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link I to H--><g class="link" data-entity-1="ent0003" data-entity-2="ent0006" id="lnk12" data-source-line="16" data-link-type="dependency"><path d="M109.33,344.06 C108.75,361.71 108.134,380.173 107.504,399.323" style="stroke:#181818;stroke-width:1;" fill="none" id="I-to-H"/><polygon points="107.34,404.32,111.634,395.456,107.504,399.323,103.638,395.193,107.34,404.32" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link P to C--><g class="link" data-entity-1="ent0005" data-entity-2="ent0004" id="lnk13" data-source-line="17" data-link-type="dependency"><path d="M274.2,344.06 C274.2,361.71 274.2,380.17 274.2,399.32" style="stroke:#181818;stroke-width:1;" fill="none" id="P-to-C"/><polygon points="274.2,404.32,278.2,395.32,274.2,399.32,270.2,395.32,274.2,404.32" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><?plantuml-src RP9FQnf16CRlVeeNSsbeZMaC148e51l_G4X3UjtBPdVLfUkix1zwAretGSmUKgeqgIQie0qM2pQcTMsJYnzdP-OxT7QKn1PFiyyxx_pcUPzPywsAIg8X5a5MSgAjMIaTMVjYKO7eor99K-3DAqZhLa6LO5_Hen7peTyiYBB-JaLvo8cQgIpi6BgDvAHk8CM0v-iHIxKO1u_AmSqzq9Qp3SGhawiUEN63OHb8wmoF_6T0d2wPd0EfTsbbWB_UqxeVRkFhIgXxT-pBnPyyVDgD68faYIZFgD6qQcNi8y0J9nZz38RjHxQ095tIPPavND_QICGbJRHb9IRfAAVceo2Qa8QLtKHgQpUn2CJNFS2TDlap05gvnHrFG3E7y2Iqzc4m7TFMyNGSZDjaSi74vnhstNzihtBwtZAwYanBrBGriy1mrHgx2CYl1fjpLK2pIO5KBudp0vxoGBmc2-uZRVOvChiC-Jw-DXjDGBJv7N_huv4pJurPTtnoV3uTazzdvBIDwmq8nZvso-nYJap2IYgLsankB19V6v88jE6m9jfqW5xK11JuGzAvdNF_WnmiWuIsUDHnpIZ62lQHoVovBhcyM_H7JpnQ6J9_rGgjSd_px8dda2-pgJFByEnDWfi-u_G4b5SjADcQ5lvSy9WmFtpu45aQTcAn5-nPjbapop_Epx1oM3taLIRtkCn6idnDpjTCv62c_m80?></g></svg></div></div></div>
+<p class="label">도식 아래 한 줄: 원본이 저장소로 옮겨지고, 기존 위치는 링크가 되어 프로필 홈 쪽 경로는 바뀌지 않는다.</p>
+
+<h2>🔎 리서치 — 관리 방식 비교</h2>
+<div class="table-wrap"><table><tr><th>방식</th><th>동작</th><th>좋은 점</th><th>걸리는 점</th><th>판정</th></tr>
+<tr><td>GNU stow</td><td>저장소 폴더를 홈에 링크로 펼침</td><td>단순하고 의존성이 작다</td><td>폴더째 링크하므로 외부 도구 항목이 섞인다</td><td>🟡 기각, 발상만 차용</td></tr>
+<tr><td>chezmoi</td><td>파일을 복사해 적용, 템플릿·암호화 지원</td><td>맥별 값과 비밀 관리에 강하다</td><td>복사본이라 어긋나고 규칙을 새로 배워야 한다</td><td>🟡 기각, 맥별 값이 생기면 재검토</td></tr>
+<tr><td>bare repo</td><td>홈 전체를 git 작업 트리로 사용</td><td>도구가 필요 없다</td><td>홈 전체가 추적 대상이라 세션·캐시 오염 위험이 크다</td><td>🔴 기각</td></tr>
+<tr><td>yadm</td><td>git 을 감싼 dotfiles 도구</td><td>암호화·대체 파일 지원</td><td>chezmoi 와 겹치고 홈 전체 추적 성격이 있다</td><td>🔴 기각</td></tr>
+<tr><td>목록 기반 링크 스크립트</td><td>적은 항목만 링크·병합</td><td>외부 폴더를 건드리지 않는다</td><td>스크립트를 직접 유지한다</td><td>🟢 채택</td></tr></table></div>
+<h3>실제 사례</h3>
+<ul class="facts">
+<li>🟢 허용 목록 방식 — 설정·규칙·스킬·훅 폴더만 추적하고 세션·기록은 제외한 공개 저장소가 있다.</li>
+<li>🟢 stow 패키지 방식 — 설정·훅·규칙·스킬 1개를 한 패키지로 묶고 새 맥에서 stow 한 번으로 설치하는 제안이 있다.</li>
+<li>🟢 링크 + 자동 동기화 — 규칙 파일을 링크하고 시작 훅에서 pull, 종료 훅에서 push 하는 도구가 있다.</li>
+<li>⚠️ Orca 가 설정 파일 링크를 실제 파일로 바꿔 저장소와 끊었다는 보고가 있다. 결정2 의 근거다.</li>
+<li>⚠️ 자동 push 는 이 환경의 승인 규칙과 충돌하므로 채택하지 않는다.</li>
+<li>출처는 맨 아래 참고 칸에 있다.</li></ul>
+
+<h2>🗂️ 현재 위치 조사</h2>
+<div class="table-wrap"><table><tr><th>위치</th><th>내용</th><th>크기</th><th>링크 여부</th></tr>
+<tr><td>~/.claude/CLAUDE.md</td><td>전역 규칙 102줄</td><td>11.8KB</td><td>실제 파일</td></tr>
+<tr><td>~/.claude/settings.json</td><td>권한·훅 16종·플러그인·모델</td><td>58KB</td><td>실제 파일, 프로필 홈 복사본과 내용 동일</td></tr>
+<tr><td>~/.claude/keybindings.json</td><td>키맵</td><td>10KB</td><td>실제 파일, 프로필 홈 복사본과 내용 동일</td></tr>
+<tr><td>~/.claude/skills</td><td>37개 항목, 일반 폴더 35개와 링크 2개</td><td>12MB</td><td>링크 2개는 외부 폴더를 가리킴</td></tr>
+<tr><td>skills/synced</td><td>Anthropic 이 동기화하는 스킬 묶음</td><td>8.7MB</td><td>외부 관리, 저장소 제외</td></tr>
+<tr><td>skills 직접 작성분</td><td>34개 폴더, 파일 131개</td><td>약 3.7MB</td><td>실제 파일, 이미지가 2.6MB</td></tr>
+<tr><td>~/.claude/hooks</td><td>스크립트 7개와 보조 스크립트 4개</td><td>약 56KB</td><td>실제 파일</td></tr>
+<tr><td>hooks/state</td><td>로그·세션·저장소별 상태</td><td>13MB</td><td>실제 폴더, 제외</td></tr>
+<tr><td>~/.claude/meat-proxy</td><td>공통 규칙 문서 1개</td><td>2.1KB</td><td>실제 파일</td></tr>
+<tr><td>~/.claude/plugins</td><td>설치된 플러그인 캐시</td><td>340MB</td><td>제외, 활성 목록은 설정에 있음</td></tr>
+<tr><td>프로필 홈 (Orca)</td><td>스킬·훅·메모 문서·기록 등 11개가 ~/.claude 링크</td><td>—</td><td>설정·키맵은 복사본, 규칙 파일은 1줄 가져오기</td></tr>
+<tr><td>~/.config/lrm-hubs</td><td>스크립트 10개, 역할 10개, 봇 양식, launchd 설정</td><td>약 360KB</td><td>실제 파일, git 아님</td></tr>
+<tr><td>~/agent-config</td><td>스킬 1개의 원본과 조사 도구</td><td>—</td><td>git 아님, ~/.claude/skills 에서 링크됨</td></tr></table></div>
+<ul class="facts">
+<li>⚠️ 홈 경로가 하드코딩된 곳이 있다: 규칙 파일 2곳, 설정 파일 2곳, 허브 스크립트 1개, launchd 설정 3곳.</li>
+<li>⚠️ 다른 맥의 계정 이름이 같은지는 미확인이다.</li>
+<li>⚠️ 원격 맥 REMOTE_MAC_HOST 은 이 맥에서 접속 시간 초과, 상태는 미확인이다.</li></ul>
+
+<h2>📦 포함 / 제외 목록</h2>
+<div class="table-wrap"><table><tr><th>구분</th><th>대상</th><th>이유</th></tr>
+<tr><td>🟢 포함</td><td>CLAUDE.md, keybindings.json, 설정 기본값</td><td>내가 직접 정한 값</td></tr>
+<tr><td>🟢 포함</td><td>hooks 스크립트와 보조 스크립트</td><td>동작을 정의하는 코드</td></tr>
+<tr><td>🟢 포함</td><td>meat-proxy 문서</td><td>공통 규칙 원문</td></tr>
+<tr><td>🟢 포함</td><td>skills 직접 작성분 34개</td><td>재사용 자산</td></tr>
+<tr><td>🟢 포함</td><td>허브 스크립트 10개, 역할 10개, 봇 양식, launchd 설정</td><td>허브 동작 정의, 토큰 없음을 패턴 검색으로 확인</td></tr>
+<tr><td>🔴 제외</td><td>*.env 전부, slack-bot.env</td><td>토큰 보관</td></tr>
+<tr><td>🔴 제외</td><td>state, cache, history, projects, sessions</td><td>이 맥에서만 쓰는 기록</td></tr>
+<tr><td>🔴 제외</td><td>skills/synced, 외부 링크 2개의 원본</td><td>다른 도구가 관리</td></tr>
+<tr><td>🔴 제외</td><td>*.bak* 백업본</td><td>이력은 git 이 대신함</td></tr>
+<tr><td>🔴 제외</td><td>plugins, file-history, paste-cache, shell-snapshots</td><td>캐시, 용량 큼</td></tr>
+<tr><td>🔴 제외</td><td>자격 증명 파일, 정책 서명 파일</td><td>비밀 또는 맥별 값</td></tr>
+<tr><td>🔴 제외</td><td>허브의 slack-* 로그·상태·수신함, 잠금 파일</td><td>실행 중 계속 바뀌는 상태</td></tr></table></div>
+<ul class="facts">
+<li>⚠️ 이미지가 든 스킬 1개가 2.6MB 라 저장소 크기에 영향을 준다.</li>
+<li>🔵 이름이 skills 와 겹치는 플러그인 스킬이 있는지는 미확인이다.</li></ul>
+
+<h2>🧱 폴더 구조안 / 설치 방식</h2>
+<pre class="tree">claude-config/
+├─ README.md            설치·동기화 절차
+├─ install.sh           링크 생성 + 설정 병합 (--dry-run 지원)
+├─ links.tsv            원본 → 대상 → 방식(link|merge) 목록
+├─ claude/
+│  ├─ CLAUDE.md
+│  ├─ keybindings.json
+│  ├─ settings.base.json   내 설정만, Orca 항목 제외
+│  ├─ hooks/              스크립트 + lib/
+│  └─ meat-proxy/
+├─ skills/&lt;이름&gt;/        직접 작성한 스킬만
+├─ hubs/
+│  ├─ scripts/ roles/ launchd/
+│  └─ slack-bot.env.example   값 없는 양식
+└─ .gitignore           *.env, *.bak*, state, logs 방어용</pre>
+<ul class="facts">
+<li>🟢 install.sh 는 links.tsv 에 적힌 항목만 처리한다.</li>
+<li>🟢 이미 있는 실제 파일은 백업 폴더로 옮긴 뒤 링크한다.</li>
+<li>🟢 --dry-run 은 바꿀 내용만 출력한다.</li>
+<li>🔵 설치 후 점검 모드가 끊어진 링크와 어긋난 설정을 보고한다.</li>
+<li>🟡 프로필 홈은 이미 ~/.claude 를 링크하므로 바꾸지 않는다.</li>
+<li>🟡 스킬은 폴더 단위가 아니라 스킬마다 링크해 외부 항목과 섞이지 않게 한다.</li></ul>
+
+<h2>🔄 여러 맥 동기화</h2>
+<ul class="facts">
+<li>🟢 새 맥: 저장소 clone → install.sh --dry-run → install.sh.</li>
+<li>🟢 갱신: git pull → install.sh.</li>
+<li>🟢 변경: 작업 브랜치에서 커밋, push 와 병합은 승인 뒤에만.</li>
+<li>⚠️ 맥별로 다른 값은 설정 병합 단계에서 따로 얹고 저장소에 넣지 않는다.</li>
+<li>⚠️ 원격 맥은 접속 확인이 먼저다. 이 맥에서는 시간 초과였다.</li></ul>
+
+<h2>🔄 주제별 before / after</h2>
+<section class="ba" data-check="ba"><h3>스킬 연결: 폴더째가 아니라 스킬마다</h3>
+<div class="ba-grid"><div class="before"><div class="label">before (지금, 외부 링크가 섞임)</div><pre><code>~/.claude/skills/
+  comment-lint/        (실제 폴더)
+  create-pr/           (실제 폴더)
+  synced/              (외부 도구 관리)
+  dart-mcp-workflow -> ~/agent-config/skills/...
+  factory-workflow  -> ~/.local/share/unity-factory/...
+
+# 폴더째 링크하면 synced 8.7MB 가
+# 저장소로 들어온다</code></pre></div>
+<div class="after"><div class="label">after (제안)</div><pre><code># links.tsv
+skills/comment-lint  .claude/skills/comment-lint  link
+skills/create-pr     .claude/skills/create-pr     link
+
+# install.sh 핵심
+while IFS=$'\t' read -r src dst mode; do
+  [ "$mode" = link ] || continue
+  [ -e "$HOME/$dst" ] &amp;&amp; [ ! -L "$HOME/$dst" ] \
+    &amp;&amp; mv "$HOME/$dst" "$BACKUP/"
+  ln -sfn "$REPO/$src" "$HOME/$dst"
+done &lt; links.tsv</code></pre></div></div>
+<p class="why" data-check="why"><b>왜:</b> 목록에 적은 스킬만 링크하므로 외부 도구가 관리하는 폴더가 저장소에 섞이지 않는다.</p></section>
+
+<section class="ba" data-check="ba"><h3>설정 파일: 링크가 아니라 병합</h3>
+<div class="ba-grid"><div class="before"><div class="label">before (지금)</div><pre><code># ~/.claude/settings.json 과
+# 프로필 홈 settings.json 은
+# 내용이 같은 실제 파일 두 벌
+$ cmp settings.json $PROFILE/settings.json
+(출력 없음 = 같음)
+
+# Orca 주입 항목이 섞여 있음
+$ grep -c ORCA_AGENT_HOOK settings.json
+15</code></pre></div>
+<div class="after"><div class="label">after (제안)</div><pre><code># links.tsv
+claude/settings.base.json  .claude/settings.json  merge
+
+# install.sh merge 단계
+# 1) 기존 파일을 백업
+# 2) 기존 파일의 Orca 항목을 보존
+# 3) 기본값 위에 얹어 새 파일 생성
+jq -s '.[0] * .[1]' \
+  "$REPO/claude/settings.base.json" \
+  "$ORCA_KEEP" &gt; "$HOME/.claude/settings.json"
+
+# 병합 규칙의 세부는 구현 때 확정(미확정)</code></pre></div></div>
+<p class="why" data-check="why"><b>왜:</b> Orca 가 파일을 다시 써도 저장소 원본은 그대로라서 맥마다 달라지는 훅 항목이 저장소를 오염시키지 않는다.</p></section>
+
+<h2>✅ 그대로인 것 / 없어지는 것</h2>
+<div class="table-wrap"><table><tr><th>그대로</th><th>없어짐</th></tr>
+<tr><td>프로필 홈의 기존 링크 11개</td><td>🔴 ~/agent-config 의 스킬 링크 (저장소로 이관 시)</td></tr>
+<tr><td>세션·기록·캐시 위치</td><td>🔴 흩어진 *.bak* 백업본의 역할</td></tr>
+<tr><td>외부 도구가 관리하는 스킬 묶음</td><td>🔴 설정 파일 손복사</td></tr>
+<tr><td>토큰 파일의 위치와 권한</td><td></td></tr></table></div>
+
+<h2>🔄 진행 순서</h2>
+<ol>
+<li>구조 승인 — <small>검증: 결정 1~4 답 수령</small></li>
+<li>저장소에 파일 복사 후 첫 커밋 — <small>검증: 제외 목록 파일이 0개, 토큰 패턴 검색 0건</small></li>
+<li>install.sh --dry-run 실행 — <small>검증: 바뀔 항목 목록이 links.tsv 와 일치</small></li>
+<li>이 맥에 설치 — <small>검증: ls -l 로 링크 확인, 새 세션에서 스킬 목록 37개 유지</small></li>
+<li>허브 링크 후 봇 동작 확인 — <small>검증: 알림 스크립트 드라이런 1회, 실패 시 원복</small></li>
+<li>원격 맥 접속 확인 후 설치 — <small>검증: 이 맥과 같은 점검 모드 결과</small></li>
+<li>push 와 PR — <small>검증: 승인 뒤에만</small></li></ol>
+
+<details class="ref"><summary>참고 (파일·출처)</summary>
+<p>조사 파일: ~/.claude, ~/Library/Application Support/orca/claude-profiles/*/home, ~/.config/lrm-hubs, ~/agent-config</p>
+<p>읽지 않은 것: *.env, 자격 증명, state, cache, history, projects, sessions 의 내용</p>
+<p>출처(2차 자료, 블로그·저장소 글):</p>
+<ul>
+<li><a href="https://dingjiu1989-hue.github.io/en/tools/dotfile-management">Dotfile Management: chezmoi, GNU Stow, Bare Git Repos</a></li>
+<li><a href="https://github.com/chrisor-dev/claude-autosync">chrisor-dev/claude-autosync</a></li>
+<li><a href="https://github.com/elizabethfuentes12/claude-code-dotfiles">elizabethfuentes12/claude-code-dotfiles</a></li>
+<li><a href="https://github.com/pruszel/dotfiles/issues/1">pruszel/dotfiles 이슈 1 (stow 패키지 제안)</a></li>
+<li><a href="https://github.com/JRRS1982/dotfiles">JRRS1982/dotfiles (Orca 가 링크를 실제 파일로 바꾼 사례)</a></li>
+<li><a href="https://github.com/kasimmj/claude-code-memory-sync">kasimmj/claude-code-memory-sync</a></li></ul>
+<p>검색 결과 요약만 확인했고 각 저장소 본문은 직접 열람하지 않았다.</p></details>
+<details class="ref" data-check="review"><summary>검수 기록</summary>1차 독자 검수·2차 교차 검수는 아직 하지 않았다. 코디네이터가 진행한다. 이 문서는 자동 검사 통과만 확인했다.</details>
+</html>
