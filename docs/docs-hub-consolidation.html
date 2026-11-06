@@ -23,7 +23,7 @@ ul.facts{margin:6px 0;padding-left:20px}ul.facts li{margin:2px 0}
 </style>
 <h1>문서 코디네이터 정리안 — 규칙 통합 · 새 허브</h1>
 <p class="meta">2026-11-06 · 조사 전용 · 이 문서 외에는 아무것도 바꾸지 않았다 · 저장소 구조안 결정1~4 는 사용자가 승인했고 이 안은 그 결정에 의존한다. 이 문서의 결정은 '정리안 결정'으로 구분한다</p>
-<div class="ask" data-top="changed"><b>🔁 이번에 바뀐 점</b><br>① 🔁 정리안 결정3 신설: 연애혁명 메모리 16개 원본을 어떻게 할지 사용자 결정으로 올렸다. 앞 승인과 사용자 지시가 달라서다.<br>② 🔁 양식 외 규칙 7개는 전부 전역에 두지 않고 규칙별로 나눠 둔다(정리안 결정2). 전역에는 1개만 간다.<br>③ 🔁 결정 번호에 '정리안'을 붙였고, 설정 읽기에 프로젝트 지정 방법을 추가했다.</div>
+<div class="ask" data-top="changed"><b>🔁 이번에 바뀐 점</b><br>① 🔁 정리안 결정3 비용을 사실대로 고쳤다. B 는 링크 4개 끊김과 인덱스 16줄 정리, A 는 옛 이름 치환 12파일이다.<br>② 🔁 진행 순서 앞에 시작 전제를 넣었다. 저장소 구조안 5단계(이 맥 설치) 뒤에 시작한다.<br>③ 🔁 프로젝트 지정은 프롬프트에 적는 방법이 기본이고 환경 변수는 보조다.</div>
 <div class="summary" data-check="summary"><b>3줄 요약</b><br>① <b>지금 문제</b> — 문서 작성 규칙이 여러 곳에 겹치고 프로젝트 고유값이 섞여 있으며 문서 담당 창구는 한 프로젝트에 묶여 있다.<br>② <b>그래서</b> — 규칙만 지침 파일 하나와 설정 틀로 모으고 새 창구를 만드는 안을 냈다. 옛 문서는 그대로 둔다.<br>③ <b>그러면</b> — 아래 정리안 결정 5개에 답하면 된다.</div>
 
 <h2>📖 용어 풀이</h2>
@@ -85,12 +85,12 @@ ul.facts{margin:6px 0;padding-left:20px}ul.facts li{margin:2px 0}
 </section>
 <section class="decision-card" data-check="dcard">
 <h3><span class="badge tag-warn">🔁 바뀐 결정</span> 정리안 결정3. 연애혁명 프로젝트 메모리 16개 원본을 어떻게 할까?</h3>
-<p><b>지금 문제:</b> 앞 승인은 16개를 메모리에서 제거(양식 흡수 8·삭제 1·양식 외 이전 7)였다.<br>이후 사용자 지시는 연애혁명 메모리 내용을 새 저장소로 옮기지 않는 것이다.<br>두 방향이 달라서 사용자가 다시 정해야 한다.</p>
+<p><b>지금 문제:</b> 앞 승인은 16개 제거였고 사용자 지시는 내용을 새 저장소로 옮기지 않기라서 방향이 다르다.<br>옛 허브는 지금 이 메모리를 읽는다.</p>
 <p data-check="blocks"><b>안 정하면 멈추는 것:</b> 배치표 이전·삭제 작업의 범위를 정하지 못한다.</p>
 <table class="opts"><tr><th>선택지</th><th>고르면</th><th>되돌리기</th></tr>
-<tr class="rec" data-check="opt"><td><b>A. 원본 유지 + 새 위치에 사본 ✅ 추천</b><br><small>옛 허브는 메모리를 그대로 읽음</small></td><td>옛 허브 작업이 안 깨진다. 규칙이 두 곳에 있어 어긋날 수 있다. 이후 고치는 곳은 새 위치뿐이다.</td><td>쉬움, 사본 삭제</td></tr>
-<tr data-check="opt"><td><b>B. 앞 승인대로 이전 후 제거</b><br><small>백업 뒤 메모리에서 삭제</small></td><td>규칙이 한 곳이 된다. 옛 허브가 규칙을 못 읽어 연애혁명 쪽 세션에 영향이 간다.</td><td>보통, 백업 복원</td></tr></table>
-<p data-check="why-rec"><b>추천 이유:</b> 옛 허브는 진행 중 작업이 있어 메모리를 계속 읽으므로, 지우면 그 규칙이 막혀 옛 허브의 문서 작업이 어긋난다. <b>감수하는 단점:</b> 옛 허브를 닫을 때까지 같은 규칙이 두 곳에 있고, 정리는 그때 따로 정한다.</p>
+<tr class="rec" data-check="opt"><td><b>A. 원본 유지 + 새 위치에 사본 ✅ 추천</b><br><small>메모리 11개·인덱스의 옛 스킬 이름만 치환, 원문 보존</small></td><td>옛 허브 작업이 그대로 돈다. 규칙이 두 곳이라 새 규칙은 doc-kit 에만 쓰고 월 1회 grep 목록으로 점검한다.</td><td>쉬움, 사본 삭제</td></tr>
+<tr data-check="opt"><td><b>B. 앞 승인대로 이전 후 제거</b><br><small>백업 뒤 메모리에서 삭제</small></td><td>옛 허브는 역할 파일·공통 규칙·doc-kit 으로 규칙을 읽어 안 막힌다. 다른 메모리 4개의 링크가 끊기고 인덱스 16줄을 정리한다.</td><td>보통, 백업 복원</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> B 는 메모리를 지워 링크 4개를 끊고 사용자 지시와도 달라서, 이름만 바꾸는 A 가 옛 세션을 덜 건드린다. <b>감수하는 단점:</b> 옛 스킬을 지우면 메모리 11개가 없는 스킬을 가리켜서 이름 치환 12파일이 필요하다.</p>
 <p class="answer">답: <code>정리안 결정3 A</code></p>
 </section>
 <section class="decision-card" data-check="dcard">
@@ -135,7 +135,7 @@ ul.facts{margin:6px 0;padding-left:20px}ul.facts li{margin:2px 0}
 <tr><td>visual-change-doc-for-jeongo</td><td>ui-prefab-layout-rules</td><td>같음</td></tr>
 <tr><td>hub-html-subject-format</td><td>hub-decision-to-main</td><td>같음</td></tr>
 <tr><td>compressed-headline-style</td><td>compressed-korean</td><td>같음. 대상 메모리 파일이 없다</td></tr></table>
-<p class="cap">바깥 링크는 4개다. 새 위치에는 링크를 쓰지 않는다. 메모리 원본의 기존 링크는 정리안 결정3 A 일 때 그대로 유효하다.</p>
+<p class="cap">바깥 링크는 4개다. 새 위치에는 링크를 쓰지 않는다. 메모리 원본의 기존 링크는 정리안 결정3 A 일 때 그대로 유효하지만 compressed-korean 링크는 지금도 대상 파일이 없다.</p>
 
 <h2>📄 도식 3장</h2>
 <h3>1. 이전 구조</h3>
@@ -194,7 +194,9 @@ ul.facts{margin:6px 0;padding-left:20px}ul.facts li{margin:2px 0}
 <ul class="facts">
 <li>🟢 문장 편집·화면 흐름·퀴즈·Jira·인수 요약 스킬은 문서 규칙이 아니라 도구라 그대로 둔다.</li>
 <li>⚠️ 옛 5개 이름을 적은 파일은 아래 표대로 13개다. 명령은 참고 칸에 있다.</li>
-<li>⚠️ 메모리 12개와 옛 허브 인계 문서도 옛 이름을 적고 있다. 메모리는 원본 유지라 고치지 않는다.</li>
+<li>⚠️ 메모리 11개와 MEMORY.md 인덱스도 옛 이름을 적고 있다.</li>
+<li>🔁 정리안 결정3 A 면 그 12파일은 옛 이름만 doc-kit 으로 치환한다(원문 보존).</li>
+<li>⚠️ 옛 허브 인계 문서도 옛 이름을 적고 있다.</li>
 <li>🟡 유형 표: 구조안·해설·기록·보고서·비주얼 5칸. 기록 칸 안에 계약·규약·명세·런북 자리를 둔다.</li>
 <li>⚠️ 검사 스크립트는 구조안 스킬 폴더에 있고 보고서 스킬이 그 경로를 부른다. 이관 시 경로가 바뀐다.</li>
 </ul>
@@ -207,12 +209,14 @@ ul.facts{margin:6px 0;padding-left:20px}ul.facts li{margin:2px 0}
 <h3>표 밖 참조</h3>
 <table><tr><th>위치</th><th>내용</th><th>영향</th></tr>
 <tr><td>~/.codex/skills</td><td>심볼릭 링크 6개</td><td>옛 4개(공동작성·해설·기록·보고서)는 삭제 시 끊김. 구조안 스킬은 링크 없음이라 doc-kit 링크를 새로 만든다. PR·QA 링크 2개는 유지</td></tr>
-<tr><td>옛 허브 인계 문서</td><td>옛 스킬 이름을 적은 줄</td><td>이름만 doc-kit 으로 갱신</td></tr></table>
+<tr><td>옛 허브 인계 문서</td><td>옛 스킬 이름을 적은 줄</td><td>이름만 doc-kit 으로 갱신</td></tr>
+<tr><td>연애혁명 메모리 11개 + MEMORY.md</td><td>옛 스킬 이름을 적은 줄</td><td>정리안 결정3 A 면 이름만 치환(원문 보존). 안 하면 10단계 뒤 없는 스킬을 가리킨다</td></tr></table>
 
 <h2>🧩 겹침표 — 메모리</h2>
 <ul class="facts">
 <li>📄 위치: ~/.claude/projects 아래 연애혁명 프로젝트 폴더, 메모리 126개 중 문서 규칙 16개.</li>
-<li>📄 프로필 홈 projects 아래 memory 파일은 0개다(참고 칸 명령).</li>
+<li>📄 프로필 홈 projects 는 ~/.claude/projects 로 가는 링크라 같은 폴더다. 다른 memory 폴더는 없다(참고 칸 명령).</li>
+<li>📄 옛 허브가 이 메모리를 읽는다는 것은 사실이다.</li>
 <li>⚠️ 다른 프로젝트 3곳에 PR 문체 메모리 4개가 따로 있다(참고 칸 명령). create-pr 후속 정리 대상이다.</li>
 <li>🟢 16개 = 양식 8 + 반영 안 함 1 + 양식 외 7. 양식 외 7개는 위 배치표를 따른다.</li>
 <li>🟢 같은 내용이 겹친 쌍은 4개다.</li>
@@ -221,6 +225,8 @@ ul.facts{margin:6px 0;padding-left:20px}ul.facts li{margin:2px 0}
 <li>🟢 쌍 3: doc-one-fact-per-line 과 compressed-headline-style.</li>
 <li>🟢 쌍 4: docs-as-html 과 user-docs-as-html.</li>
 <li>🔁 원본을 둘지는 정리안 결정3 에서 정한다. 아래 표는 A(원본 유지)를 가정한다.</li>
+<li>🔁 A 의 동기화: 새 규칙은 doc-kit 에만 쓴다.</li>
+<li>🔁 A 의 점검: 연애혁명 세션이 새로 저장한 문서 규칙 메모리는 월 1회 grep 목록으로 doc-kit 에 올린다.</li>
 </ul>
 <table><tr><th>양식 메모리</th><th>같은 내용이 있는 곳</th><th>규칙 반영 위치(원본은 정리안 결정3)</th></tr>
 <tr><td><code>doc-three-stage-review</code></td><td>structure-doc-review-3stage 와 쌍. 구조안 스킬 검수표</td><td><span class="badge tag-ok">🟢</span> doc-kit '검수 3단계'</td></tr>
@@ -252,8 +258,8 @@ ul.facts{margin:6px 0;padding-left:20px}ul.facts li{margin:2px 0}
 <tr><td>메모리 doc-three-stage-review:9 · structure-doc-review-3stage:7 · dev-review-doc-style:11</td><td>받는 사람 전용 검수 규칙</td><td>설정 audience·recipients</td></tr>
 <tr><td>메모리 doc-writing-skills:3, 8, 10, 11</td><td>선례 저작자 이름</td><td>반영하지 않음</td></tr>
 <tr><td>역할 파일 role-docs.txt:1, 3, 4</td><td>받는 사람, 채널, 티켓 키 목록</td><td>옛 허브 전용이라 그대로. 새 허브는 설정을 참조</td></tr>
-<tr><td>orca-hub-create/references/common-rules.txt:1, 2</td><td>받는 사람·프로젝트 이름</td><td>새 허브용 공통 규칙에서 설정 참조로</td></tr></table>
-<p class="cap">값은 요약만 적었다. work-report·qa-checklist 는 고유값이 없었다. 완료 검증의 "고유값 0건"은 이 표 전체 위치가 기준이다.</p>
+<tr><td>orca-hub-create/references/common-rules.txt:1, 2 (2줄)</td><td>받는 사람·프로젝트 이름</td><td>새 허브용 공통 규칙에서 설정 참조로</td></tr></table>
+<p class="cap">값은 요약만 적었다. 스킬 쪽은 10파일 35줄이다(검색 패턴에 90_정리기록·Slack DM·LRM- 포함). work-report·qa-checklist 는 고유값이 없었다. 완료 검증의 "고유값 0건"은 이 표 전체 위치가 기준이다.</p>
 <h3>설정 파일 설계</h3>
 <ul class="facts">
 <li>🟢 이름: projects.toml 하나. 프로젝트마다 섹션을 나눈다.</li>
@@ -291,15 +297,15 @@ base_branch = "dev"</code></pre>
 <li>3. 프로젝트를 고른다. 아래 순서에서 먼저 되는 것을 쓴다.</li>
 </ul>
 <table><tr><th>순서</th><th>방법</th><th>쓰는 때</th></tr>
-<tr><td>1</td><td>작업 지시의 프로젝트명(허브가 워커에게 넘긴 지시)</td><td>새 허브가 다른 프로젝트 문서를 맡을 때</td></tr>
-<tr><td>2</td><td>허브 시작 인자 또는 환경 변수 DOC_KIT_PROJECT</td><td>허브나 세션이 한 프로젝트 전담일 때</td></tr>
+<tr><td>1</td><td>허브 프롬프트·역할 파일·작업 지시에 프로젝트명을 적는다(기본 방법)</td><td>새 허브가 다른 프로젝트 문서를 맡을 때. 시작 스크립트가 프롬프트로만 값을 넘기므로 이 경로가 확실하다</td></tr>
+<tr><td>2</td><td>환경 변수 DOC_KIT_PROJECT(보조)</td><td>허브 Bash 까지 환경 변수가 전달되는지는 검증하지 않았다. 확인된 뒤에만 쓴다</td></tr>
 <tr><td>3</td><td>git 원격 주소(origin)를 각 섹션 match 와 대조</td><td>대상 프로젝트 저장소 안에서 만들 때. 허브·하위 워크트리는 폴더 이름이 달라도 원격이 같아 잡힌다</td></tr>
 <tr><td>4</td><td>저장소 폴더 이름을 match 와 대조</td><td>원격이 없을 때</td></tr>
 <tr><td>5</td><td>[default] 만 사용</td><td>위가 모두 안 맞을 때. 채널·받는 사람이 없어 파일 경로만 보고한다</td></tr></table>
 <ul class="facts">
 <li>4. 일치한 섹션 값을 [default] 위에 덮어쓴다. 본문 규칙은 값 대신 항목 이름만 부른다.</li>
 <li>5. check.py 는 같은 파일에서 ticket_pattern 한 값만 읽는다. 없으면 티켓 검사를 건너뛴다.</li>
-<li>🟡 새 허브는 claude-config 안이라 origin 이 어느 match 에도 안 맞는다. 그래서 순서 1·2 로 프로젝트를 지정해야 채널이 읽힌다.</li>
+<li>🟡 새 허브는 claude-config 안이라 origin 이 어느 match 에도 안 맞는다. 그래서 순서 1 로 프로젝트를 지정해야 채널이 읽힌다.</li>
 </ul>
 <ul class="facts">
 <li>🟡 파이썬 요건: PATH 의 python3 는 3.13.15 라서 TOML 모듈이 있다.</li>
@@ -340,11 +346,16 @@ ROLE="${ROLE_FILE:-$HOME/.config/lrm-hubs/roles/role-$3.txt}"
 # 새 허브: HUB_ROOT=claude-config 쪽, ROLE_FILE=$HUB/role.txt
 #   (전용 브랜치 위에서만 이력에 남음, 정리안 결정5)</code></pre></div></div>
 <p class="why" data-check="why"><b>왜:</b> 옛 허브를 계속 쓰므로 기본값은 그대로 두고, 새 허브만 환경 변수로 다른 경로를 쓰게 해서 둘이 같은 스크립트를 쓴다.</p></section>
+<ul class="facts">
+<li>🟡 고치는 사본: 저장소 구조안 결정3 승인 뒤 원본은 저장소의 hubs/scripts/restart_hub.sh 다.</li>
+<li>🟡 ~/.config/lrm-hubs 의 사본은 그 뒤 링크가 된다. 이 안은 저장소 사본을 고친다.</li>
+<li>🟢 구조안 브랜치의 README 는 이미 HUB_ROOT 기본값 방식을 쓴다. 이 안은 ROLE_FILE 변수만 더한다.</li>
+</ul>
 
 <h2>✅ 그대로인 것 / 없어지는 것</h2>
 <table><tr><th>그대로</th><th>없어짐·바뀜</th></tr>
 <tr><td>🔵 옛 허브, 하위 워크스페이스 23개, 옛 보고서·HTML</td><td>🔴 문서 스킬 5개(합쳐짐)</td></tr>
-<tr><td>🔁 연애혁명 메모리 16개: 정리안 결정3 A 일 때 그대로</td><td>🔴 규칙 복제본</td></tr>
+<tr><td>🔁 연애혁명 메모리 16개: 정리안 결정3 A 일 때 옛 스킬 이름만 치환</td><td>🔴 규칙 복제본</td></tr>
 <tr><td>🟢 PR 스킬·QA 스킬</td><td>🔴 스킬 본문의 프로젝트 고유값(설정으로 이동)</td></tr>
 <tr><td>🟢 검사 스크립트 기능(경로만 이관, 티켓 패턴은 설정에서 읽음)</td><td>🔴 새 문서 기준 저장 위치 3곳 중 2곳(정리안 결정5 A 일 때)</td></tr>
 <tr><td>🟢 결정 카드·3단계 검수·HTML 양식</td><td>🟡 전역 CLAUDE.md 에 쉬운 말 규칙 1개 추가(정리안 결정2 A)</td></tr>
@@ -352,30 +363,38 @@ ROLE="${ROLE_FILE:-$HOME/.config/lrm-hubs/roles/role-$3.txt}"
 <tr><td>🟢 문장 편집·화면 흐름·Jira 스킬</td><td>—</td></tr></table>
 
 <h2>🔄 진행 순서 (승인 뒤, 10단계)</h2>
+<ul class="facts">
+<li>🟡 시작 전제: 저장소 구조안 5단계(이 맥에 설치, 즉 ~/.claude/skills 를 링크로 전환) 뒤에 시작한다.</li>
+<li>🟡 전환 전에는 ~/.claude/skills 가 실제 폴더라 저장소의 skills/doc-kit 을 읽지 못한다.</li>
+<li>🟡 전환 전에 시험하려면 7단계에서 doc-kit 경로를 저장소 skills/doc-kit 으로 직접 지정한다.</li>
+</ul>
 <ol>
 <li>이전 조건 확인 — <small>검증: 옛 허브 진행 중 워커 0(Jira 초안 워커 2개 상태 포함), 3차 검수 대기 건 처리, 인계 문서 최신</small></li>
 <li>doc-kit 초안 작성(옛 스킬 유지). 고유값은 본문에 쓰지 않음 — <small>검증: 옛 5개 규칙 줄 단위 대조, 고유값 표 전체 위치에서 grep 0건</small></li>
 <li>설정 틀 작성, 실제 값 파일 생성, check.py 가 ticket_pattern 을 읽도록 수정 — <small>검증: 설정 없음·설정 있음·파이썬 3.9 로 각 1건 통과</small></li>
 <li>전역 CLAUDE.md 에 쉬운 말 규칙 1개 추가(사용자 승인 뒤, 백업 먼저) — <small>검증: 추가 줄 수 3~4줄, 나머지 6개는 전역에 없음</small></li>
 <li>허브 공통 규칙에 양식 외 규칙 반영(전달부·역할 분담·제목 형식·허브 신설 메모) — <small>검증: 7개 배치표 항목별 대조</small></li>
-<li>옛 이름 참조 13곳, 옛 허브 인계 문서, codex 링크 갱신 — <small>검증: grep 으로 옛 이름 0건, codex 링크 정상</small></li>
-<li>이전 전 시험: claude-config 워크트리(연애혁명 메모리를 읽지 않는 위치)에서 새 터미널로 샘플 문서 1건 작성
+<li>옛 이름 참조 13곳, 옛 허브 인계 문서, codex 링크 갱신(정리안 결정3 A 면 메모리 11개·MEMORY.md 이름 치환 포함) — <small>검증: grep 으로 옛 이름 0건, codex 링크 정상. 되돌리기: 갱신 전 복사본으로 복원</small></li>
+<li>이전 전 시험: claude-config 워크트리(연애혁명 메모리를 읽지 않는 위치)에서 새 터미널로 샘플 문서 1건 작성. doc-kit 은 저장소 skills/doc-kit 에서 읽는다
 <ul class="facts">
 <li>검증 1: check.py 통과.</li>
-<li>검증 2: 프로젝트를 지정(DOC_KIT_PROJECT 로 시험용 섹션)하면 그 섹션의 채널을 읽는다.</li>
+<li>검증 2: 프롬프트에 시험용 프로젝트명을 적으면 그 섹션의 채널을 읽는다.</li>
 <li>검증 3: 프로젝트를 지정하지 않으면 기본값으로 돌아가 파일 경로만 보고한다.</li>
-<li>검증 4: 제목 형식이 맞고, 직접 전달 금지를 지키며, 업로드를 메인에 넘긴다.</li>
+<li>검증 4: 제목 형식이 맞고 직접 전달 금지를 지킨다.</li>
+<li>검증 4 한계: 메인이 없는 시험 터미널이라 '업로드를 메인에 넘김'은 보고 메시지 문구 확인까지만 한다.</li>
 <li>하나라도 실패하면 8단계로 가지 않고 doc-kit·허브 규칙을 보강한다.</li>
 </ul></li>
 <li>새 허브 워크스페이스 생성(전용 브랜치), 역할 틀·인계 문서 틀 배치 — <small>검증: 새 터미널이 인계 문서를 읽고 보고</small></li>
 <li>메인 코디네이터 허브 목록에 새 허브 추가(옛 허브 유지) — <small>검증: 메인이 새 허브로 메시지 도달 확인</small></li>
-<li>스킬 폴더 백업 후 옛 스킬 5개 삭제 — <small>검증: 백업 복사본 열림, 새 스킬로 문서 1건 재생성</small></li>
+<li>옛 스킬 5개 삭제 — <small>검증: 새 스킬로 문서 1건 재생성. 되돌리기: 전환 뒤에는 저장소 git 이력, 전환 전이면 삭제 전 폴더 백업</small></li>
 </ol>
 <ul class="facts">
 <li>🔁 정리안 결정3 이 B 면 6단계 뒤에 "메모리 백업 후 제거" 단계가 하나 더 생긴다.</li>
 <li>⚠️ 위험: 옛 이름을 부르는 역할 파일이 한 곳이라도 남으면 허브가 없는 스킬을 찾는다.</li>
-<li>⚠️ 스킬 폴더는 git 밖이라 삭제하면 되돌릴 방법이 백업뿐이다. 그래서 10단계 전에 백업한다.</li>
+<li>⚠️ 구조안 5단계 전에는 스킬 폴더가 git 밖이라 삭제하면 되돌릴 방법이 백업뿐이다. 전환 뒤에는 저장소 이력이 있다.</li>
 <li>🟡 의존: 저장소 구조안(다른 문서)의 결정1·결정3 이 승인됐다.</li>
+<li>🟡 정리안 결정4(새 허브)와 결정2 배치표의 '허브 역할 파일' 칸은 구조안 결정3 A 가 전제다.</li>
+<li>🟡 정리안 결정5(docs/out/ 전용 브랜치)는 구조안의 폴더 구조안(결정1 A 의 일부)이 전제다.</li>
 <li>🟡 그 결정1 은 설치를 링크 스크립트로 하는 것이다.</li>
 <li>🟡 그 결정3 은 허브 스크립트·역할 파일을 저장소에 넣는 것이다.</li>
 <li>🟡 이 둘이 doc-kit·역할 틀·시작 스크립트의 위치를 정한다.</li>
@@ -398,9 +417,9 @@ ROLE="${ROLE_FILE:-$HOME/.config/lrm-hubs/roles/role-$3.txt}"
 <pre><code>find coord-docs-hub/docs -type f | wc -l            # 144
 find coord-docs-hub/docs -maxdepth 1 -type f | wc -l # 51
 ls ~/orca/workspaces/LoveRevolutionMaker | grep -c '^개인'  # 23
-grep -lE 'structure-change-doc|explain-diff|work-report|tech-record' $LRM_MEMORY/*.md | wc -l  # 12
+grep -lE 'structure-change-doc|explain-diff|work-report|tech-record|doc-coauthoring' $LRM_MEMORY/*.md | wc -l  # 12 (MEMORY.md 포함, 나머지 11)
 ls ~/.claude/projects/*/memory/ | grep -E '^pr-'    # 다른 3곳 4개 + 연애혁명 2개
-find $PROFILE_HOME/projects -path '*/memory/*.md' | wc -l  # 0
+ls -ld $PROFILE_HOME/projects  # ~/.claude/projects 로 가는 링크
 ls -la ~/.codex/skills | grep -E 'structure|work-report|explain|tech-record|doc-co|qa|create-pr'  # 링크 6개
 git -C 개인-11-04-성능-보고서 status --short | wc -l  # 946
 git -C coord-docs-hub rev-parse --abbrev-ref HEAD  # HEAD(detached)
@@ -408,10 +427,10 @@ git -C coord-docs-hub remote -v  # 원격 주소(허브·하위 워크트리 공
 python3 --version; /usr/bin/python3 --version  # 3.13.15 ; 3.9.6
 wc -c $LRM_MEMORY/{docs-as-html,user-docs-as-html,slack-report-html-format,visual-change-doc-for-jeongo,slack-plain-language,compressed-headline-style,hub-html-subject-format}.md | tail -1  # 10235
 wc -c ~/.claude/CLAUDE.md  # 11817 (102줄)
-# 고유값 재grep: 패턴 = 정오|D0C14|coord-docs-hub|연애혁명|LoveRevolution|LRM-[0-9]+|machamy|JobMaker|강찬형|origin/dev
+# 고유값 재grep: 패턴 = 정오|D0C14|coord-docs-hub|연애혁명|LoveRevolution|LRM-|machamy|JobMaker|강찬형|origin/dev|90_정리기록|Slack DM
 grep -rnE "$PATTERN" ~/.claude/skills/{structure-change-doc,explain-diff,tech-record,create-pr,doc-coauthoring,work-report,qa-checklist} --exclude='*.bak*' --exclude='*.pyc' --exclude='*.html' | cut -d: -f1,2
 grep -nE "$PATTERN" $LRM_MEMORY/{문서 규칙 16개}.md ~/.config/lrm-hubs/roles/role-docs.txt ~/.claude/skills/orca-hub-create/references/common-rules.txt | cut -d: -f1,2
-grep -n 'LRM-' ~/.claude/skills/structure-change-doc/scripts/check.py  # 144 (정규식이라 위 패턴으로는 안 잡혀 따로 확인)
+# check.py:144 는 정규식 LRM-\d+ 라서 패턴 LRM- 으로 잡힌다
 grep -o '\[\[[^]]*\]\]' $LRM_MEMORY/{양식 외 규칙 7개}.md   # 바깥 링크 4개
 # 패턴의 a|b|c 는 a 또는 b 또는 c</code></pre></li>
 </ul>
@@ -516,6 +535,9 @@ OH --&gt; KIDS : 기존 정리 규칙 그대로
 <li>2026-11-06 사용자 지시 반영: 옛 문서·하위 23개·연애혁명 메모리 내용은 옮기지 않고 규칙과 새 허브만 옮긴다. 하위 이관 결정 삭제, 허브 결정을 새 허브 생성으로 축소, 진행 순서 10단계.</li>
 <li>2026-11-06 2차 교차 검수(Fable) 반영: 양식 외 규칙 7개 배치표, 고유값 전수 재grep, 시험을 새 허브 생성 앞으로 이동, 바깥 링크 집계.</li>
 <li>2026-11-06 1차 독자 검수 전체(차단 4·경미 8) 반영: 메모리 원본 처리를 정리안 결정3 으로 분리, 도식 숫자 통일, 결정 이름에 '정리안' 접두, 프로젝트 지정 방법 설계, 용어·한 줄 한 사실 정리, 내부 맥락 제거.</li>
-<li>이번 변경분은 2차 재검수를 아직 안 받았다. 3차는 사용자 몫이다.</li>
+<li>2026-11-06 2차 교차 재검수(Fable, 차단 2·경미 6) 반영: 정리안 결정3 비용 정정과 A 의 이름 치환 명시, 시작 전제와 7·10단계 정렬, 고유값 패턴 보강, 프로필 홈 문장 정정, 의존 번호 정리, 프로젝트 지정 방식, 동기화 점검, 복원 위치.</li>
+<li>구조안 문서(다른 워크스페이스, 수정하지 않음)에서 어긋난 줄: 203행 '다른 문서의 결정3·5' 는 정리안 결정4·5 가 맞다. 308행 '다른 문서 결정3 과의 의존 확인' 은 정리안 결정4 가 맞다.</li>
+<li>지시서가 말한 15행·383행은 현재 355줄 파일에 없어 실제 줄로 적었다. 또 지시서의 '구조안 결정4 A 전제'는 구조안 결정4 가 원격 맥 pull 이라 맞지 않아 결정3 A 로 적었다.</li>
+<li>이번 변경분은 재검수를 아직 안 받았다. 3차는 사용자 몫이다.</li>
 </ul></details>
 </html>
