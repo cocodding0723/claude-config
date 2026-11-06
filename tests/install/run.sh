@@ -247,12 +247,12 @@ rm -rf "${SB3:?}"
 SB5=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox5.XXXXXX")
 mkdir -p "$SB5/.config/lrm-hubs" "$SB5/.config/claude-config" "$SB5/.claude"
 cp "$SB/.config/claude-config/values.env" "$SB5/.config/claude-config/values.env"
-# 의도된 치환(restart_hub 경로)만 다른 파일은 통과해야 하고, 내용이 다른 slack_poll 은 걸려야 함
-sed 's#\${HUB_ROOT:-\$HOME/orca/workspaces/LoveRevolutionMaker}#/Users/someone/orca/workspaces/LoveRevolutionMaker#' "$REPO/hubs/scripts/restart_hub.sh" > "$SB5/.config/lrm-hubs/restart_hub.sh"
+# 저장소와 같은 파일은 통과해야 하고, 내용이 다른 slack_poll 은 걸려야 함
+cp "$REPO/hubs/scripts/restart_hub.sh" "$SB5/.config/lrm-hubs/restart_hub.sh"
 echo "# newer live" > "$SB5/.config/lrm-hubs/slack_poll.sh"
 before=$(snapshot "$SB5")
 out=$(env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF HOME="$SB5" "$INSTALL" --diff-live 2>&1); rc=$?
-[ "$rc" = 1 ] && echo "$out" | grep -q 'LIVE-NEWER .config/lrm-hubs/slack_poll.sh' && ! echo "$out" | grep -q 'restart_hub' && ok "--diff-live: 라이브가 앞선 파일만 지적(의도된 치환은 통과)" || ko "diff-live" "rc=$rc $(echo "$out" | head -3 | tr '\n' ' ')"
+[ "$rc" = 1 ] && echo "$out" | grep -q 'LIVE-NEWER .config/lrm-hubs/slack_poll.sh' && ! echo "$out" | grep -q 'restart_hub' && ok "--diff-live: 라이브가 앞선 파일만 지적(같은 파일은 통과)" || ko "diff-live" "rc=$rc $(echo "$out" | head -3 | tr '\n' ' ')"
 env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF HOME="$SB5" "$INSTALL" >/dev/null 2>&1; rc=$?
 [ "$rc" != 0 ] && [ "$before" = "$(snapshot "$SB5")" ] && ok "라이브가 앞서면 설치가 변경 없이 중단" || ko "라이브 우선 중단" "rc=$rc"
 env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF HOME="$SB5" "$INSTALL" --dry-run >/dev/null 2>&1; rc=$?

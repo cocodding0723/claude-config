@@ -1,0 +1,4 @@
+# 문서 허브 전용 브랜치에서 HTML 만 추적
+*
+!.gitignore
+!*.html

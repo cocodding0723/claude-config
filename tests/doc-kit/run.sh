@@ -85,5 +85,23 @@ n=$(awk '/^## 쉬운 말/{f=1;next} /^## /{f=0} f && /^- /{c++} END{print c+0}' 
 leak=$(grep -nE '직접 ?전달|DM 으로|채널 ID|허브→메인|비주얼 변경 문서' "$G" | cut -d: -f1 | tr '\n' ' ')
 [ -z "$leak" ] && ok "전역에 전달·허브 규칙 없음(doc-kit·허브 역할 파일 담당)" || ko "전역 누출" "줄 $leak"
 
+# ---- 새 허브: 역할 파일·생성 스크립트·restart_hub ------------------------------
+out=$("$REPO/tests/doc-kit/check_unique.sh" "$REPO/hubs/roles/role-doc-kit.txt" 2>&1) && ok "새 허브 역할 파일 고유값 0건" || ko "역할 파일 고유값" "$(echo "$out" | head -3 | tr '\n' ' ')"
+grep -q 'doc_config.py' "$REPO/hubs/roles/role-doc-kit.txt" && grep -q '직접 보내지 않는다' "$REPO/hubs/roles/role-doc-kit.txt" && grep -q '\[문서→메인\] 📄' "$REPO/hubs/roles/role-doc-kit.txt" && ok "역할 파일: 설정 참조·직접 전달 금지·제목 형식 포함" || ko "역할 파일 내용" ""
+DH="$W/dochub"; mkdir -p "$DH/ws"
+before=$(find "$DH" | sort | tr '\n' ' ')
+out=$(DOC_HUB_REPO="$DH/repo" DOC_HUB_WS_ROOT="$DH/ws" "$REPO/hubs/scripts/create_doc_hub.sh" --dry-run --project 시험A 2>&1); rc=$?
+after=$(find "$DH" | sort | tr '\n' ' ')
+[ "$rc" = 0 ] && [ "$before" = "$after" ] && echo "$out" | grep -q 'worktree add .* -b chore/docs-hub' && echo "$out" | grep -q '프로젝트: 시험A' && ok "create_doc_hub --dry-run: 명령만 출력·무변경·프로젝트 전달" || ko "create_doc_hub dry-run" "rc=$rc"
+"$REPO/hubs/scripts/create_doc_hub.sh" --bad >/dev/null 2>&1; [ "$?" = 2 ] && ok "create_doc_hub: 알 수 없는 인자는 종료 코드 2" || ko "create_doc_hub 인자" ""
+
+# restart_hub: 가짜 orca 로 프롬프트 확인
+mkdir -p "$W/bin" "$W/hubroot/h1"; : > "$W/hubroot/h1/HANDOFF.md"
+printf '#!/bin/sh\n[ "$2" = launch ] && { printf "%%s\\n" "$*" > "$ORCA_LOG"; echo "{\\"handle\\":\\"term_x\\"}"; }\nexit 0\n' > "$W/bin/orca"
+chmod +x "$W/bin/orca"
+rh() { ORCA_LOG="$W/orca.log" PATH="$W/bin:$PATH" HUB_ROOT="$W/hubroot" "$REPO/hubs/scripts/restart_hub.sh" term_old h1 docs "$@" >/dev/null 2>&1; cat "$W/orca.log"; }
+rh_out=$(rh); echo "$rh_out" | grep -q 'common-rules.txt' && echo "$rh_out" | grep -q 'role-docs.txt' && ok "restart_hub 기본값: 기존 역할 파일·공통 규칙 경로 유지" || ko "restart_hub 기본값" "$rh_out"
+rh_out=$(ROLE_FILE="$W/custom-role.txt" COMMON_FILE= rh); echo "$rh_out" | grep -q 'custom-role.txt' && ! echo "$rh_out" | grep -q 'common-rules' && ok "restart_hub: ROLE_FILE 지정·COMMON_FILE 비우면 공통 규칙 생략" || ko "restart_hub 새 허브" "$rh_out"
+
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
