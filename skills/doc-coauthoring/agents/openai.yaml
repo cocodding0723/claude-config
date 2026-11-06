@@ -1,0 +1,4 @@
+interface:
+  display_name: "기술 문서 작성"
+  short_description: "기술 문서·설계안·QA 가이드·README를 근거에 맞게 작성하고 처음 읽는 사람도 이해하도록 구조를 정"
+  default_prompt: "$doc-coauthoring 스킬로 요청한 작업을 진행해줘."
