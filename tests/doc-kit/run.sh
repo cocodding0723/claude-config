@@ -77,5 +77,13 @@ printf '정''오님께 전달\n' >> "$W/kit-copy/references/style.md"
 out=$("$REPO/tests/doc-kit/check_unique.sh" "$W/kit-copy" 2>&1); rc=$?
 [ "$rc" = 1 ] && echo "$out" | grep -q 'style.md:' && ! echo "$out" | grep -q '정''오' && ok "고유값 검출기: 심은 값을 파일:줄로만 지적(값 미출력)" || ko "검출기 자기 시험" "rc=$rc"
 
+# ---- 전역 규칙: 쉬운 말 1개만, 나머지 양식 외 규칙은 전역에 없음 ------------------
+G="$REPO/claude/CLAUDE.md"
+n=$(awk '/^## 쉬운 말/{f=1;next} /^## /{f=0} f && /^- /{c++} END{print c+0}' "$G")
+[ "$n" -ge 3 ] && [ "$n" -le 4 ] && ok "전역: 쉬운 말 규칙 3~4줄($n)" || ko "전역 쉬운 말" "줄 수 $n"
+[ "$(grep -c '^## 쉬운 말' "$G")" = 1 ] && ok "전역: 쉬운 말 절 1개" || ko "전역 절 수" ""
+leak=$(grep -nE '직접 ?전달|DM 으로|채널 ID|허브→메인|비주얼 변경 문서' "$G" | cut -d: -f1 | tr '\n' ' ')
+[ -z "$leak" ] && ok "전역에 전달·허브 규칙 없음(doc-kit·허브 역할 파일 담당)" || ko "전역 누출" "줄 $leak"
+
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
