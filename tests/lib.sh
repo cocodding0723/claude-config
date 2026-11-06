@@ -26,6 +26,13 @@ start_stub() {
   export SLACK_API_BASE="http://127.0.0.1:$(cat "$HUB/port")"
 }
 
+# 같은 허브 폴더에서 스텁만 교체. 실행 사이에 응답을 바꿀 때 사용
+swap_stub() {
+  [ -n "$STUB_PID" ] && kill "$STUB_PID" 2>/dev/null; wait "$STUB_PID" 2>/dev/null
+  rm -f "$HUB/port"; : > "$LOG"
+  start_stub "$1"
+}
+
 stop_stub() { [ -n "$STUB_PID" ] && kill "$STUB_PID" 2>/dev/null; wait "$STUB_PID" 2>/dev/null; STUB_PID=""; rm -rf "$HUB"; }
 
 # 요청 로그에서 메서드 호출 수

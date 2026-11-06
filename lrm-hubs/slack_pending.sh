@@ -3,7 +3,9 @@
 # 새 메시지로 보내는 이유: chat.update 는 알림이 오지 않아 2시간 알림이 사라지기 때문.
 # 사용: slack_pending.sh [--dry-run]
 # 이력: slack-pending-history.jsonl (추가 전용). 이력 기록이 실패하면 삭제·수정하지 않음.
-# 환경 변수: LRM_HUB_DIR 작업 폴더, SLACK_API_BASE API 주소(테스트용), LRM_UPDATE_MAX 회당 메시지 수정 상한(기본 20)
+# 환경 변수: LRM_HUB_DIR 작업 폴더, SLACK_API_BASE API 주소(테스트용), LRM_UPDATE_MAX 회당 메시지 수정 상한(기본 20),
+#           LRM_PENDING_BUDGET 재시도 시간 예산 초(기본 120)
+# 한계: 수정 전 원문은 conversations.history 로 얻으며 text 가 없는 메시지(파일 첨부 등)는 null 로 기록
 set -eu
 export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/cert.pem}"
 DIR="${LRM_HUB_DIR:-$HOME/.config/lrm-hubs}"
@@ -20,7 +22,9 @@ DRY = "--dry-run" in sys.argv[2:]
 TOK = os.environ["SLACK_BOT_TOKEN"]
 BASE = os.environ.get("SLACK_API_BASE", "https://slack.com/api")
 UPDATE_MAX = int(os.environ.get("LRM_UPDATE_MAX", "20"))  # 첫 실행에 쌓인 답한 결정이 몰려도 한도를 넘지 않게 분할
-RETRY_CAP = float(os.environ.get("LRM_RETRY_CAP", "20"))
+RETRY_CAP = float(os.environ.get("LRM_RETRY_CAP", "20"))  # 429 한 번당 대기 상한
+# 실행 전체 재시도 시간 예산. slack_poll.sh 가 잡은 잠금(5분) 안에서 끝나야 함
+DEADLINE = time.time() + float(os.environ.get("LRM_PENDING_BUDGET", "120"))
 RETRIES = 2
 # 다시 시도해도 소용없는 수정 오류. 이력에 남기고 재시도 목록에서 뺌
 FINAL_UPDATE_ERRORS = {"message_not_found", "cant_update_message", "edit_window_closed"}
@@ -32,22 +36,40 @@ class Fail(Exception):
 def call(method, body=None, **params):
     url = f"{BASE}/{method}" + ("?" + urllib.parse.urlencode(params) if params else "")
     for attempt in range(RETRIES + 1):
+        left = DEADLINE - time.time()
+        if left <= 0:
+            raise Fail(f"{method}: 재시도 시간 예산 초과")
         data = json.dumps(body).encode() if body is not None else None
         headers = {"Authorization": "Bearer " + TOK}
         if data is not None:
             headers["Content-Type"] = "application/json"
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers), timeout=15) as r:
+            with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers), timeout=min(15, left)) as r:
                 return json.load(r)
         except urllib.error.HTTPError as e:
-            # 429 는 Retry-After 만큼 쉬고 재시도. 소진 시 실패로 올림
+            # 429 는 Retry-After 만큼 쉬고 재시도. 횟수·시간 예산 소진 시 실패로 올림
             if e.code != 429 or attempt == RETRIES:
                 raise Fail(f"{method}: HTTP {e.code}")
             try:
-                wait = float(e.headers.get("Retry-After", "1"))
+                wait = min(float(e.headers.get("Retry-After", "1")), RETRY_CAP)
             except ValueError:
                 wait = 1.0
-            time.sleep(min(wait, RETRY_CAP))
+            if wait >= DEADLINE - time.time():
+                raise Fail(f"{method}: HTTP 429, 대기 {wait:g}초가 남은 예산을 넘김")
+            time.sleep(wait)
+
+def original_text(s):
+    """수정 직전 원문. 조회 실패면 False(다음 주기에 재시도), 메시지에 text 가 없으면 None."""
+    try:
+        d = call("conversations.history", channel=s["channel"], latest=s["ts"], inclusive="true", limit=1)
+    except Fail:
+        return False
+    if not d.get("ok"):
+        return False
+    for m in d.get("messages", []):
+        if m.get("ts") == s["ts"]:
+            return m.get("text")
+    return None
 
 def jsonl(path):
     if not os.path.exists(path):
@@ -104,7 +126,12 @@ def main():
         if DRY:
             print(f"수정 예정: {s['ts']} → {text}")
             continue
-        log("answered_update", ts=s["ts"], title=s["title"], action=action, answered_at=r.get("received_at"))
+        # 수정하면 원문이 사라지므로 이력에 원문을 먼저 남김. title 은 기록 시 첫 줄 200자로 잘려 있음
+        orig = original_text(s)
+        if orig is False:
+            continue
+        log("answered_update", ts=s["ts"], title=s["title"], action=action,
+            answered_at=r.get("received_at"), original_text=orig)
         res = call("chat.update", {"channel": s["channel"], "ts": s["ts"], "text": text})
         if not res.get("ok"):
             log("update_failed", ts=s["ts"], error=res.get("error"), final=res.get("error") in FINAL_UPDATE_ERRORS)
@@ -128,7 +155,15 @@ def main():
         if not res.get("ok"):
             raise Fail("chat.postMessage: " + str(res.get("error")))
         new_ts = res["ts"]
-        log("pending_posted", ts=new_ts, channel=channel, titles=[r[0] for r in rows])
+        try:
+            log("pending_posted", ts=new_ts, channel=channel, titles=[r[0] for r in rows])
+        except OSError:
+            # 이력에 없는 메시지는 다음 실행이 지울 수 없어 고아가 되므로 방금 보낸 것을 회수
+            try:
+                call("chat.delete", {"channel": channel, "ts": new_ts})
+            except Fail:
+                pass
+            raise
         print("ok", len(rows))
     else:
         print("대기 0")
