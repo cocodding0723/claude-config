@@ -1,0 +1,7 @@
+extends: existence
+message: "'%s': 변경할 입력과 관찰 가능한 예상 결과를 구체적으로 표시."
+level: warning
+scope: text
+nonword: true
+tokens:
+  - '정상 동작 확인'
