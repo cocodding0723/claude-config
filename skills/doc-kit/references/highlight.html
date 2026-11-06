@@ -1,0 +1,64 @@
+<!--
+  doc-kit 구문 강조 조각. 외부 CDN 금지 규칙 때문에 인라인으로 넣는다.
+  사용법:
+    1) style 블록 내용을 문서 <style> 안 @media print 앞에 붙인다
+    2) script 블록 전체를 문서 맨 끝에 붙인다
+    3) 코드블록에 언어 클래스를 단다: <pre><code class="lang-cs">, <pre><code class="lang-json">
+       클래스가 없으면 강조하지 않는다(셸 출력·로그 등)
+  지원: lang-cs(C#·Java·TS 계열 공용), lang-json(// 생략 주석 허용)
+-->
+<style>
+  :root { --hl-kw:#a626a4; --hl-type:#c18401; --hl-fn:#4078f2; --hl-str:#50a14f;
+          --hl-num:#986801; --hl-com:#a0a1a7; --hl-key:#e45649; }
+  @media (prefers-color-scheme:dark) {
+    :root { --hl-kw:#c678dd; --hl-type:#e5c07b; --hl-fn:#61afef; --hl-str:#98c379;
+            --hl-num:#d19a66; --hl-com:#7f848e; --hl-key:#e06c75; } }
+  .k { color:var(--hl-kw); } .t { color:var(--hl-type); } .f { color:var(--hl-fn); }
+  .s { color:var(--hl-str); } .n { color:var(--hl-num); } .y { color:var(--hl-key); }
+  .c { color:var(--hl-com); font-style:italic; }
+</style>
+
+<script>
+(function () {
+  var KW = 'if else foreach for while do return var new public private protected internal static readonly const ' +
+    'async await is not and or null true false switch case break continue throw try catch finally using namespace ' +
+    'class struct record interface enum void int long float double bool string object event this base out in ref ' +
+    'default override virtual abstract sealed partial get set value nameof typeof';
+  var kw = {}; KW.split(' ').forEach(function (w) { kw[w] = 1; });
+  function esc(t) { return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+  function wrap(c, t) { return '<span class="' + c + '">' + esc(t) + '</span>'; }
+
+  var csRe = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|(\$?@?"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)')|(\b\d+(?:\.\d+)?[fFdDmMlL]?\b)|([A-Za-z_][A-Za-z0-9_]*)|([\s\S])/g;
+  var callAfter = /^\s*(\(|<[A-Za-z_][^()\n]*?>\s*\()/;
+  function cs(src) {
+    return src.replace(csRe, function (m, com, str, num, id, other, off) {
+      if (com) return wrap('c', com);
+      if (str) return wrap('s', str);
+      if (num) return wrap('n', num);
+      if (id) {
+        if (kw[id]) return wrap('k', id);
+        if (callAfter.test(src.slice(off + id.length, off + id.length + 80))) return wrap('f', id);
+        if (/^[A-Z]/.test(id)) return wrap('t', id);
+        return esc(id);
+      }
+      return esc(other);
+    });
+  }
+
+  var jsonRe = /(\/\/[^\n]*)|("(?:[^"\\\n]|\\.)*")(\s*:)?|(-?\b\d+(?:\.\d+)?\b)|(\b(?:true|false|null)\b)|([\s\S])/g;
+  function json(src) {
+    return src.replace(jsonRe, function (m, com, str, colon, num, lit, other) {
+      if (com) return wrap('c', com);
+      if (str) return colon ? wrap('y', str) + esc(colon) : wrap('s', str);
+      if (num) return wrap('n', num);
+      if (lit) return wrap('k', lit);
+      return esc(other);
+    });
+  }
+
+  var LANGS = { 'lang-cs': cs, 'lang-json': json };
+  document.querySelectorAll('pre > code[class*="lang-"]').forEach(function (el) {
+    for (var cls in LANGS) if (el.classList.contains(cls)) { el.innerHTML = LANGS[cls](el.textContent); return; }
+  });
+})();
+</script>
