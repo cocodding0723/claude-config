@@ -1,0 +1,7 @@
+# 라이브 → 저장소 형태로 바꾸는 의도된 치환(perl). install.sh --diff-live 가 라이브 파일에 적용한 뒤 저장소 원본과 비교함.
+# 키: links.tsv 의 dst(폴더 항목은 dst/하위경로). 이 목록에 없는 파일은 바이트 동일해야 함.
+.claude/CLAUDE.md	s#/Users/[^/]+/#~/#g
+.claude/hooks/lib/common.sh	s#^STATE_DIR="\$HOOKS_DIR/state"#STATE_DIR="\${CLAUDE_HOOKS_STATE:-\$HOME/.claude/hooks/state}"#
+.claude/skills/orca-hub-create/scripts/create_hub.sh	s#/Users/[^/]+/#\$HOME/#g
+.claude/skills/orca-hub-create/scripts/create_worker_ws.sh	s#/Users/[^/]+/#\$HOME/#g
+.config/lrm-hubs/restart_hub.sh	s#"/Users/[^/]+/orca/workspaces/LoveRevolutionMaker/\$2"#"\${HUB_ROOT:-\$HOME/orca/workspaces/LoveRevolutionMaker}/\$2"#

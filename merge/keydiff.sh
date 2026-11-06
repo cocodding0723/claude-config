@@ -9,12 +9,12 @@ LIVE="${1:-$HOME/.claude/settings.json}"
 BASE="${2:-$REPO/claude/settings.base.json}"
 [ -f "$LIVE" ] && [ -f "$BASE" ] || { echo "ERROR: 파일 없음 ($LIVE, $BASE). 인자: keydiff.sh [라이브 settings.json] [base.json]" >&2; exit 2; }
 
-jq -n --slurpfile L "$LIVE" --slurpfile B <(sed "s#__HOME__#$HOME#g" "$BASE") '
+out=$(jq -n --slurpfile L "$LIVE" --slurpfile B <(sed "s#__HOME__#$HOME#g" "$BASE") '
   def leaves: del(.hooks, .statusLine) | [tostream | select(length == 2)];
   def keyname: .[0] | map(select(type == "string")) | join(".");
   def count_by_key: map(keyname) | group_by(.) | map({"key": .[0], "count": length});
   ($L[0] | leaves) as $l | ($B[0] | leaves) as $b
   | { "live_only": ([$l[] | select(. as $x | $b | index([$x]) | not)] | count_by_key),
-      "repo_only": ([$b[] | select(. as $x | $l | index([$x]) | not)] | count_by_key) }
-  | ., (if (.live_only | length) + (.repo_only | length) == 0 then halt else halt_error(1) end)' \
-  || exit 1
+      "repo_only": ([$b[] | select(. as $x | $l | index([$x]) | not)] | count_by_key) }')
+printf '%s\n' "$out"
+printf '%s' "$out" | jq -e '(.live_only | length) + (.repo_only | length) == 0' >/dev/null

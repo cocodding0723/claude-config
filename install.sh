@@ -2,10 +2,13 @@
 # 설정 저장소 설치기. links.tsv 에 적힌 항목만 $HOME 아래에 링크·병합·복사하고 git 설정 4개 키를 맞춘다.
 # 목록 밖 경로는 건드리지 않음. 덮어쓸 파일은 백업 폴더로 옮긴 뒤 처리하며 --restore 로 되돌림.
 set -euo pipefail
+# bash 5.2+ 는 치환 문자열의 &(매치 문자열)을 확장함. 값에 &가 있어도 그대로 쓰도록 끔(3.2 는 해당 옵션 없음)
+shopt -u patsub_replacement 2>/dev/null || true
 
 REPO=$(cd "$(dirname "$0")" && pwd -P)
 LINKS="$REPO/links.tsv"
 GITCFG="$REPO/gitconfig.tsv"
+LIVE_DIFF_RULES="$REPO/live-diff.tsv"
 VALUES_EXAMPLE="$REPO/values.env.example"
 VALUES="${CLAUDE_CONFIG_VALUES:-$HOME/.config/claude-config/values.env}"
 BACKUP_ROOT="${CLAUDE_CONFIG_BACKUP_ROOT:-$HOME/.claude-config-backup}"
@@ -13,11 +16,14 @@ export GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL:-$HOME/.gitconfig}"
 
 usage() {
   cat <<'E'
-사용: install.sh [--dry-run | --check | --restore <백업폴더>] [--reload-launchd]
+사용: install.sh [--dry-run | --check | --diff-live | --restore <백업폴더>] [--reload-launchd] [--allow-live-diff]
 
-  (옵션 없음)        links.tsv 항목 설치. 이미 같은 상태면 건너뜀(반복 실행 안전)
+  (옵션 없음)        links.tsv 항목 설치. 이미 같은 상태면 건너뜀(반복 실행 안전).
+                     라이브가 저장소보다 앞선 항목이 있으면 변경 전에 중단
   --dry-run          바뀔 내용만 출력. 파일을 만들거나 바꾸지 않음
   --check            끊어진 링크·어긋난 설정 점검. 문제가 있으면 종료 코드 1
+  --diff-live        라이브 파일이 저장소 원본과 다른(라이브가 더 최신인) 항목만 출력. 있으면 종료 코드 1
+  --allow-live-diff  라이브가 앞선 항목이 있어도 설치를 진행(백업 후 저장소 내용으로 덮어씀)
   --restore <폴더>   그 설치 때 만든 링크·병합 결과를 지우고 백업 원본 복원
   --reload-launchd   plist 가 바뀌면 launchctl 로 재적재(기본은 명령만 안내)
 
@@ -32,12 +38,14 @@ E
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
-DRY=0 ACTION=install RESTORE_DIR="" RELOAD=0
+DRY=0 ACTION=install RESTORE_DIR="" RELOAD=0 ALLOW_LIVE_DIFF="${CLAUDE_CONFIG_ALLOW_LIVE_DIFF:-0}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1; shift ;;
     --check) ACTION=check; shift ;;
     --restore) ACTION=restore; RESTORE_DIR="${2:-}"; [ -n "$RESTORE_DIR" ] || die "--restore 에 백업 폴더 경로가 필요함"; shift 2 ;;
+    --diff-live) ACTION=difflive; shift ;;
+    --allow-live-diff) ALLOW_LIVE_DIFF=1; shift ;;
     --reload-launchd) RELOAD=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; die "알 수 없는 옵션: $1" ;;
@@ -169,11 +177,12 @@ subst_file() {
 
 # 값 파일에 values.env.example 의 모든 키가 채워져 있어야 함
 check_values() {
-  local k missing=""
+  local k v missing=""
   [ -f "$VALUES" ] || die "값 파일 없음: $VALUES. values.env.example 을 복사해 채운 뒤 다시 실행 (권한 600 권장)"
   while IFS='=' read -r k _; do
     case "$k" in ''|'#'*) continue ;; esac
-    grep -qE "^${k}=.+" "$VALUES" || missing="$missing $k"
+    v=$(grep -E "^${k}=" "$VALUES" | head -1 | cut -d= -f2- | tr -d '[:space:]')
+    [ -n "$v" ] || missing="$missing $k"
   done < "$VALUES_EXAMPLE"
   [ -z "$missing" ] || die "값 파일에 빈 키:$missing ($VALUES)"
 }
@@ -253,8 +262,58 @@ apply_git_config() {
   done < <(grep -v '^#' "$GITCFG" | grep -v '^[[:space:]]*$')
 }
 
+# 라이브가 저장소보다 앞선 항목 출력(내용만 비교, 값은 출력하지 않음). 의도된 경로 치환은 live-diff.tsv 규칙으로 흡수
+live_differs() {
+  local key="$1" r="$2" l="$3" expr=""
+  [ -f "$LIVE_DIFF_RULES" ] && expr=$(awk -F'\t' -v k="$key" '$1 !~ /^#/ && $1 == k {print $2; exit}' "$LIVE_DIFF_RULES")
+  if [ -n "$expr" ]; then ! perl -pe "$expr" "$l" | cmp -s - "$r"; else ! cmp -s "$r" "$l"; fi
+}
+
+live_diff() {
+  local src dst mode t f rel n=0
+  while IFS=$'\t' read -r src dst mode; do
+    t="$HOME/$dst"
+    case "$mode" in
+      link)
+        if [ -L "$t" ] && [ "$(readlink "$t")" = "$REPO/$src" ]; then continue; fi
+        [ -e "$t" ] || continue
+        if [ -d "$REPO/$src" ]; then
+          [ -d "$t" ] || { log "LIVE-NEWER $dst (폴더가 아님)"; n=$((n + 1)); continue; }
+          while IFS= read -r f; do
+            rel=${f#"$REPO/$src/"}
+            [ -e "$t/$rel" ] || continue
+            if live_differs "$dst/$rel" "$f" "$t/$rel"; then log "LIVE-NEWER $dst/$rel"; n=$((n + 1)); fi
+          done < <(find "$REPO/$src" -type f ! -name '*.bak*' ! -name .DS_Store ! -path '*__pycache__*')
+          while IFS= read -r f; do
+            rel=${f#"$t/"}
+            [ -e "$REPO/$src/$rel" ] || { log "LIVE-ONLY  $dst/$rel (라이브에만 있음)"; n=$((n + 1)); }
+          done < <(find "$t" -type f ! -name '*.bak*' ! -name .DS_Store ! -name '*.pyc' ! -path '*__pycache__*' ! -path '*/state/*')
+        elif [ -f "$t" ] && live_differs "$dst" "$REPO/$src" "$t"; then
+          log "LIVE-NEWER $dst"; n=$((n + 1))
+        fi ;;
+      copy)
+        subst_file "$REPO/$src" "$TMP/ld"
+        if [ -f "$t" ] && ! cmp -s "$TMP/ld" "$t"; then log "LIVE-NEWER $dst"; n=$((n + 1)); fi ;;
+      render)
+        subst_file "$REPO/$src" "$TMP/ld" values
+        if [ -f "$t" ] && ! cmp -s "$TMP/ld" "$t"; then log "LIVE-NEWER $dst"; n=$((n + 1)); fi ;;
+    esac
+  done < <(entries)
+  [ "$n" = 0 ] || return 1
+}
+
+# 변경 전 점검. 라이브가 앞서 있으면 저장소 내용으로 덮어쓰지 않도록 중단
+guard_live_diff() {
+  [ "$ALLOW_LIVE_DIFF" = 1 ] && return 0
+  live_diff > "$TMP/live-diff.txt" || {
+    cat "$TMP/live-diff.txt"
+    die "라이브가 저장소보다 앞선 항목 $(wc -l < "$TMP/live-diff.txt" | tr -d ' ')건. 라이브 변경을 저장소로 옮긴 뒤 다시 실행. 백업 후 덮어써도 되면 --allow-live-diff"
+  }
+}
+
 do_install() {
   validate
+  guard_live_diff
   local src dst mode
   while IFS=$'\t' read -r src dst mode; do
     case "$mode" in
@@ -351,6 +410,7 @@ restore_one() {
 
 case "$ACTION" in
   install) do_install ;;
+  difflive) validate; if live_diff; then log "라이브가 앞선 항목 없음"; else exit 1; fi ;;
   check) do_check ;;
   restore) do_restore ;;
 esac
