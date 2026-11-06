@@ -1,0 +1,4 @@
+interface:
+  display_name: "상투적인 AI 문체 정리"
+  short_description: "기계적인 대조, 과장, 상투어, 억지 목록 등 AI스러운 문체를 원래 의미와 말투를 유지하며 고친다. 문"
+  default_prompt: "$writing-humanizer 스킬로 요청한 작업을 진행해줘."
