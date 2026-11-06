@@ -1,0 +1,9 @@
+# 비밀·개인 상태는 커밋 금지
+*.env
+*.pem
+*.p8
+*.key
+*.keystore
+*.jks
+**/state/
+**/cache/
