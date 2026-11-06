@@ -1,0 +1,265 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git worktree list:*)",
+      "Bash(git remote -v:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git blame:*)",
+      "Bash(git stash list:*)",
+      "Bash(git fetch:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh pr edit:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh auth status:*)",
+      "Bash(ls:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(tree:*)",
+      "Bash(file:*)",
+      "Bash(stat:*)",
+      "Bash(du:*)",
+      "Bash(df:*)",
+      "Bash(which:*)",
+      "Bash(command -v:*)",
+      "Bash(pwd:*)",
+      "Bash(date:*)",
+      "Bash(jq:*)",
+      "Bash(diff:*)",
+      "Bash(sort:*)",
+      "Bash(uniq:*)",
+      "Bash(cut:*)",
+      "Bash(awk:*)",
+      "Bash(flutter analyze:*)",
+      "Bash(flutter test:*)",
+      "Bash(flutter doctor:*)",
+      "Bash(flutter devices:*)",
+      "Bash(flutter pub get:*)",
+      "Bash(flutter pub outdated:*)",
+      "Bash(dart analyze:*)",
+      "Bash(dart test:*)",
+      "Bash(dart format:*)",
+      "Bash(dart pub get:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npm run test:*)",
+      "Bash(npx vitest:*)",
+      "Bash(npx jest:*)",
+      "Bash(npx tsc --noEmit:*)",
+      "Bash(brew list:*)",
+      "Bash(brew info:*)",
+      "Bash(adb devices:*)",
+      "Bash(xcrun simctl list:*)",
+      "Bash(emulator -list-avds:*)",
+      "Bash(claude mcp list:*)",
+      "Bash(claude plugin list:*)",
+      "Bash(~/.claude/hooks/scoped-test.sh --doctor:*)",
+      "Bash(~/.claude/hooks/scoped-test.sh --run:*)",
+      "Bash(git tag backup/*)",
+      "Bash(git tag -a backup/*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/*.pem)",
+      "Read(**/*.p12)",
+      "Read(**/*.keystore)",
+      "Read(**/*.jks)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Bash(rm -rf /:*)",
+      "Bash(rm -rf ~:*)",
+      "Bash(rm -rf ~/*)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(git merge:*)",
+      "Bash(git rebase:*)",
+      "Bash(git tag -d:*)",
+      "Bash(git tag --delete:*)",
+      "Bash(git tag -f:*)",
+      "Bash(git tag --force:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(git revert:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr merge:*)"
+    ]
+  },
+  "model": "opus",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/git-guard.sh",
+            "timeout": 10,
+            "statusMessage": "git-guard 검사 중"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/post-edit.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/prompt-context.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/scoped-test.sh",
+            "timeout": 150,
+            "statusMessage": "scoped-test: 변경 범위 테스트 중"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/session-start.sh",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/session-end.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/notify.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "enabledPlugins": {
+    "figma@claude-plugins-official": false,
+    "gitkraken-hooks@gitkraken": true,
+    "openviking-memory@openviking": true,
+    "unity@claude-plugins-official": true,
+    "exa@claude-plugins-official": true,
+    "i-have-adhd@i-have-adhd": true
+  },
+  "extraKnownMarketplaces": {
+    "gitkraken": {
+      "source": {
+        "source": "directory",
+        "path": "__HOME__/.claude/plugins/marketplaces/gitkraken"
+      }
+    },
+    "openviking": {
+      "source": {
+        "source": "url",
+        "url": "https://raw.githubusercontent.com/volcengine/OpenViking/main/.claude-plugin/marketplace.json"
+      }
+    },
+    "i-have-adhd": {
+      "source": {
+        "source": "github",
+        "repo": "cocodding0723/i-have-adhd-compression"
+      }
+    }
+  },
+  "modelSettings": {
+    "claude-opus-4-8": {
+      "effortLevel": "xhigh"
+    },
+    "claude-opus-5": {
+      "effortLevel": "xhigh"
+    },
+    "claude-opus-5-5": {
+      "effortLevel": "low"
+    }
+  },
+  "skipDangerousModePermissionPrompt": true,
+  "skipWorkflowUsageWarning": true,
+  "theme": "dark",
+  "switchModelsOnFlag": true,
+  "autoMode": {
+    "soft_deny": [
+      "$defaults",
+      "Bash(git push --force*) in Basakansoft/student_maker_2_en — reinforces repo's active branch-protection rulesets on main/dev/release/*",
+      "Writes to .github/workflows/deploy-prod.yml or ios/fastlane/.env — production deploy config and CI secrets file"
+    ],
+    "environment": [
+      "### Org-wide",
+      "**Organization**: None configured",
+      "**Cloud provider(s)**: None configured",
+      "**Repository visibility**: Private — `Basakansoft/student_maker_2_en` (origin)",
+      "**Internal sharing / snippet hosting**: None configured — treat public paste/gist services as outside the trust boundary",
+      "**Secrets management**: CI secret names referenced in workflows (values not present): ANDROID_FASTLANE_KEY_JSON, ANDROID_KEYSTORE, ANDROID_KEY_PROPERTIES, APP_STORE_CONNECT_API_KEY_ID, APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64, APP_STORE_CONNECT_ISSUER_ID, BASAKANSOFT_PERSONAL_ACCESS_TOKEN, CLAUDE_CODE_OAUTH_TOKEN, CS_API_KEY, CS_URL, EN_IOS_DISTRIBUTION_PROVISIONING_PROFILE_BASE64, EN_IOS_EXPORT_OPTIONS_BASE64, GITHUB_TOKEN, IOS_P12_DISTRIBUTION_CERTIFICATE_BASE64, IOS_P12_DISTRIBUTION_CERTIFICATE_PASSWORD, IOS_RUNNER_LOCAL_KEYCHAIN_PASSWORD, NOTION_API_KEY, NOTION_GACHA_PROBABILITY_PAGE_ID",
+      "**Default / protected branches**: Default branch `main`. Protected (via rulesets `Protect main/dev`, `Protect release branches`, both active): `dev`, `main`, `release/en-cicd-test`, and numerous `release/v*` branches (19+ more not listed)",
+      "**CI/CD deploy targets**: `.github/workflows/deploy-prod.yml` (name suggests a production deploy target); iOS/Android release pipeline via fastlane (`ios/fastlane/.env`)",
+      "**Network posture**: None configured",
+      "**Host containment**: None configured — assume Claude Code runs on an ordinary developer machine (macOS) with open internet",
+      "**Source control**: The trusted repo (`Basakansoft/student_maker_2_en`, private) and its `origin` remote only",
+      "**Trusted internal domains**: None configured",
+      "**Trusted cloud buckets**: None configured",
+      "**Key internal services**: None configured",
+      "**Internal package registry**: None configured",
+      "**Sensitive data locations & audiences**: `.env` files, key/certificate files (`*.pem`, `*.keystore`, `~/.ssh`), `ios/fastlane/.env`, `private/` (gitignored) — never read directly per global CLAUDE.md; ask the user if a value is needed. CI secrets listed above are names only. Share only with audiences cleared at this repo's private-visibility bar",
+      "**Data retention / declassification**: None configured",
+      "**Sensitive remote targets**: any namespace, host, or container whose name carries `prod` or `production` as a whole word/segment — includes `.github/workflows/deploy-prod.yml`'s target",
+      "**Protected deployment namespaces / environments**: None configured — fall back to the Sensitive remote targets heuristic",
+      "**Protected IaC scopes**: IAM, RBAC, networking, quota, and node-pool resources; anything whose name or tag carries `prod` or `production` as a whole word or name segment",
+      "### User-specific",
+      "**Primary use of Claude Code**: software development (Flutter/Dart mobile game, `student_maker_2_en`)",
+      "**Trusted repo**: `__HOME__/orca/workspaces/student_maker_2_en/feature-fix-iap-image-url-fatal` and its `origin` remote (`github.com:Basakansoft/student_maker_2_en.git`), private",
+      "**Org-specific CLIs**: `orca` (7× in this project's transcript), `fvm` (Flutter version manager, 2× in-project / 11× in shell history)",
+      "Routine under this repo's working tree (feature-fix-iap-image-url-fatal branch) is standard dev activity per the global CLAUDE.md review-gate workflow"
+    ]
+  },
+  "crossSessionInbound": "accept"
+}
