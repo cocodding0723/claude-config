@@ -84,6 +84,7 @@ doc-kit 은 따로 검증한다. 모두 임시 폴더에서만 실행하고 실�
 tests/doc-kit/run.sh      # 설정 읽기(우선순위·파이썬 3.9)·check.py·고유값 0건·전역 규칙·새 허브 스크립트
 tests/doc-kit/sample.sh   # 샘플 문서 전달: 프로젝트 지정 시 채널, 미지정 시 기본값·경로만 보고, 제목 형식·직접 전달 금지
 tests/doc-kit/rename.sh   # 이름 치환 도구: dry-run 무변경, 백업 후 치환, 반복 실행, 되돌리기
+tests/doc-kit/backup.sh   # 반영 순서 2번 백업 블록: 링크가 실제 내용으로 복사돼 7번 삭제 뒤에도 복원되는지(임시 HOME)
 ```
 
 `sample.sh` 는 LLM 을 돌리지 않는다. 보고 메시지 문구와 설정 읽기까지만 대조하며, 메인에 업로드를 넘기는 동작은 문구 확인에 그친다. `tests/install/run.sh` 는 `doc-kit` 스킬·역할 파일 링크 설치와 `--check` 의 끊긴 링크 검출도 확인한다.
@@ -154,16 +155,17 @@ ONLY="D1 D13" tests/mutate.sh   # 일부만. M=설치기, D=doc-kit
 
 1. **사전 점검(읽기만).** `git status --short` 가 비어 있고 아래가 모두 통과해야 한다.
    ```sh
-   tests/install/run.sh && tests/doc-kit/run.sh && tests/doc-kit/sample.sh && tests/doc-kit/rename.sh
+   tests/install/run.sh && tests/doc-kit/run.sh && tests/doc-kit/sample.sh && tests/doc-kit/rename.sh && tests/doc-kit/backup.sh
    ./install.sh --diff-live      # 위 «판단 3건» 아래 확인 항목대로 해석. 링크 상태면 출력 없음
    ```
-2. **백업.** 되돌릴 수 있게 옛 스킬 5개와 프로젝트 메모리를 한 곳에 복사한다.
+2. **백업.** 되돌릴 수 있게 옛 스킬 5개와 프로젝트 메모리를 한 곳에 복사한다. 옛 스킬 4개는 저장소를 가리키는 링크이므로 `-L` 로 링크가 가리키는 **실제 내용**을 복사한다. 링크째 복사하면 7번에서 저장소 폴더를 지울 때 백업이 끊긴 링크가 되어 되돌릴 수 없다(`tests/doc-kit/backup.sh` 가 이 블록을 그대로 실행해 확인한다).
    ```sh
    B=~/.claude-config-backup/pre-doc-kit-$(date +%Y%m%d-%H%M%S)
    mkdir -p "$B"/skills "$B"/memory
-   cp -a ~/.claude/skills/explain-diff ~/.claude/skills/tech-record ~/.claude/skills/structure-change-doc ~/.claude/skills/work-report ~/.claude/skills/doc-coauthoring "$B"/skills/
-   cp -a ~/.claude/projects/-Users-$(id -un)-orca-LoveRevolutionMaker/memory/. "$B"/memory/
+   cp -RpL ~/.claude/skills/explain-diff ~/.claude/skills/tech-record ~/.claude/skills/structure-change-doc ~/.claude/skills/work-report ~/.claude/skills/doc-coauthoring "$B"/skills/
+   cp -RpL ~/.claude/projects/-Users-$(id -un)-orca-LoveRevolutionMaker/memory/. "$B"/memory/
    echo "$B" > ~/.claude-config-backup/LAST-PRE-DOC-KIT
+   find "$B"/skills -type l   # 출력이 없어야 한다(링크가 남아 있으면 복사가 잘못된 것)
    ```
 3. **값 파일 만들기(없을 때만).** `~/.config/doc-kit/projects.toml` 은 설치기가 만들지도 지우지도 않는다. 값은 화면·로그에 출력하지 않는다.
    ```sh
@@ -171,12 +173,14 @@ ONLY="D1 D13" tests/mutate.sh   # 일부만. M=설치기, D=doc-kit
    cp skills/doc-kit/projects.example.toml ~/.config/doc-kit/projects.toml
    chmod 600 ~/.config/doc-kit/projects.toml   # 편집기로 자리표시를 실제 값으로 바꾼다
    ```
-4. **설치 재실행.** `doc-kit` 스킬·`role-doc-kit.txt`·`handoff-template.md`·`create_doc_hub.sh` 링크가 생기고, `restart_hub.sh`·이름 치환된 역할 파일·스킬 사본이 저장소 내용으로 바뀐다.
+4. **설치 재실행.** `doc-kit` 스킬·`role-doc-kit.txt`·`handoff-template.md`·`create_doc_hub.sh` 링크가 생기고, `restart_hub.sh`·이름 치환된 역할 파일·스킬 사본이 저장소 내용으로 바뀐다. `--allow-live-diff` 는 라이브 우선 중단 보호를 끄므로 **먼저 플래그 없이** 실행하고, 아래 조건일 때만 붙인다.
    ```sh
-   ./install.sh --dry-run --allow-live-diff   # 바뀔 항목 확인
-   ./install.sh --allow-live-diff             # 출력의 '백업:' 경로를 기록
-   ./install.sh --check                       # 점검 통과: 문제 없음
+   ./install.sh --diff-live    # 링크 상태 확인. 출력이 없으면 라이브가 저장소와 같다(이미 링크). 플래그 없이 진행
+   ./install.sh --dry-run      # 플래그 없이 바뀔 항목 확인. 중단 없이 끝나면 아래 설치도 플래그 없이
+   ./install.sh                # 출력의 '백업:' 경로를 기록
+   ./install.sh --check        # 점검 통과: 문제 없음
    ```
+   `--diff-live` 가 `restart_hub.sh` 와 치환 대상 중 라이브가 아직 링크가 아닌 사본의 줄**만** 내고, 위 확인 항목 3개를 마쳤을 때에만 `--dry-run` 과 설치를 `--allow-live-diff` 를 붙여 다시 실행한다. 그 밖의 줄이 있으면 플래그를 쓰지 않고 라이브 변경을 먼저 저장소로 옮긴다.
 5. **프로젝트 메모리 이름 치환.** 저장소 13파일은 4번 설치로 이미 라이브에 반영됐다. 남은 것은 저장소 밖의 메모리 12파일이다.
    ```sh
    migrate/rename_skills.sh --dry-run    # 바뀔 줄을 파일:줄로만 출력. REVIEW·MISSING 이 0 이어야 함
@@ -192,7 +196,7 @@ ONLY="D1 D13" tests/mutate.sh   # 일부만. M=설치기, D=doc-kit
 |---|---|
 | 설치(링크·렌더) | `./install.sh --restore <4번의 백업 폴더>` |
 | 메모리 이름 치환 | `migrate/rename_skills.sh --revert <5번의 백업 폴더>`. 치환 뒤 직접 고친 파일은 건너뛰고 알린다. |
-| 옛 스킬 5개 | 7번 전이면 그대로. 지운 뒤에는 `git revert` 또는 2번 `"$B"/skills` 에서 `cp -a` |
+| 옛 스킬 5개 | 7번 전이면 그대로. 지운 뒤에는 `git revert` 또는 2번 백업(`"$B"/skills`, 링크가 아니라 실제 내용)에서 `cp -Rp "$B"/skills/<이름> ~/.claude/skills/` |
 | 값 파일 | 설치기가 건드리지 않는다. 지우려면 직접 지운다. |
 
 ## 복원의 한계
