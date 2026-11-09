@@ -18,10 +18,15 @@ usage() {
 첨부 저장: ~/.config/lrm-hubs/slack-files/<file_id>_<정리한 이름> (폴더 700, 파일 600, 25MB 상한, 봇 파일 제외)
 상태 파일: ~/.config/lrm-hubs/slack-poll-state.json (중복 방지, 스레드별 마지막 답글 시각,
            file_share_since = 첨부 메시지 수집을 시작한 시각. 그 이전 첨부 메시지는 기록·내려받기 없이 건너뜀,
-           reacted = 읽음 반응 진행 표 {메시지 ts: new|eyes|done|skip}, reactions_disabled_reason = 반응 권한 부족 사유)
+           reacted = 읽음 반응 진행 표 {메시지 ts: new|eyes|done|skip}, reactions_disabled_reason = 반응 권한 부족 사유,
+           acked = {스레드 루트 ts: 확인 답장 시각}, ack_sent = 최근 확인 답장 시각 목록)
 읽음 반응: 새 사용자 메시지(note·command·thread_reply)에 👀, 메인이 읽음 처리(.main-read-lines 의 줄 수가 그 줄을 지남)하면 ✅ 로 교체.
-           reactions:write scope 가 없으면 조용히 건너뛰고 10분마다 재시도. 텍스트 답장은 보내지 않음
+           reactions:write scope 가 없으면 조용히 건너뛰고 10분마다 재시도
+수신 확인 답장: 새 사용자 메시지의 스레드에 "확인했어요, 분석 중이에요 👀" 1회(chat:write). 같은 스레드 30초 1회, 60초 3회, 회차 3회. 결정·승인 같은 명령 답글에는 달지 않음.
+           slack_cmd.sh 즉답 명령·30분 넘게 묵은 항목은 제외. 권한 부족이면 조용히 건너뛰고 10분마다 재시도(상태: ack_disabled_reason).
+           전송 전에 상태(acked·ack_sent)부터 저장하므로 실패해도 다시 보내지 않음. 이미 보낸 답장은 지우거나 고치지 않음
 환경 변수: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs), SLACK_API_BASE API 주소(테스트용),
+           LRM_ACK=off 수신 확인 답장 끔(기본 켜짐), LRM_ACK_TEXT 답장 문구(200자 제한·제어 문자 제거),
            LRM_RETRY_CAP 429 대기 상한 초(기본 20), LRM_DL_BUDGET 회차 첨부 내려받기 시간 상한 초(기본 60),
            LRM_REACT_MAX 회차당 반응 호출 상한(기본 10, 0~50. 정수가 아니면 10. 1은 2로 올림: ✅ 전환은 호출 2개 한 쌍)
 종료 코드: 0 성공, 1 API·네트워크 실패, 2 설정·인자 오류
@@ -101,6 +106,7 @@ NAME_MAX_CHARS, NAME_MAX_BYTES = 100, 200  # 파일명 상한. 바이트 상한�
 USER_SUBTYPES = (None, "file_share")       # 사용자 본인 메시지로 인정할 subtype. 첨부 메시지는 file_share
 SHARE_SINCE_KEY = "file_share_since"       # 상태 파일 키: 첨부 메시지 수집 시작 시각(초)
 SHARE_GRACE = 300                          # 수집 시작 시각을 현재보다 앞당기는 여유(초)
+OWN_SINCE_KEY = "own_reply_since"          # 상태 파일 키: 본인 최상위 메시지의 스레드 답글 수집 시작 시각(초)
 ID_RE = re.compile(r"[A-Za-z0-9]{1,32}")
 UNSAFE_CHARS = re.compile(r"[^0-9A-Za-z가-힣._-]")
 DL = {"ok": 0, "fail": {}, "spent": 0.0}  # 회차 집계: 성공 수, 사유별 실패 수, 사용 시간
@@ -126,6 +132,19 @@ RX_OK = {"add": "already_reacted", "remove": "no_reaction"}
 # 권한·인증 문제: 회차를 멈추고 RX_RETRY 뒤 재시도 / 메시지 단위 문제: 그 메시지만 포기. 그 밖(429 소진·5xx·시간 예산)은 다음 회차에 재시도
 RX_DISABLE = frozenset({"missing_scope", "not_allowed_token_type", "not_authed", "invalid_auth", "account_inactive", "token_revoked", "no_permission", "access_denied", "org_login_required", "ekm_access_denied", "team_access_not_granted"})
 RX_SKIP = frozenset({"message_not_found", "channel_not_found", "bad_timestamp", "not_reactable", "too_many_emoji", "too_many_reactions", "is_archived", "thread_locked", "not_in_channel", "user_is_restricted"})
+# 수신 확인 자동 답장 설정. 새 사용자 메시지의 스레드에 짧은 답장 1회. 켜고 끄기 LRM_ACK=off, 문구 LRM_ACK_TEXT
+ACK_DEFAULT_TEXT = "확인했어요, 분석 중이에요 👀"
+ACK_TEXT_MAX = 200                           # 문구 상한(글자 수)
+ACK_OFF = frozenset({"off", "0", "false", "no"})
+ACK_THREAD_GAP = 30                          # 같은 스레드 재전송 간격(초)
+ACK_WINDOW, ACK_MAX = 60, 3                  # 상한: ACK_WINDOW 초 안 ACK_MAX 회. 회차당에도 같은 값을 적용(회차가 창보다 길어 창이 비어도 폭주하지 않게)
+ACK_MIN_LEFT = 5                             # 남은 시간 예산이 이보다 짧으면 호출하지 않고 건너뜀(초)
+ACK_KEEP, ACK_KEYS_MAX = 30 * 86400, 500     # 스레드별 기록 보관 기간·개수 상한
+ACK_DISABLE = RX_DISABLE | {"channel_not_found", "not_in_channel", "is_archived", "restricted_action"}  # 권한·채널 문제: ACK_RETRY 뒤 재시도
+ACK_RETRY = RX_RETRY
+# slack_cmd.sh 가 직접 답하는 명령. case 라벨(대기|미승인|"승인 대기" / PR|pr|"초안 PR" / 할일|"할 일" / CI|ci / 문서\ *)을 옮긴 것이라 그쪽을 바꾸면 함께 바꿀 것
+CMD_REPLY_EXACT = frozenset({"대기", "미승인", "승인 대기", "PR", "pr", "초안 PR", "할일", "할 일", "CI", "ci"})
+CMD_REPLY_PREFIX = "문서 "
 
 class ApiError(Exception):
     code = None  # Slack 응답의 error 코드. HTTP·시간 예산 오류는 None
@@ -406,6 +425,77 @@ def react_phase(state, ch, now):
             return
         rx[ts] = "done" if r == "ok" else "skip"
 
+def ack_text():
+    """LRM_ACK_TEXT 를 정리한 답장 문구. 제어 문자·짝 없는 서로게이트(잘못된 UTF-8)는 제거, ACK_TEXT_MAX 자로 자름. 비면 기본 문구"""
+    raw = os.environ.get("LRM_ACK_TEXT") or ACK_DEFAULT_TEXT
+    t = "".join(c for c in raw if unicodedata.category(c) not in ("Cc", "Cs")).strip()[:ACK_TEXT_MAX].strip()
+    return t or ACK_DEFAULT_TEXT
+
+def cmd_replies(item):
+    """slack_cmd.sh 가 직접 답하는 메시지인가. slack_cmd.sh 의 처리 대상(type=command|note, 스레드 답글 제외)과
+    줄 단위 case 판별(read -r 이 줄 양끝 공백·탭 제거)을 그대로 따름"""
+    if item.get("type") not in ("command", "note") or item.get("parent_ts"):
+        return False
+    for line in (item.get("text") or item.get("command") or "").strip().split("\n"):
+        t = line.strip(" \t")
+        if t in CMD_REPLY_EXACT or t.startswith(CMD_REPLY_PREFIX):
+            return True
+    return False
+
+def ack_phase(state, ch, now, items):
+    """새 사용자 메시지의 스레드(스레드 답글이면 부모, 최상위면 그 메시지)에 확인 답장 1회.
+    제외: 결정·승인 같은 명령(command, 분석 대상 아님), slack_cmd.sh 즉답 명령, RX_STALE 보다 묵은 항목. 같은 스레드 ACK_THREAD_GAP 초 1회, ACK_WINDOW 초 ACK_MAX 회, 회차 ACK_MAX 회.
+    전송 전에 상태를 먼저 저장(at-most-once): 실패해도 재시도하지 않음. 예외는 호출부가 삼킴"""
+    if os.environ.get("LRM_ACK", "").strip().lower() in ACK_OFF:
+        return
+    cand = sorted((it for it in items if it.get("type") in RX_TYPES and float(it["ts"]) >= now - RX_STALE
+                 and not it.get("command") and not cmd_replies(it)),
+                  key=lambda it: float(it["ts"]))
+    if not cand:
+        return
+    at = state.get("ack_disabled_at")
+    if state.get("ack_disabled_reason") and isinstance(at, (int, float)) and time.time() - at < ACK_RETRY:
+        return
+    num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
+    t = int(time.time())
+    acked = state.get("acked")
+    acked = {k: v for k, v in (acked if isinstance(acked, dict) else {}).items() if num(v) and v > t - ACK_KEEP}
+    for k in sorted(acked, key=acked.get)[:max(0, len(acked) - (ACK_KEYS_MAX - ACK_MAX))]:  # 이번 회차에 더해도 ACK_KEYS_MAX 이하
+        del acked[k]
+    state["acked"] = acked
+    sent = state.get("ack_sent")
+    sent = [x for x in (sent if isinstance(sent, list) else []) if num(x)]
+    text, count = ack_text(), 0
+    for it in cand:
+        root = str(it.get("parent_ts") or it["ts"])
+        t = int(time.time())
+        sent = [x for x in sent if 0 <= t - x < ACK_WINDOW]
+        if count >= ACK_MAX or len(sent) >= ACK_MAX:
+            break
+        if 0 <= t - acked.get(root, -ACK_THREAD_GAP - 1) < ACK_THREAD_GAP:
+            continue
+        if DEADLINE - time.time() < ACK_MIN_LEFT:  # 수집이 예산을 다 쓴 회차. 남은 항목은 새 항목이 아니게 돼 다시 오지 않으므로 답장 없이 끝남(재시도 안 함)
+            print("수신 확인 답장 건너뜀(budget) — 회차 시간 예산 부족, 재시도 안 함", file=sys.stderr)
+            return
+        acked[root] = t
+        sent.append(t)
+        state["ack_sent"] = sent
+        save_state(state)
+        count += 1
+        try:
+            api("chat.postMessage", channel=ch, thread_ts=root, text=text)
+        except ApiError as e:
+            if e.code in ACK_DISABLE:
+                if state.get("ack_disabled_reason") != e.code:  # 같은 사유는 다시 알리지 않음
+                    print(f"수신 확인 답장 사용 불가({e.code}) — Slack 앱 scope(chat:write)·채널 확인, {ACK_RETRY // 60}분마다 재시도", file=sys.stderr)
+                state["ack_disabled_reason"], state["ack_disabled_at"] = e.code, int(time.time())
+            else:
+                print(f"수신 확인 답장 실패({e.code or 'http'}) — 재시도 안 함", file=sys.stderr)
+            return
+        state.pop("ack_disabled_reason", None)
+        state.pop("ack_disabled_at", None)
+    state["ack_sent"] = sent
+
 def fetch_history(ch, oldest):
     msgs, cursor = [], None
     for _ in range(MAX_PAGES):
@@ -433,6 +523,11 @@ def main():
         state[SHARE_SINCE_KEY] = int(time.time()) - SHARE_GRACE
         save_state(state)
     since = state[SHARE_SINCE_KEY]
+    # 본인 메시지 스레드 답글 수집 시작 시각. 이전에는 수집하지 않던 묵은 답글이 배포 직후 새 명령으로 재생되지 않게 하는 경계. 키가 없으면 지금(-여유)으로 저장
+    if not isinstance(state.get(OWN_SINCE_KEY), (int, float)):
+        state[OWN_SINCE_KEY] = int(time.time()) - SHARE_GRACE
+        save_state(state)
+    own_since = state[OWN_SINCE_KEY]
     seen = state.setdefault("seen", {})
     latest = state.setdefault("latest", {})  # 스레드 부모 ts → 마지막으로 읽은 latest_reply
     ch = api("conversations.open", users=ME)["channel"]["id"]
@@ -464,12 +559,30 @@ def main():
         if item["type"] in RX_TYPES:
             rx_map(state).setdefault(item["ts"], "new")
 
+    def collect_replies(m, meta, floor=None):
+        """답글이 바뀐 스레드만 조회해 사용자 답글을 thread_reply 로 추가. latest_reply 가 응답에 없을 수 있어 없으면 reply_count 로 비교.
+        floor: 이 시각(초) 이전 답글은 기록만 하고 새 항목으로 만들지 않음(본인 메시지 스레드의 배포 전 답글)"""
+        ts = m["ts"]
+        marker = m.get("latest_reply") or f"n{m.get('reply_count')}"
+        if m.get("reply_count") and marker != latest.get(ts):
+            lr = m.get("latest_reply")
+            if not (floor and lr and float(lr) < floor):  # 마지막 답글이 경계 이전이면 조회 자체를 생략
+                for rp in api("conversations.replies", channel=ch, ts=ts, limit=200).get("messages", []):
+                    if rp["ts"] != ts and rp.get("user") == ME and not rp.get("bot_id") and rp.get("subtype") in USER_SUBTYPES:
+                        kind, cmd, args = classify(rp.get("text", ""))
+                        item = {"type": "thread_reply", "ts": rp["ts"], "text": rp.get("text", ""), **meta}
+                        if cmd:
+                            item.update({"command": cmd, "args": args})
+                        add(f"msg:{rp['ts']}", item, rp.get("files"), is_backlog(rp) or bool(floor and float(rp["ts"]) < floor))
+            latest[ts] = marker
+
     # 반응·답글 수는 목록 응답에 들어 있어 메시지별 조회가 필요 없음. 반응은 오래된 메시지에도 달리므로 매번 기간 전체를 읽음
     hist = fetch_history(ch, f"{cutoff:.6f}")
     for m in hist:
         ts = m["ts"]
         mine = m.get("user") == ME
-        if mine and not m.get("bot_id") and m.get("subtype") in USER_SUBTYPES and m.get("thread_ts", ts) == ts:
+        own_top = mine and not m.get("bot_id") and m.get("subtype") in USER_SUBTYPES and m.get("thread_ts", ts) == ts
+        if own_top:
             kind, cmd, args = classify(m.get("text", ""))
             item = {"type": kind, "ts": ts, "text": m.get("text", "")}
             if cmd:
@@ -478,6 +591,9 @@ def main():
         # 반응·답글은 slack_notify.sh 가 기록한 메시지만. 대기 목록 같은 다른 봇 메시지의 반응이 결정 답으로 오판되지 않게 함
         rec = sent.get(ts) or next((sent_files[f["id"]] for f in m.get("files", []) if f.get("id") in sent_files), None)
         if mine and not m.get("files") or rec is None:
+            # 본인 최상위 메시지: 확인 답장 스레드에 이어 쓴 사용자 답글만 수집(반응은 대상 아님, 봇 답장은 collect_replies 가 제외)
+            if own_top:
+                collect_replies(m, {"parent_ts": ts, "title": "", "tag": ""}, own_since)
             continue
         meta = {"parent_ts": ts, "title": rec.get("title", ""), "tag": rec.get("tag", "")}
         reactions = m.get("reactions", [])
@@ -489,17 +605,7 @@ def main():
                 name = r["name"]
                 add(f"react:{ts}:{name}", {"type": "reaction", "emoji": name,
                                            "action": REACTION_ACTION.get(name, name), **meta})
-        # 답글이 바뀐 스레드만 조회. latest_reply 가 응답에 없을 수 있어 없으면 reply_count 로 비교
-        marker = m.get("latest_reply") or f"n{m.get('reply_count')}"
-        if m.get("reply_count") and marker != latest.get(ts):
-            for rp in api("conversations.replies", channel=ch, ts=ts, limit=200).get("messages", []):
-                if rp["ts"] != ts and rp.get("user") == ME and not rp.get("bot_id") and rp.get("subtype") in USER_SUBTYPES:
-                    kind, cmd, args = classify(rp.get("text", ""))
-                    item = {"type": "thread_reply", "ts": rp["ts"], "text": rp.get("text", ""), **meta}
-                    if cmd:
-                        item.update({"command": cmd, "args": args})
-                    add(f"msg:{rp['ts']}", item, rp.get("files"), is_backlog(rp))
-            latest[ts] = marker
+        collect_replies(m, meta)
 
     # 30일 지난 중복 방지 키 정리, 기간 밖 스레드 기록 정리
     for k in [k for k, v in seen.items() if v < now - 30 * 86400]:
@@ -511,6 +617,10 @@ def main():
         for it in new:
             f.write(json.dumps(it, ensure_ascii=False) + "\n")
     save_state(state)  # 반응 호출은 DEADLINE 까지 걸릴 수 있어, 그 사이 죽어도 inbox 중복 기록이 안 생기게 먼저 저장
+    try:
+        ack_phase(state, ch, now, new)
+    except Exception:  # 확인 답장 실패가 수집·상태 저장·반응 단계를 막지 않게 함
+        pass
     try:
         react_phase(state, ch, now)
     except Exception:  # 반응 실패가 수집·상태 저장을 막지 않게 함

@@ -2,6 +2,7 @@
 사용: fake_slack.py <응답 폴더> <포트 기록 파일> [<호출 기록 파일>]
 GET /<method> 에 <응답 폴더>/<method>.json 내용을 그대로 돌려줌(없으면 {"ok":false,"error":"no_fixture"}).
 reactions.add·reactions.remove 는 <method>.<timestamp>.json(메시지별) → <method>.json 순으로 찾고, 둘 다 없으면 {"ok":true}.
+chat.postMessage 는 <응답 폴더>/chat.postMessage.json 이 없으면 {"ok":true} (호출 기록의 쿼리에 channel·thread_ts·text 가 남음).
 <응답 폴더>/hang.<method> 가 있으면 그 안의 초만큼 응답을 늦춤(호출 중 프로세스가 죽는 상황 시험용).
 호출 기록 파일을 주면 요청마다 "<method>\\t<쿼리>" 한 줄을 덧붙임(토큰은 헤더라 기록되지 않음).
 """
@@ -31,6 +32,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if method in REACTION_METHODS:
             per_msg = os.path.join(FIX, f"{method}.{ts}.json")
             path = per_msg if os.path.exists(per_msg) else path
+            default = b'{"ok":true}'
+        elif method == "chat.postMessage":
             default = b'{"ok":true}'
         else:
             default = b'{"ok":false,"error":"no_fixture"}'
