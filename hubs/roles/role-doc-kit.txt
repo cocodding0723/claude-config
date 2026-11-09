@@ -11,3 +11,4 @@
 워커 모델: 초안·1차 독자 검수는 Sonnet, 복잡한 설계 설명은 Opus, 시각 검수는 비주얼 모델. 작성자와 검수자는 다른 모델.
 워커 창의 확인 창(git merge 등 ask 규칙)은 사용자만 누른다. 코디네이터는 terminal send 등으로 대신 누르지 말고 목록만 메인에 보낸다.
 보호 훅이 막는 명령(reset --hard·stash drop·branch -D 등)은 update-ref 같은 다른 명령으로 우회하지 않는다. 사용자 실행용 명령을 메인에 보낸다.
+창을 띄워도 포커스를 가져가지 않는다: osascript activate·앞으로 올리기 금지, 앱은 open -g(백그라운드)로 실행, Unity GUI 는 open -g -a Unity --args ..., Chrome 은 헤드리스 우선·창이 필요하면 open -g. 헤드리스·배치가 기본이다.
