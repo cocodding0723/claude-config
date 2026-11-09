@@ -9,3 +9,5 @@
 허브 신설 메모: 이 허브는 개인 설정 저장소(claude-config)의 워크스페이스다. 기존 프로젝트 허브·그 하위 워크스페이스·옛 산출물은 건드리지 않는다. 옛 산출물은 제자리에 둔다.
 인계: HANDOFF.md 에 진행 중 작업·완료·결정 대기·다음 행동을 적는다(틀은 hubs/roles/handoff-template.md, 미추적). 사람 없이 내린 결정은 decision-log 스킬로 decisions.tsv 에 남긴다.
 워커 모델: 초안·1차 독자 검수는 Sonnet, 복잡한 설계 설명은 Opus, 시각 검수는 비주얼 모델. 작성자와 검수자는 다른 모델.
+워커 창의 확인 창(git merge 등 ask 규칙)은 사용자만 누른다. 코디네이터는 terminal send 등으로 대신 누르지 말고 목록만 메인에 보낸다.
+보호 훅이 막는 명령(reset --hard·stash drop·branch -D 등)은 update-ref 같은 다른 명령으로 우회하지 않는다. 사용자 실행용 명령을 메인에 보낸다.
