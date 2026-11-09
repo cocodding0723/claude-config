@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # 변이 검증: 저장소 사본에 결함을 하나씩 심고 검증 스크립트가 실패하는지 확인한다.
-# 설치기 변이(M)는 tests/install/run.sh, doc-kit 변이(D)는 tests/doc-kit/{run,sample,rename}.sh 가 맡음.
+# 설치기 변이(M)는 tests/install/run.sh, doc-kit 변이(D)는 tests/doc-kit/{run,sample,rename,backup}.sh 가 맡음.
 # ONLY="M3 M6" 처럼 일부만 실행 가능. 검출 못 한 변이가 있으면 종료 코드 1. 원본 작업 트리는 바꾸지 않고 임시 사본에서만 실행함.
 set -uo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd -P)
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/cc-mutate.XXXXXX")
 trap 'rm -rf "${WORK:?}"' EXIT
-MISSED=0
+MISSED=0 RAN_M=0 RAN_D=0
 
 fresh_copy() {  # 로컬 하네스 설정(.claude)은 사본에서 제외: 미추적이라 설치기 시험의 경로 검사에 걸림
   rm -rf "${WORK:?}/repo"
@@ -26,6 +26,7 @@ mutate() {
 exec_case() {
   local runner="$1" id="$2" desc="$3" file="$4" expr="$5" out failed
   if [ -n "${ONLY:-}" ] && [[ " $ONLY " != *" $id "* ]]; then return; fi
+  case "$id" in M*) RAN_M=$((RAN_M + 1)) ;; *) RAN_D=$((RAN_D + 1)) ;; esac
   fresh_copy
   if ! mutate "$file" "$expr"; then printf '| %s | %s | 정의 오류 | - |\n' "$id" "$desc"; MISSED=$((MISSED + 1)); return; fi
   out=$("$runner" 2>&1); local rc=$?
@@ -37,7 +38,7 @@ install_suite() { "$WORK/repo/tests/install/run.sh"; }
 # doc-kit 검증 3종. 하나라도 실패하면 실패
 dk_suite() {
   local rc=0 s
-  for s in run.sh sample.sh rename.sh; do "$WORK/repo/tests/doc-kit/$s" || rc=1; done
+  for s in run.sh sample.sh rename.sh backup.sh; do "$WORK/repo/tests/doc-kit/$s" || rc=1; done
   return $rc
 }
 # ONLY 에 해당 접두(M·D)가 있을 때만 그 묶음의 기준 실행을 함
@@ -93,7 +94,12 @@ run_dk D13 "치환 스크립트가 백업 복사를 생략" migrate/rename_skill
 run_dk D14 "치환 스크립트가 대상 존재 사전 확인을 생략" migrate/rename_skills.sh 's/\|\| die "대상 없음: /|| true # /'
 run_dk D15 "치환 되돌리기가 치환 뒤 수정 파일도 덮어씀" migrate/rename_skills.sh 's/if \[ "\$cur" != "\$after" \]; then/if false; then/'
 run_dk D16 "치환 --dry-run 이 실제로 치환" migrate/rename_skills.sh 's/dry\) do_dry ;;/dry) do_apply ;;/'
-run_dk D17 "치환 규칙에서 참고 파일 경로 규칙 제거" migrate/rename-rules.tsv 's/^tech-record\/references\/house-style[^\n]*\n//m'
+run_dk D17 "치환 규칙에서 house-style 참고 파일 규칙 제거" migrate/rename-rules.tsv 's/^house-style[^\n]*\n//m'
+run_dk D18 "README 백업이 링크째 복사(cp -a)" README.md 's/cp -RpL ~\/\.claude\/skills/cp -a ~\/.claude\/skills/'
+run_dk D19 "show 가 채널·받는 사람 값을 출력" skills/doc-kit/scripts/doc_config.py 's/PRIVATE_KEYS = \("recipients", "channel"\)/PRIVATE_KEYS = ()/'
+run_dk D20 "check.py 가 숫자만의 7자리를 해시로 오검출" skills/doc-kit/scripts/check.py 's/\(\?=\[0-9\]\*\[a-f\]\)//'
+run_dk D21 "치환 검사가 이름만 남은 없는 참고 파일을 놓침" migrate/rename_skills.sh 's/house-style|sources|md-spec/zz-none/g'
 
 echo
-if [ "$MISSED" = 0 ]; then echo "변이 모두 검출(설치기 17개·doc-kit 17개)"; else echo "미검출·오류 $MISSED 개"; exit 1; fi
+if [ $((RAN_M + RAN_D)) = 0 ]; then echo "실행한 변이가 없음: ONLY 가 어느 변이 번호와도 맞지 않음"; exit 1; fi
+if [ "$MISSED" = 0 ]; then echo "실행한 변이 모두 검출(설치기 ${RAN_M}개·doc-kit ${RAN_D}개)"; else echo "미검출·오류 $MISSED 개(실행: 설치기 ${RAN_M}개·doc-kit ${RAN_D}개)"; exit 1; fi

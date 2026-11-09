@@ -92,7 +92,7 @@ tests/doc-kit/backup.sh   # 반영 순서 2번 백업 블록: 링크가 실제 �
 미추적 `.claude/`(로컬 하네스 설정)에 절대 경로가 있으면 `tests/install/run.sh` 의 하드코딩 경로 검사 1건이 실패한다. 저장소 문제가 아니므로 그 폴더를 치우고 다시 돌린다.
 
 ```sh
-tests/mutate.sh   # 설치기 변이 17개(병합 식·복원·STATE_DIR·render·라이브 우선 등)와 doc-kit 변이 17개(고유값 혼입·설정 우선순위·치환 백업 생략 등)가 모두 검출되는지 확인(약 10분)
+tests/mutate.sh   # 설치기 변이 17개(병합 식·복원·STATE_DIR·render·라이브 우선 등)와 doc-kit 변이 21개(고유값 혼입·설정 우선순위·치환 백업 생략·링크째 백업 등)가 모두 검출되는지 확인(약 10분)
 ONLY="D1 D13" tests/mutate.sh   # 일부만. M=설치기, D=doc-kit
 ```
 

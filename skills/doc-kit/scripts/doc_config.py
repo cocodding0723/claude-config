@@ -2,7 +2,7 @@
 """doc-kit 프로젝트별 설정 읽기.
 
 사용:
-  doc_config.py show [--project 이름] [--config 경로] [--repo 폴더] [--json]
+  doc_config.py show [--project 이름] [--config 경로] [--repo 폴더] [--json]   (채널·받는 사람은 있음/없음만 표시)
   doc_config.py get 키... [같은 옵션] [--require]
 
 프로젝트 선택 순서: --project(작업 지시) → DOC_KIT_PROJECT → origin 원격 주소 → 폴더 이름 → [default].
@@ -24,6 +24,8 @@ DEFAULTS = {
 KEYS = ("audience", "recipients", "channel", "out_dir", "name_rule",
         "ticket_pattern", "base_branch", "docs_dir", "precedent")
 LIST_KEYS = ("match", "recipients", "precedent")
+# show 는 개인 값(채널·받는 사람)을 화면·로그에 남기지 않도록 있음/없음만 표시. 값은 get 으로만 읽는다.
+PRIVATE_KEYS = ("recipients", "channel")
 DEFAULT_PATH = os.path.join(os.path.expanduser("~"), ".config", "doc-kit", "projects.toml")
 
 
@@ -180,11 +182,14 @@ def main(argv=None):
     elif cfg["_source"] in ("arg-missing", "env-missing"):
         print("프로젝트 섹션 없음 — 기본값", file=sys.stderr)
     if a.cmd == "show":
+        shown = {k: ("있음" if v not in (None, "", []) else "없음") if k in PRIVATE_KEYS else v for k, v in cfg.items()}
+        for k in PRIVATE_KEYS:
+            shown.setdefault(k, "없음")
         if a.json:
-            print(json.dumps(cfg, ensure_ascii=False, indent=2))
+            print(json.dumps(shown, ensure_ascii=False, indent=2))
         else:
             for k in ("_project", "_source") + KEYS:
-                v = cfg.get(k)
+                v = shown.get(k)
                 if v in (None, "", []):
                     continue
                 print(f"{k.lstrip('_')}={' / '.join(v) if isinstance(v, list) else v}")

@@ -23,6 +23,10 @@ chk() { python3 -I "$KIT/scripts/check.py" "$@"; }
 # ---- 설정 읽기 ---------------------------------------------------------------
 out=$(DOC_KIT_CONFIG="$W/없는파일.toml" cfg show 2>"$W/err"); rc=$?
 [ "$rc" = 0 ] && echo "$out" | grep -qx 'audience=개발자' && echo "$out" | grep -qx 'out_dir=docs/out' && grep -q '설정 없음 — 기본값' "$W/err" && ok "설정 파일 없음: 기본값 + 안내 한 줄" || ko "설정 없음" "rc=$rc"
+out=$(cfg show --config "$CFG" --project 시험A 2>&1); rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -qx 'channel=있음' && echo "$out" | grep -qx 'recipients=있음' && ! echo "$out" | grep -q '시험채널값' && ok "show: 채널·받는 사람은 값 대신 있음만 출력" || ko "show 값 숨김" "$(echo "$out" | grep -E 'channel|recipients' | tr '\n' ' ')"
+out=$(cfg show --json --config "$CFG" --project 시험A 2>&1); echo "$out" | grep -q '"channel": "있음"' && ! echo "$out" | grep -q '시험채널값' && ok "show --json: 채널 값 미출력" || ko "show --json 값 숨김" ""
+out=$(DOC_KIT_CONFIG="$W/없는파일.toml" cfg show 2>/dev/null); echo "$out" | grep -qx 'channel=없음' && echo "$out" | grep -qx 'recipients=없음' && ok "show: 설정이 없으면 없음 표시" || ko "show 없음 표시" ""
 [ -z "$(DOC_KIT_CONFIG="$W/없는파일.toml" cfg get channel 2>/dev/null)" ] && ok "설정 없음: channel 비어 있음(파일 경로만 보고)" || ko "설정 없음 channel" ""
 
 [ "$(cfg get channel --config "$CFG" --project 시험A)" = "DM:시험채널값" ] && ok "프로젝트 지정: 그 섹션의 channel" || ko "프로젝트 지정" ""
@@ -68,6 +72,11 @@ DOC_KIT_CONFIG="$CFG" chk "$W/ticket.html" >/dev/null 2>&1 && ok "check.py: 프�
 sed 's#규칙이 여러 곳에 있다\. 그래서#규칙이 EffectManager 에 있다. 그래서#' "$FIX/sample-ok.html" > "$W/camel.html"
 out=$(chk --audience 기획자 "$W/camel.html" 2>&1); echo "$out" | grep -q 'EffectManager' && ok "check.py: 기획자 독자면 본문 고유명사 검출" || ko "기획자 고유명사" ""
 chk "$W/camel.html" >/dev/null 2>&1 && ok "check.py: 개발자 독자(기본)는 고유명사 허용" || ko "개발자 고유명사" ""
+sed 's#규칙이 여러 곳에 있다\. 그래서#규칙이 20261109 에 있다. 그래서#' "$FIX/sample-ok.html" > "$W/digits.html"
+cmp -s "$W/digits.html" "$FIX/sample-ok.html" && ko "시험 문서 생성(숫자)" "치환 안 됨"
+chk --audience 기획자 "$W/digits.html" >/dev/null 2>&1 && ok "check.py: 기획자 독자라도 숫자만의 7자리(날짜 20261109)는 고유명사가 아님" || ko "숫자 오검출" "$(chk --audience 기획자 "$W/digits.html" 2>&1 | head -2 | tr '\n' ' ')"
+sed 's#규칙이 여러 곳에 있다\. 그래서#규칙이 8763a17 에 있다. 그래서#' "$FIX/sample-ok.html" > "$W/hash.html"
+out=$(chk --audience 기획자 "$W/hash.html" 2>&1); echo "$out" | grep -q '8763a17' && ok "check.py: 기획자 독자면 커밋 해시(8763a17)는 계속 검출" || ko "해시 검출" ""
 
 # ---- 고유값 0건 ---------------------------------------------------------------
 out=$("$REPO/tests/doc-kit/check_unique.sh" 2>&1); rc=$?

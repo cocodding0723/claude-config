@@ -1,11 +1,10 @@
 # 옛 문서 스킬 이름 → doc-kit 치환 규칙. 위에서 아래로 순서대로 적용한다.
 # 열: perl 정규식 <TAB> 치환 문자열(문자 그대로). 줄 단위로 적용하며 이름만 바꾸고 문장은 건드리지 않는다.
 # 1) 경로: 사라지는 참고 파일은 doc-kit 의 대응 파일로
-tech-record/references/house-style\.md	doc-kit/references/style.md
 tech-record/references/sources\.md	doc-kit/references/sources.md
 explain-diff/references/md-spec\.md	doc-kit/references/explain.md
 work-report/references/templates\.md	doc-kit/references/report.md
-# 1-1) 경로 없이 파일 이름만 적은 참조도 doc-kit 의 대응 파일로
+# 1-1) house-style.md 는 경로가 있든 이름만 적었든 style.md 로(앞 경로는 3번 규칙이 doc-kit 으로 바꿈)
 house-style\.md	style.md
 # 2) 여러 이름을 나열한 구절은 하나로
 `explain-diff`·`tech-record`·`create-pr`·`work-report`	`doc-kit`·`create-pr`

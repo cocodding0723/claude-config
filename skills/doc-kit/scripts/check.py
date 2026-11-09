@@ -159,7 +159,8 @@ def main(path, report=False, strict=False, project=None, audience=None):
         else:
             parts.append("(?:" + ticket + ")")
     if audience == "기획자":
-        parts += [r"[0-9a-f]{7,40}", r"[A-Z][a-z]+(?:[A-Z][a-z0-9]+){1,}"]
+        # 커밋 해시 후보. 숫자만으로 된 날짜·건수(20261109)는 해시가 아니므로 영문 a-f 를 하나 이상 요구
+        parts += [r"(?=[0-9]*[a-f])[0-9a-f]{7,40}", r"[A-Z][a-z]+(?:[A-Z][a-z0-9]+){1,}"]
         allow = {"PlantUML", "JavaScript", "TypeScript", "GitHub", "PowerPoint", "UniTask", "ZLinq"}
     elif parts:
         allow = set()
