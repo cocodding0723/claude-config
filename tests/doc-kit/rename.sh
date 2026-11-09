@@ -37,7 +37,19 @@ echo "$out" | grep -q '요약: 바뀔 파일 2, 확인 필요 0, 없음 0' && ok
 printf 'tech-record/references/nope.md 참조\n' > "$MEM/m.md"
 out=$(run --dry-run 2>&1); rc=$?
 [ "$rc" = 1 ] && echo "$out" | grep -qx 'REVIEW mem/m.md:1' && ok "dry-run: 없는 doc-kit 경로는 REVIEW·종료 코드 1" || ko "REVIEW" "rc=$rc"
+# REVIEW: 경로 접두 없이 옛 참고 파일 이름만 남은 줄도 doc-kit/references 에 있는지 확인(없는 파일을 가리키는 치환)
+printf 'tech-record 의 같은 폴더 `md-spec.md` 를 본다\n' > "$MEM/m.md"
+out=$(run --dry-run 2>&1); rc=$?
+[ "$rc" = 1 ] && echo "$out" | grep -qx 'REVIEW mem/m.md:1' && ok "dry-run: 이름만 남은 없는 참고 파일(md-spec.md)은 REVIEW·종료 코드 1" || ko "접두 없는 참고 파일 REVIEW" "rc=$rc"
+printf '같은 폴더 `house-style.md` 를 본다\n' > "$MEM/m.md"
+out=$(run --dry-run 2>&1); rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -qx 'CHANGE mem/m.md:1' && ok "dry-run: 이름만 적은 house-style.md 는 style.md 로 치환돼 REVIEW 없음" || ko "house-style 이름 치환" "rc=$rc"
 printf 'structure-change-doc 와 doc-coauthoring 사용\n' > "$MEM/m.md"
+
+# perl 실패는 빈 출력으로 묻지 않고 종료 코드 2 와 메시지로 알림
+printf '(\t대치\n' > "$W/bad-rules.tsv"
+out=$("$TOOL" --dry-run --rules "$W/bad-rules.tsv" --targets "$W/targets.tsv" --memory-dir "$MEM" --backup-root "$BK" 2>&1); rc=$?
+[ "$rc" = 2 ] && echo "$out" | grep -q '치환 규칙 적용 실패' && ! echo "$out" | grep -q '^CHANGE' && ok "dry-run: 규칙 적용(perl) 실패는 CHANGE 없이 종료 코드 2·메시지" || ko "perl 실패 노출" "rc=$rc"
 
 # ---- 대상 없음 ---------------------------------------------------------------
 printf 'repo\tclaude/a.md\nmem\t없는파일.md\n' > "$W/targets-missing.tsv"
@@ -56,6 +68,10 @@ dir=$(echo "$out" | sed -n 's/^백업: \([^ ]*\) .*/\1/p')
 ! grep -q 'tech-record\|structure-change-doc\|doc-coauthoring' "$SB/claude/a.md" "$MEM/m.md" && grep -q 'doc-kit/references/style.md' "$SB/claude/a.md" && ok "apply: 옛 이름이 doc-kit 으로 바뀜(경로 규칙 포함)" || ko "치환 결과" ""
 [ "$(sed -n 2p "$SB/claude/a.md")" = '무관한 줄' ] && ok "apply: 이름이 없는 줄은 그대로" || ko "무관한 줄" ""
 grep -qx '`doc-kit`·`create-pr` 를 쓴다.' "$SB/claude/a.md" && ok "apply: 나열 구절이 하나로 합쳐지고 중복 없음" || ko "나열 구절" "$(sed -n 3p "$SB/claude/a.md")"
+# 조사: doc-kit 은 받침으로 끝나므로 로→으로, 가→이(이름 치환으로 틀어진 조사 교정)
+printf '`explain-diff`로 쓴다\nwork-report 가 맡는다\n`tech-record` 가 맡는다\nwork-report 가능\n' > "$W/josa.md"
+perl "$SB/migrate/rename_apply.pl" "$SB/migrate/rename-rules.tsv" < "$W/josa.md" > "$W/josa.out"
+[ "$(cat "$W/josa.out")" = "$(printf '`doc-kit`으로 쓴다\ndoc-kit 이 맡는다\n`doc-kit` 이 맡는다\ndoc-kit 가능')" ] && ok "치환: 이름 뒤 조사 로→으로·가→이 교정(가능 같은 단어는 그대로)" || ko "조사 교정" "$(tr '\n' '/' < "$W/josa.out")"
 cmp -s "$MEM/clean.md" <(printf '이미 doc-kit 만 있다\n') && ok "apply: 바뀔 것 없는 파일은 건드리지 않음" || ko "clean 무변경" ""
 run --apply >/dev/null 2>&1; run --dry-run 2>&1 | grep -q '요약: 바뀔 파일 0' && ok "apply 반복: 이미 치환돼 바뀔 파일 0(멱등)" || ko "멱등" ""
 

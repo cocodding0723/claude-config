@@ -65,21 +65,26 @@ label() { if [ "$1" = repo ]; then printf '%s' "$2"; else printf 'mem/%s' "$2"; 
 
 entries() { grep -v '^[[:space:]]*#' "$TARGETS" | grep -v '^[[:space:]]*$' || true; }
 
-transform() { perl "$HERE/rename_apply.pl" "$RULES" < "$1" > "$2"; }
+# perl 실패를 빈 출력으로 착각해 전 줄 CHANGE 로 내지 않도록 즉시 중단(조건문 안에서 불려도 die 는 종료함)
+transform() { perl "$HERE/rename_apply.pl" "$RULES" < "$1" > "$2" || die "치환 규칙 적용 실패: $1 (규칙: $RULES)"; }
 
 # 치환 뒤 파일에서 doc-kit 경로가 실재하지 않는 줄을 REVIEW 로 출력. 개수를 반환값 대신 전역에 누적
+# 경로 접두 없이 옛 참고 파일 이름만 남은 줄(예: "같은 폴더 house-style.md")도 doc-kit/references 에 있는지 본다
 review_paths() {
   local new="$1" lab="$2" ln p
   while IFS=: read -r ln p; do
     [ -n "$ln" ] || continue
     [ -e "$REPO/skills/$p" ] || { printf 'REVIEW %s:%s\n' "$lab" "$ln"; N_REVIEW=$((N_REVIEW + 1)); }
-  done < <(grep -noE 'doc-kit/(references|scripts|templates)/[A-Za-z0-9_.-]+' "$new" | sed 's/^\([0-9]*\):/\1:/')
+  done < <(grep -noE 'doc-kit/(references|scripts|templates)/[A-Za-z0-9_.-]+' "$new")
+  while IFS=: read -r ln p; do
+    [ -n "$ln" ] || continue
+    [ -e "$REPO/skills/doc-kit/references/$p" ] || { printf 'REVIEW %s:%s\n' "$lab" "$ln"; N_REVIEW=$((N_REVIEW + 1)); }
+  done < <(grep -noE '(^|[^/A-Za-z0-9_.-])(house-style|sources|md-spec)\.md' "$new" | sed -E 's/^([0-9]+):.*(house-style|sources|md-spec)\.md$/\1:\2.md/')
 }
 
 # 원본과 치환본의 달라진 줄 번호를 출력
 changed_lines() {
   local old="$1" new="$2" lab="$3"
-  diff <(cat -n "$old" | cut -f1) <(cat -n "$new" | cut -f1) >/dev/null 2>&1 || true
   awk -v lab="$lab" 'NR==FNR { a[FNR]=$0; next } { if (a[FNR] != $0) printf "CHANGE %s:%d\n", lab, FNR }' "$old" "$new"
 }
 

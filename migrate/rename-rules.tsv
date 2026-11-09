@@ -2,9 +2,11 @@
 # 열: perl 정규식 <TAB> 치환 문자열(문자 그대로). 줄 단위로 적용하며 이름만 바꾸고 문장은 건드리지 않는다.
 # 1) 경로: 사라지는 참고 파일은 doc-kit 의 대응 파일로
 tech-record/references/house-style\.md	doc-kit/references/style.md
-tech-record/references/sources\.md	doc-kit/references/config.md
+tech-record/references/sources\.md	doc-kit/references/sources.md
 explain-diff/references/md-spec\.md	doc-kit/references/explain.md
 work-report/references/templates\.md	doc-kit/references/report.md
+# 1-1) 경로 없이 파일 이름만 적은 참조도 doc-kit 의 대응 파일로
+house-style\.md	style.md
 # 2) 여러 이름을 나열한 구절은 하나로
 `explain-diff`·`tech-record`·`create-pr`·`work-report`	`doc-kit`·`create-pr`
 explain-diff·tech-record·structure-change-doc·work-report·doc-coauthoring	doc-kit
@@ -16,3 +18,8 @@ tech-record/explain-diff	doc-kit
 # 4) 이름이 겹쳐 생긴 중복
 `doc-kit`(?:[·/]`doc-kit`)+	`doc-kit`
 doc-kit(?:[·/]doc-kit)+	doc-kit
+# 5) 이름이 바뀌어 받침이 달라진 조사. doc-kit 은 받침으로 끝나 로→으로, 가→이
+(?<=doc-kit)로(?![가-힣])	으로
+(?<=doc-kit`)로(?![가-힣])	으로
+(?<=doc-kit) 가(?![가-힣])	 이
+(?<=doc-kit`) 가(?![가-힣])	 이

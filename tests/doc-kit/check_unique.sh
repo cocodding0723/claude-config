@@ -16,7 +16,8 @@ pattern=$(IFS='|'; echo "${parts[*]}")
 # render 자리표시(__KEY__)가 doc-kit 에 있으면 설치기 값 파일에 묶임
 pattern="$pattern|__[A-Z][A-Z_]*__"
 
-hits=$(grep -rnE "$pattern" "$TARGET" --exclude='*.pyc' --exclude-dir=__pycache__ | cut -d: -f1,2 | sed "s#^$TARGET/##")
+# references/sources.md 는 선례 저작자·저장소 이름을 적는 것이 목적인 목록이라 이 점검에서 제외(다른 파일은 그대로 검사)
+hits=$(grep -rnE "$pattern" "$TARGET" --exclude='*.pyc' --exclude='sources.md' --exclude-dir=__pycache__ | cut -d: -f1,2 | sed "s#^$TARGET/##")
 if [ -n "$hits" ]; then
   echo "고유값 $(echo "$hits" | wc -l | tr -d ' ')건(파일:줄):"
   echo "$hits"
