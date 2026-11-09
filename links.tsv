@@ -77,6 +77,7 @@ hubs/roles/role-server.txt	.config/lrm-hubs/roles/role-server.txt	link
 hubs/roles/role-test.txt	.config/lrm-hubs/roles/role-test.txt	link
 hubs/roles/role-ui.txt	.config/lrm-hubs/roles/role-ui.txt	link
 hubs/slack-bot-manifest.yml	.config/lrm-hubs/slack-bot-manifest.yml	link
+hubs/docs/slack-format.md	.config/lrm-hubs/docs/slack-format.md	link
 hubs/launchd/ai.lrm.slackpoll.plist	Library/LaunchAgents/ai.lrm.slackpoll.plist	copy
 hubs/roles/role-vfx.txt.tmpl	.config/lrm-hubs/roles/role-vfx.txt	render
 hubs/roles/role-tutorial.txt.tmpl	.config/lrm-hubs/roles/role-tutorial.txt	render
