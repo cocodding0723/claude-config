@@ -25,6 +25,9 @@ ap.add_argument('--before'); ap.add_argument('--after'); ap.add_argument('--vide
 ap.add_argument('--template', default=os.path.join(ASSETS, 'template-v4.html'))
 a = ap.parse_args()
 d = json.load(open(a.data))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import shuffle_opts
+shuffle_opts.shuffle_questions(d['q'], d['pr']['num'])  # 보기 섞기 + 편중 검사
 d['svg'] = {k: render(v) for k, v in d.get('puml', {}).items()}
 d.pop('puml', None)
 if a.before or a.after or a.video:

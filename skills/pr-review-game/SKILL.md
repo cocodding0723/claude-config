@@ -24,6 +24,7 @@ v4 가 기본이다. 아래 「v3 고해실」 절은 `assets/template-v3.html` 
    `node scripts/cdp-v4.mjs <url> touch 390 844 <shot-390.png> 2` 와 `node scripts/cdp-v4.mjs <url> mouse 1440 900 <shot-1440.png> 4`.
    마지막 인자는 일부러 틀릴 문항 번호(쉼표). FAIL 0·오류 0, 샷을 직접 열어 확인한다.
    도식(`.dia svg`)에 `min-width` 금지. 폭 100%·height auto 로 줄이고 390px 에서 가로 스크롤 0 으로 확인한다.
+   보기 순서 섞기: `scripts/shuffle_opts.py` 가 빌드 때 opts·miss·ans 를 같은 순열로 재배치(시드=PR번호), 정답 위치 편중(위치별 횟수 편차 2 이상)이면 빌드 실패. 위치 지칭 해설 문항은 제외.
 
 ## v4 문항 규칙
 - 질문은 "왜 이런 구조로 만들었을까?" 형태, 쉬운 난이도, 자연스러운 문장. 보기는 PR 실제 의도에서만.
