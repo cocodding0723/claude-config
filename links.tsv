@@ -20,8 +20,6 @@ skills/create-pr	.claude/skills/create-pr	link
 skills/csharp-readable-layout	.claude/skills/csharp-readable-layout	link
 skills/decision-log	.claude/skills/decision-log	link
 skills/doc-kit	.claude/skills/doc-kit	link
-skills/doc-coauthoring	.claude/skills/doc-coauthoring	link
-skills/explain-diff	.claude/skills/explain-diff	link
 skills/frontend-design	.claude/skills/frontend-design	link
 skills/i-have-adhd	.claude/skills/i-have-adhd	link
 skills/jira-issue	.claude/skills/jira-issue	link
@@ -34,13 +32,11 @@ skills/prose-lint	.claude/skills/prose-lint	link
 skills/qa-checklist	.claude/skills/qa-checklist	link
 skills/repo-reality-check	.claude/skills/repo-reality-check	link
 skills/review-before-commit	.claude/skills/review-before-commit	link
-skills/tech-record	.claude/skills/tech-record	link
 skills/triage	.claude/skills/triage	link
 skills/unity-mcp-skill	.claude/skills/unity-mcp-skill	link
 skills/ux-flow-board	.claude/skills/ux-flow-board	link
 skills/web-tool-design	.claude/skills/web-tool-design	link
 skills/work-brief	.claude/skills/work-brief	link
-skills/work-report	.claude/skills/work-report	link
 skills/worktree-gc	.claude/skills/worktree-gc	link
 skills/writing-clearly-and-concisely	.claude/skills/writing-clearly-and-concisely	link
 skills/writing-humanizer	.claude/skills/writing-humanizer	link
@@ -51,14 +47,6 @@ skills/orca-hub-create/references/role-prompt.md	.claude/skills/orca-hub-create/
 skills/orca-hub-create/scripts/create_hub.sh	.claude/skills/orca-hub-create/scripts/create_hub.sh	link
 skills/orca-hub-create/scripts/create_worker_ws.sh	.claude/skills/orca-hub-create/scripts/create_worker_ws.sh	link
 skills/orca-hub-create/scripts/pick_host.sh	.claude/skills/orca-hub-create/scripts/pick_host.sh	link
-skills/structure-change-doc/SKILL.md.tmpl	.claude/skills/structure-change-doc/SKILL.md	render
-skills/structure-change-doc/scripts/check.py	.claude/skills/structure-change-doc/scripts/check.py	link
-skills/structure-change-doc/scripts/image_diff.py	.claude/skills/structure-change-doc/scripts/image_diff.py	link
-skills/structure-change-doc/scripts/puml_diff.py	.claude/skills/structure-change-doc/scripts/puml_diff.py	link
-skills/structure-change-doc/scripts/screen_flow.sh	.claude/skills/structure-change-doc/scripts/screen_flow.sh	link
-skills/structure-change-doc/templates/after.puml	.claude/skills/structure-change-doc/templates/after.puml	link
-skills/structure-change-doc/templates/before.puml	.claude/skills/structure-change-doc/templates/before.puml	link
-skills/structure-change-doc/templates/doc.html	.claude/skills/structure-change-doc/templates/doc.html	link
 git/hooks/_chain	.config/git/hooks/_chain	link
 git/hooks/commit-msg	.config/git/hooks/commit-msg	link
 git/hooks/post-checkout	.config/git/hooks/post-checkout	link
