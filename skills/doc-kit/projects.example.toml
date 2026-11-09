@@ -1,0 +1,21 @@
+# doc-kit 프로젝트별 설정 틀. 값은 자리표시다.
+# 실제 값은 ~/.config/doc-kit/projects.toml 에 복사해 채운다(git 밖, 권한 600 권장).
+# 읽는 방법·기본값은 references/config.md.
+
+# 프로젝트 섹션에 없는 값을 채우는 기본값
+[default]
+audience = "개발자"          # 개발자 | 기획자. 기획자면 본문 고유명사를 검사한다
+out_dir = "docs/out"        # 산출물 폴더
+name_rule = "{날짜}-{주제}"  # 폴더 안 <이름>.html
+
+# 프로젝트마다 섹션 하나. 작업 지시에 이 이름을 적으면 그 섹션 값을 읽는다
+# 한글 이름은 TOML 규칙상 따옴표로 감싼다: [project."이름"]
+[project."예시A"]
+match = ["예시저장소A"]                                # origin 주소·폴더 이름 조각
+audience = "기획자"
+recipients = ["받는사람1|구현 담당|직접전달 안 함"]     # 이름|역할|직접전달 여부
+channel = "DM:채널ID자리표시"                          # 메인이 업로드할 채널
+ticket_pattern = 'ABC-\d+'                            # 티켓 키 정규식(작은따옴표로 감쌈)
+base_branch = "dev"                                   # 사실 대조 기준 브랜치
+docs_dir = "docs"                                     # 저장소에 커밋하는 기술 문서 폴더
+precedent = ["선례저작자A|예시저장소A"]                  # 문체 선례. 없으면 공통 문체만

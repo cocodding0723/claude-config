@@ -19,6 +19,7 @@ skills/comment-lint	.claude/skills/comment-lint	link
 skills/create-pr	.claude/skills/create-pr	link
 skills/csharp-readable-layout	.claude/skills/csharp-readable-layout	link
 skills/decision-log	.claude/skills/decision-log	link
+skills/doc-kit	.claude/skills/doc-kit	link
 skills/doc-coauthoring	.claude/skills/doc-coauthoring	link
 skills/explain-diff	.claude/skills/explain-diff	link
 skills/frontend-design	.claude/skills/frontend-design	link
@@ -78,6 +79,9 @@ hubs/scripts/slack_pending.sh	.config/lrm-hubs/slack_pending.sh	link
 hubs/scripts/slack_poll.sh	.config/lrm-hubs/slack_poll.sh	link
 hubs/scripts/unity_slot.sh	.config/lrm-hubs/unity_slot.sh	link
 hubs/roles/role-arch.txt	.config/lrm-hubs/roles/role-arch.txt	link
+hubs/roles/role-doc-kit.txt	.config/lrm-hubs/roles/role-doc-kit.txt	link
+hubs/roles/handoff-template.md	.config/lrm-hubs/roles/handoff-template.md	link
+hubs/scripts/create_doc_hub.sh	.config/lrm-hubs/create_doc_hub.sh	link
 hubs/roles/role-config.txt	.config/lrm-hubs/roles/role-config.txt	link
 hubs/roles/role-data.txt	.config/lrm-hubs/roles/role-data.txt	link
 hubs/roles/role-scrum.txt	.config/lrm-hubs/roles/role-scrum.txt	link

@@ -1,0 +1,29 @@
+# 옛 이름 치환 대상. 열: 기준<TAB>상대경로
+# 기준: repo = 이 저장소, mem = 프로젝트 메모리 폴더(--memory-dir)
+# 저장소 13곳: 전역 설정 2, 허브 역할 파일 4, orca-hub-create 참고 2, 다른 스킬 5
+repo	claude/CLAUDE.md
+repo	claude/meat-proxy/WORKFLOW.md
+repo	hubs/roles/role-arch.txt
+repo	hubs/roles/role-config.txt
+repo	hubs/roles/role-docs.txt.tmpl
+repo	hubs/roles/role-server.txt
+repo	skills/orca-hub-create/references/common-rules.txt.tmpl
+repo	skills/orca-hub-create/references/role-prompt.md
+repo	skills/catch-up/SKILL.md
+repo	skills/create-pr/SKILL.md
+repo	skills/pr-review-game/SKILL.md
+repo	skills/pretty-code/SKILL.md
+repo	skills/work-brief/SKILL.md
+# 메모리 12파일: 원문 보존, 옛 스킬 이름만 치환(MEMORY.md 인덱스 포함)
+mem	MEMORY.md
+mem	coordinator-completion-flow.md
+mem	decision-card-format.md
+mem	diagram-before-problem-after.md
+mem	doc-diagrams-and-shot-diff.md
+mem	doc-three-stage-review.md
+mem	doc-writing-skills.md
+mem	editor-builder-remove-before-pr.md
+mem	structure-approval-first.md
+mem	structure-doc-review-3stage.md
+mem	user-docs-as-html.md
+mem	visual-change-doc-for-jeongo.md

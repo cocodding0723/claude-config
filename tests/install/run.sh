@@ -103,6 +103,15 @@ got=$(echo "$dry" | grep -cE '^\[dry-run\] (LINK|BACKUP\+LINK|MERGE|COPY|RENDER|
 "$INSTALL" >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && ok "설치 종료 코드 0" || ko "설치" "rc=$rc"
 check "점검 모드 통과" "$INSTALL" --check
+# doc-kit: 스킬·역할 파일 링크가 설치되고, 링크 너머로 스크립트가 실행되며, --check 가 끊긴 링크를 잡음
+DK="$SB/.claude/skills/doc-kit"; DKROLE="$SB/.config/lrm-hubs/roles/role-doc-kit.txt"
+[ "$(readlink "$DK")" = "$REPO/skills/doc-kit" ] && [ "$(readlink "$DKROLE")" = "$REPO/hubs/roles/role-doc-kit.txt" ] && ok "doc-kit 스킬·역할 파일 링크 설치" || ko "doc-kit 링크" "원본을 가리키지 않음"
+DOC_KIT_CONFIG="$SB/없는설정.toml" python3 -I "$DK/scripts/doc_config.py" show >/dev/null 2>&1 && ok "doc-kit: 링크 경로로 doc_config.py 실행" || ko "doc-kit 링크 실행" ""
+rm "$DK"
+out=$("$INSTALL" --check 2>&1); rc=$?
+[ "$rc" = 1 ] && echo "$out" | grep -q 'doc-kit' && ok "--check: doc-kit 링크가 없으면 지적" || ko "--check doc-kit" "rc=$rc"
+ln -s "$REPO/skills/doc-kit" "$DK"
+check "doc-kit 링크 되돌린 뒤 점검 통과" "$INSTALL" --check
 linkbad=0; while IFS=$'\t' read -r src dst mode; do
   [ "$mode" = link ] || continue
   [ -L "$SB/$dst" ] && [ -e "$SB/$dst" ] && [ "$(readlink "$SB/$dst")" = "$REPO/$src" ] || { linkbad=1; ko "링크" "$dst"; }
@@ -247,12 +256,12 @@ rm -rf "${SB3:?}"
 SB5=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox5.XXXXXX")
 mkdir -p "$SB5/.config/lrm-hubs" "$SB5/.config/claude-config" "$SB5/.claude"
 cp "$SB/.config/claude-config/values.env" "$SB5/.config/claude-config/values.env"
-# 의도된 치환(restart_hub 경로)만 다른 파일은 통과해야 하고, 내용이 다른 slack_poll 은 걸려야 함
-sed 's#\${HUB_ROOT:-\$HOME/orca/workspaces/LoveRevolutionMaker}#/Users/someone/orca/workspaces/LoveRevolutionMaker#' "$REPO/hubs/scripts/restart_hub.sh" > "$SB5/.config/lrm-hubs/restart_hub.sh"
+# 저장소와 같은 파일은 통과해야 하고, 내용이 다른 slack_poll 은 걸려야 함
+cp "$REPO/hubs/scripts/restart_hub.sh" "$SB5/.config/lrm-hubs/restart_hub.sh"
 echo "# newer live" > "$SB5/.config/lrm-hubs/slack_poll.sh"
 before=$(snapshot "$SB5")
 out=$(env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF HOME="$SB5" "$INSTALL" --diff-live 2>&1); rc=$?
-[ "$rc" = 1 ] && echo "$out" | grep -q 'LIVE-NEWER .config/lrm-hubs/slack_poll.sh' && ! echo "$out" | grep -q 'restart_hub' && ok "--diff-live: 라이브가 앞선 파일만 지적(의도된 치환은 통과)" || ko "diff-live" "rc=$rc $(echo "$out" | head -3 | tr '\n' ' ')"
+[ "$rc" = 1 ] && echo "$out" | grep -q 'LIVE-NEWER .config/lrm-hubs/slack_poll.sh' && ! echo "$out" | grep -q 'restart_hub' && ok "--diff-live: 라이브가 앞선 파일만 지적(같은 파일은 통과)" || ko "diff-live" "rc=$rc $(echo "$out" | head -3 | tr '\n' ' ')"
 env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF HOME="$SB5" "$INSTALL" >/dev/null 2>&1; rc=$?
 [ "$rc" != 0 ] && [ "$before" = "$(snapshot "$SB5")" ] && ok "라이브가 앞서면 설치가 변경 없이 중단" || ko "라이브 우선 중단" "rc=$rc"
 env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF HOME="$SB5" "$INSTALL" --dry-run >/dev/null 2>&1; rc=$?
