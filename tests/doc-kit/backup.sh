@@ -65,7 +65,7 @@ done < <(grep -v '^#' "$REPO/links.tsv")
 [ "$seen" = 7 ] && [ "$miss" = 0 ] && ok "links.tsv 의 폴더 안 링크 7개(structure-change-doc)가 7번에 모두 rm 줄로 있음" || ko "폴더 안 링크 목록 불일치" "seen=$seen miss=$miss"
 # 링크 하나짜리 4개도 7번에 있어야 함
 miss=0; for n in $LINKED; do grep -qxF "rm ~/.claude/skills/$n" "$DEL" || miss=$((miss + 1)); done
-[ "$miss" = 0 ] && ok "7번에 폴더째 링크 4개의 rm 줄이 있음" || ko "폴더째 링크 rm 줄" "$miss개 누락"
+[ "$miss" = 0 ] && ok "7번에 폴더째 링크 4개의 rm 줄이 있음" || ko "폴더째 링크 rm 줄" "${miss}개 누락"
 # README 되돌리기 표에 복원 명령과 중간 정지 안내가 있음
 grep -qF 'cp -Rp "$B"/skills/<이름> ~/.claude/skills/' "$REPO/README.md" && grep -q '중간에 멈춰' "$REPO/README.md" && ok "되돌리기 표에 복원 명령과 7번 중간 정지 안내가 있음" || ko "되돌리기 표 내용" ""
 
@@ -96,7 +96,7 @@ bad=0
 for n in $LINKED; do
   [ "$(cat "$B/skills/$n/SKILL.md" 2>/dev/null)" = "$n 본문" ] && [ "$(cat "$B/skills/$n/references/r.md" 2>/dev/null)" = "$n 참고" ] || bad=$((bad + 1))
 done
-[ "$bad" = 0 ] && ok "저장소 폴더를 지운 뒤에도 링크였던 스킬 4개의 내용이 백업에 남음" || ko "백업 내용 유실" "$bad개"
+[ "$bad" = 0 ] && ok "저장소 폴더를 지운 뒤에도 링크였던 스킬 4개의 내용이 백업에 남음" || ko "백업 내용 유실" "${bad}개"
 
 # ---- 되돌리기 표의 명령 ---------------------------------------------------------------
 fail=0
