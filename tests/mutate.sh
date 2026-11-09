@@ -99,6 +99,8 @@ run_dk D18 "README 백업이 링크째 복사(cp -a)" README.md 's/cp -RpL ~\/\.
 run_dk D19 "show 가 채널·받는 사람 값을 출력" skills/doc-kit/scripts/doc_config.py 's/PRIVATE_KEYS = \("recipients", "channel"\)/PRIVATE_KEYS = ()/'
 run_dk D20 "check.py 가 숫자만의 7자리를 해시로 오검출" skills/doc-kit/scripts/check.py 's/\(\?=\[0-9\]\*\[a-f\]\)//'
 run_dk D21 "치환 검사가 이름만 남은 없는 참고 파일을 놓침" migrate/rename_skills.sh 's/house-style|sources|md-spec/zz-none/g'
+run_dk D22 "README 7번에서 폴더 안 링크 rm 줄 1개 누락" README.md 's/rm ~\/\.claude\/skills\/structure-change-doc\/templates\/doc\.html\n//'
+run_dk D23 "README 7번이 실제 폴더를 -r 없이 rm" README.md 's/rm -r ~\/\.claude\/skills\/structure-change-doc\n/rm ~\/.claude\/skills\/structure-change-doc\n/'
 
 echo
 if [ $((RAN_M + RAN_D)) = 0 ]; then echo "실행한 변이가 없음: ONLY 가 어느 변이 번호와도 맞지 않음"; exit 1; fi

@@ -188,7 +188,25 @@ ONLY="D1 D13" tests/mutate.sh   # 일부만. M=설치기, D=doc-kit
    ```
    저장소 13파일은 `--dry-run` 결과가 바뀔 파일 0 이어야 정상이다.
 6. **시험.** 메인이 없는 새 터미널에서 샘플 문서 1건을 만들어 check.py 통과, 프로젝트 지정 시 채널, 미지정 시 기본값·경로만 보고, 제목 형식을 확인한다. 하나라도 실패하면 7번으로 가지 않는다.
-7. **옛 스킬 5개 삭제(별도 커밋·사용자 승인).** 먼저 저장소에서 `skills/` 폴더 5개와 `links.tsv` 5줄을 지운다. 그다음 라이브의 링크만 지운다(`rm ~/.claude/skills/<이름>`). 링크라 원본은 저장소 이력에 남는다. 지운 뒤 `./install.sh --check` 와 새 스킬로 문서 1건 재생성을 확인한다.
+7. **옛 스킬 5개 삭제(별도 커밋·사용자 승인).** 먼저 저장소에서 `skills/` 폴더 5개와 `links.tsv` 의 해당 줄을 지운다. 그다음 라이브를 지운다. 라이브의 모양이 둘로 갈린다. 지우기 전에 2번 백업이 끝났는지 확인한다.
+   - `explain-diff`·`tech-record`·`work-report`·`doc-coauthoring` 은 저장소 폴더를 가리키는 링크 하나다. `rm 링크` 로 지운다.
+   - `structure-change-doc` 은 링크가 아니라 **실제 폴더**다. 안에 저장소 파일을 가리키는 파일 단위 링크 7개(`scripts/` 4개, `templates/` 3개)와 설치기가 렌더한 `SKILL.md`, 옛 작업이 남긴 라이브 전용 파일(`__pycache__`, `*.bak-*`)이 있다. `rm 폴더` 는 `-r` 없이 실패하고, 폴더를 남기면 저장소 폴더를 지운 뒤 링크가 끊겨 되돌리기의 `cp -Rp` 가 실패한다. 그래서 안의 링크를 먼저 지우고, 링크가 없는 것을 확인한 뒤에 폴더를 지운다.
+   ```sh
+   rm ~/.claude/skills/explain-diff
+   rm ~/.claude/skills/tech-record
+   rm ~/.claude/skills/work-report
+   rm ~/.claude/skills/doc-coauthoring
+   rm ~/.claude/skills/structure-change-doc/scripts/check.py
+   rm ~/.claude/skills/structure-change-doc/scripts/image_diff.py
+   rm ~/.claude/skills/structure-change-doc/scripts/puml_diff.py
+   rm ~/.claude/skills/structure-change-doc/scripts/screen_flow.sh
+   rm ~/.claude/skills/structure-change-doc/templates/after.puml
+   rm ~/.claude/skills/structure-change-doc/templates/before.puml
+   rm ~/.claude/skills/structure-change-doc/templates/doc.html
+   find ~/.claude/skills/structure-change-doc -type l   # 출력이 없어야 한다(남은 링크가 있으면 멈추고 확인)
+   rm -r ~/.claude/skills/structure-change-doc
+   ```
+   링크 7개를 먼저 지웠으므로 `rm -r` 이 저장소 파일에 닿지 않는다. 라이브 전용 파일은 2번 백업(`cp -RpL`)에 들어 있다. 지운 뒤 `./install.sh --check` 와 새 스킬로 문서 1건 재생성을 확인한다(`tests/doc-kit/backup.sh` 가 이 블록을 그대로 실행해 확인한다).
 
 ### 되돌리기
 
@@ -196,7 +214,7 @@ ONLY="D1 D13" tests/mutate.sh   # 일부만. M=설치기, D=doc-kit
 |---|---|
 | 설치(링크·렌더) | `./install.sh --restore <4번의 백업 폴더>` |
 | 메모리 이름 치환 | `migrate/rename_skills.sh --revert <5번의 백업 폴더>`. 치환 뒤 직접 고친 파일은 건너뛰고 알린다. |
-| 옛 스킬 5개 | 7번 전이면 그대로. 지운 뒤에는 `git revert` 또는 2번 백업(`"$B"/skills`, 링크가 아니라 실제 내용)에서 `cp -Rp "$B"/skills/<이름> ~/.claude/skills/` |
+| 옛 스킬 5개 | 7번 전이면 그대로. 지운 뒤에는 `git revert` 또는 2번 백업(`"$B"/skills`, 링크가 아니라 실제 내용)에서 `cp -Rp "$B"/skills/<이름> ~/.claude/skills/`. 7번을 중간에 멈춰 `~/.claude/skills/structure-change-doc` 폴더가 남아 있으면 끊긴 링크 때문에 `cp` 가 실패하므로, 7번의 `rm` 줄과 `rm -r` 을 먼저 끝낸 뒤 복원한다. 복원본은 링크가 아니라 실제 파일이다. |
 | 값 파일 | 설치기가 건드리지 않는다. 지우려면 직접 지운다. |
 
 ## 복원의 한계
