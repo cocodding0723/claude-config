@@ -84,7 +84,8 @@ doc-kit 은 따로 검증한다. 모두 임시 폴더에서만 실행하고 실�
 tests/doc-kit/run.sh      # 설정 읽기(우선순위·파이썬 3.9)·check.py·고유값 0건·전역 규칙·새 허브 스크립트
 tests/doc-kit/sample.sh   # 샘플 문서 전달: 프로젝트 지정 시 채널, 미지정 시 기본값·경로만 보고, 제목 형식·직접 전달 금지
 tests/doc-kit/rename.sh   # 이름 치환 도구: dry-run 무변경, 백업 후 치환, 반복 실행, 되돌리기
-tests/doc-kit/backup.sh   # 반영 순서 2번 백업 블록: 링크가 실제 내용으로 복사돼 7번 삭제 뒤에도 복원되는지(임시 HOME)
+tests/doc-kit/backup.sh   # 반영 순서 2번 백업·7번 삭제 블록: 폴더 안 링크까지 실제 내용으로 백업되고 삭제 뒤 복원되는지(임시 HOME)
+tests/doc-kit/livediff.sh # 반영 순서 4번 라이브 우선 점검: 링크 상태여도 render 2개는 LIVE-NEWER, 허용 줄 목록대로 진행(임시 HOME)
 ```
 
 `sample.sh` 는 LLM 을 돌리지 않는다. 보고 메시지 문구와 설정 읽기까지만 대조하며, 메인에 업로드를 넘기는 동작은 문구 확인에 그친다. `tests/install/run.sh` 는 `doc-kit` 스킬·역할 파일 링크 설치와 `--check` 의 끊긴 링크 검출도 확인한다.
@@ -145,9 +146,34 @@ ONLY="D1 D13" tests/mutate.sh   # 일부만. M=설치기, D=doc-kit
 | `check.py` 고유명사 검사 | 옛 `structure-change-doc` 의 `check.py`: 독자와 무관하게 항상 검사, 티켓 접두는 코드에 고정 | 설정 `audience` 가 `기획자` 일 때만 검사 | 개발자 독자는 클래스·함수 이름을 쓰는 것이 맞다. 티켓 키 검사도 설정에 `ticket_pattern` 이 있고 프로젝트가 잡혔을 때만 돈다. 프로젝트를 지정하지 않으면 두 검사 모두 생략되어 기본값으로 통과한다. |
 | `live-diff.tsv` 의 `restart_hub` 규칙 | 라이브의 고정 경로를 `HUB_ROOT` 형태로 바꿔 비교 | 규칙 제거 | 저장소의 `restart_hub.sh` 에 `ROLE_FILE`·`COMMON_FILE` 변수가 더해져 경로 치환만으로는 라이브와 같아지지 않는다. 그래서 `--diff-live` 가 이 파일을 `LIVE-NEWER` 로 알리고, 설치는 `--allow-live-diff` 없이 중단한다. 라이브가 앞선 것이 아니라 저장소가 앞선 차이다. |
 
-`--allow-live-diff` 가 필요한 경우는 **라이브가 아직 저장소 링크가 아닐 때**(첫 설치와 함께 반영할 때)다. 라이브가 이미 저장소를 가리키는 링크이고 `main` 을 받았다면 내용이 같아 `--diff-live` 에 아무것도 나오지 않고 플래그도 필요 없다. 플래그를 쓰기 전에 아래를 확인한다.
+`--allow-live-diff` 가 필요한 경우는 둘이다. 플래그를 쓰기 전에 아래 «허용 줄 목록»과 확인 항목을 본다.
 
-- `--diff-live` 가 알리는 줄은 `LIVE-NEWER .config/lrm-hubs/restart_hub.sh` 와 이름 치환 대상 13파일(`migrate/rename-targets.tsv` 의 `repo` 줄) 중 라이브에 대응 파일이 있는 것뿐이어야 한다. 그 밖의 줄은 라이브가 앞선 변경이므로 먼저 저장소로 옮긴다.
+1. **라이브가 아직 저장소 링크가 아닌 항목이 있을 때**(첫 설치와 함께 반영할 때). 링크인 항목은 저장소와 같은 파일이므로 `--diff-live` 가 건너뛴다.
+2. **링크 상태와 무관하게 render 항목 2개가 있을 때.** 이름 치환 대상 13파일 중 11개는 링크 항목이지만, `hubs/roles/role-docs.txt.tmpl` 과 `skills/orca-hub-create/references/common-rules.txt.tmpl` 2개는 링크가 아니라 설치기가 값 파일로 자리표시를 채워 **만드는 파일**이다(`links.tsv` 의 `render`). 이 둘의 라이브 파일은 첫 설치 전까지 옛 스킬 이름이 든 내용이라 저장소 렌더 결과와 다르다. 나머지가 전부 링크여도 `--diff-live` 가 아래 2줄을 내고, 플래그 없는 `--dry-run`·설치는 «라이브가 저장소보다 앞선 항목 2건» 으로 변경 없이 중단된다. 라이브 파일이 없거나 이미 렌더 결과와 같으면(4번 설치를 마친 뒤) 나오지 않는다.
+
+   ```
+   LIVE-NEWER .config/lrm-hubs/roles/role-docs.txt
+   LIVE-NEWER .claude/skills/orca-hub-create/references/common-rules.txt
+   ```
+
+**허용 줄 목록.** `--diff-live` 가 낼 수 있는 줄 중 플래그로 진행해도 되는 것은 아래뿐이다.
+
+| 줄 | 나오는 경우 |
+|---|---|
+| render 2줄(위) | 라이브 파일이 옛 내용인 동안. 링크 상태와 무관 |
+| `LIVE-NEWER .config/lrm-hubs/restart_hub.sh` | 라이브가 저장소 링크가 아닐 때 |
+| 링크 항목 11개의 줄: `.claude/CLAUDE.md`, `.claude/meat-proxy/WORKFLOW.md`, `.claude/skills/{catch-up,create-pr,pr-review-game,pretty-code,work-brief}/SKILL.md`, `.claude/skills/orca-hub-create/references/role-prompt.md`, `.config/lrm-hubs/roles/role-{arch,config,server}.txt` | 그 파일이 링크가 아닌 사본으로 남아 있을 때만 |
+
+| 상황 | `--diff-live` 출력 | 진행 |
+|---|---|---|
+| 링크 항목이 모두 링크, render 2개는 옛 내용 | render 2줄만 | 허용 줄 목록과 같으므로 확인 항목을 마치고 `--dry-run --allow-live-diff` → `--allow-live-diff` 설치 |
+| 링크가 아닌 사본이 남아 있음 | render 2줄 + `restart_hub.sh` + 그 사본 줄 | 모두 허용 줄 목록 안일 때만 같은 방식 |
+| render 2개가 없거나 이미 렌더 결과와 같고 나머지가 링크 | 줄 없음(`라이브가 앞선 항목 없음`) | 플래그 없이 진행 |
+| 허용 줄 목록 밖의 줄 | 목록 밖 줄이 하나라도 있음 | 플래그를 쓰지 않고 라이브 변경을 먼저 저장소로 옮김 |
+
+`tests/doc-kit/livediff.sh` 가 위 상황을 임시 HOME 에서 그대로 재현한다.
+
+- `--diff-live` 가 알리는 줄은 위 «허용 줄 목록»(render 2줄, `restart_hub.sh`, 링크가 아닌 치환 대상 사본)뿐이어야 한다. 그 밖의 줄은 라이브가 앞선 변경이므로 먼저 저장소로 옮긴다.
 - 치환 대상은 차이가 이름 치환뿐인지 본다. 예: `perl migrate/rename_apply.pl migrate/rename-rules.tsv < ~/.claude/skills/create-pr/SKILL.md | diff - skills/create-pr/SKILL.md` 출력이 없어야 한다. `claude/CLAUDE.md` 는 `live-diff.tsv` 의 경로 치환(절대 홈 경로 → `~/`)도 겹치므로 둘 다 적용해 비교한다. render 로 만든 역할·스킬 파일은 값이 채워진 상태이므로 diff 가 치환한 줄뿐인지 눈으로 본다.
 - 라이브 `restart_hub.sh` 는 이전 저장소 사본(`git show 6313f37:hubs/scripts/restart_hub.sh`)에 고정 경로만 다른 것인지 눈으로 확인한다.
 
@@ -155,8 +181,8 @@ ONLY="D1 D13" tests/mutate.sh   # 일부만. M=설치기, D=doc-kit
 
 1. **사전 점검(읽기만).** `git status --short` 가 비어 있고 아래가 모두 통과해야 한다.
    ```sh
-   tests/install/run.sh && tests/doc-kit/run.sh && tests/doc-kit/sample.sh && tests/doc-kit/rename.sh && tests/doc-kit/backup.sh
-   ./install.sh --diff-live      # 위 «판단 3건» 아래 확인 항목대로 해석. 링크 상태면 출력 없음
+   tests/install/run.sh && tests/doc-kit/run.sh && tests/doc-kit/sample.sh && tests/doc-kit/rename.sh && tests/doc-kit/backup.sh && tests/doc-kit/livediff.sh
+   ./install.sh --diff-live      # «허용 줄 목록»으로 해석. 링크 상태여도 render 2줄은 나올 수 있음
    ```
 2. **백업.** 되돌릴 수 있게 옛 스킬 5개와 프로젝트 메모리를 한 곳에 복사한다. 옛 스킬 4개는 저장소를 가리키는 링크이므로 `-L` 로 링크가 가리키는 **실제 내용**을 복사한다. 링크째 복사하면 7번에서 저장소 폴더를 지울 때 백업이 끊긴 링크가 되어 되돌릴 수 없다(`tests/doc-kit/backup.sh` 가 이 블록을 그대로 실행해 확인한다).
    ```sh
@@ -175,12 +201,12 @@ ONLY="D1 D13" tests/mutate.sh   # 일부만. M=설치기, D=doc-kit
    ```
 4. **설치 재실행.** `doc-kit` 스킬·`role-doc-kit.txt`·`handoff-template.md`·`create_doc_hub.sh` 링크가 생기고, `restart_hub.sh`·이름 치환된 역할 파일·스킬 사본이 저장소 내용으로 바뀐다. `--allow-live-diff` 는 라이브 우선 중단 보호를 끄므로 **먼저 플래그 없이** 실행하고, 아래 조건일 때만 붙인다.
    ```sh
-   ./install.sh --diff-live    # 링크 상태 확인. 출력이 없으면 라이브가 저장소와 같다(이미 링크). 플래그 없이 진행
-   ./install.sh --dry-run      # 플래그 없이 바뀔 항목 확인. 중단 없이 끝나면 아래 설치도 플래그 없이
+   ./install.sh --diff-live    # 출력이 없으면 라이브가 저장소와 같다. 줄이 있으면 «허용 줄 목록»과 비교
+   ./install.sh --dry-run      # 플래그 없이 바뀔 항목 확인. 중단 없이 끝나면 아래 설치도 플래그 없이(render 2줄이 있으면 여기서 중단됨)
    ./install.sh                # 출력의 '백업:' 경로를 기록
    ./install.sh --check        # 점검 통과: 문제 없음
    ```
-   `--diff-live` 가 `restart_hub.sh` 와 치환 대상 중 라이브가 아직 링크가 아닌 사본의 줄**만** 내고, 위 확인 항목 3개를 마쳤을 때에만 `--dry-run` 과 설치를 `--allow-live-diff` 를 붙여 다시 실행한다. 그 밖의 줄이 있으면 플래그를 쓰지 않고 라이브 변경을 먼저 저장소로 옮긴다.
+   `--diff-live` 가 «허용 줄 목록»의 줄**만** 내고(render 2줄 포함, 링크 상태여도 첫 설치 전에는 나온다), 위 확인 항목 3개를 마쳤을 때에만 `--dry-run` 과 설치를 `--allow-live-diff` 를 붙여 다시 실행한다. 목록 밖의 줄이 있으면 플래그를 쓰지 않고 라이브 변경을 먼저 저장소로 옮긴다.
 5. **프로젝트 메모리 이름 치환.** 저장소 13파일은 4번 설치로 이미 라이브에 반영됐다. 남은 것은 저장소 밖의 메모리 12파일이다.
    ```sh
    migrate/rename_skills.sh --dry-run    # 바뀔 줄을 파일:줄로만 출력. REVIEW·MISSING 이 0 이어야 함

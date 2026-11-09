@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 변이 검증: 저장소 사본에 결함을 하나씩 심고 검증 스크립트가 실패하는지 확인한다.
-# 설치기 변이(M)는 tests/install/run.sh, doc-kit 변이(D)는 tests/doc-kit/{run,sample,rename,backup}.sh 가 맡음.
+# 설치기 변이(M)는 tests/install/run.sh, doc-kit 변이(D)는 tests/doc-kit/{run,sample,rename,backup,livediff}.sh 가 맡음.
 # ONLY="M3 M6" 처럼 일부만 실행 가능. 검출 못 한 변이가 있으면 종료 코드 1. 원본 작업 트리는 바꾸지 않고 임시 사본에서만 실행함.
 set -uo pipefail
 
@@ -38,7 +38,7 @@ install_suite() { "$WORK/repo/tests/install/run.sh"; }
 # doc-kit 검증 3종. 하나라도 실패하면 실패
 dk_suite() {
   local rc=0 s
-  for s in run.sh sample.sh rename.sh backup.sh; do "$WORK/repo/tests/doc-kit/$s" || rc=1; done
+  for s in run.sh sample.sh rename.sh backup.sh livediff.sh; do "$WORK/repo/tests/doc-kit/$s" || rc=1; done
   return $rc
 }
 # ONLY 에 해당 접두(M·D)가 있을 때만 그 묶음의 기준 실행을 함
@@ -105,6 +105,8 @@ run_dk D24 "create-pr 선례 경로를 config.md 로" skills/create-pr/SKILL.md 
 run_dk D25 "치환 규칙에서 띄어 쓴 로→으로 제거" migrate/rename-rules.tsv 's/^\(\?<=doc-kit\) 로[^\n]*\n//m'
 run_dk D26 "치환 규칙이 .md 없는 house-style 을 처리하지 않음" migrate/rename-rules.tsv 's/house-style\(\?:\\\.md\)\?\(\?!\[\\w-\]\)/house-style\\.md/'
 run_dk D27 "role-docs 가 없는 house-style 이름을 가리킴" hubs/roles/role-docs.txt.tmpl 's/doc-kit style\.md/doc-kit house-style/'
+run_dk D28 "라이브 우선 점검이 render 항목을 비교하지 않음" install.sh 's/(subst_file "\$REPO\/\$src" "\$TMP\/ld" values\n\s+)if \[ -f "\$t" \] && ! cmp -s "\$TMP\/ld" "\$t"; then/$1if false; then/'
+run_dk D29 "README 허용 줄 목록에서 render 줄 1개 누락" README.md 's/   LIVE-NEWER \.config\/lrm-hubs\/roles\/role-docs\.txt\n//'
 
 echo
 if [ $((RAN_M + RAN_D)) = 0 ]; then echo "실행한 변이가 없음: ONLY 가 어느 변이 번호와도 맞지 않음"; exit 1; fi
