@@ -23,6 +23,7 @@ v4 가 기본이다. 아래 「v3 고해실」 절은 `assets/template-v3.html` 
 4. 검사(필수, 실제 좌표 입력): 폴더를 `python3 -m http.server 8765 --bind 127.0.0.1` 로 서빙하고
    `node scripts/cdp-v4.mjs <url> touch 390 844 <shot-390.png> 2` 와 `node scripts/cdp-v4.mjs <url> mouse 1440 900 <shot-1440.png> 4`.
    마지막 인자는 일부러 틀릴 문항 번호(쉼표). FAIL 0·오류 0, 샷을 직접 열어 확인한다.
+   도식(`.dia svg`)에 `min-width` 금지. 폭 100%·height auto 로 줄이고 390px 에서 가로 스크롤 0 으로 확인한다.
 
 ## v4 문항 규칙
 - 질문은 "왜 이런 구조로 만들었을까?" 형태, 쉬운 난이도, 자연스러운 문장. 보기는 PR 실제 의도에서만.
