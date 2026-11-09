@@ -65,7 +65,8 @@ for _ in $(seq 1 50); do [ -s "$SB/port" ] && break; sleep 0.1; done
 API="http://127.0.0.1:$(cat "$SB/port")"
 
 pollh() { # 허브 폴더, 출력 파일 접두사
-  LRM_HUB_DIR="$1" SLACK_API_BASE="$API" PATH="$BIN:$PATH" bash "$POLL" --once > "$SB/$2.out" 2> "$SB/$2.err"
+  # LRM_ACK=off: 수신 확인 답장(chat.postMessage)은 ack.sh 에서 따로 시험함
+  LRM_ACK=off LRM_HUB_DIR="$1" SLACK_API_BASE="$API" PATH="$BIN:$PATH" bash "$POLL" --once > "$SB/$2.out" 2> "$SB/$2.err"
 }
 poll() { pollh "$H" "$1"; }
 curl_calls() { wc -l < "$LOG/curl.args" | tr -d ' '; }
