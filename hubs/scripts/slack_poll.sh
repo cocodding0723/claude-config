@@ -168,6 +168,8 @@ def main():
     ch = api("conversations.open", users=ME)["channel"]["id"]
     cutoff = time.time() - DAYS * 86400
     sent = {r["ts"]: r for r in load_jsonl(SENT) if r.get("ts") and r.get("at", 0) >= cutoff}
+    # 파일 업로드는 ts 를 못 받아 file_id 로만 기록됨. 메시지의 files[].id 로 찾아 답글·반응 수집
+    sent_files = {r["file_id"]: r for r in load_jsonl(SENT) if r.get("file_id") and r.get("at", 0) >= cutoff}
     new = []
     now = int(time.time())
 
@@ -190,9 +192,9 @@ def main():
                 item.update({"command": cmd, "args": args})
             add(f"msg:{ts}", item)
         # 반응·답글은 slack_notify.sh 가 기록한 메시지만. 대기 목록 같은 다른 봇 메시지의 반응이 결정 답으로 오판되지 않게 함
-        if mine or ts not in sent:
+        rec = sent.get(ts) or next((sent_files[f["id"]] for f in m.get("files", []) if f.get("id") in sent_files), None)
+        if mine and not m.get("files") or rec is None:
             continue
-        rec = sent[ts]
         meta = {"parent_ts": ts, "title": rec.get("title", ""), "tag": rec.get("tag", "")}
         reactions = m.get("reactions", [])
         # 응답의 users 는 잘릴 수 있어 본인 반응이 안 보이고 개수가 더 많으면 그 메시지만 reactions.get 으로 보강
