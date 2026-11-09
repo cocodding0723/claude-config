@@ -103,6 +103,15 @@ got=$(echo "$dry" | grep -cE '^\[dry-run\] (LINK|BACKUP\+LINK|MERGE|COPY|RENDER|
 "$INSTALL" >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && ok "설치 종료 코드 0" || ko "설치" "rc=$rc"
 check "점검 모드 통과" "$INSTALL" --check
+# doc-kit: 스킬·역할 파일 링크가 설치되고, 링크 너머로 스크립트가 실행되며, --check 가 끊긴 링크를 잡음
+DK="$SB/.claude/skills/doc-kit"; DKROLE="$SB/.config/lrm-hubs/roles/role-doc-kit.txt"
+[ "$(readlink "$DK")" = "$REPO/skills/doc-kit" ] && [ "$(readlink "$DKROLE")" = "$REPO/hubs/roles/role-doc-kit.txt" ] && ok "doc-kit 스킬·역할 파일 링크 설치" || ko "doc-kit 링크" "원본을 가리키지 않음"
+DOC_KIT_CONFIG="$SB/없는설정.toml" python3 -I "$DK/scripts/doc_config.py" show >/dev/null 2>&1 && ok "doc-kit: 링크 경로로 doc_config.py 실행" || ko "doc-kit 링크 실행" ""
+rm "$DK"
+out=$("$INSTALL" --check 2>&1); rc=$?
+[ "$rc" = 1 ] && echo "$out" | grep -q 'doc-kit' && ok "--check: doc-kit 링크가 없으면 지적" || ko "--check doc-kit" "rc=$rc"
+ln -s "$REPO/skills/doc-kit" "$DK"
+check "doc-kit 링크 되돌린 뒤 점검 통과" "$INSTALL" --check
 linkbad=0; while IFS=$'\t' read -r src dst mode; do
   [ "$mode" = link ] || continue
   [ -L "$SB/$dst" ] && [ -e "$SB/$dst" ] && [ "$(readlink "$SB/$dst")" = "$REPO/$src" ] || { linkbad=1; ko "링크" "$dst"; }

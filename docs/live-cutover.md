@@ -135,3 +135,10 @@ diff -r -x state ~/.claude/hooks "$(cat ~/.claude-config-backup/LAST-PRE-LIVE)"/
 - 폴링(`launchctl bootout`)을 멈추는 동안 슬랙 명령 수신이 끊긴다. 재적재 뒤 `slack-poll.log` 에 새 줄이 생겨야 정상이다.
 - 이후 `settings.json` 을 직접 고치면 다음 `install.sh` 때 저장소 기본값 기준으로 덮어쓴다(백업은 남는다). 설정을 바꿀 땐 `claude/settings.base.json` 을 같이 고친다.
 - render 5개 파일(역할 3개, 스킬 파일 2개)과 `settings.json` 은 링크가 아니라 생성된 파일이다. `.tmpl`·값 파일·`settings.base.json` 을 고쳐도 `./install.sh` 를 다시 실행하기 전에는 라이브에 반영되지 않는다. 반영 여부는 `./install.sh --check` 의 `DRIFT` 로 본다.
+
+## 7. 이어서: doc-kit 반영
+
+구조안 전환이 끝난 뒤 문서 규칙 통합(`skills/doc-kit`·새 허브 역할 파일·옛 스킬 이름 치환)을 라이브에 반영하는 순서는 [README «doc-kit 라이브 반영 순서»](../README.md) 에 있다. 이 계획서의 백업·확인·되돌리기 방식을 그대로 쓰고, 달라진 점은 두 가지다.
+
+- `restart_hub.sh` 가 저장소에서 앞서 있어 라이브가 링크가 아니면 설치에 `--allow-live-diff` 가 필요하다(조건은 README 참조).
+- 프로젝트 메모리 12파일은 저장소 밖이라 `migrate/rename_skills.sh` 로 따로 치환한다. 이 도구도 백업과 `--revert` 를 지원한다.
