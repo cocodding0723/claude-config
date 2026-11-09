@@ -19,7 +19,7 @@ mkdir -p "$FIX"; : > "$CL"
 FAKE_TOKEN="fake-token-0123456789-abcdefghij"
 ME=Uuser1; BOT=Ubot1
 N=$(date +%s)
-DEFAULT_TEXT="확인했어요, 분석 중이에요 👀"
+DEFAULT_TEXT="📥 메시지 집계 중이에요"
 
 mkhub() { # 허브 폴더: 설정 파일과 첨부 전환 시각만 있는 새 허브
   mkdir -p "$1"
@@ -66,7 +66,7 @@ printf '{"ts":"%s.000300","at":%s,"title":"결정 1","tag":"t"}\n' "$N" "$N" > "
 c=$(acalls); pollh "$H" a1; rc=$?
 [ "$rc" = 0 ] && [ "$(inbox_n "$H")" = 2 ] && ok "수집 정상(메모·스레드 답글 2건, 봇 확인 답장 에코는 수집 안 됨)" || ko "수집" "rc=$rc inbox $(inbox_n "$H")"
 [ "$(( $(acalls) - c ))" = 2 ] && [ "$(ack_threads "$c")" = "$N.000100,$N.000300," ] && ok "ⓐ 새 메시지 2건에 스레드 답장 각 1회(thread_ts: 최상위는 그 ts, 답글은 부모 ts)" || ko "ⓐ 호출" "$(( $(acalls) - c )) $(ack_threads "$c")"
-[ "$(acks | jq -rs '[.[].channel] | unique | join(",")')" = Dfake ] && [ "$(acks | jq -rs '[.[].text] | unique | join(",")')" = "$DEFAULT_TEXT" ] && ok "ⓐ channel=DM 채널, 문구=확인했어요, 분석 중이에요 👀" || ko "ⓐ 채널·문구" "$(acks | head -2)"
+[ "$(acks | jq -rs '[.[].channel] | unique | join(",")')" = Dfake ] && [ "$(acks | jq -rs '[.[].text] | unique | join(",")')" = "$DEFAULT_TEXT" ] && ok "ⓐ channel=DM 채널, 문구=📥 메시지 집계 중이에요" || ko "ⓐ 채널·문구" "$(acks | head -2)"
 [ "$(errlines a1)" = 0 ] && [ "$(st "$H" '.acked | keys | length')" = 2 ] && [ "$(st "$H" '.ack_sent | length')" = 2 ] && ok "ⓐ 정상 시 stderr 없음, 상태에 acked 2건·ack_sent 2건" || ko "ⓐ 상태" "$(cat "$SB/a1.err") $(st "$H" '.acked')"
 [ "$(jq -c 'select(.ts=="'"$N.000100"'") | keys' "$H/slack-inbox.jsonl")" = '["channel","received_at","text","ts","type"]' ] && ok "inbox 레코드 스키마 불변(기존 필드 그대로)" || ko "스키마" "$(head -1 "$H/slack-inbox.jsonl")"
 [ "$(wc -l < "$H/slack-sent.jsonl" | tr -d ' ')" = 1 ] && ok "확인 답장은 slack-sent.jsonl 에 기록하지 않음(반응·답글 수집 대상이 되지 않게)" || ko "sent 기록" ""

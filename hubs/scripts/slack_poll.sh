@@ -22,7 +22,7 @@ usage() {
            acked = {스레드 루트 ts: 확인 답장 시각}, ack_sent = 최근 확인 답장 시각 목록)
 읽음 반응: 새 사용자 메시지(note·command·thread_reply)에 👀, 메인이 읽음 처리(.main-read-lines 의 줄 수가 그 줄을 지남)하면 ✅ 로 교체.
            reactions:write scope 가 없으면 조용히 건너뛰고 10분마다 재시도
-수신 확인 답장: 새 사용자 메시지의 스레드에 "확인했어요, 분석 중이에요 👀" 1회(chat:write). 같은 스레드 30초 1회, 60초 3회, 회차 3회. 결정·승인 같은 명령 답글에는 달지 않음.
+수신 확인 답장: 새 사용자 메시지의 스레드에 "📥 메시지 집계 중이에요" 1회(chat:write). 같은 스레드 30초 1회, 60초 3회, 회차 3회. 결정·승인 같은 명령 답글에는 달지 않음.
            slack_cmd.sh 즉답 명령·30분 넘게 묵은 항목은 제외. 권한 부족이면 조용히 건너뛰고 10분마다 재시도(상태: ack_disabled_reason).
            전송 전에 상태(acked·ack_sent)부터 저장하므로 실패해도 다시 보내지 않음. 이미 보낸 답장은 지우거나 고치지 않음
 환경 변수: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs), SLACK_API_BASE API 주소(테스트용),
@@ -133,7 +133,7 @@ RX_OK = {"add": "already_reacted", "remove": "no_reaction"}
 RX_DISABLE = frozenset({"missing_scope", "not_allowed_token_type", "not_authed", "invalid_auth", "account_inactive", "token_revoked", "no_permission", "access_denied", "org_login_required", "ekm_access_denied", "team_access_not_granted"})
 RX_SKIP = frozenset({"message_not_found", "channel_not_found", "bad_timestamp", "not_reactable", "too_many_emoji", "too_many_reactions", "is_archived", "thread_locked", "not_in_channel", "user_is_restricted"})
 # 수신 확인 자동 답장 설정. 새 사용자 메시지의 스레드에 짧은 답장 1회. 켜고 끄기 LRM_ACK=off, 문구 LRM_ACK_TEXT
-ACK_DEFAULT_TEXT = "확인했어요, 분석 중이에요 👀"
+ACK_DEFAULT_TEXT = "📥 메시지 집계 중이에요"
 ACK_TEXT_MAX = 200                           # 문구 상한(글자 수)
 ACK_OFF = frozenset({"off", "0", "false", "no"})
 ACK_THREAD_GAP = 30                          # 같은 스레드 재전송 간격(초)
