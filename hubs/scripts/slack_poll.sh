@@ -17,9 +17,13 @@ usage() {
            내려받기에 실패한 첨부는 "files_failed":[{"id":파일 id,"why":사유 코드}] 추가(없으면 키 없음)
 첨부 저장: ~/.config/lrm-hubs/slack-files/<file_id>_<정리한 이름> (폴더 700, 파일 600, 25MB 상한, 봇 파일 제외)
 상태 파일: ~/.config/lrm-hubs/slack-poll-state.json (중복 방지, 스레드별 마지막 답글 시각,
-           file_share_since = 첨부 메시지 수집을 시작한 시각. 그 이전 첨부 메시지는 기록·내려받기 없이 건너뜀)
+           file_share_since = 첨부 메시지 수집을 시작한 시각. 그 이전 첨부 메시지는 기록·내려받기 없이 건너뜀,
+           reacted = 읽음 반응 진행 표 {메시지 ts: new|eyes|done|skip}, reactions_disabled_reason = 반응 권한 부족 사유)
+읽음 반응: 새 사용자 메시지(note·command·thread_reply)에 👀, 메인이 읽음 처리(.main-read-lines 의 줄 수가 그 줄을 지남)하면 ✅ 로 교체.
+           reactions:write scope 가 없으면 조용히 건너뛰고 10분마다 재시도. 텍스트 답장은 보내지 않음
 환경 변수: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs), SLACK_API_BASE API 주소(테스트용),
-           LRM_RETRY_CAP 429 대기 상한 초(기본 20), LRM_DL_BUDGET 회차 첨부 내려받기 시간 상한 초(기본 60)
+           LRM_RETRY_CAP 429 대기 상한 초(기본 20), LRM_DL_BUDGET 회차 첨부 내려받기 시간 상한 초(기본 60),
+           LRM_REACT_MAX 회차당 반응 호출 상한(기본 10, 0~50. 정수가 아니면 10. 1은 2로 올림: ✅ 전환은 호출 2개 한 쌍)
 종료 코드: 0 성공, 1 API·네트워크 실패, 2 설정·인자 오류
 EOF
 }
@@ -100,9 +104,31 @@ SHARE_GRACE = 300                          # 수집 시작 시각을 현재보�
 ID_RE = re.compile(r"[A-Za-z0-9]{1,32}")
 UNSAFE_CHARS = re.compile(r"[^0-9A-Za-z가-힣._-]")
 DL = {"ok": 0, "fail": {}, "spent": 0.0}  # 회차 집계: 성공 수, 사유별 실패 수, 사용 시간
+# 읽음 반응 설정. 진행 표 state["reacted"][ts] = new(👀 대기) → eyes(👀 달림) → done(✅) | skip(포기)
+RX_SEEN, RX_DONE = "eyes", "white_check_mark"
+RX_TYPES = ("note", "command", "thread_reply")  # 반응 대상 레코드. type=reaction·봇 줄은 제외
+def env_int(name, default, lo, hi):
+    """정수 환경 변수. 정수가 아니면 default, 범위 밖이면 경계값. 잘못된 설정 하나가 수집 전체를 죽이지 않게 함"""
+    try:
+        v = int(os.environ.get(name, default))
+    except ValueError:
+        return default
+    return max(lo, min(v, hi))
+
+RX_MAX = env_int("LRM_REACT_MAX", 10, 0, 50)  # 회차당 반응 API 호출 상한
+RX_MAX = max(RX_MAX, 2) if RX_MAX else 0      # ✅ 전환이 제거+추가 한 쌍이라 1이면 영영 전환할 수 없음
+RX_RETRY = 600                  # 권한 부족 뒤 재시도 간격(초)
+RX_STALE = 1800                 # 이 시간보다 오래된 새 메시지에는 👀 를 달지 않음(권한 복구 직후 묵은 메시지 폭주 방지)
+RX_KEEP = 30 * 86400            # 진행 표 보관 기간(seen 과 같음)
+READ_MARK = ".main-read-lines"  # 메인이 읽은 inbox 줄 수. 메인만 갱신하고 여기서는 읽기만 함
+# 같은 호출을 다시 해도 되는 오류는 성공으로 봄
+RX_OK = {"add": "already_reacted", "remove": "no_reaction"}
+# 권한·인증 문제: 회차를 멈추고 RX_RETRY 뒤 재시도 / 메시지 단위 문제: 그 메시지만 포기. 그 밖(429 소진·5xx·시간 예산)은 다음 회차에 재시도
+RX_DISABLE = frozenset({"missing_scope", "not_allowed_token_type", "not_authed", "invalid_auth", "account_inactive", "token_revoked", "no_permission", "access_denied", "org_login_required", "ekm_access_denied", "team_access_not_granted"})
+RX_SKIP = frozenset({"message_not_found", "channel_not_found", "bad_timestamp", "not_reactable", "too_many_emoji", "too_many_reactions", "is_archived", "thread_locked", "not_in_channel", "user_is_restricted"})
 
 class ApiError(Exception):
-    pass
+    code = None  # Slack 응답의 error 코드. HTTP·시간 예산 오류는 None
 
 def api(method, **params):
     q = urllib.parse.urlencode(params)
@@ -127,7 +153,9 @@ def api(method, **params):
                 raise ApiError(f"{method}: HTTP 429, 대기 {wait:g}초가 남은 예산을 넘김")
             time.sleep(wait)
     if not d.get("ok"):
-        raise ApiError(f"{method}: {d.get('error')}")
+        err = ApiError(f"{method}: {d.get('error')}")
+        err.code = d.get("error")
+        raise err
     return d
 
 def safe_name(name):
@@ -293,6 +321,91 @@ def load_state():
         os.replace(STATE, f"{STATE}.corrupt-{int(time.time())}")
         return {"seen": seen_from_inbox()}
 
+def read_ts():
+    """메인이 읽은 inbox 줄(READ_MARK 의 줄 수)까지의 사용자 메시지 ts 집합. 표식이 없거나 깨졌으면 빈 집합"""
+    try:
+        with open(os.path.join(DIR, READ_MARK), encoding="utf-8") as f:
+            n = int(f.read().strip())
+        out = set()
+        # n 이 inbox 줄 수보다 크면 전부 읽음으로 봄. inbox 를 회전·자르면 표식(.main-read-lines)도 0 으로 함께 리셋할 것
+        with open(INBOX, encoding="utf-8") as f:
+            for i, line in enumerate(f):
+                if i >= n:
+                    break
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(d, dict) and d.get("type") in RX_TYPES and d.get("ts"):
+                    out.add(d["ts"])
+        return out
+    except (OSError, ValueError):
+        return set()
+
+def rx_map(state):
+    r = state.get("reacted")
+    if not isinstance(r, dict):
+        r = state["reacted"] = {}
+    return r
+
+def react_phase(state, ch, now):
+    """👀 달기(new → eyes), 읽힌 줄은 👀 제거 + ✅ 추가(→ done). 호출은 회차당 RX_MAX 개까지.
+    다른 반응은 건드리지 않음(제거는 이 봇의 👀 만). 예외는 호출부가 삼킴"""
+    rx = rx_map(state)
+    for k in [k for k in rx if not (isinstance(k, str) and k.replace(".", "", 1).isdigit()) or float(k) < now - RX_KEEP]:
+        del rx[k]
+    # 권한 정지·호출 상한과 무관하게 묵은 new 를 정리. 정지 중 쌓인 과거 메시지에 복구 뒤 소급 반응이 달리는 것을 막음
+    for k, s in rx.items():
+        if s == "new" and float(k) < now - RX_STALE:
+            rx[k] = "skip"
+    if not any(s in ("new", "eyes") for s in rx.values()):
+        return
+    at = state.get("reactions_disabled_at")
+    if state.get("reactions_disabled_reason") and isinstance(at, (int, float)) and now - at < RX_RETRY:
+        return
+    read = read_ts()
+    calls = 0
+
+    def call(op, ts, name):
+        """'ok' 성공 / 'skip' 이 메시지 포기 / 'stop' 이번 회차 중단"""
+        nonlocal calls
+        if calls >= RX_MAX:
+            return "stop"
+        calls += 1
+        try:
+            api(f"reactions.{op}", channel=ch, timestamp=ts, name=name)
+        except ApiError as e:
+            if e.code == RX_OK[op]:
+                return "ok"
+            if e.code in RX_DISABLE:
+                if state.get("reactions_disabled_reason") != e.code:  # 같은 사유는 다시 알리지 않음
+                    print(f"읽음 반응 사용 불가({e.code}) — Slack 앱 scope(reactions:write) 확인, {RX_RETRY // 60}분마다 재시도", file=sys.stderr)
+                state["reactions_disabled_reason"], state["reactions_disabled_at"] = e.code, int(time.time())
+            return "skip" if e.code in RX_SKIP else "stop"
+        state.pop("reactions_disabled_reason", None)
+        state.pop("reactions_disabled_at", None)
+        return "ok"
+
+    for ts in sorted(k for k, s in rx.items() if s == "new" and k not in read):
+        r = call("add", ts, RX_SEEN)
+        if r == "stop":
+            return
+        rx[ts] = "eyes" if r == "ok" else "skip"
+    for ts in sorted(k for k, s in rx.items() if s in ("new", "eyes") and k in read):
+        if rx[ts] == "eyes":
+            if calls + 2 > RX_MAX:  # 제거만 하고 추가가 상한에 걸리면 👀·✅ 둘 다 없는 회차가 생김. 한 쌍이 들어갈 때만 시작
+                return
+            r = call("remove", ts, RX_SEEN)
+            if r == "stop":
+                return
+            if r == "skip":
+                rx[ts] = "skip"
+                continue
+        r = call("add", ts, RX_DONE)
+        if r == "stop":
+            return
+        rx[ts] = "done" if r == "ok" else "skip"
+
 def fetch_history(ch, oldest):
     msgs, cursor = [], None
     for _ in range(MAX_PAGES):
@@ -348,6 +461,8 @@ def main():
         if failed:
             item["files_failed"] = failed
         new.append(item)
+        if item["type"] in RX_TYPES:
+            rx_map(state).setdefault(item["ts"], "new")
 
     # 반응·답글 수는 목록 응답에 들어 있어 메시지별 조회가 필요 없음. 반응은 오래된 메시지에도 달리므로 매번 기간 전체를 읽음
     hist = fetch_history(ch, f"{cutoff:.6f}")
@@ -395,6 +510,11 @@ def main():
     with open(INBOX, "a", encoding="utf-8") as f:
         for it in new:
             f.write(json.dumps(it, ensure_ascii=False) + "\n")
+    save_state(state)  # 반응 호출은 DEADLINE 까지 걸릴 수 있어, 그 사이 죽어도 inbox 중복 기록이 안 생기게 먼저 저장
+    try:
+        react_phase(state, ch, now)
+    except Exception:  # 반응 실패가 수집·상태 저장을 막지 않게 함
+        pass
     save_state(state)
     bad = sum(DL["fail"].values())
     if bad:  # 사유 코드만 출력. URL·파일명·토큰은 넣지 않음
