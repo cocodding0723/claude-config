@@ -53,16 +53,13 @@ extract 7 '옛 스킬 5개 삭제' "$DEL"
 # 삭제는 리터럴 경로만(변수·와일드카드·find -delete 금지)
 bad=$(grep -E '^[[:space:]]*rm ' "$DEL" | grep -E '[$*?{}]|-rf|-fr' || true)
 [ -z "$bad" ] && ! grep -q -- '-delete' "$DEL" && ok "7번 삭제 줄은 리터럴 경로뿐(변수·와일드카드·-rf·-delete 없음)" || ko "삭제 줄이 리터럴이 아님" "$bad"
-# links.tsv 가 안의 파일을 링크로 설치하는 옛 스킬 폴더는 모두 7번에 그 링크의 rm 줄이 있어야 함
-miss=0 seen=0
-while IFS=$'\t' read -r src dst mode; do
-  [ "$mode" = link ] || continue
-  case "$dst" in .claude/skills/*/*)
-    n=${dst#.claude/skills/}; n=${n%%/*}
-    case " $LINKED $FOLDER " in *" $n "*) seen=$((seen + 1)); grep -qxF "rm ~/$dst" "$DEL" || { miss=$((miss + 1)); echo "  rm 줄 없음: $dst"; } ;; esac ;;
-  esac
-done < <(grep -v '^#' "$REPO/links.tsv")
-[ "$seen" = 7 ] && [ "$miss" = 0 ] && ok "links.tsv 의 폴더 안 링크 7개(structure-change-doc)가 7번에 모두 rm 줄로 있음" || ko "폴더 안 링크 목록 불일치" "seen=$seen miss=$miss"
+# 저장소에서 옛 스킬 줄을 지운 뒤에도 라이브 삭제 절차는 남으므로, 폴더 안 링크 7개는 고정 목록(SCD_LINKS)으로 대조함
+miss=0
+for f in $SCD_LINKS; do grep -qxF "rm ~/.claude/skills/$FOLDER/$f" "$DEL" || { miss=$((miss + 1)); echo "  rm 줄 없음: $f"; }; done
+[ "$miss" = 0 ] && ok "폴더 안 링크 7개(structure-change-doc)가 7번에 모두 rm 줄로 있음" || ko "폴더 안 링크 목록 불일치" "miss=$miss"
+# links.tsv 에 옛 스킬 줄이 남아 있으면 설치기가 지운 저장소 폴더를 가리키는 링크를 만들므로 없어야 함
+left=$(grep -v '^#' "$REPO/links.tsv" | grep -cE "skills/($(echo "$LINKED $FOLDER" | tr ' ' '|'))(/|[[:space:]])" || true)
+[ "$left" = 0 ] && ok "links.tsv 에 옛 스킬 5개 줄이 없음" || ko "links.tsv 잔존" "${left}줄"
 # 링크 하나짜리 4개도 7번에 있어야 함
 miss=0; for n in $LINKED; do grep -qxF "rm ~/.claude/skills/$n" "$DEL" || miss=$((miss + 1)); done
 [ "$miss" = 0 ] && ok "7번에 폴더째 링크 4개의 rm 줄이 있음" || ko "폴더째 링크 rm 줄" "${miss}개 누락"

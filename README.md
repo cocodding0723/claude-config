@@ -26,7 +26,7 @@ claude-config/
 - `link` 는 대상을 저장소 원본으로 가리키는 링크로 만든다. 스킬은 폴더째가 아니라 스킬마다 링크해 `skills/synced` 같은 외부 항목이 섞이지 않는다.
 - `merge` 는 `settings.base.json`(내 설정)에 현재 파일의 Orca 훅·상태줄을 얹어 새 파일로 쓴다. 훅 배열은 순서를 유지해 이어붙인다.
 - `copy` 는 `__HOME__` 을 현재 HOME 으로 치환해 복사한다(launchd plist).
-- `render` 는 `*.tmpl` 의 `__KEY__` 자리표시를 로컬 값 파일로 채워 실제 파일로 복사한다. 실명·DM 채널 ID 가 든 파일 5개(역할 3개, 스킬 파일 2개)가 이 방식이다. 스킬 2개(`orca-hub-create`, `structure-change-doc`)는 폴더째가 아니라 파일마다 링크한다.
+- `render` 는 `*.tmpl` 의 `__KEY__` 자리표시를 로컬 값 파일로 채워 실제 파일로 복사한다. 실명·DM 채널 ID 가 든 파일 4개(역할 3개, 스킬 파일 1개)가 이 방식이다. 스킬 `orca-hub-create` 는 폴더째가 아니라 파일마다 링크한다.
 
 ## 설치·동기화
 
@@ -105,7 +105,7 @@ ONLY="D1 D13" tests/mutate.sh   # 일부만. M=설치기, D=doc-kit
 |---|---|---|
 | `chore/slack-bot-optimize` | `lrm-hubs/slack_poll.sh`, `lrm-hubs/slack_pending.sh`, `lrm-hubs/slack_cmd.sh` (3개 수정·사본) | 이 저장소의 위치는 `hubs/scripts/`. git 은 경로가 달라 충돌 대신 같은 파일의 중복으로 보인다. 병합 시 그쪽 변경분을 `hubs/scripts/` 로 옮기고 `lrm-hubs/` 사본은 지운다. |
 | 위와 동일 | `tests/run.sh`, `tests/lib.sh`, `tests/mutate.py`, `tests/test_*.sh`, `tests/stub_slack.py` | 이 브랜치의 테스트는 `tests/install/` 와 `tests/mutate.sh` 만 쓴다. 파일 이름이 겹치지 않는다. |
-| `chore/docs-hub-consolidation` | `docs/docs-hub-consolidation.html` 1개(설계 문서). 겹치는 경로 없음 | 이 문서가 설계한 `skills/doc-kit/`·새 허브 역할 파일·치환 도구는 `chore/doc-kit` 에서 구현했다. 통합 대상 스킬 5개(`explain-diff`·`tech-record`·`structure-change-doc`·`work-report`·`doc-coauthoring`)의 삭제는 이 브랜치에서 하지 않았다. 라이브 검증 뒤 별도 커밋으로 `links.tsv` 줄과 함께 지운다. |
+| `chore/docs-hub-consolidation` | `docs/docs-hub-consolidation.html` 1개(설계 문서). 겹치는 경로 없음 | 이 문서가 설계한 `skills/doc-kit/`·새 허브 역할 파일·치환 도구는 `chore/doc-kit` 에서 구현했다. 통합 대상 스킬 5개(`explain-diff`·`tech-record`·`structure-change-doc`·`work-report`·`doc-coauthoring`)의 삭제는 이 브랜치에서 하지 않았다. 라이브 검증 뒤 `chore/remove-old-doc-skills` 에서 별도 커밋으로 `links.tsv` 줄과 함께 지웠다. |
 | 위와 동일(예정) | `.gitignore`, `README.md`, `docs/out/` | `docs/out/` 은 허브 전용 브랜치에서만 추적한다. `.gitignore` 의 `HANDOFF.md`·`decisions.tsv` 줄은 같은 취지라 합치면 된다. |
 | `chore/jira-comment-rule` | `claude/CLAUDE.md`, `hubs/roles/role-{arch,config,docs.txt.tmpl,server}.txt`, `skills/orca-hub-create/references/common-rules.txt.tmpl` (6개 파일을 양쪽이 수정). 그 브랜치만 바꾼 파일: `claude/settings.base.json`, 역할 파일 7개, `skills/jira-issue/SKILL.md` | 이 브랜치는 Jira 절·역할 파일 끝줄을 건드리지 않았다. 아래 «Jira 브랜치와 줄 범위» 표 기준으로 수정 줄이 서로 떨어져 있어 줄 단위 충돌은 없을 것으로 보지만 병합 시험은 하지 않았다. 병합 때 `claude/CLAUDE.md` 와 역할 파일을 눈으로 한 번 확인한다. |
 
