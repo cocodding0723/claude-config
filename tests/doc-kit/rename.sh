@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# 옛 문서 스킬 이름 치환 도구(migrate/rename_skills.sh) 시험. 임시 사본·가짜 메모리 폴더에서만 실행하며 실제 파일은 바꾸지 않음.
+set -uo pipefail
+
+REPO=$(cd "$(dirname "$0")/../.." && pwd -P)
+PASS=0 FAIL=0
+ok() { PASS=$((PASS + 1)); printf 'PASS  %s\n' "$1"; }
+ko() { FAIL=$((FAIL + 1)); printf 'FAIL  %s — %s\n' "$1" "${2:-}"; }
+
+W=$(mktemp -d "${TMPDIR:-/tmp}/cc-dockit-rename.XXXXXX")
+trap 'rm -rf "${W:?}"' EXIT
+export HOME="$W/home"; mkdir -p "$HOME"
+
+# 도구를 임시 저장소 사본에 놓고(REPO 가 스크립트 위치 기준) doc-kit 참고 파일만 흉내 냄
+SB="$W/repo"; MEM="$W/mem"; BK="$W/backup"
+mkdir -p "$SB/migrate" "$SB/skills/doc-kit/references" "$SB/claude" "$MEM"
+cp "$REPO"/migrate/rename_skills.sh "$REPO"/migrate/rename_apply.pl "$REPO"/migrate/rename-rules.tsv "$SB/migrate/"
+for f in style config explain report; do : > "$SB/skills/doc-kit/references/$f.md"; done
+TOOL="$SB/migrate/rename_skills.sh"
+
+printf '규칙은 tech-record/references/house-style.md 를 따른다.\n무관한 줄\n`explain-diff`·`tech-record`·`create-pr`·`work-report` 를 쓴다.\n' > "$SB/claude/a.md"
+printf 'structure-change-doc 와 doc-coauthoring 사용\n' > "$MEM/m.md"
+printf '이미 doc-kit 만 있다\n' > "$MEM/clean.md"
+printf 'repo\tclaude/a.md\nmem\tm.md\nmem\tclean.md\n' > "$W/targets.tsv"
+run() { "$TOOL" "$@" --targets "$W/targets.tsv" --memory-dir "$MEM" --backup-root "$BK"; }
+sum() { shasum "$SB/claude/a.md" "$MEM/m.md" "$MEM/clean.md" | cut -d' ' -f1 | tr '\n' ' '; }
+
+# ---- dry-run ----------------------------------------------------------------
+before=$(sum)
+out=$(run --dry-run 2>&1); rc=$?
+[ "$rc" = 0 ] && [ "$(sum)" = "$before" ] && [ ! -e "$BK" ] && ok "dry-run: 파일·백업 무변경, 성공" || ko "dry-run 무변경" "rc=$rc"
+echo "$out" | grep -qx 'CHANGE claude/a.md:1' && echo "$out" | grep -qx 'CHANGE claude/a.md:3' && ! echo "$out" | grep -q 'a.md:2' && echo "$out" | grep -qx 'CHANGE mem/m.md:1' && ok "dry-run: 바뀔 줄만 파일:줄로 출력(mem 표기 포함)" || ko "dry-run 줄 표시" "$(echo "$out" | tr '\n' '/')"
+! echo "$out" | grep -q 'house-style\|structure-change-doc\|무관한' && ok "dry-run: 줄 내용은 출력하지 않음" || ko "내용 미출력" ""
+echo "$out" | grep -q '요약: 바뀔 파일 2, 확인 필요 0, 없음 0' && ok "dry-run: 이미 치환된 파일(clean.md)은 제외·요약 일치" || ko "dry-run 요약" "$(echo "$out" | tail -1)"
+
+# REVIEW: 치환 뒤 doc-kit 경로가 실재하지 않는 줄
+printf 'tech-record/references/nope.md 참조\n' > "$MEM/m.md"
+out=$(run --dry-run 2>&1); rc=$?
+[ "$rc" = 1 ] && echo "$out" | grep -qx 'REVIEW mem/m.md:1' && ok "dry-run: 없는 doc-kit 경로는 REVIEW·종료 코드 1" || ko "REVIEW" "rc=$rc"
+printf 'structure-change-doc 와 doc-coauthoring 사용\n' > "$MEM/m.md"
+
+# ---- 대상 없음 ---------------------------------------------------------------
+printf 'repo\tclaude/a.md\nmem\t없는파일.md\n' > "$W/targets-missing.tsv"
+before=$(sum)
+out=$("$TOOL" --apply --targets "$W/targets-missing.tsv" --memory-dir "$MEM" --backup-root "$BK" 2>&1); rc=$?
+[ "$rc" = 2 ] && [ "$(sum)" = "$before" ] && [ ! -e "$BK" ] && ok "apply: 대상이 하나라도 없으면 아무것도 바꾸지 않고 종료 코드 2" || ko "대상 없음 중단" "rc=$rc"
+out=$("$TOOL" --dry-run --targets "$W/targets-missing.tsv" --memory-dir "$MEM" --backup-root "$BK" 2>&1)
+echo "$out" | grep -qx 'MISSING mem/없는파일.md' && ok "dry-run: 없는 대상은 MISSING" || ko "MISSING" ""
+
+# ---- apply: 백업 후 치환 ------------------------------------------------------
+cp -p "$SB/claude/a.md" "$W/a.orig"; cp -p "$MEM/m.md" "$W/m.orig"
+out=$(run --apply 2>&1); rc=$?
+dir=$(echo "$out" | sed -n 's/^백업: \([^ ]*\) .*/\1/p')
+[ "$rc" = 0 ] && [ -d "$dir" ] && [ -s "$dir/manifest.tsv" ] && ok "apply: 백업 폴더·manifest 생성" || ko "apply 백업" "rc=$rc dir=$dir"
+[ -f "$dir/1.orig" ] && [ -f "$dir/2.orig" ] && cmp -s "$dir/1.orig" "$W/a.orig" && cmp -s "$dir/2.orig" "$W/m.orig" && ok "apply: 백업 원본이 치환 전과 바이트 동일" || ko "백업 내용" ""
+! grep -q 'tech-record\|structure-change-doc\|doc-coauthoring' "$SB/claude/a.md" "$MEM/m.md" && grep -q 'doc-kit/references/style.md' "$SB/claude/a.md" && ok "apply: 옛 이름이 doc-kit 으로 바뀜(경로 규칙 포함)" || ko "치환 결과" ""
+[ "$(sed -n 2p "$SB/claude/a.md")" = '무관한 줄' ] && ok "apply: 이름이 없는 줄은 그대로" || ko "무관한 줄" ""
+grep -qx '`doc-kit`·`create-pr` 를 쓴다.' "$SB/claude/a.md" && ok "apply: 나열 구절이 하나로 합쳐지고 중복 없음" || ko "나열 구절" "$(sed -n 3p "$SB/claude/a.md")"
+cmp -s "$MEM/clean.md" <(printf '이미 doc-kit 만 있다\n') && ok "apply: 바뀔 것 없는 파일은 건드리지 않음" || ko "clean 무변경" ""
+run --apply >/dev/null 2>&1; run --dry-run 2>&1 | grep -q '요약: 바뀔 파일 0' && ok "apply 반복: 이미 치환돼 바뀔 파일 0(멱등)" || ko "멱등" ""
+
+# ---- revert --------------------------------------------------------------------
+printf '치환 뒤 직접 고친 줄\n' >> "$MEM/m.md"
+out=$("$TOOL" --revert "$dir" 2>&1); rc=$?
+echo "$out" | grep -qx 'KEEP mem/m.md (치환 뒤 다시 바뀌어 건너뜀, 직접 확인)' && [ "$rc" = 1 ] && grep -q '치환 뒤 직접 고친 줄' "$MEM/m.md" && ok "revert: 치환 뒤 다시 바뀐 파일은 건너뛰고 알림" || ko "revert KEEP" "rc=$rc"
+cmp -s "$SB/claude/a.md" "$W/a.orig" && ok "revert: 안 바뀐 파일은 원본으로 복원" || ko "revert 복원" ""
+out=$("$TOOL" --revert "$dir" 2>&1); echo "$out" | grep -qx 'SKIP claude/a.md (이미 원본)' && ok "revert 반복: 이미 원본이면 건너뜀" || ko "revert 멱등" ""
+rm -f "${dir:?}/1.orig"
+"$TOOL" --revert "$dir" >/dev/null 2>&1; [ "$?" = 2 ] && ok "revert: 백업 원본이 없으면 아무것도 바꾸지 않고 종료 코드 2" || ko "revert 원본 없음" ""
+"$TOOL" --revert "$W/없는폴더" >/dev/null 2>&1; [ "$?" = 2 ] && ok "revert: 백업 폴더가 아니면 종료 코드 2" || ko "revert 폴더 아님" ""
+"$TOOL" --bad >/dev/null 2>&1; [ "$?" = 2 ] && ok "알 수 없는 인자는 종료 코드 2" || ko "인자 오류" ""
+
+# ---- 실제 저장소 대상: 존재하지 않는 참고 경로·없는 대상이 없어야 함 ---------------------------
+grep -E '^repo' "$REPO/migrate/rename-targets.tsv" > "$W/repo-targets.tsv"
+out=$("$REPO/migrate/rename_skills.sh" --dry-run --targets "$W/repo-targets.tsv" --memory-dir "$MEM" 2>&1); rc=$?
+[ "$rc" = 0 ] && ok "저장소 대상 13곳: 없는 대상·없는 doc-kit 경로 0건" || ko "저장소 대상" "$(echo "$out" | grep -E 'REVIEW|MISSING' | head -3 | tr '\n' '/')"
+[ "$(wc -l < "$W/repo-targets.tsv" | tr -d ' ')" = 13 ] && ok "저장소 대상 목록 13개" || ko "대상 수" ""
+
+printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
+[ "$FAIL" = 0 ]
