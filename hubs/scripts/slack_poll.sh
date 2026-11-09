@@ -19,12 +19,21 @@ usage() {
 상태 파일: ~/.config/lrm-hubs/slack-poll-state.json (중복 방지, 스레드별 마지막 답글 시각,
            file_share_since = 첨부 메시지 수집을 시작한 시각. 그 이전 첨부 메시지는 기록·내려받기 없이 건너뜀,
            reacted = 읽음 반응 진행 표 {메시지 ts: new|eyes|done|skip}, reactions_disabled_reason = 반응 권한 부족 사유,
-           acked = {스레드 루트 ts: 확인 답장 시각}, ack_sent = 최근 확인 답장 시각 목록)
+           acked = {스레드 루트 ts: 확인 답장 시각}, ack_sent = 최근 확인 답장 시각 목록,
+           ack_msgs = {스레드 루트 ts: {ts,ch,n}} 확인 답장 메시지 ts·채널·누적 전달 건수, upd_pos = 처리한 전달 기록의 마지막 seq,
+           upd_part = 처리 중인 기록 {seq,k}(회차 상한으로 중단된 위치))
 읽음 반응: 새 사용자 메시지(note·command·thread_reply)에 👀, 메인이 읽음 처리(.main-read-lines 의 줄 수가 그 줄을 지남)하면 ✅ 로 교체.
            reactions:write scope 가 없으면 조용히 건너뛰고 10분마다 재시도
 수신 확인 답장: 새 사용자 메시지의 스레드에 "📥 메시지 집계 중이에요" 1회(chat:write). 같은 스레드 30초 1회, 60초 3회, 회차 3회. 결정·승인 같은 명령 답글에는 달지 않음.
            slack_cmd.sh 즉답 명령·30분 넘게 묵은 항목은 제외. 권한 부족이면 조용히 건너뛰고 10분마다 재시도(상태: ack_disabled_reason).
-           전송 전에 상태(acked·ack_sent)부터 저장하므로 실패해도 다시 보내지 않음. 이미 보낸 답장은 지우거나 고치지 않음
+           전송 전에 상태(acked·ack_sent)부터 저장하므로 실패해도 다시 보내지 않음. 이미 보낸 답장은 지우거나 고치지 않음(아래 전달 완료 표시만 예외)
+전달 완료 표시: 메인 전달(slack_push.sh)이 slack-push-delivered.jsonl 에 남긴 기록을 읽어 그 스레드의 확인 답장을 chat.update(POST, chat:write)로
+           "📨 메인에 전달했어요 (n건)" 으로 고침. n 은 스레드 누적 전달 건수, 기록 1건·스레드 1개당 1회, 회차당 5회.
+           처리 위치는 기록의 단조 증가 번호(seq)로 저장해 그보다 큰 기록만 처리(기록 파일이 잘려도 옛 기록 재처리 없음).
+           앞 확인 답장이 아직 '집계 중'이면 같은 스레드에 새 답장을 보내지 않음(앞 답장이 영구히 '집계 중'으로 남는 것 방지)
+           실패(message_not_found·cant_update_message·edit_window_closed 등)는 stderr 1줄만 남기고 재시도 안 함. LRM_ACK_UPDATE=off 로 끔
+메인 전달(push): 회차 끝에 slack_push.sh --kick 호출. 사용자 메시지를 묶어 메인 터미널에 한 번 전달하고 .main-read-lines 를 올림.
+           상세·끄는 법(LRM_PUSH=off)은 slack_push.sh --help
 환경 변수: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs), SLACK_API_BASE API 주소(테스트용),
            LRM_ACK=off 수신 확인 답장 끔(기본 켜짐), LRM_ACK_TEXT 답장 문구(200자 제한·제어 문자 제거),
            LRM_RETRY_CAP 429 대기 상한 초(기본 20), LRM_DL_BUDGET 회차 첨부 내려받기 시간 상한 초(기본 60),
@@ -49,7 +58,7 @@ ENV="$DIR/slack-bot.env"
 [ -f "$ENV" ] || { echo "slack-bot.env 없음 — 사용자 설정 필요" >&2; exit 2; }
 . "$ENV"
 : "${SLACK_BOT_TOKEN:?}" "${SLACK_USER_ID:?}"
-# 동시 실행 방지(launchd 30초 간격과 수동 실행 겹침)
+# 동시 실행 방지(launchd 2분 간격·소켓 수신기·수동 실행 겹침)
 LOCK="$DIR/.slack-poll.lock"
 # 5분 넘은 잠금은 죽은 실행의 잔재로 보고 제거
 [ -d "$LOCK" ] && [ -n "$(find "$LOCK" -maxdepth 0 -mmin +5 2>/dev/null)" ] && rmdir "$LOCK" 2>/dev/null
@@ -142,6 +151,11 @@ ACK_MIN_LEFT = 5                             # 남은 시간 예산이 이보다
 ACK_KEEP, ACK_KEYS_MAX = 30 * 86400, 500     # 스레드별 기록 보관 기간·개수 상한
 ACK_DISABLE = RX_DISABLE | {"channel_not_found", "not_in_channel", "is_archived", "restricted_action"}  # 권한·채널 문제: ACK_RETRY 뒤 재시도
 ACK_RETRY = RX_RETRY
+# 전달 완료 표시: 메인 전달(slack_push.py)이 slack-push-delivered.jsonl 에 남긴 기록을 읽어 확인 답장을 chat.update 로 고침.
+# 토큰이 없는 push 대신 여기서 호출. LRM_ACK=off 또는 LRM_ACK_UPDATE=off 면 안 함
+PUSH_DELIVERED = os.path.join(DIR, "slack-push-delivered.jsonl")
+DONE_TEXT = "📨 메인에 전달했어요 ({n}건)"
+UPD_MAX = 5                                  # 회차당 chat.update 상한
 # slack_cmd.sh 가 직접 답하는 명령. case 라벨(대기|미승인|"승인 대기" / PR|pr|"초안 PR" / 할일|"할 일" / CI|ci / 문서\ *)을 옮긴 것이라 그쪽을 바꾸면 함께 바꿀 것
 CMD_REPLY_EXACT = frozenset({"대기", "미승인", "승인 대기", "PR", "pr", "초안 PR", "할일", "할 일", "CI", "ci"})
 CMD_REPLY_PREFIX = "문서 "
@@ -149,13 +163,18 @@ CMD_REPLY_PREFIX = "문서 "
 class ApiError(Exception):
     code = None  # Slack 응답의 error 코드. HTTP·시간 예산 오류는 None
 
-def api(method, **params):
+def api(method, _post=False, **params):
+    """_post=True 는 form 본문 POST. 문서상 POST 만 허용하는 쓰기 메서드(chat.update)용. 기존 호출은 GET 그대로"""
     q = urllib.parse.urlencode(params)
     for attempt in range(RETRIES + 1):
         left = DEADLINE - time.time()
         if left <= 0:
             raise ApiError(f"{method}: 재시도 시간 예산 초과")
-        req = urllib.request.Request(f"{BASE}/{method}?{q}", headers={"Authorization": f"Bearer {TOKEN}"})
+        if _post:
+            req = urllib.request.Request(f"{BASE}/{method}", data=q.encode(), method="POST",
+                                         headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/x-www-form-urlencoded"})
+        else:
+            req = urllib.request.Request(f"{BASE}/{method}?{q}", headers={"Authorization": f"Bearer {TOKEN}"})
         try:
             with urllib.request.urlopen(req, timeout=min(15, left)) as r:
                 d = json.load(r)
@@ -463,6 +482,8 @@ def ack_phase(state, ch, now, items):
     for k in sorted(acked, key=acked.get)[:max(0, len(acked) - (ACK_KEYS_MAX - ACK_MAX))]:  # 이번 회차에 더해도 ACK_KEYS_MAX 이하
         del acked[k]
     state["acked"] = acked
+    msgs = state.get("ack_msgs")
+    state["ack_msgs"] = {k: v for k, v in (msgs if isinstance(msgs, dict) else {}).items() if k in acked}
     sent = state.get("ack_sent")
     sent = [x for x in (sent if isinstance(sent, list) else []) if num(x)]
     text, count = ack_text(), 0
@@ -474,6 +495,9 @@ def ack_phase(state, ch, now, items):
             break
         if 0 <= t - acked.get(root, -ACK_THREAD_GAP - 1) < ACK_THREAD_GAP:
             continue
+        prev = state["ack_msgs"].get(root)
+        if isinstance(prev, dict) and isinstance(prev.get("ts"), str) and not prev.get("n"):
+            continue  # 앞 답장이 아직 '집계 중'. 새로 보내면 ack_msgs 가 새 답장으로 바뀌어 앞 답장은 영구히 '집계 중'으로 남음
         if DEADLINE - time.time() < ACK_MIN_LEFT:  # 수집이 예산을 다 쓴 회차. 남은 항목은 새 항목이 아니게 돼 다시 오지 않으므로 답장 없이 끝남(재시도 안 함)
             print("수신 확인 답장 건너뜀(budget) — 회차 시간 예산 부족, 재시도 안 함", file=sys.stderr)
             return
@@ -483,7 +507,9 @@ def ack_phase(state, ch, now, items):
         save_state(state)
         count += 1
         try:
-            api("chat.postMessage", channel=ch, thread_ts=root, text=text)
+            d = api("chat.postMessage", channel=ch, thread_ts=root, text=text)
+            if isinstance(d.get("ts"), str):  # 전달 완료 표시(done_phase)가 이 메시지를 고치려고 보관
+                state.setdefault("ack_msgs", {})[root] = {"ts": d["ts"], "ch": d.get("channel") or ch, "n": 0}
         except ApiError as e:
             if e.code in ACK_DISABLE:
                 if state.get("ack_disabled_reason") != e.code:  # 같은 사유는 다시 알리지 않음
@@ -495,6 +521,48 @@ def ack_phase(state, ch, now, items):
         state.pop("ack_disabled_reason", None)
         state.pop("ack_disabled_at", None)
     state["ack_sent"] = sent
+
+def done_phase(state):
+    """메인에 전달된 스레드의 확인 답장을 "📨 메인에 전달했어요 (n건)" 으로 고침. n 은 그 스레드의 누적 전달 건수.
+    기록 1건·스레드 1개당 chat.update 1회, 회차당 UPD_MAX 회. 호출 전에 처리 위치와 건수를 먼저 저장(at-most-once): 실패해도 재시도하지 않음.
+    처리 위치는 upd_pos(마지막으로 끝낸 기록의 seq, 단조 증가)이고 그보다 큰 seq 의 기록만 처리. 기록이 한 기록 안에서 회차 상한으로 끊기면
+    upd_part={seq,k} 로 이어 처리. seq 가 없는 옛 형식 기록은 처리하지 않음.
+    확인 답장 ts 가 없는 스레드(답장 안 보냄·옛 답장)는 호출 없이 처리 위치만 넘김. 예외는 호출부가 삼킴"""
+    if os.environ.get("LRM_ACK", "").strip().lower() in ACK_OFF or os.environ.get("LRM_ACK_UPDATE", "").strip().lower() in ACK_OFF:
+        return
+    state.pop("upd_seen", None)
+    pos = state.get("upd_pos")
+    pos = pos if isinstance(pos, int) and not isinstance(pos, bool) else 0
+    part = state.get("upd_part") if isinstance(state.get("upd_part"), dict) else {}
+    msgs = state.get("ack_msgs") if isinstance(state.get("ack_msgs"), dict) else {}
+    recs = sorted((r for r in load_jsonl(PUSH_DELIVERED)
+                   if isinstance(r, dict) and isinstance(r.get("seq"), int) and not isinstance(r["seq"], bool) and r["seq"] > pos),
+                  key=lambda r: r["seq"])
+    calls = 0
+    for rec in recs:
+        roots = list((rec.get("roots") if isinstance(rec.get("roots"), dict) else {}).items())
+        for i in range(part.get("k", 0) if part.get("seq") == rec["seq"] else 0, len(roots)):
+            root, n = roots[i]
+            ent = msgs.get(root)
+            live = isinstance(n, int) and isinstance(ent, dict) and isinstance(ent.get("ts"), str)
+            if live and (calls >= UPD_MAX or DEADLINE - time.time() < ACK_MIN_LEFT):
+                state["upd_part"] = {"seq": rec["seq"], "k": i}
+                return
+            state["upd_part"] = {"seq": rec["seq"], "k": i + 1}
+            if not live:
+                continue
+            ent["n"] = int(ent.get("n") or 0) + n
+            save_state(state)
+            calls += 1
+            try:
+                api("chat.update", _post=True, channel=ent.get("ch") or "", ts=ent["ts"], text=DONE_TEXT.format(n=ent["n"]))
+            except ApiError as e:
+                print(f"전달 완료 표시 건너뜀({e.code or 'http'}) — 재시도 안 함", file=sys.stderr)
+                if e.code in ACK_DISABLE:  # 권한·채널 문제는 나머지도 실패하므로 이번 회차 중단
+                    return
+        state["upd_pos"] = rec["seq"]
+        state.pop("upd_part", None)
+        part = {}
 
 def fetch_history(ch, oldest):
     msgs, cursor = [], None
@@ -549,7 +617,7 @@ def main():
         if backlog:
             return
         item.update({"channel": ch, "received_at": now})
-        # 새 항목일 때만 내려받음(30초 주기 재조회에서 반복 방지). 파일이 없으면 기존 레코드 모양 유지
+        # 새 항목일 때만 내려받음(주기 재조회에서 반복 방지). 파일이 없으면 기존 레코드 모양 유지
         paths, failed = fetch_files(files)
         if paths:
             item["files"] = paths
@@ -622,6 +690,10 @@ def main():
     except Exception:  # 확인 답장 실패가 수집·상태 저장·반응 단계를 막지 않게 함
         pass
     try:
+        done_phase(state)
+    except Exception:  # 전달 완료 표시 실패가 반응 단계·상태 저장을 막지 않게 함
+        pass
+    try:
         react_phase(state, ch, now)
     except Exception:  # 반응 실패가 수집·상태 저장을 막지 않게 함
         pass
@@ -647,4 +719,8 @@ if [ $((now - last)) -ge 7200 ]; then echo "$now" > "$L"; LRM_PENDING_BUDGET="$(
 
 # 봇 DM 즉답 명령(대기·PR) 처리. 대기 명령이 대기 목록을 다시 부르므로 남은 예산을 그대로 물려줌
 LRM_PENDING_BUDGET="$(cap "${LRM_PENDING_BUDGET:-120}")" "$DIR/slack_cmd.sh" >/dev/null 2>&1 || true
+
+# 새 메시지 묶음 전달(push). 수집이 실패한 회차에도 대기분을 전달하도록 RC 와 무관하게 호출.
+# 워커는 분리돼 바로 반환하므로 이 잠금(300초)을 쥐지 않고, 출력 파이프도 닫아 소켓 수신기의 capture_output 이 기다리지 않음
+LRM_HUB_DIR="$DIR" /bin/bash "$(dirname "$0")/slack_push.sh" --kick >/dev/null 2>&1 || true
 exit "$RC"
