@@ -101,6 +101,10 @@ run_dk D20 "check.py 가 숫자만의 7자리를 해시로 오검출" skills/doc
 run_dk D21 "치환 검사가 이름만 남은 없는 참고 파일을 놓침" migrate/rename_skills.sh 's/house-style|sources|md-spec/zz-none/g'
 run_dk D22 "README 7번에서 폴더 안 링크 rm 줄 1개 누락" README.md 's/rm ~\/\.claude\/skills\/structure-change-doc\/templates\/doc\.html\n//'
 run_dk D23 "README 7번이 실제 폴더를 -r 없이 rm" README.md 's/rm -r ~\/\.claude\/skills\/structure-change-doc\n/rm ~\/.claude\/skills\/structure-change-doc\n/'
+run_dk D24 "create-pr 선례 경로를 config.md 로" skills/create-pr/SKILL.md 's/references\/sources\.md`\)/references\/config.md`)/'
+run_dk D25 "치환 규칙에서 띄어 쓴 로→으로 제거" migrate/rename-rules.tsv 's/^\(\?<=doc-kit\) 로[^\n]*\n//m'
+run_dk D26 "치환 규칙이 .md 없는 house-style 을 처리하지 않음" migrate/rename-rules.tsv 's/house-style\(\?:\\\.md\)\?\(\?!\[\\w-\]\)/house-style\\.md/'
+run_dk D27 "role-docs 가 없는 house-style 이름을 가리킴" hubs/roles/role-docs.txt.tmpl 's/doc-kit style\.md/doc-kit house-style/'
 
 echo
 if [ $((RAN_M + RAN_D)) = 0 ]; then echo "실행한 변이가 없음: ONLY 가 어느 변이 번호와도 맞지 않음"; exit 1; fi

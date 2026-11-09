@@ -72,6 +72,10 @@ grep -qx '`doc-kit`·`create-pr` 를 쓴다.' "$SB/claude/a.md" && ok "apply: �
 printf '`explain-diff`로 쓴다\nwork-report 가 맡는다\n`tech-record` 가 맡는다\nwork-report 가능\n' > "$W/josa.md"
 perl "$SB/migrate/rename_apply.pl" "$SB/migrate/rename-rules.tsv" < "$W/josa.md" > "$W/josa.out"
 [ "$(cat "$W/josa.out")" = "$(printf '`doc-kit`으로 쓴다\ndoc-kit 이 맡는다\n`doc-kit` 이 맡는다\ndoc-kit 가능')" ] && ok "치환: 이름 뒤 조사 로→으로·가→이 교정(가능 같은 단어는 그대로)" || ko "조사 교정" "$(tr '\n' '/' < "$W/josa.out")"
+# 띄어 쓴 조사, .md 없는 house-style, 선례 경로가 재적용에서도 같은 결과로 나옴(옛 문구 그대로 넣어 규칙만 시험)
+printf '`explain-diff` 로 작성\nwork-report 로 작성\ndoc-kit 로그\n문서 스킬 규칙(explain-diff·tech-record house-style, 평서 ~다) 준수\n선례는 `~/.claude/skills/tech-record/references/sources.md` 다\n' > "$W/old.md"
+perl "$SB/migrate/rename_apply.pl" "$SB/migrate/rename-rules.tsv" < "$W/old.md" > "$W/old.out"
+[ "$(cat "$W/old.out")" = "$(printf '`doc-kit` 으로 작성\ndoc-kit 으로 작성\ndoc-kit 로그\n문서 스킬 규칙(doc-kit style.md, 평서 ~다) 준수\n선례는 `~/.claude/skills/doc-kit/references/sources.md` 다')" ] && ok "치환: 띄어 쓴 로→으로, .md 없는 house-style→style.md, 선례 경로→sources.md(로그 같은 단어는 그대로)" || ko "옛 문구 재적용" "$(tr '\n' '/' < "$W/old.out")"
 cmp -s "$MEM/clean.md" <(printf '이미 doc-kit 만 있다\n') && ok "apply: 바뀔 것 없는 파일은 건드리지 않음" || ko "clean 무변경" ""
 run --apply >/dev/null 2>&1; run --dry-run 2>&1 | grep -q '요약: 바뀔 파일 0' && ok "apply 반복: 이미 치환돼 바뀔 파일 0(멱등)" || ko "멱등" ""
 
@@ -90,6 +94,10 @@ rm -f "${dir:?}/1.orig"
 grep -E '^repo' "$REPO/migrate/rename-targets.tsv" > "$W/repo-targets.tsv"
 out=$("$REPO/migrate/rename_skills.sh" --dry-run --targets "$W/repo-targets.tsv" --memory-dir "$MEM" 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "저장소 대상 13곳: 없는 대상·없는 doc-kit 경로 0건" || ko "저장소 대상" "$(echo "$out" | grep -E 'REVIEW|MISSING' | head -3 | tr '\n' '/')"
+# 저장소 13곳은 이미 치환된 상태: 규칙을 다시 적용해도 바뀌는 파일이 없고, 선례는 sources.md 를 가리킴
+echo "$out" | grep -q '요약: 바뀔 파일 0, 확인 필요 0, 없음 0' && ok "저장소 대상 13곳: 규칙 재적용 시 바뀔 파일 0" || ko "저장소 대상 멱등" "$(echo "$out" | tail -1)"
+grep -qF '선례는 `~/.claude/skills/doc-kit/references/sources.md`' "$REPO/skills/create-pr/SKILL.md" && ok "create-pr 의 선례 경로는 doc-kit/references/sources.md" || ko "create-pr 선례 경로" ""
+! grep -rnE 'doc-kit`? 로([^가-힣]|$)|doc-kit house-style' "$REPO/claude" "$REPO/hubs" "$REPO/skills/create-pr" "$REPO/skills/work-brief" "$REPO/skills/catch-up" "$REPO/skills/pr-review-game" "$REPO/skills/pretty-code" "$REPO/skills/orca-hub-create" >/dev/null && ok "저장소 13곳에 'doc-kit 로'·'doc-kit house-style' 문구가 남지 않음" || ko "옛 조사·옛 파일명 문구" ""
 [ "$(wc -l < "$W/repo-targets.tsv" | tr -d ' ')" = 13 ] && ok "저장소 대상 목록 13개" || ko "대상 수" ""
 
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"

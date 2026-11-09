@@ -15,7 +15,7 @@ description: "현재 브랜치의 변경과 저장소 PR 템플릿을 바탕으�
 
 ## 본문
 
-machamy 의 JobMaker PR **10월 형식**을 따른다(2026-10-08 정제 분석, 선례는 `~/.claude/skills/doc-kit/references/config.md`). 문체·장치는 `~/.claude/skills/doc-kit/references/style.md` — 평서 `~다`. 저장소 PR 템플릿이 있으면 템플릿 구조가 우선이고 각 칸을 이 기준으로 채운다.
+machamy 의 JobMaker PR **10월 형식**을 따른다(2026-10-08 정제 분석, 선례는 `~/.claude/skills/doc-kit/references/sources.md`). 문체·장치는 `~/.claude/skills/doc-kit/references/style.md` — 평서 `~다`. 저장소 PR 템플릿이 있으면 템플릿 구조가 우선이고 각 칸을 이 기준으로 채운다.
 
 ```markdown
 > <변경 해설 문서가 있고 리뷰 전에 읽어야 하면: 링크(blob 절대 URL) + 담긴 내용 한 줄>

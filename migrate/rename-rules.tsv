@@ -4,8 +4,8 @@
 tech-record/references/sources\.md	doc-kit/references/sources.md
 explain-diff/references/md-spec\.md	doc-kit/references/explain.md
 work-report/references/templates\.md	doc-kit/references/report.md
-# 1-1) house-style.md 는 경로가 있든 이름만 적었든 style.md 로(앞 경로는 3번 규칙이 doc-kit 으로 바꿈)
-house-style\.md	style.md
+# 1-1) house-style 은 .md 가 있든 없든, 경로가 있든 이름만 적었든 style.md 로(앞 경로는 3번 규칙이 doc-kit 으로 바꿈)
+house-style(?:\.md)?(?![\w-])	style.md
 # 2) 여러 이름을 나열한 구절은 하나로
 `explain-diff`·`tech-record`·`create-pr`·`work-report`	`doc-kit`·`create-pr`
 explain-diff·tech-record·structure-change-doc·work-report·doc-coauthoring	doc-kit
@@ -20,5 +20,7 @@ doc-kit(?:[·/]doc-kit)+	doc-kit
 # 5) 이름이 바뀌어 받침이 달라진 조사. doc-kit 은 받침으로 끝나 로→으로, 가→이
 (?<=doc-kit)로(?![가-힣])	으로
 (?<=doc-kit`)로(?![가-힣])	으로
+(?<=doc-kit) 로(?![가-힣])	 으로
+(?<=doc-kit`) 로(?![가-힣])	 으로
 (?<=doc-kit) 가(?![가-힣])	 이
 (?<=doc-kit`) 가(?![가-힣])	 이
