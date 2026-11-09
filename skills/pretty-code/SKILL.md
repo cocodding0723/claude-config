@@ -13,7 +13,7 @@ description: 연애혁명 키우기 C# 코드를 "검수자가 빨리 읽고 믿
 |---|---|---|---|
 | 1 | 이름 | 함수 동사 사전(`docs/METHOD-VERBS.md`: Get 필수·Find 없을 수 있음·Try 실패 예상, Update/Refresh/Apply, Show/Render/Bind, On, ~Async, Is/Has/Can, Load/Save), 클래스는 역할이 드러나는 행위자 이름(-er/-or, 보편 관례 Format·Rule·Policy·Config·State·Factory·Repository 허용, Util·Helper·Logic·Common·Misc 금지) | `refactor: … 이름 정리` (순수 개명만) |
 | 2 | 값 | 매직 숫자·문자열 → 소유 모듈 한 곳(설정 객체·enum·시트), 흩어진 const 금지, `public static` 전역 값 금지 | `refactor: … 값 정리` |
-| 3 | 구조 | MVP(View 는 Render 만, Presenter 는 Unity 비의존), DDD(도메인 순수·포트/어댑터), SOLID, 결합↓ 응집↑, 바깥과 닿는 곳·구현 2개 이상만 인터페이스, 순수 규칙은 `sealed` | 구조 변경은 **structure-change-doc 구조안 승인 뒤** |
+| 3 | 구조 | MVP(View 는 Render 만, Presenter 는 Unity 비의존), DDD(도메인 순수·포트/어댑터), SOLID, 결합↓ 응집↑, 바깥과 닿는 곳·구현 2개 이상만 인터페이스, 순수 규칙은 `sealed` | 구조 변경은 **doc-kit 구조안 승인 뒤** |
 | 4 | 안전 | 비동기 취소 토큰·화면 닫힘 취소·`async void` 금지, 구독·Addressables 해제, null 경계(필수 데이터는 바로 오류), 멱등(두 번 불러도 같은 결과) | `fix:` 또는 `refactor:` |
 | 5 | 프레임워크 | `System.Linq` → ZLinq(`AsValueEnumerable()`), 이벤트 → R3, 코루틴 → UniTask, `new` 직접 생성 → VContainer 주입, 로그 → `LogEngine`, 화면 문구 → 번역 키 | `refactor: … ZLinq 전환` 등 묶음별 |
 | 6 | 주석 | 아래 「의도 주석」 | 해당 커밋에 포함 |
