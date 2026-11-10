@@ -134,6 +134,10 @@ done <<< "$entries"
 [ "$rend_bad" = 0 ] && ok "render 항목: 실제 파일·자리표시 전부 치환"
 grep -qF 'VAL&DM_CHANNEL' "$SB/.config/lrm-hubs/roles/role-docs.txt" && grep -q 'VAL_PERSON_FULL' "$SB/.config/lrm-hubs/roles/role-tutorial.txt" && ok "render: 값 파일 값이 들어감" || ko "render 값" "누락"
 grep -q "$SB" "$SB/Library/LaunchAgents/ai.lrm.slackpoll.plist" && ! grep -q '__HOME__' "$SB/Library/LaunchAgents/ai.lrm.slackpoll.plist" && ok "plist __HOME__ 치환" || ko "plist 치환" ""
+# 옆 패널 수집기: 스크립트 링크, plist __HOME__ 치환·형식 정상, 링크 경로로 --help 실행
+PCP="$SB/Library/LaunchAgents/ai.lrm.panelcollect.plist"
+grep -q "<string>$SB/.config/lrm-hubs/panel_collect.sh</string>" "$PCP" && grep -q "<string>$SB/.config/lrm-hubs/panel-collect.log</string>" "$PCP" && ! grep -q '__HOME__' "$PCP" && plutil -lint "$PCP" >/dev/null && ok "수집기 plist __HOME__ 치환·형식 정상" || ko "수집기 plist" "치환·형식 오류"
+PYTHONDONTWRITEBYTECODE=1 bash "$SB/.config/lrm-hubs/panel_collect.sh" --help 2>&1 | grep -q -- '--once' && [ -L "$SB/.config/lrm-hubs/panel_collect.py" ] && ok "수집기: 링크 경로로 --help 실행" || ko "수집기 링크 실행" ""
 # 옆 패널 mod: 링크가 아닌 실제 파일 4개, 패널 데이터·메인 체크아웃 경로가 이 HOME 기준
 MOD="$SB/.config/lrm-hubs/mods/lrm-board"
 mod_bad=0; for f in .claude-plugin/plugin.json hooks/hooks.json hooks/register.tsx types/index.d.ts; do [ -f "$MOD/$f" ] && [ ! -L "$MOD/$f" ] || mod_bad=1; done
