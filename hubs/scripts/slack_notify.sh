@@ -6,12 +6,23 @@ set -eu
 usage() {
   cat <<'EOF'
 사용: slack_notify.sh [--tag 허브] [--title 제목] [--thread TS] [--kind 종류 [--choices N] [--emoji-set 종류]] [--no-check] "메시지" [파일경로]
+      slack_notify.sh --kind decide --options '1=문구,2=문구' --recommend N --decision-id D-xxxx [--reversible 쉬움|보통|어려움] [--seq 3/9] "제목·배경"
+      slack_notify.sh --kind todo --todo-id T-xxxx "할 일"
   --tag        관련 허브 태그(기록용)
   --title      기록용 제목(기본: 메시지 첫 줄)
   --thread     해당 ts 메시지의 스레드 답글로 게시
   --kind       decide|todo|done|progress|warn|doc. 첫 줄에 종류 이모지가 없으면 붙이고 양식 A 를 검사
   --choices    2~4(--kind decide 전용). 메시지 끝에 '👉 답:' 이모지 안내 줄을 붙임(본문에 👉 줄이 있으면 생략)
   --emoji-set  custom(기본, :비서-a: 등)|std(표준 :a: :regional_indicator_c: 등). 안내 줄 이모지 종류
+  --options    (--kind decide 전용) 번호 이모지로 고르는 카드. '번호=문구' 를 쉼표로 이음. 번호는 1부터 연속 2~4개, 문구 1~80자.
+               문구에 :이름:·👉·✅·❌·키캡은 못 씀(답 이모지로 오인). --thread 와 함께 못 씀(스레드 답글의 반응은 수집 안 됨).
+               선택지 줄(:one: 등)·추천 줄·'👉 답:' 줄·결정 번호 줄을 도구가 붙임. 본문에는 제목과 배경만 씀(본문 '👉 답:' 줄은 거부)
+  --recommend  (--options 필수) 추천 선택지 번호
+  --decision-id (--options 필수) 결정 번호 D-영문·숫자 1~16자. 태그에서 만들지 않음(결정끼리 겹치면 답이 다른 결정에 붙음).
+               최근 7일 안에 같은 번호로 보낸 카드가 있으면 stderr 경고(전송은 함)
+  --reversible (--options 선택) 되돌리기 난이도 쉬움|보통|어려움
+  --seq        (--options 선택) 순번/전체(예 3/9)
+  --todo-id    (--kind todo 전용) 할 일 번호 T-영문·숫자 1~16자. 본문에 답 줄이 없으면 완료 안내 줄을 붙임
   --no-check   양식 검사 생략(slack-sent.jsonl 에 unchecked:true 기록)
 환경 변수: LRM_FORMAT=warn|strict|off (기본 warn). warn 은 위반해도 전송하고 stderr 경고, strict 는 위반 시 미전송·종료 코드 2
   --kind decide 는 결정이 2개 이상이거나 python3 검사가 실패하면 모드와 무관하게 미전송·종료 코드 2(결정 1건 = 메시지 1개). --no-check·off 로 우회하면 로그에 한 줄 남음
@@ -21,11 +32,14 @@ usage() {
   slack_notify.sh --thread 1730790000.123456 "반영함"
   slack_notify.sh --kind done "알림 시각 통일"
   slack_notify.sh --kind decide --choices 3 "알림 시각 정하기"
+  slack_notify.sh --kind decide --options '1=오전 9시,2=오전 10시' --recommend 1 --decision-id D-0001 --seq 1/3 "알림 시각"
 종료 코드: 0 성공, 1 API 실패, 2 설정·인자·양식 오류
 EOF
 }
 die() { echo "$1" >&2; exit 2; }
 TAG="" TITLE="" THREAD="" KIND="" NOCHECK=0 CHOICES="" CHOICES_SET=0 EMOJISET=custom
+# 번호 카드 인자. 값 검증은 FORM_PY opts 가 함. *_SET 은 빈 값으로 준 경우도 '준 것'으로 보기 위함
+OPTIONS="" OPT_SET=0 RECOMMEND="" REC_SET=0 REVERSIBLE="" REV_SET=0 DECISION_ID="" DID_SET=0 SEQ="" SEQ_SET=0 TODO_ID="" TID_SET=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
@@ -35,6 +49,12 @@ while [ $# -gt 0 ]; do
     --kind) [ $# -ge 2 ] || die "--kind 값 필요 — decide|todo|done|progress|warn|doc 중 하나"; KIND="$2"; shift 2 ;;
     --choices) [ $# -ge 2 ] || die "--choices 값 필요 — 2~4 사이 숫자"; CHOICES="$2" CHOICES_SET=1; shift 2 ;;
     --emoji-set) [ $# -ge 2 ] || die "--emoji-set 값 필요 — custom|std 중 하나"; EMOJISET="$2"; shift 2 ;;
+    --options) [ $# -ge 2 ] || die "--options 값 필요 — 예 '1=오전 9시,2=오전 10시'"; OPTIONS="$2" OPT_SET=1; shift 2 ;;
+    --recommend) [ $# -ge 2 ] || die "--recommend 값 필요 — 선택지 번호"; RECOMMEND="$2" REC_SET=1; shift 2 ;;
+    --reversible) [ $# -ge 2 ] || die "--reversible 값 필요 — 쉬움|보통|어려움"; REVERSIBLE="$2" REV_SET=1; shift 2 ;;
+    --decision-id) [ $# -ge 2 ] || die "--decision-id 값 필요 — 예 D-0001"; DECISION_ID="$2" DID_SET=1; shift 2 ;;
+    --seq) [ $# -ge 2 ] || die "--seq 값 필요 — 예 3/9"; SEQ="$2" SEQ_SET=1; shift 2 ;;
+    --todo-id) [ $# -ge 2 ] || die "--todo-id 값 필요 — 예 T-0001"; TODO_ID="$2" TID_SET=1; shift 2 ;;
     --no-check) NOCHECK=1; shift ;;
     --) shift; break ;;
     -*) echo "알 수 없는 옵션: $1 — --help 참고" >&2; exit 2 ;;
@@ -54,6 +74,16 @@ if [ "$CHOICES_SET" = 1 ]; then
   case "$CHOICES" in 2|3|4) ;; *) die "--choices 범위 오류: $CHOICES — 2~4 사이 숫자로 지정" ;; esac
   [ "$KIND" = decide ] || die "--choices 는 --kind decide 와만 사용 — --kind decide 를 함께 지정"
 fi
+if [ "$OPT_SET$REC_SET$REV_SET$DID_SET$SEQ_SET" != 00000 ]; then
+  [ "$KIND" = decide ] || die "--options·--recommend·--reversible·--decision-id·--seq 는 --kind decide 와만 사용 — --kind decide 를 함께 지정"
+  [ "$OPT_SET" = 1 ] || die "--recommend·--reversible·--decision-id·--seq 는 --options 와 함께 사용 — --options '1=문구,2=문구' 를 지정"
+  [ "$CHOICES_SET" = 0 ] || die "--options 와 --choices 는 함께 쓸 수 없음 — 번호 카드는 --options 만 지정"
+  [ "$REC_SET" = 1 ] || die "--recommend 필요 — 선택지 번호 중 하나(예 --recommend 1)"
+  [ "$DID_SET" = 1 ] || die "--decision-id 필요 — 예 --decision-id D-0001(태그에서 만들지 않음: 결정끼리 번호가 겹칠 수 있음)"
+fi
+if [ "$TID_SET" = 1 ] && [ "$KIND" != todo ]; then die "--todo-id 는 --kind todo 와만 사용 — --kind todo 를 함께 지정"; fi
+# 폴러·대기 목록은 최상위 메시지의 반응만 읽음. 스레드 답글로 나간 카드는 답할 수 없으므로 미전송
+if [ -n "$THREAD" ] && { [ "$OPT_SET" = 1 ] || [ "$TID_SET" = 1 ]; }; then die "--thread 는 --options·--todo-id 카드와 함께 쓸 수 없음 — 스레드 답글의 반응은 수집되지 않으므로 --thread 를 빼고 보내세요"; fi
 DIR="$HOME/.config/lrm-hubs"
 ENV="$DIR/slack-bot.env"
 SENT="$DIR/slack-sent.jsonl"
@@ -81,10 +111,14 @@ has_kind_emoji() {
 }
 if [ -n "$KIND" ] && ! has_kind_emoji "$MSG"; then MSG="$(kind_glyph "$KIND") $MSG"; fi
 
+# todo 카드의 반응 표는 표준 이름(white_check_mark·x)만 읽음. 본문 ✅·❌ 를 강비서 이름으로 바꾸면 사용자가 누른 반응이 완료·보류로 안 읽히므로 표준 이름으로 둠
+OK_NAME=':비서-추천대로:' NO_NAME=':비서-보류:'
+if [ "$KIND" = todo ]; then OK_NAME=':white_check_mark:' NO_NAME=':x:'; fi
+
 # 기본 이모지 → 워크스페이스 강비서 이모지
-# 줄머리(공백·'•' 불릿 뒤 포함) ✅ 는 완료 표시라 :white_check_mark:, 줄 중간 ✅ 는 반응 선택지라 :비서-추천대로:.
+# 줄머리(공백·'•' 불릿 뒤 포함) ✅ 는 완료 표시라 :white_check_mark:, 줄 중간 ✅ 는 반응 선택지라 :비서-추천대로:(todo 는 위 OK_NAME).
 # 기존 호출자 불변 원칙의 명시적 예외: --kind 없는 호출에도 줄머리 ✅ 규칙을 적용함
-MSG="$(printf '%s' "$MSG" | sed -e 's/🅰️/:비서-a:/g' -e 's/🅱️/:비서-b:/g' -e 's/^\([[:blank:]]*\)✅/\1:white_check_mark:/' -e 's/^\([[:blank:]]*• *\)✅/\1:white_check_mark:/' -e 's/✅/:비서-추천대로:/g' -e 's/❌/:비서-보류:/g' -e 's/🙋/:비서-선택해주세요:/g' -e 's/📄/:비서-공유합니다:/g' -e 's/🔄/:비서-진행중:/g' -e 's/⚠️/:비서-긴급:/g')"
+MSG="$(printf '%s' "$MSG" | sed -e 's/🅰️/:비서-a:/g' -e 's/🅱️/:비서-b:/g' -e 's/^\([[:blank:]]*\)✅/\1:white_check_mark:/' -e 's/^\([[:blank:]]*• *\)✅/\1:white_check_mark:/' -e "s/✅/$OK_NAME/g" -e "s/❌/$NO_NAME/g" -e 's/🙋/:비서-선택해주세요:/g' -e 's/📄/:비서-공유합니다:/g' -e 's/🔄/:비서-진행중:/g' -e 's/⚠️/:비서-긴급:/g')"
 # 🅲·🅳 는 변형 선택자(VS16) 유무 둘 다 처리. 대응 이모지(:비서-c:·:비서-d:) 존재 미확인이라 --kind 지정 시에만 치환, 기존 호출은 원문 유지
 if [ -n "$KIND" ]; then
   MSG="$(printf '%s' "$MSG" | sed -e 's/🅲️/:비서-c:/g' -e 's/🅲/:비서-c:/g' -e 's/🅳️/:비서-d:/g' -e 's/🅳/:비서-d:/g')"
@@ -93,9 +127,12 @@ fi
 # 양식 A 검사·안내 줄 부착용 파이썬. 모든 정규식은 여기에만 둠. 구간 제거는 길이를 유지해 줄 위치를 보존함
 #   check  <종류> <안내줄부착예정 0|1>: "수준<TAB>코드<TAB>메시지" 줄 출력. reject 는 위반(strict 에서 거부), warn 은 경고만, hard 는 모드와 무관하게 거부(decide 다중 결정)
 #   attach <안내줄>: 본문에 '👉 답:' 줄이 없으면 마지막 '참고:' 줄 앞(없으면 맨 끝)에 안내 줄을 끼워 출력
+#   opts <추천> <되돌리기> <결정번호> <순번> <할일번호>: 표준입력(--options 값)과 함께 검증해 기록용 JSON 출력. 각 인자는 '=값'(줌)|''(안 줌). 틀리면 종료 코드 2
+#   card <JSON>: 번호 카드·할 일 줄을 붙여 출력. 본문 '👉 답:' 줄과 --options 가 겹치면 종료 코드 2
+#   dup <sent 파일> <결정번호>: 최근 7일 안에 같은 결정 번호로 보낸 기록이 있으면 stderr 경고(종료 코드 항상 0)
 # 검사 제외 구간: 코드 블록·인라인 코드·URL, 마지막 '참고:' 줄 이후(티켓·커밋 번호 허용, 첫 줄 제외). 결정 개수는 예외로 '참고:' 줄 자체만 빼고 그 뒤도 셈
 read -r -d '' FORM_PY <<'PYEOF' || true
-import re, sys, unicodedata
+import json, re, sys, time, unicodedata
 
 RX = {
     "fence": re.compile(r"```.*?```", re.S),
@@ -115,7 +152,25 @@ RX = {
     "head_a": re.compile(r"^[ \t]*(?:(?:>|[•\-*·#\[])[ \t]*)*결정[ \t]*[-#]?[ \t]*(?P<n>[①-⑳]|\d{1,2}(?![0-9]))(?:번)?(?=[).:*\]\s]|$)", re.M),
     "head_b": re.compile(r"^[ \t]*(?:(?:>|[•\-*·])[ \t]*)*(?P<n>[①-⑳]|\d{1,2}(?:[.)]|번)|\(\d{1,2}\)|\d{1,2}\uFE0F?\u20E3)[ \t]*\**[ \t]*결정", re.M),
     "mid_a": re.compile(r"(?<![0-9A-Za-z_가-힣])결정[ \t]*[-#]?[ \t]*(?P<n>[①-⑳]|\d{1,2}(?![0-9])(?=[).:*]))"),
+    # 번호 카드 인자. 문구 안 쉼표는 뒤에 '숫자=' 가 올 때만 구분자로 봄. 두 자리 번호도 구분자로 봐 범위 오류로 거부(문구에 조용히 합쳐지지 않게)
+    "opt_split": re.compile(r",[ \t]*(?=[0-9]+[ \t]*=)"),
+    "opt_item": re.compile(r"[ \t]*([0-9]+)[ \t]*=(.*)", re.S),
+    # 선택지 문구에 있으면 답 이모지·답 줄로 오인되는 것: :이름:·👉·✅·❌·키캡 숫자
+    "opt_fake": re.compile(r"(?<!\w):[\w+\-]{1,40}:(?!\w)|👉|✅|❌|[0-9#*]️?⃣"),
+    "decision_id": re.compile(r"D-[0-9A-Za-z]{1,16}", re.A),
+    "todo_id": re.compile(r"T-[0-9A-Za-z]{1,16}", re.A),
+    "seq": re.compile(r"([0-9]{1,3})/([0-9]{1,3})", re.A),
+    "opt_line": re.compile(r"^[ \t]*(?::(?:one|two|three|four):|[1-4]️?⃣)", re.M),
 }
+# 번호 카드 이모지. 이름은 slack_poll.sh 의 PICK_EMOJI 와 같아야 함
+OPT_EMOJI = {1: ":one:", 2: ":two:", 3: ":three:", 4: ":four:"}
+OPT_TEXT_MAX = 80
+DUP_DAYS = 7  # 같은 결정 번호 재사용을 경고하는 기간
+REVERSIBLE = ("쉬움", "보통", "어려움")
+# 줄을 새로 만들거나 글 방향을 뒤집어 가짜 선택지·답 줄처럼 보이게 하는 문자. 깨진 UTF-8 이 바뀐 U+FFFD 도 거부
+BAD_CATS = ("Cc", "Cs", "Co", "Cn", "Zl", "Zp")
+BAD_CHARS = frozenset("‪‫‬‭‮⁦⁧⁨⁩‎‏؜�")
+TODO_GUIDE = "👉 답: 끝나면 :white_check_mark: (또는 :hammer_and_wrench:) · 보류는 :x:"
 
 def num_key(token):
     """번호 표기 → 정수. ①→1, '2.'·'(2)'·'2번'·키캡 → 2"""
@@ -186,15 +241,133 @@ def attach_guide(msg, guide):
         return msg.rstrip("\n") + "\n\n" + guide
     return msg[:pos].rstrip("\n") + "\n\n" + guide + "\n\n" + msg[pos:].lstrip("\n")
 
+def given(arg):
+    """bash 가 '=값'(줌) 또는 ''(안 줌)으로 넘긴 인자. 안 줬으면 None"""
+    return arg[1:] if arg.startswith("=") else None
+
+def parse_card(raw, rec, rev, did, seq, tid):
+    """번호 카드·할 일 번호 인자를 검증해 보낸 기록에 더할 dict 반환. 틀리면 ValueError(원인 — 조치)"""
+    rec, rev, did, seq, tid = map(given, (rec, rev, did, seq, tid))
+    if tid is not None:
+        if not RX["todo_id"].fullmatch(tid):
+            raise ValueError("--todo-id 형식 오류: T-영문·숫자 1~16자 — 예 T-0001")
+        return {"todo_id": tid}
+    opts = {}
+    for part in RX["opt_split"].split(unicodedata.normalize("NFC", raw)):
+        m = RX["opt_item"].fullmatch(part)
+        if not m:
+            raise ValueError("--options 형식 오류 — '1=문구,2=문구' 처럼 번호=문구 를 쉼표로 이어 쓰세요")
+        n, text = m.group(1), m.group(2).strip(" \t")
+        if n in opts:
+            raise ValueError("--options 번호 중복: %s — 번호마다 한 번씩만 쓰세요" % n)
+        if any(unicodedata.category(c) in BAD_CATS or c in BAD_CHARS for c in text):
+            raise ValueError("--options 문구에 줄바꿈·제어 문자가 있음(%s번) — 한 줄 문구로 쓰세요" % n)
+        if RX["opt_fake"].search(text):
+            raise ValueError("--options 문구에 이모지 이름(:이름:)·👉·✅·❌·키캡이 있음(%s번) — 답 이모지·답 줄로 오인되므로 글자로만 쓰세요" % n)
+        if not text:
+            raise ValueError("--options 문구 없음(%s번) — 번호마다 문구를 쓰세요" % n)
+        if len(text) > OPT_TEXT_MAX:
+            raise ValueError("--options 문구가 %d자(%s번, 최대 %d) — 줄이세요" % (len(text), n, OPT_TEXT_MAX))
+        opts[n] = text
+    if not 2 <= len(opts) <= 4 or set(opts) != {str(i) for i in range(1, len(opts) + 1)}:
+        raise ValueError("--options 범위 오류: 번호는 1부터 빠짐없이 2~4개 — 예 '1=가,2=나,3=다'")
+    if rec not in opts:
+        raise ValueError("--recommend 범위 오류: %s — 선택지 번호(1~%d) 중 하나로 지정" % (rec, len(opts)))
+    if not RX["decision_id"].fullmatch(did or ""):
+        raise ValueError("--decision-id 형식 오류: D-영문·숫자 1~16자 — 예 D-0001")
+    out = {"decision_id": did, "options": opts, "recommended": int(rec)}
+    if rev is not None:
+        if rev not in REVERSIBLE:
+            raise ValueError("--reversible 값 오류: %s — 쉬움|보통|어려움 중 하나" % rev)
+        out["reversible"] = rev
+    if seq is not None:
+        m = RX["seq"].fullmatch(seq)
+        if not m or not 1 <= int(m.group(1)) <= int(m.group(2)):
+            raise ValueError("--seq 형식 오류: 순번/전체(1 ≤ 순번 ≤ 전체 ≤ 999) — 예 3/9")
+        out["seq"] = seq
+    return out
+
+def build_card(msg, spec):
+    """검사를 마친 본문에 카드 줄을 붙여 (본문, 경고 목록) 반환. 카드의 답 줄은 1개여야 해서 본문 답 줄은 ValueError.
+    선택지·추천·답 줄은 마지막 '참고:' 줄 앞(없으면 끝). 번호 줄은 메시지 맨 끝 = 참고 블록 끝('참고:' 줄 뒤에 다른 줄이 더 있어도 그 뒤. 없으면 '참고:' 줄을 새로 만듦)"""
+    scan = scrub(msg)
+    pos = ref_start(scan)
+    has_answer = RX["answer"].search(scan)
+    warns, block = [], []
+    if "options" in spec:
+        if has_answer:
+            raise ValueError("거부: --options 카드 본문에 '👉 답:' 줄이 있음(전송 안 함) — 답 줄은 도구가 만듦. 본문에는 제목과 배경만 쓰세요")
+        if RX["opt_line"].search(scan if pos is None else scan[:pos]):
+            warns.append("경고: 본문 줄 머리에 선택지 이모지(:one: 등)가 있음 — --options 가 선택지 줄을 만들므로 본문에는 배경만 쓰세요")
+        nums = sorted(int(k) for k in spec["options"])
+        block = ["%s %s" % (OPT_EMOJI[n], spec["options"][str(n)]) for n in nums]
+        rec = ":star: 추천: %s" % OPT_EMOJI[spec["recommended"]]
+        block.append(rec + (" · 되돌리기: %s" % spec["reversible"] if "reversible" in spec else ""))
+        block.append("👉 답: %s 중 하나 · :white_check_mark: 추천대로 · :x: 보류" % " ".join(OPT_EMOJI[n] for n in nums))
+        ref = "결정 %s" % spec["decision_id"] + (" · %s" % spec["seq"] if "seq" in spec else "")
+    else:
+        if not has_answer:
+            block = [TODO_GUIDE]
+        ref = "할 일 %s" % spec["todo_id"]
+    out = msg
+    if block:
+        guide = "\n".join(block)
+        out = msg.rstrip("\n") + "\n\n" + guide if pos is None else msg[:pos].rstrip("\n") + "\n\n" + guide + "\n\n" + msg[pos:].lstrip("\n")
+    return out.rstrip("\n") + ("\n\n참고: " + ref if pos is None else "\n" + ref), warns
+
+def recent_dup(path, did):
+    """최근 DUP_DAYS 일 안에 같은 결정 번호로 보낸 기록 수. 파일이 없거나 깨진 줄은 무시"""
+    since, n = time.time() - DUP_DAYS * 86400, 0
+    try:
+        with open(path, encoding="utf-8") as f:
+            for ln in f:
+                try:
+                    r = json.loads(ln)
+                except ValueError:
+                    continue
+                at = r.get("at") if isinstance(r, dict) else None
+                if r.get("decision_id") == did and isinstance(at, (int, float)) and not isinstance(at, bool) and at >= since:
+                    n += 1
+    except OSError:
+        pass
+    return n
+
 data = sys.stdin.buffer.read().decode("utf-8", "replace")
-if sys.argv[1] == "check":
+if sys.argv[1] == "dup":
+    if recent_dup(sys.argv[2], sys.argv[3]):
+        sys.stderr.buffer.write(("경고: --decision-id %s 로 최근 %d일 안에 보낸 카드가 있음(전송함) — 메인 전달문 '결정 %s = …' 이 어느 카드의 답인지 구분되지 않으니 번호를 새로 정하세요\n" % (sys.argv[3], DUP_DAYS, sys.argv[3])).encode("utf-8"))
+elif sys.argv[1] == "check":
     for lvl, code, text in check_form(data, sys.argv[2], sys.argv[3] == "1"):
         sys.stdout.buffer.write(("%s\t%s\t%s\n" % (lvl, code, text)).encode("utf-8"))
+elif sys.argv[1] in ("opts", "card"):
+    try:
+        if sys.argv[1] == "opts":
+            out, warns = json.dumps(parse_card(data, *sys.argv[2:7]), ensure_ascii=False), []
+        else:
+            out, warns = build_card(data, json.loads(sys.argv[2]))
+    except ValueError as e:
+        sys.stderr.buffer.write(("%s\n" % e).encode("utf-8"))
+        sys.exit(2)
+    sys.stderr.buffer.write("".join(w + "\n" for w in warns).encode("utf-8"))
+    sys.stdout.buffer.write(out.encode("utf-8"))
 else:
     sys.stdout.buffer.write(attach_guide(data, sys.argv[2]).encode("utf-8"))
 PYEOF
 check_form() { printf '%s' "$1" | python3 -c "$FORM_PY" check "$2" "$3"; }
 attach_guide() { printf '%s' "$1" | python3 -c "$FORM_PY" attach "$2"; }
+setv() { if [ "$1" = 1 ]; then printf '=%s' "$2"; fi; }  # opts 인자: 준 값은 '=값', 안 준 값은 ''
+
+# 번호 카드·할 일 번호 검증. 틀리거나 검사가 실패하면 모드·우회와 무관하게 미전송(카드 줄 없이 보내면 답을 해석할 수 없음)
+CARD_JSON=""
+if [ "$OPT_SET" = 1 ] || [ "$TID_SET" = 1 ]; then
+  CARD_JSON="$(printf '%s' "$OPTIONS" | python3 -c "$FORM_PY" opts "$(setv "$REC_SET" "$RECOMMEND")" "$(setv "$REV_SET" "$REVERSIBLE")" \
+    "$(setv "$DID_SET" "$DECISION_ID")" "$(setv "$SEQ_SET" "$SEQ")" "$(setv "$TID_SET" "$TODO_ID")")" \
+    || { rc=$?; [ "$rc" = 2 ] || echo "카드 인자 검사 실패(전송 안 함) — python3 동작 확인 뒤 다시 보내세요" >&2; exit 2; }
+fi
+# 같은 결정 번호 재사용은 경고만(재전송일 수 있음). 검사 실패·기록 없음은 전송에 영향 없음
+if [ "$OPT_SET" = 1 ]; then python3 -c "$FORM_PY" dup "$SENT" "$DECISION_ID" < /dev/null || true; fi
+GUIDED=0  # 답 줄을 도구가 붙이면 no-answer 검사 생략
+if [ "$CHOICES_SET" = 1 ] || [ -n "$CARD_JSON" ]; then GUIDED=1; fi
 
 # 결정 메시지 끝의 이모지 답 안내 줄. --choices N 만큼 A.. 나열, 추천대로·보류는 항상 붙임. 이름은 slack_poll.sh 반응표와 일치해야 함
 guide_line() {
@@ -222,7 +395,7 @@ if [ -n "$KIND" ] && [ "$NOCHECK" = 0 ]; then
   case "$MODE" in warn|strict|off) ;; *) die "LRM_FORMAT 값 오류: $MODE — warn|strict|off 중 하나로 지정" ;; esac
   if [ "$MODE" != off ]; then
     FORM_N=0 HARD_N=0 FORM_CODES="" FORM_OUT="" HARD_TXT=""
-    if ! FORM_OUT="$(check_form "$MSG" "$KIND" "$CHOICES_SET")"; then
+    if ! FORM_OUT="$(check_form "$MSG" "$KIND" "$GUIDED")"; then
       # decide 는 다중 결정 검사를 건너뛰면 안 되므로 warn 이어도 미전송. 다른 kind 는 warn 에서 검사 없이 전송
       if [ "$MODE" = strict ] || [ "$KIND" = decide ]; then
         log_format "$KIND" check-fail "$MODE"
@@ -265,27 +438,35 @@ if [ "$CHOICES_SET" = 1 ]; then
     echo "안내 줄 부착 실패 — 안내 줄 없이 전송" >&2
   fi
 fi
+# 번호 카드·할 일 줄도 검사 뒤에 부착(선택지 문구의 '결정'을 결정 개수로 세지 않음). 실패하면 미전송
+if [ -n "$CARD_JSON" ]; then
+  CARDED="$(printf '%s' "$MSG" | python3 -c "$FORM_PY" card "$CARD_JSON")" \
+    || { rc=$?; [ "$rc" = 2 ] || echo "카드 줄 부착 실패(전송 안 함) — python3 동작 확인 뒤 다시 보내세요" >&2; exit 2; }
+  MSG="$CARDED"
+fi
 
 [ -n "$TITLE" ] || TITLE="${MSG%%$'\n'*}"
 CH=$(curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -d "users=$SLACK_USER_ID" $API/conversations.open | python3 -c 'import sys,json;print(json.load(sys.stdin)["channel"]["id"])')
 
 # 응답 JSON 을 받아 ok/에러 출력 + 성공 시 sent 기록. ts 는 postMessage 만 제공, 파일 업로드는 file_id 로 남김.
-# form_kind(--kind 지정 시), unchecked(--no-check 시)는 해당할 때만 기록해 기존 레코드 모양을 유지함.
+# form_kind(--kind 지정 시), unchecked(--no-check 시), 카드 필드(decision_id·options·recommended·reversible·seq 또는 todo_id)는
+# 해당할 때만 기록해 기존 레코드 모양을 유지함. 카드 필드가 없는 기록은 폴러가 옵션 없는 옛 카드로 읽음
 record() {
   python3 -c '
 import sys,json,time,os
-d=json.load(sys.stdin); sent,ch,title,tag,thread,kind,fkind,unchecked=sys.argv[1:9]
+d=json.load(sys.stdin); sent,ch,title,tag,thread,kind,fkind,unchecked,card=sys.argv[1:10]
 if not d.get("ok"):
     print(d.get("error")); sys.exit(1)
 rec={"at":int(time.time()),"channel":ch,"ts":d.get("ts",""),"thread_ts":thread,"kind":kind,"title":title[:200],"tag":tag}
 if fkind: rec["form_kind"]=fkind
 if unchecked=="1": rec["unchecked"]=True
+if card: rec.update(json.loads(card))
 if kind=="file":
     rec["file_id"]=(d.get("files") or [{}])[0].get("id","")
     rec["path"]=os.environ.get("LRM_FILE_PATH","")
 with open(sent,"a",encoding="utf-8") as f: f.write(json.dumps(rec,ensure_ascii=False)+"\n")
 print("ok", rec["ts"])
-' "$SENT" "$CH" "$TITLE" "$TAG" "$THREAD" "$1" "$KIND" "$NOCHECK"
+' "$SENT" "$CH" "$TITLE" "$TAG" "$THREAD" "$1" "$KIND" "$NOCHECK" "$CARD_JSON"
 }
 
 if [ $# -ge 2 ]; then

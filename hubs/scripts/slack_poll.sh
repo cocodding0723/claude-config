@@ -30,7 +30,10 @@ usage() {
            reactions:write scope 가 없으면 조용히 건너뛰고 10분마다 재시도(stderr 에 사유·scope 이름 한 줄, 토큰 없음). 수집·전달은 계속
 반응 해석: 결정 카드 ✅=approve ❌(x)=hold :비서-a~d:=a~d, 시안(kind=review) ✅=pass ❌=fail :비서-a:=pick_a :비서-b:=pick_b.
            표에 없는 이모지는 이름 그대로. 종류는 slack-sent.jsonl 의 form_kind·kind(text·file 제외) → 없으면 첨부 기록이고 제목에 '결정'이 없을 때 review.
-           review 메시지의 반응·답글 레코드에 "kind":"review" 추가(다른 종류는 키 없음)
+           review 메시지의 반응·답글 레코드에 "kind":"review" 추가(옛 결정 카드는 키 없음)
+           번호 카드(form_kind=decide + options): :one:~:four:=pick(pick=N, 선택지 수 안일 때만) ✅=approve(pick=추천 번호) ❌=hold,
+           레코드에 kind=decide·decision_id·pick·option_text(문구 앞 80자). 같은 카드 답이 갈리면 conflict:true·choices
+           할 일(form_kind=todo): ✅·🛠️(hammer_and_wrench)=done ❌=hold, kind=todo·todo_id. 범위 밖·기록 모양 오류는 이름 그대로(stderr 1줄)
 스레드 답글: '채널에도 보내기'를 켠 답글(subtype thread_broadcast)도 thread_reply 로 수집
 수신 확인 답장: 새 사용자 메시지의 스레드에 "📥 메시지 집계 중이에요" 1회(chat:write). 같은 스레드 30초 1회, 60초 3회, 회차 3회. 결정·승인 같은 명령 답글에는 달지 않음.
            slack_cmd.sh 즉답 명령·30분 넘게 묵은 항목은 제외. 권한 부족이면 조용히 건너뛰고 10분마다 재시도(상태: ack_disabled_reason).
@@ -100,6 +103,16 @@ SENT, INBOX, STATE = (os.path.join(DIR, n) for n in ("slack-sent.jsonl", "slack-
 REACTION_ACTION = {"white_check_mark": "approve", "x": "hold", "비서-추천대로": "approve", "비서-lgtm": "approve", "비서동의": "approve", "비서-보류": "hold", "비서-a": "a", "비서-b": "b", "비서-c": "c", "비서-d": "d"}
 REVIEW_ACTION = {"white_check_mark": "pass", "x": "fail", "비서-a": "pick_a", "비서-b": "pick_b"}
 REVIEW = "review"
+# 번호 카드(보낸 기록에 options 가 있는 decide)·할 일(todo) 해석. 이름은 slack_notify.sh 의 OPT_EMOJI 와 같아야 함.
+# 사용자 답이 메인에 넘어가므로 틀린 해석이 가장 나쁨: 표·범위·기록 모양이 하나라도 어긋나면 해석하지 않고 이름 그대로
+DECIDE, TODO = "decide", "todo"
+PICK_EMOJI = {"one": 1, "two": 2, "three": 3, "four": 4}
+TODO_ACTION = {"white_check_mark": "done", "hammer_and_wrench": "done", "x": "hold"}
+ANSWER_ACTIONS = ("pick", "approve", "hold")  # 결정 답. 이 셋만 충돌 판정·대기 목록 닫힘에 씀
+DECISION_ID_RE = re.compile(r"D-[0-9A-Za-z]{1,16}", re.ASCII)
+TODO_ID_RE = re.compile(r"T-[0-9A-Za-z]{1,16}", re.ASCII)
+OPTION_TEXT_MAX = 80
+SKIP_WHY = {"range": "범위 밖", "options": "옵션 정보 오류"}  # 해석하지 않은 사유(stderr). 문구·제목은 쓰지 않음
 TRANSPORT_KINDS = ("text", "file")  # slack_notify.sh 기록의 kind 중 전송 방식 값(메시지 종류 아님)
 COMMANDS = [
     ("decision", re.compile(r"^결정\s*(\d+)\s+(\S+)$")),
@@ -360,6 +373,64 @@ def msg_kind(rec):
 
 def reaction_action(kind, name):
     return (REVIEW_ACTION if kind == REVIEW else REACTION_ACTION).get(name, name)
+
+def card_options(rec):
+    """번호 카드 기록의 (결정 번호, {번호: 문구}, 추천 번호). 모양이 틀리면 ValueError"""
+    opts, best, did = rec.get("options"), rec.get("recommended"), rec.get("decision_id")
+    if not isinstance(opts, dict) or not 2 <= len(opts) <= 4 or set(opts) != {str(i) for i in range(1, len(opts) + 1)} \
+            or not all(isinstance(v, str) and v.strip() for v in opts.values()):
+        raise ValueError
+    if not isinstance(best, int) or isinstance(best, bool) or not 1 <= best <= len(opts):
+        raise ValueError
+    if not isinstance(did, str) or not DECISION_ID_RE.fullmatch(did):
+        raise ValueError
+    return did, {int(k): v for k, v in opts.items()}, best
+
+def interpret(rec, kind, name):
+    """반응 1건 → (레코드에 더할 필드, 해석하지 않은 사유|None). 옛 카드·시안은 기존 표 그대로이고 레코드 모양도 같음.
+    할 일은 kind=todo, 번호 카드는 kind=decide·decision_id 를 붙이며 pick·approve 는 pick·option_text(문구 앞 80자)도 붙임"""
+    if kind == TODO:
+        out = {"action": TODO_ACTION.get(name, name), "kind": TODO}
+        tid = rec.get("todo_id")
+        if isinstance(tid, str) and TODO_ID_RE.fullmatch(tid):
+            out["todo_id"] = tid
+        return out, None
+    if kind != DECIDE or "options" not in rec:
+        return {"action": reaction_action(kind, name)}, None
+    try:
+        did, opts, best = card_options(rec)
+    except ValueError:
+        return {"action": name, "kind": DECIDE}, "options"
+    out = {"action": name, "kind": DECIDE}
+    if name == "x":
+        out["action"] = "hold"
+    elif name == "white_check_mark":
+        out.update(action="approve", pick=best)
+    elif name in PICK_EMOJI:
+        if PICK_EMOJI[name] not in opts:  # 범위 검사가 깨져도 KeyError 로 회차 전체가 죽지 않게 사전 조회로 거름
+            out["decision_id"] = did
+            return out, "range"
+        out.update(action="pick", pick=PICK_EMOJI[name])
+    out["decision_id"] = did
+    if "pick" in out:
+        out["option_text"] = opts.get(out["pick"], "")[:OPTION_TEXT_MAX]
+    return out, None
+
+def answer_key(d):
+    """결정 답의 비교 값. 같은 답(선택 1 과 추천대로=1)은 같은 값"""
+    return "hold" if d.get("action") == "hold" else str(d.get("pick"))
+
+def mark_conflict(items, prior):
+    """같은 카드(parent_ts·decision_id)의 이전 답(inbox)과 이번 회차 답이 둘 이상 갈리면 이번 회차 답 전부에 conflict·choices 를 붙임.
+    inbox 는 추가 전용이라 앞서 기록된 줄은 고치지 않음. 취소를 볼 수 없어 1 취소 → 2 도 충돌로 남김(사용자 확인)"""
+    head = items[0]
+    keys = {answer_key(d) for d in prior if d.get("type") == "reaction" and d.get("parent_ts") == head["parent_ts"]
+            and d.get("decision_id") == head["decision_id"] and d.get("action") in ANSWER_ACTIONS}
+    keys |= {answer_key(d) for d in items}
+    if len(keys) > 1:
+        choices = sorted(keys, key=lambda k: (k == "hold", k))
+        for d in items:
+            d.update(conflict=True, choices=choices)
 
 def classify(text):
     t = " ".join(text.split())
@@ -721,6 +792,7 @@ def main():
 
     # 반응·답글 수는 목록 응답에 들어 있어 메시지별 조회가 필요 없음. 반응은 오래된 메시지에도 달리므로 매번 기간 전체를 읽음
     hist = fetch_history(ch, f"{cutoff:.6f}")
+    prior = None  # 충돌 판정용 inbox. 번호 카드에 새 답이 올 때만 읽음
     for m in hist:
         ts = m["ts"]
         mine = m.get("user") == ME
@@ -746,12 +818,22 @@ def main():
         # 응답의 users 는 잘릴 수 있어 본인 반응이 안 보이고 개수가 더 많으면 그 메시지만 reactions.get 으로 보강
         if any(r.get("count", 0) > len(r.get("users", [])) and ME not in r.get("users", []) for r in reactions):
             reactions = api("reactions.get", channel=ch, timestamp=ts).get("message", {}).get("reactions", [])
+        answers = []
         for r in reactions:
             if ME in r.get("users", []):
                 name = r["name"]
-                if add(f"react:{ts}:{name}", {"type": "reaction", "emoji": name,
-                                              "action": reaction_action(kind, name), **meta}):
+                extra, why = interpret(rec, kind, name)
+                item = {"type": "reaction", "emoji": name, **extra, **meta}
+                if add(f"react:{ts}:{name}", item):
                     mark_on(state, ts, now)
+                    if why:  # 새 반응일 때만 1줄(주기 재조회에서 반복 안 함)
+                        print(f"반응 해석 안 함({SKIP_WHY[why]}) — 이모지 이름 그대로 전달", file=sys.stderr)
+                    if item.get("decision_id") and item["action"] in ANSWER_ACTIONS:
+                        answers.append(item)
+        if answers:
+            if prior is None:
+                prior = load_jsonl(INBOX)
+            mark_conflict(answers, prior)
         collect_replies(m, meta)
 
     # 30일 지난 중복 방지 키 정리, 기간 밖 스레드 기록 정리

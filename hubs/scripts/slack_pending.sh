@@ -17,7 +17,7 @@ LOCK="$DIR/.slack-pending.lock"
 mkdir "$LOCK" 2>/dev/null || { echo "이미 실행 중 — 건너뜀"; exit 75; }
 trap 'rmdir "$LOCK"' EXIT
 python3 -I - "$DIR" "$@" <<'PY'
-import json, os, sys, time, urllib.error, urllib.parse, urllib.request
+import json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 H = sys.argv[1]
 DRY = "--dry-run" in sys.argv[2:]
 TOK = os.environ["SLACK_BOT_TOKEN"]
@@ -30,6 +30,9 @@ RETRIES = 2
 # 다시 시도해도 소용없는 수정 오류. 이력에 남기고 재시도 목록에서 뺌
 FINAL_UPDATE_ERRORS = {"message_not_found", "cant_update_message", "edit_window_closed"}
 HIST = os.path.join(H, "slack-pending-history.jsonl")
+# 번호 카드(slack_notify.sh --options) 답 표시. 형식은 slack_poll.sh 와 같음. 표시만 하고 결정을 확정·실행하지 않음(메인이 원문으로 확인)
+DECISION_ID_RE = re.compile(r"D-[0-9A-Za-z]{1,16}", re.ASCII)
+ANSWER_ACTIONS = ("pick", "approve", "hold")
 
 class Fail(Exception):
     pass
@@ -91,16 +94,48 @@ def log(event, **fields):
         f.flush()
         os.fsync(f.fileno())
 
+def card_state(s, reactions):
+    """번호 카드의 답 상태 (closed|hold|conflict, 표시 문구) 또는 None(답 없음).
+    폴러가 해석한 답(pick·approve·hold)만 보며, 답이 하나로 모이고 보류가 아닐 때만 닫음. 범위 밖·이름 그대로 반응은 답이 아님"""
+    did = s.get("decision_id")
+    if not isinstance(did, str) or not DECISION_ID_RE.fullmatch(did):
+        return None
+    ans = [d for d in reactions if d.get("kind") == "decide" and d.get("decision_id") == did and d.get("action") in ANSWER_ACTIONS]
+    keys = []
+    for d in ans:
+        n = d.get("pick")
+        k = "hold" if d["action"] == "hold" else str(n) if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= 4 else None
+        if k and k not in keys:
+            keys.append(k)
+    if len(keys) > 1 or any(d.get("conflict") is True for d in ans):
+        shown = ", ".join("보류" if k == "hold" else k for k in sorted(keys, key=lambda k: (k == "hold", k)))
+        return "conflict", f"선택이 여러 개({shown}), 확인 필요"
+    if not keys:
+        return None
+    if keys == ["hold"]:
+        return "hold", "보류"
+    last = [d for d in ans if d["action"] != "hold"][-1]
+    return "closed", "답 도착(" + ("추천대로, " if last["action"] == "approve" else "") + f"선택 {keys[0]})"
+
 def main():
     sent = jsonl(os.path.join(H, "slack-sent.jsonl"))
     inbox = jsonl(os.path.join(H, "slack-inbox.jsonl"))
     done_file = os.path.join(H, "slack-done.txt")
-    reacted = {}
+    reacted, by_msg = {}, {}
     for d in inbox:
         if d.get("type") == "reaction":
             reacted[d.get("parent_ts")] = d  # 같은 메시지에 여러 반응이면 마지막 것
-    done = set(reacted) | (set(open(done_file).read().split()) if os.path.exists(done_file) else set())
-    decisions = [s for s in sent if s.get("ts") and not s.get("thread_ts") and "결정" in s.get("title", "")]
+            by_msg.setdefault(d.get("parent_ts"), []).append(d)
+    # 번호 카드는 어떤 반응이든 닫지 않고 card_state 가 닫힘으로 본 것만 닫음. 옛 카드는 기존대로 반응이 있으면 닫음
+    # 결정 번호 형식이 틀린 기록(손상·위조)은 번호 카드로 안 보고 옛 경로로 보냄: 줄에 번호를 그대로 넣지 않고, 상태가 없어 영원히 대기로 남는 일도 막음
+    cards = {s["ts"]: card_state(s, by_msg.get(s["ts"], [])) for s in sent
+             if s.get("ts") and s.get("form_kind") == "decide" and "options" in s
+             and isinstance(s.get("decision_id"), str) and DECISION_ID_RE.fullmatch(s["decision_id"])}
+    done = {t for t in reacted if t not in cards} | {t for t, st in cards.items() if st and st[0] == "closed"}
+    done |= set(open(done_file).read().split()) if os.path.exists(done_file) else set()
+    # 번호 카드 기록이면 번호가 손상됐어도 목록에는 남김(번호 없이 제목만 표시)
+    decisions = [s for s in sent if s.get("ts") and not s.get("thread_ts")
+                 and ("결정" in s.get("title", "") or s["ts"] in cards or (s.get("form_kind") == "decide" and "options" in s))]
     answered = [s for s in decisions if s["ts"] in done]
     waiting = [s for s in decisions if s["ts"] not in done]
 
@@ -122,8 +157,9 @@ def main():
     todo = [s for s in answered if s["ts"] not in handled][:UPDATE_MAX]
     for s in todo:
         r = reacted.get(s["ts"], {})
-        action = r.get("action", "완료")
-        text = f"✅ {s['title']} — 답: {action}"
+        st = cards.get(s["ts"])
+        action = st[1] if st else r.get("action", "완료")
+        text = f"✅ {s['title']} — {action}" if st else f"✅ {s['title']} — 답: {action}"
         if DRY:
             print(f"수정 예정: {s['ts']} → {text}")
             continue
@@ -144,11 +180,18 @@ def main():
 
     rows, seen = [], set()
     for s in waiting:
-        if s["title"] in seen:
+        # 번호 카드는 제목이 같아도 결정 번호로 구분. 보류·충돌은 닫지 않고 상태를 덧붙임
+        card = s["ts"] in cards
+        key = ("card", s.get("decision_id"), s["ts"]) if card else s["title"]
+        if key in seen:
             continue
-        seen.add(s["title"])
+        seen.add(key)
         link = call("chat.getPermalink", channel=s["channel"], message_ts=s["ts"]).get("permalink", "")
-        rows.append((s["title"], f"• <{link}|{s['title']}>"))
+        row = f"• <{link}|{s['title']}>"
+        if card:
+            st = cards[s["ts"]]
+            row += f" · {s.get('decision_id')}" + (f" — {st[1]}" if st else "")
+        rows.append((s["title"], row))
     channel = waiting[0]["channel"] if waiting else None
 
     new_ts = None
