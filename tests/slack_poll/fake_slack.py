@@ -18,12 +18,21 @@ REACTION_METHODS = ("reactions.add", "reactions.remove")
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        """form 본문 POST(chat.update). 본문을 쿼리처럼 기록·해석하고 호출 기록의 메서드 앞에 POST: 를 붙임"""
+        body = self.rfile.read(int(self.headers.get("Content-Length", "0"))).decode()
+        self.handle_call(urllib.parse.urlsplit(self.path).path, body, "POST:")
+
     def do_GET(self):
         parts = urllib.parse.urlsplit(self.path)
+        self.handle_call(parts.path, parts.query, "")
+
+    def handle_call(self, path, query, prefix):
+        parts = urllib.parse.SplitResult("", "", path, query, "")
         method = os.path.basename(parts.path)
         if CALL_LOG:
             with open(CALL_LOG, "a", encoding="utf-8") as f:
-                f.write(f"{method}\t{parts.query}\n")
+                f.write(f"{prefix}{method}\t{parts.query}\n")
         hang = os.path.join(FIX, f"hang.{method}")
         if os.path.exists(hang):
             time.sleep(float(open(hang).read().strip() or "3"))
@@ -34,6 +43,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             path = per_msg if os.path.exists(per_msg) else path
             default = b'{"ok":true}'
         elif method == "chat.postMessage":
+            # ts 는 호출 순번으로 만든 가짜 값. 응답 폴더에 chat.postMessage.json 이 있으면 그대로 씀
+            n = sum(1 for _ in open(CALL_LOG, encoding="utf-8") if _.startswith("chat.postMessage")) if CALL_LOG else 0
+            default = ('{"ok":true,"channel":"Dfake","ts":"9999.%06d"}' % n).encode()
+        elif method == "chat.update":
             default = b'{"ok":true}'
         else:
             default = b'{"ok":false,"error":"no_fixture"}'

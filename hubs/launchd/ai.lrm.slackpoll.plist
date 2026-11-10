@@ -9,7 +9,8 @@
     <string>__HOME__/.config/lrm-hubs/slack_poll.sh</string>
     <string>--once</string>
   </array>
-  <key>StartInterval</key><integer>30</integer>
+  <key>StartInterval</key><integer>120</integer>
+  <key>AbandonProcessGroup</key><true/>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>__HOME__/.config/lrm-hubs/slack-poll.log</string>
   <key>StandardErrorPath</key><string>__HOME__/.config/lrm-hubs/slack-poll.log</string>

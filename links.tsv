@@ -65,6 +65,8 @@ hubs/scripts/slack_cmd.sh	.config/lrm-hubs/slack_cmd.sh	link
 hubs/scripts/slack_notify.sh	.config/lrm-hubs/slack_notify.sh	link
 hubs/scripts/slack_pending.sh	.config/lrm-hubs/slack_pending.sh	link
 hubs/scripts/slack_poll.sh	.config/lrm-hubs/slack_poll.sh	link
+hubs/scripts/slack_push.sh	.config/lrm-hubs/slack_push.sh	link
+hubs/scripts/slack_push.py	.config/lrm-hubs/slack_push.py	link
 hubs/scripts/unity_slot.sh	.config/lrm-hubs/unity_slot.sh	link
 hubs/roles/role-arch.txt	.config/lrm-hubs/roles/role-arch.txt	link
 hubs/roles/role-doc-kit.txt	.config/lrm-hubs/roles/role-doc-kit.txt	link

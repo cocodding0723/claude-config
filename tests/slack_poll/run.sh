@@ -2,6 +2,7 @@
 # slack_poll.sh 첨부 내려받기 검증. 가짜 Slack API(로컬 HTTP)와 가짜 curl 만 사용하며 실제 Slack·토큰·네트워크는 쓰지 않음.
 # 임시 폴더(mktemp -d) 안에서만 읽고 쓰며 종료 시 정리함.
 set -uo pipefail
+export LRM_PUSH=off  # 폴러 끝의 메인 전달(push)이 실제 orca 를 부르지 않게 함. push 는 push.sh 가 가짜 orca 로 시험
 
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 POLL="$HERE/../../hubs/scripts/slack_poll.sh"

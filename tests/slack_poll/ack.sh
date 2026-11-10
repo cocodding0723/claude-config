@@ -2,6 +2,7 @@
 # slack_poll.sh 수신 확인 자동 답장 검증. 가짜 Slack API(로컬 HTTP)만 사용하며 실제 Slack·토큰·네트워크는 쓰지 않음.
 # 임시 폴더(mktemp -d) 안에서만 읽고 쓰며 종료 시 정리함. ACK_POLL=<경로> 로 변형 사본을 시험할 수 있음(변이 확인용).
 set -uo pipefail
+export LRM_PUSH=off  # 폴러 끝의 메인 전달(push)이 실제 orca 를 부르지 않게 함. push 는 push.sh 가 가짜 orca 로 시험
 
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 POLL="${ACK_POLL:-$HERE/../../hubs/scripts/slack_poll.sh}"
@@ -19,7 +20,7 @@ mkdir -p "$FIX"; : > "$CL"
 FAKE_TOKEN="fake-token-0123456789-abcdefghij"
 ME=Uuser1; BOT=Ubot1
 N=$(date +%s)
-DEFAULT_TEXT="확인했어요, 분석 중이에요 👀"
+DEFAULT_TEXT="📥 메시지 집계 중이에요"
 
 mkhub() { # 허브 폴더: 설정 파일과 첨부 전환 시각만 있는 새 허브
   mkdir -p "$1"
@@ -66,7 +67,7 @@ printf '{"ts":"%s.000300","at":%s,"title":"결정 1","tag":"t"}\n' "$N" "$N" > "
 c=$(acalls); pollh "$H" a1; rc=$?
 [ "$rc" = 0 ] && [ "$(inbox_n "$H")" = 2 ] && ok "수집 정상(메모·스레드 답글 2건, 봇 확인 답장 에코는 수집 안 됨)" || ko "수집" "rc=$rc inbox $(inbox_n "$H")"
 [ "$(( $(acalls) - c ))" = 2 ] && [ "$(ack_threads "$c")" = "$N.000100,$N.000300," ] && ok "ⓐ 새 메시지 2건에 스레드 답장 각 1회(thread_ts: 최상위는 그 ts, 답글은 부모 ts)" || ko "ⓐ 호출" "$(( $(acalls) - c )) $(ack_threads "$c")"
-[ "$(acks | jq -rs '[.[].channel] | unique | join(",")')" = Dfake ] && [ "$(acks | jq -rs '[.[].text] | unique | join(",")')" = "$DEFAULT_TEXT" ] && ok "ⓐ channel=DM 채널, 문구=확인했어요, 분석 중이에요 👀" || ko "ⓐ 채널·문구" "$(acks | head -2)"
+[ "$(acks | jq -rs '[.[].channel] | unique | join(",")')" = Dfake ] && [ "$(acks | jq -rs '[.[].text] | unique | join(",")')" = "$DEFAULT_TEXT" ] && ok "ⓐ channel=DM 채널, 문구=📥 메시지 집계 중이에요" || ko "ⓐ 채널·문구" "$(acks | head -2)"
 [ "$(errlines a1)" = 0 ] && [ "$(st "$H" '.acked | keys | length')" = 2 ] && [ "$(st "$H" '.ack_sent | length')" = 2 ] && ok "ⓐ 정상 시 stderr 없음, 상태에 acked 2건·ack_sent 2건" || ko "ⓐ 상태" "$(cat "$SB/a1.err") $(st "$H" '.acked')"
 [ "$(jq -c 'select(.ts=="'"$N.000100"'") | keys' "$H/slack-inbox.jsonl")" = '["channel","received_at","text","ts","type"]' ] && ok "inbox 레코드 스키마 불변(기존 필드 그대로)" || ko "스키마" "$(head -1 "$H/slack-inbox.jsonl")"
 [ "$(wc -l < "$H/slack-sent.jsonl" | tr -d ' ')" = 1 ] && ok "확인 답장은 slack-sent.jsonl 에 기록하지 않음(반응·답글 수집 대상이 되지 않게)" || ko "sent 기록" ""
@@ -86,6 +87,8 @@ replies "$(botmsg "$N.001300" "결정 필요"),$(umsg "$N.001400" "답글1"),$(u
 c=$(acalls); pollh "$H" b2; rc=$?
 [ "$rc" = 0 ] && [ "$(inbox_n "$H")" = 3 ] && [ "$(acalls)" = "$c" ] && ok "ⓑ 30초 안 다음 회차의 같은 스레드 답글 → 호출 0회" || ko "ⓑ 다음 회차" "rc=$rc $(( $(acalls) - c ))"
 agepast "$H" 40
+# 앞 답장이 이미 '전달했어요'로 갱신된 상태(n>0)여야 30초 규칙만 시험됨. 갱신 전이면 새 답장을 보내지 않음(아래 ⓥ)
+jq '.ack_msgs["'"$N.001300"'"].n = 1' "$H/slack-poll-state.json" > "$H/s.tmp" && mv "$H/s.tmp" "$H/slack-poll-state.json"
 hist "{\"ts\":\"$N.001300\",\"user\":\"$BOT\",\"bot_id\":\"B1\",\"text\":\"결정 필요\",\"reply_count\":4,\"latest_reply\":\"$N.001430\"}"
 replies "$(botmsg "$N.001300" "결정 필요"),$(umsg "$N.001400" "답글1"),$(umsg "$N.001410" "답글2"),$(umsg "$N.001420" "답글3"),$(umsg "$N.001430" "답글4")"
 c=$(acalls); pollh "$H" b3; rc=$?
@@ -312,6 +315,106 @@ c=$(acalls); LRM_POLL_BUDGET=3 pollh "$H" n1; rc=$?
 [ "$(st "$H" '(.acked // {}) | length')" = 0 ] && [ "$(st "$H" 'has("ack_disabled_reason")')" = false ] && ok "ⓝ 건너뛴 항목은 acked 기록·정지 상태 없음" || ko "ⓝ 상태" "$(st "$H" '.acked')"
 c=$(acalls); pollh "$H" n2
 [ "$(acalls)" = "$c" ] && ok "ⓝ 건너뛴 항목은 다음 회차에도 재시도하지 않음(at-most-once)" || ko "ⓝ 재시도" "$(( $(acalls) - c ))"
+
+# ---- 전달 완료 표시: 메인 전달 기록 → 확인 답장 chat.update ---------------------------------------------
+# slack_push 가 남기는 slack-push-delivered.jsonl 을 직접 써서 시험(push 자체는 push.sh 가 시험)
+ucalls() { awk '/^POST:chat\.update\t/{n++} END{print n+0}' "$CL"; }
+updates() { python3 -I "$HERE/ack_calls.py" "$CL" update; }
+DSEQ=1000 # 전달 기록의 단조 증가 번호(seq). 폴러는 이 값을 처리 위치로 씀
+deliver() { DSEQ=$((DSEQ + 1)); printf '{"seq":%s,"id":"%s","roots":%s}\n' "$DSEQ" "$2" "$3" >> "$1/slack-push-delivered.jsonl"; }
+seed() { # 허브 폴더, 루트 ts...: 확인 답장 ts 가 보관된 상태(acked 포함)를 직접 만듦
+  local h="$1"; shift; local j='{}' r
+  for r in "$@"; do j=$(printf '%s' "$j" | jq -c --arg r "$r" '.[$r] = {ts: ("8888." + $r), ch: "Dfake", n: 0}'); done
+  jq --argjson m "$j" --argjson t "$N" '.ack_msgs = $m | .acked = ($m | with_entries(.value = $t))' "$h/slack-poll-state.json" > "$h/s.tmp" && mv "$h/s.tmp" "$h/slack-poll-state.json"
+}
+# 앞 시나리오가 남긴 chat.postMessage 고정 응답을 ts 가 있는 정상 응답으로 되돌림
+printf '{"ok":true,"channel":"Dfake","ts":"9999.000001"}' > "$FIX/chat.postMessage.json"
+H="$SB/hubU"; mkhub "$H"; hist "$(note "$N.003000")"
+c=$(acalls); pollh "$H" u1
+[ "$(( $(acalls) - c ))" = 1 ] && [ "$(st "$H" '.ack_msgs["'"$N.003000"'"].n')" = 0 ] && st "$H" '.ack_msgs["'"$N.003000"'"].ts' | grep -q '^9999\.' && [ "$(st "$H" '.ack_msgs["'"$N.003000"'"].ch')" = Dfake ] && ok "확인 답장 응답의 ts·채널이 ack_msgs 에 보관됨(기존 acked 표는 그대로)" || ko "ts 보관" "$(st "$H" '.ack_msgs')"
+[ "$(st "$H" '.acked["'"$N.003000"'"] | type')" = number ] && ok "기존 acked 표 형식(스레드 → 시각 숫자) 호환 유지" || ko "acked 호환" ""
+ACKTS=$(st "$H" '.ack_msgs["'"$N.003000"'"].ts')
+pollh "$H" u2
+[ "$(ucalls)" = 0 ] && ok "전달 기록이 없으면 chat.update 0회" || ko "기록 없음" "$(ucalls)"
+deliver "$H" 5-1 "{\"$N.003000\":1}"
+pollh "$H" u3; rc=$?
+[ "$rc" = 0 ] && [ "$(ucalls)" = 1 ] && [ "$(updates | jq -r '.ts')" = "$ACKTS" ] && [ "$(updates | jq -r '.channel')" = Dfake ] && [ "$(updates | jq -r '.text')" = "📨 메인에 전달했어요 (1건)" ] && ok "전달 1건 → 그 스레드의 확인 답장에 chat.update 1회(POST), 문구 '📨 메인에 전달했어요 (1건)'" || ko "update 1회" "rc=$rc $(updates)"
+pollh "$H" u4
+[ "$(ucalls)" = 1 ] && [ "$(errlines u3)" = 0 ] && ok "이미 갱신한 기록은 다음 회차에 재호출 0, 정상 시 stderr 없음" || ko "재호출" "$(ucalls)"
+deliver "$H" 9-2 "{\"$N.003000\":2}"
+pollh "$H" u5
+[ "$(ucalls)" = 2 ] && [ "$(updates | jq -r '.text' | tail -1)" = "📨 메인에 전달했어요 (3건)" ] && [ "$(updates | jq -r '.ts' | sort -u | wc -l | tr -d ' ')" = 1 ] && ok "같은 스레드의 다음 배치(2건): 호출 1회, 건수는 누적 '(3건)'" || ko "누적" "$(updates | tail -1)"
+grep -q 'POST:chat.update' "$CL" && ! grep -qF -- "$FAKE_TOKEN" "$CL" && ok "chat.update 는 POST 로 호출하고 토큰은 요청 기록에 없음" || ko "POST·토큰" ""
+
+# 실패해도 나머지 스레드를 계속, 사유 코드만 stderr 1줄씩, 재시도 없음
+H="$SB/hubU2"; mkhub "$H"; hist ""; pollh "$H" v0; seed "$H" "$N.003100" "$N.003200"
+errjson chat.update message_not_found
+deliver "$H" 7-1 "{\"$N.003100\":1,\"$N.003200\":1}"
+c=$(ucalls); pollh "$H" v1; rc=$?
+[ "$rc" = 0 ] && [ "$(( $(ucalls) - c ))" = 2 ] && [ "$(errlines v1)" = 2 ] && [ "$(grep -c 'message_not_found' "$SB/v1.err")" = 2 ] && ! grep -qF -- "$FAKE_TOKEN" "$SB/v1.err" && ok "실패(message_not_found)해도 다음 스레드 계속: 호출 2회, 종료 코드 0, stderr 사유 코드 1줄씩" || ko "실패 계속" "rc=$rc $(( $(ucalls) - c )) $(cat "$SB/v1.err")"
+okjson chat.update
+c=$(ucalls); pollh "$H" v2
+[ "$(ucalls)" = "$c" ] && ok "실패한 갱신은 재시도하지 않음(at-most-once)" || ko "재시도" "$(( $(ucalls) - c ))"
+H="$SB/hubU3"; mkhub "$H"; hist ""; pollh "$H" w0; seed "$H" "$N.003300" "$N.003400"
+errjson chat.update missing_scope
+deliver "$H" 7-2 "{\"$N.003300\":1,\"$N.003400\":1}"
+c=$(ucalls); pollh "$H" w1
+[ "$(( $(ucalls) - c ))" = 1 ] && [ "$(errlines w1)" = 1 ] && grep -q 'missing_scope' "$SB/w1.err" && ok "권한·채널 문제(missing_scope)는 그 회차 갱신을 중단(호출 1회, stderr 1줄)" || ko "권한 중단" "$(( $(ucalls) - c ))"
+okjson chat.update
+
+# 회차 상한 5회, 나머지는 다음 회차
+H="$SB/hubU4"; mkhub "$H"; hist ""; pollh "$H" x0
+roots=(); for i in 1 2 3 4 5 6 7; do roots+=("$N.00350$i"); done
+seed "$H" "${roots[@]}"
+rj=$(printf '"%s":1,' "${roots[@]}"); deliver "$H" 8-1 "{${rj%,}}"
+c=$(ucalls); pollh "$H" x1
+[ "$(( $(ucalls) - c ))" = 5 ] && ok "회차당 chat.update 상한 5회" || ko "상한" "$(( $(ucalls) - c ))"
+c=$(ucalls); pollh "$H" x2; pollh "$H" x3
+[ "$(( $(ucalls) - c ))" = 2 ] && [ "$(updates | jq -r '.ts' | sort -u | wc -l | tr -d ' ')" -ge 7 ] && ok "남은 2건은 다음 회차에 처리, 그 뒤 재호출 0(7스레드 각 1회)" || ko "상한 이월" "$(( $(ucalls) - c ))"
+
+# 확인 답장이 없는 스레드·끄기
+H="$SB/hubU5"; mkhub "$H"; hist ""; pollh "$H" y0; seed "$H" "$N.003600"
+deliver "$H" 6-1 "{\"$N.003999\":1}"
+c=$(ucalls); pollh "$H" y1
+[ "$(ucalls)" = "$c" ] && [ "$(st "$H" '.upd_pos')" = "$DSEQ" ] && [ "$(st "$H" 'has("upd_part")')" = false ] && ok "확인 답장 ts 가 없는 스레드(답장 안 보냄·옛 답장)는 호출 없이 처리 위치(upd_pos=기록 seq)만 넘김" || ko "ts 없음" "$(st "$H" '.upd_pos')"
+for off in "LRM_ACK_UPDATE=off" "LRM_ACK=off"; do
+  H="$SB/hubU6-${off%%=*}"; mkhub "$H"; hist ""; pollh "$H" z0; seed "$H" "$N.003700"; deliver "$H" 4-1 "{\"$N.003700\":1}"
+  c=$(ucalls); env "$off" LRM_HUB_DIR="$H" SLACK_API_BASE="$API" bash "$POLL" --once > "$SB/z1.out" 2> "$SB/z1.err"
+  [ "$(ucalls)" = "$c" ] && ok "$off: chat.update 0회" || ko "$off" "$(( $(ucalls) - c ))"
+done
+
+# 결함 2: 처리 위치는 단조 증가 seq. 전달 기록이 1000줄→500줄로 잘리는 장기 운용(1300회차)에서도 회차당 호출 1회·건수 부풀림 0.
+# 수정 전에는 처리 표시(500키 상한)가 잘린 기록을 놓쳐 503회차부터 회차당 5회 호출·'(5건)' 으로 바뀜
+SIMHUB="$SB/simhub"; mkdir -p "$SIMHUB"
+sim=$(python3 -I "$HERE/done_sim.py" "$POLL" "$HERE/../../hubs/scripts/slack_push.py" "$SIMHUB" 1300 2>&1 | tail -1)
+[ "$(printf '%s' "$sim" | jq -r '[.rounds, .calls, .bad] | join(",")' 2>/dev/null)" = "1300,1300,0" ] && ok "ⓤ 1300회차 시뮬레이션(기록 1000줄 초과 정리 포함): 회차당 chat.update 정확히 1회, 오래된 기록 재처리·건수 부풀림 0" || ko "ⓤ 장기 시뮬레이션" "$sim"
+# 처리 위치 저장: 기록 파일이 통째로 새로 시작돼도(seq 가 시각 기반이라 계속 커짐) 이미 처리한 기록은 건드리지 않음
+H="$SB/hubU7"; mkhub "$H"; hist ""; pollh "$H" t0; seed "$H" "$N.003800" "$N.003810"
+deliver "$H" 3-1 "{\"$N.003800\":1}"; pollh "$H" t1
+c=$(ucalls); pollh "$H" t2; deliver "$H" 3-2 "{\"$N.003810\":1}"; pollh "$H" t3
+[ "$(( $(ucalls) - c ))" = 1 ] && [ "$(st "$H" '.upd_pos')" = "$DSEQ" ] && ok "ⓤ 처리 위치(upd_pos)보다 큰 seq 의 기록만 처리(재실행 호출 0·새 기록 1회)" || ko "ⓤ 위치" "$(( $(ucalls) - c )) pos=$(st "$H" '.upd_pos')"
+# 한 기록 안에서 회차 상한(5)으로 끊겨도 이어서 처리: 7스레드 기록 → 5회 + 2회, 중복 0 (위 '회차 상한' 시험과 같은 시나리오의 상태 확인)
+[ "$(st "$H" 'has("upd_seen")')" = false ] && ok "ⓤ 옛 처리 표시(upd_seen)는 더 쓰지 않음" || ko "ⓤ upd_seen" ""
+
+# 결함 8: 같은 스레드에 앞 확인 답장이 아직 '집계 중'이면 새 답장을 보내지 않음(보내면 앞 답장이 영구히 '집계 중'으로 남음)
+H="$SB/hubV"; mkhub "$H"
+RT="$N.004000"
+printf '{"ts":"%s","at":%s,"title":"결정 8","tag":"t"}\n' "$RT" "$N" > "$H/slack-sent.jsonl"
+thr() { # 답글 ts 목록(공백 구분). 마지막 답글이 latest_reply
+  local list="" last="" t cnt=0
+  for t in "$@"; do list="$list,$(umsg "$t" "답글 $t")"; last=$t; cnt=$((cnt + 1)); done
+  hist "{\"ts\":\"$RT\",\"user\":\"$BOT\",\"bot_id\":\"B1\",\"text\":\"결정 필요\",\"reply_count\":$cnt,\"latest_reply\":\"$last\"}"
+  replies "$(botmsg "$RT" "결정 필요")$list"
+}
+thr "$N.004100"; c=$(acalls); pollh "$H" v1
+[ "$(( $(acalls) - c ))" = 1 ] && [ "$(st "$H" '.ack_msgs["'"$RT"'"].n')" = 0 ] && ok "ⓥ 첫 답글 → 확인 답장 1회(집계 중)" || ko "ⓥ 첫 답장" "$(( $(acalls) - c ))"
+ACK1=$(st "$H" '.ack_msgs["'"$RT"'"].ts')
+agepast "$H" 40; thr "$N.004100" "$N.004200"; c=$(acalls); pollh "$H" v2
+[ "$(inbox_n "$H")" = 2 ] && [ "$(acalls)" = "$c" ] && [ "$(st "$H" '.ack_msgs["'"$RT"'"].ts')" = "$ACK1" ] && ok "ⓥ 30초 뒤 같은 스레드 새 답글: 앞 답장이 아직 '집계 중'이므로 새 답장을 보내지 않고 앞 답장 ts 를 그대로 보관(수집은 정상)" || ko "ⓥ 두 번째 답장" "calls=$(( $(acalls) - c )) ts=$(st "$H" '.ack_msgs["'"$RT"'"].ts')"
+deliver "$H" 4-2 "{\"$RT\":2}"; c=$(ucalls); pollh "$H" v3
+[ "$(( $(ucalls) - c ))" = 1 ] && [ "$(updates | jq -r '.ts' | tail -1)" = "$ACK1" ] && [ "$(updates | jq -r '.text' | tail -1)" = "📨 메인에 전달했어요 (2건)" ] && ok "ⓥ 두 답글이 한 묶음으로 전달되면 앞 답장이 '(2건)' 으로 갱신됨(영구 '집계 중' 없음)" || ko "ⓥ 갱신" "$(updates | tail -1)"
+agepast "$H" 40; thr "$N.004100" "$N.004200" "$N.004300"; c=$(acalls); pollh "$H" v4
+[ "$(( $(acalls) - c ))" = 1 ] && [ "$(st "$H" '.ack_msgs["'"$RT"'"].n')" = 0 ] && ok "ⓥ 앞 답장이 갱신된 뒤의 새 답글에는 다시 확인 답장 1회" || ko "ⓥ 갱신 뒤" "$(( $(acalls) - c ))"
 
 # ---- ⓗ 토큰 비노출 ------------------------------------------------------------------------
 leak=$(grep -rlF -- "$FAKE_TOKEN" "$SB" 2>/dev/null | grep -v '/slack-bot\.env$' || true)
