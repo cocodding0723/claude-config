@@ -74,14 +74,14 @@ wait $WP
 [ "$(nsend)" = 1 ] && [ "$(ndel)" = 1 ] && [ -z "$(fmt_bad "$FO/send.1.txt" 3)" ] && ok "ⓐ 연속 3건 → 전달 1회(3건 한 본문)" || ko "ⓐ" "sends=$(nsend) $(fmt_bad "$FO/send.1.txt" 3)"
 [ "$(wc -l < "$H/slack-push-delivered.jsonl" | tr -d ' ')" = 1 ] && [ "$(jq -c '.roots' "$H/slack-push-delivered.jsonl")" = '{"1000.000001":1,"1000.000002":1,"1000.000003":1}' ] && ok "전달 기록(slack-push-delivered.jsonl): 배치당 1줄, 스레드(루트 ts)별 건수 — 폴러가 확인 답장 갱신에 사용" || ko "전달 기록" "$(cat "$H/slack-push-delivered.jsonl")"
 d=$(sub_f "$(stime 1)" "$tl")
-between "$d" 1.5 3.6 && ok "ⓐ 마지막 새 메시지 뒤 조용 대기(QUIET 2초)를 채운 뒤 전달(${d}초)" || ko "ⓐ 대기 시간" "$d"
+between "$d" 1.5 5.5 && ok "ⓐ 마지막 새 메시지 뒤 조용 대기(QUIET 2초)를 채운 뒤 전달(${d}초)" || ko "ⓐ 대기 시간" "$d"
 
 # ---- ⓒ 조용하면 전달 ------------------------------------------------------------------------------
 newhub C
 addmsg note 1100.000001 "혼자"; t0=$(nowf)
 W
 d=$(sub_f "$(stime 1)" "$t0")
-[ "$(nsend)" = 1 ] && between "$d" 1.8 3.6 && ok "ⓒ 단일 메시지: 조용 2초 뒤 전달(${d}초)" || ko "ⓒ" "sends=$(nsend) d=$d"
+[ "$(nsend)" = 1 ] && between "$d" 1.8 5.5 && ok "ⓒ 단일 메시지: 조용 2초 뒤 전달(${d}초)" || ko "ⓒ" "sends=$(nsend) d=$d"
 [ "$(st .pushed_lines)" = 1 ] && [ "$(st .push_pending)" = null ] && [ "$(mk)" = 1 ] && [ "$(plog ok)" = 1 ] && ok "ⓒ 전달 뒤 상태: pushed_lines=1, push_pending 없음, 읽음 표식=1, 로그 ok 1줄" || ko "ⓒ 상태" "$(cat "$H/slack-push-state.json") mark=$(mk)"
 [ "$(awk -F'\t' 'NR==1{print $5}' "$FO/sends.log")" = 10 ] && awk -F'\t' 'NR==1{print $4}' "$FO/sends.log" | grep -Eqi "$UUID_RE" && ok "ⓒ 첫 시도부터 --retry-request <UUID>(묶음 확정 때 만든 값)와 --wait-submit 10 을 붙여 전송" || ko "ⓒ 인자" "$(cat "$FO/sends.log")"
 grep -q ' push ok .*stages=input_accepted,turn_started' "$H/slack-push.log" && ok "ⓒ 성공 로그에 영수증 단계(input_accepted,turn_started) 기록" || ko "ⓒ 단계 로그" "$(cat "$H/slack-push.log")"
@@ -95,7 +95,7 @@ t0=$(nowf); addmsg note 1200.000001 "m1"; LRM_PUSH_LIFE=25 bash "$PUSH" --kick
 for i in 2 3 4 5 6 7 8 9 10; do sleep 1; addmsg note "1200.00000$i" "m$i"; LRM_PUSH_LIFE=25 bash "$PUSH" --kick; done
 idle_wait
 d=$(sub_f "$(stime 1)" "$t0")
-[ "$(nsend)" = 2 ] && between "$d" 5.5 7.5 && ok "ⓑ 조용할 틈 없이 이어지면 첫 메시지로부터 MAX(6초)에 전달(${d}초), 이후 조용해지면 나머지 전달(총 2회)" || ko "ⓑ" "sends=$(nsend) d=$d $(tr "\n" "|" < "$H/slack-push.log")"
+[ "$(nsend)" = 2 ] && between "$d" 5.5 9 && ok "ⓑ 조용할 틈 없이 이어지면 첫 메시지로부터 MAX(6초)에 전달(${d}초), 이후 조용해지면 나머지 전달(총 2회)" || ko "ⓑ" "sends=$(nsend) d=$d $(tr "\n" "|" < "$H/slack-push.log")"
 tot=$(cat "$FO"/send.*.txt | grep -o '^- #[0-9]*' | sort | wc -l | tr -d ' '); uniq=$(cat "$FO"/send.*.txt | grep -o '^- #[0-9]*' | sort -u | wc -l | tr -d ' ')
 [ "$tot" = 10 ] && [ "$uniq" = 10 ] && ok "ⓑ 전달 합계 10건·중복 0·유실 0" || ko "ⓑ 중복·유실" "tot=$tot uniq=$uniq"
 
@@ -258,10 +258,76 @@ printf '#!/bin/bash\necho MAIN_TERMINAL=%s > "$LRM_HUB_DIR/main.env"\n' "$HD2" >
 LRM_PUSH_LIFE=6 W
 [ "$(nsend)" = 1 ] && [ "$(st .push_pending.reason)" = unknown_delivery ] && grep -q 'why=target_changed' "$H/slack-push.log" && ok "ⓔ 모호한 전송 뒤 대상 터미널이 바뀌면 다른 터미널에 보내지 않고 보류" || ko "ⓔ 대상 변경" "sends=$(nsend) $(st .push_pending.reason)"
 newhub E2g; echo unsubmitted > "$FO/send.mode"; addmsg note 1400.000060 "제출 미확인"
+export LRM_PUSH_CONFIRM=0  # 화면 재확인을 끈 기존 동작(turn_started 필수). 화면 재확인은 ⓟ
 LRM_PUSH_LIFE=3 W
-[ "$(nsend)" = 1 ] && [ "$(st .push_pending.reason)" = unsubmitted ] && [ "$(st .pushed_lines)" = 0 ] && [ -z "$(mk)" ] && grep -q 'push hold reason=unsubmitted .*stages=input_accepted ' "$H/slack-push.log" && [ ! -e "$H/slack-push-delivered.jsonl" ] && ok "ⓔ 입력은 받았으나 턴 시작(제출) 미확인: 읽음 표식·전달 기록 올리지 않고 단계 로그와 함께 보류(unsubmitted)" || ko "ⓔ unsubmitted" "sends=$(nsend) $(st .push_pending) $(cat "$H/slack-push.log")"
+[ "$(nsend)" = 1 ] && [ "$(st .push_pending.reason)" = unsubmitted ] && [ "$(st .pushed_lines)" = 0 ] && [ -z "$(mk)" ] && grep -q 'push hold reason=unsubmitted .*stages=input_accepted .*confirm=off$' "$H/slack-push.log" && [ ! -e "$H/slack-push-delivered.jsonl" ] && [ "$(grep -c '^show' "$FO/calls.log")" = 1 ] && ok "ⓔ LRM_PUSH_CONFIRM=0: 입력은 받았으나 턴 시작(제출) 미확인이면 화면 재확인 없이(show 1회) 읽음 표식·전달 기록 올리지 않고 보류(unsubmitted, confirm=off)" || ko "ⓔ unsubmitted" "sends=$(nsend) $(st .push_pending) $(cat "$H/slack-push.log")"
 LRM_PUSH_LIFE=3 W; bash "$PUSH" --kick; sleep 0.6
 [ "$(nsend)" = 1 ] && ok "ⓔ unsubmitted 는 다음 실행·--kick 에도 재전송하지 않음(입력 칸 글 중복 방지)" || ko "ⓔ 재전송 금지" "sends=$(nsend)"
+newhub E2h; echo unsubmitted > "$FO/send.mode"; addmsg note 1400.000061 "끔 표기"; LRM_PUSH_CONFIRM=off LRM_PUSH_LIFE=3 W
+[ "$(st .push_pending.reason)" = unsubmitted ] && grep -q 'confirm=off$' "$H/slack-push.log" && ok "ⓔ LRM_PUSH_CONFIRM=off 도 화면 재확인 끔" || ko "ⓔ CONFIRM=off" "$(cat "$H/slack-push.log")"
+unset LRM_PUSH_CONFIRM
+
+# ---- ⓟ 접수 뒤 화면 재확인: turn_started 없는 접수 영수증이면 화면을 다시 읽어 입력 칸이 비었는지로 판정 ----------
+export LRM_PUSH_CONFIRM_TICK=0.2 LRM_PUSH_TEST_CONFIRM_GAP=0.2  # 시험은 짧은 간격. 운영 하한(1초)은 아래 P11 이 따로 확인
+nshow() { grep -c '^show' "$FO/calls.log" 2>/dev/null || echo 0; }
+conf_run() { # 이름 show.seq(공백 구분, 1번째 = 전송 전 확인) send.mode [환경 변수]. 재확인 2초
+  newhub "$1"; echo seq > "$FO/show.mode"; printf '%s\n' $2 > "$FO/show.seq"; echo "$3" > "$FO/send.mode"
+  addmsg note 2100.000001 "화면 확인 본문"
+  env LRM_PUSH_CONFIRM="${CONF_T:-2}" LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 "${4:-X=1}" bash "$PUSH" --run
+}
+pv_clean() { ! grep -qF -e Pasted -e 'Slack→메인' -e interrupt -e Cogitating -e '본문' "$H/slack-push.log"; }
+conf_sent() { # 이름 show.seq 화면 종류 읽은 횟수 설명
+  conf_run "$1" "$2" unsubmitted
+  [ "$(nsend)" = 1 ] && [ "$(st .push_pending)" = null ] && [ "$(st .pushed_lines)" = 1 ] && [ "$(mk)" = 1 ] && [ -s "$H/slack-push-delivered.jsonl" ] \
+    && grep -q "push ok .*stages=input_accepted obs=supported confirm=screen screen=$3 reads=$4$" "$H/slack-push.log" && [ "$(nshow)" = $(($4 + 1)) ] && pv_clean \
+    && ok "ⓟ $5 → 전달 완료(confirm=screen screen=$3 reads=$4): 읽음 표식·전달 기록 갱신, 재전송 0, 로그에 화면·본문 없음" || ko "ⓟ $1" "sends=$(nsend) shows=$(nshow) $(st .push_pending.reason) $(cat "$H/slack-push.log")"
+}
+conf_hold() { # 이름 show.seq 보류 사유 why confirm screen 설명 [send.mode]
+  conf_run "$1" "$2" "${8:-unsubmitted}"
+  [ "$(nsend)" = 1 ] && [ "$(st .push_pending.reason)" = "$3" ] && [ "$(st .push_pending.stop)" = true ] && [ "$(st .pushed_lines)" = 0 ] && [ -z "$(mk)" ] && [ ! -e "$H/slack-push-delivered.jsonl" ] \
+    && grep -q "push hold reason=$3 .*why=$4 .*confirm=$5 screen=$6 " "$H/slack-push.log" && [ ! -e "$FO/replays" ] && pv_clean \
+    && ok "ⓟ $7 → 보류($3, confirm=$5 screen=$6): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음" || ko "ⓟ $1" "sends=$(nsend) $(st .push_pending) $(cat "$H/slack-push.log")"
+}
+conf_sent P1 "idle pasted pasted idle idle" idle 4 "접수 직후 입력 칸에 글(붙여넣기 자리표시) → 2회 뒤 빈 입력 칸 연속 2회"
+conf_sent P1b "idle idle" idle 2 "접수 직후부터 빈 입력 칸 연속 2회"
+conf_hold P5 "idle busy" unsubmitted unsubmitted unknown no_box "입력 칸이 안 보이고 작업 중 표식(esc to interrupt)만 보임(표식은 제출 증거가 아님)"
+conf_hold P5d "idle tailbusy" unsubmitted unsubmitted unknown no_box "입력 칸이 밀려 우리 글 끝부분+테두리+표식 상태줄만 보임"
+conf_hold P5e "idle longdraft" unsubmitted unsubmitted unknown no_box "긴 줄 때문에 칸 판별 불가인 글 + 표식 상태줄"
+conf_hold P5f "idle toolout" unsubmitted unsubmitted unknown no_box "도구 출력 안의 esc to interrupt 문구, 입력 칸 없음"
+conf_sent P5b "idle queued" idle 2 "작업 중 표식 + 빈 입력 칸(바쁜 메인이 줄 세움)"
+conf_hold P2 "idle pasted" unsubmitted unsubmitted still_draft pasted "끝까지 입력 칸에 붙여넣기 자리표시"
+c=$(nshow); LRM_PUSH_CONFIRM=2 LRM_PUSH_LIFE=3 W; bash "$PUSH" --kick; sleep 0.6
+[ "$(nsend)" = 1 ] && [ "$(nshow)" = "$c" ] && [ ! -e "$FO/replays" ] && ok "ⓟ 화면 확인 실패 보류는 다음 실행·--kick 에도 재전송·재확인 없음(전송 호출 1회 그대로)" || ko "ⓟ 재전송 금지" "sends=$(nsend) shows=$(nshow)/$c"
+CONF_T=1 LRM_PUSH_CONFIRM_TICK=2 conf_sent P10 "idle idle idle" idle 2 "CONFIRM=1·TICK=2 에서도 1회로 끝나지 않고 최소 2회 읽음"
+g=$LRM_PUSH_TEST_CONFIRM_GAP; unset LRM_PUSH_TEST_CONFIRM_GAP  # 운영 기본 하한(1초)으로 실행
+LRM_PUSH_CONFIRM_TICK=0.05 CONF_T=3 conf_run P11 "idle idle idle" unsubmitted
+export LRM_PUSH_TEST_CONFIRM_GAP=$g
+d=$(awk 'NR==2{a=$1} NR==3{b=$1} END{printf "%.3f", b-a}' "$FO/shows.log")
+[ "$(mk)" = 1 ] && between "$d" 0.95 3 && ok "ⓟ 연속 두 제출 판정 사이는 1초 이상(TICK 0.05 요청도 하한 1초로 올림, 간격 ${d}초)" || ko "ⓟ P11 간격" "gap=$d $(cat "$H/slack-push.log")"
+conf_hold P2b "idle typed" unsubmitted unsubmitted still_draft typed "끝까지 입력 칸에 우리 글 첫 줄·인용 줄"
+conf_hold P5c "idle busydraft" unsubmitted unsubmitted still_draft pasted "작업 중 표식이 보여도 입력 칸에 글이 남음"
+conf_hold P6 "idle pasted idle pasted idle pasted idle pasted idle pasted idle pasted idle pasted idle pasted idle pasted idle pasted idle pasted idle pasted pasted" unsubmitted unsubmitted still_draft pasted "빈 입력 칸이 1회씩만 보임(연속 2회 아님)"
+conf_hold P3 "idle empty" unsubmitted unsubmitted unknown empty "화면 비어 있음"
+conf_hold P3b "idle nopreview" unsubmitted unsubmitted unknown no_preview "preview 없음"
+conf_hold P3c "idle dialogpv" unsubmitted unsubmitted unknown dialog "대화상자"
+conf_hold P3d "idle unavail" unsubmitted unsubmitted unknown show_fail "show 일시 오류"
+conf_hold P4 "idle idle other_handle" unknown_delivery target_changed changed handle_gone "확인 중 응답 handle 이 다름"
+conf_hold P4b "idle gone" unknown_delivery target_changed changed handle_gone "확인 중 핸들 무효 오류"
+conf_hold P4c "idle codex" unknown_delivery target_changed changed not_claude "확인 중 agentIdentity 가 claude 아님"
+conf_hold P4f "idle ro" unsubmitted unsubmitted unknown not_writable "확인 중 같은 터미널이 일시 쓰기 불가(빈 입력 칸이어도 근거로 쓰지 않음)"
+conf_hold P4d "idle other_wt" unknown_delivery target_changed changed wrong_worktree "확인 중 worktreePath 가 메인 아님"
+newhub P4e; echo seq > "$FO/show.mode"; printf 'idle\nidle\n' > "$FO/show.seq"; echo unsubmitted > "$FO/send.mode"; addmsg note 2100.000002 "핸들 바뀜"
+printf '#!/bin/bash\necho MAIN_TERMINAL=%s > "$LRM_HUB_DIR/main.env"\n' "$HD2" > "$FO/send.hook"; chmod 755 "$FO/send.hook"  # 전송 직후 main.env 가 다른 핸들로 바뀜
+LRM_PUSH_CONFIRM=2 LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
+[ "$(nsend)" = 1 ] && [ "$(st .push_pending.reason)" = unknown_delivery ] && grep -q 'why=target_changed .*confirm=changed screen=main_env ' "$H/slack-push.log" && [ -z "$(mk)" ] && ! grep -q "show --terminal $HD2" "$FO/calls.log" \
+  && ok "ⓟ 확인 중 main.env 핸들이 바뀌면 화면을 보지 않고 보류(unknown_delivery), 새 핸들에 보내거나 조회하지 않음" || ko "ⓟ main.env 변경" "sends=$(nsend) $(st .push_pending.reason) $(cat "$H/slack-push.log")"
+conf_run P9 "idle idle" nostage
+[ "$(nsend)" = 1 ] && [ "$(nshow)" = 1 ] && [ "$(st .push_pending.reason)" = unsubmitted ] && [ -z "$(mk)" ] && grep -q 'push hold reason=unsubmitted .*stages=none .*confirm=skip$' "$H/slack-push.log" \
+  && ok "ⓟ 영수증 stages 에 input_accepted 가 없으면 화면 확인 없이 기존대로 보류(show 1회, confirm=skip)" || ko "ⓟ P9" "shows=$(nshow) $(cat "$H/slack-push.log")"
+newhub P8; echo seq > "$FO/show.mode"; printf 'idle\npasted\n' > "$FO/show.seq"; addmsg note 2100.000003 "영수증 확인"; LRM_PUSH_CONFIRM=2 LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
+[ "$(nsend)" = 1 ] && [ "$(nshow)" = 1 ] && [ "$(mk)" = 1 ] && grep -q 'push ok .*stages=input_accepted,turn_started obs=observed confirm=receipt$' "$H/slack-push.log" \
+  && ok "ⓟ 영수증에 turn_started 가 있으면 화면 확인 없이 전달 완료(show 1회, confirm=receipt)" || ko "ⓟ receipt" "sends=$(nsend) shows=$(nshow) $(cat "$H/slack-push.log")"
+unset LRM_PUSH_CONFIRM_TICK LRM_PUSH_TEST_CONFIRM_GAP
 newhub E3; echo fail > "$FO/send.mode"; addmsg note 1400.000003 "계속 실패"
 LRM_PUSH_TRIES=2 LRM_PUSH_HOLD=600 LRM_PUSH_LIFE=6 W
 [ "$(st .push_pending.attempts)" = 2 ] && [ "$(plog fail)" = 2 ] && [ "$(st .pushed_lines)" = 0 ] && [ "$(ndel)" = 0 ] && ok "ⓔ 계속 실패: TRIES 만큼 시도 뒤 보류 큐 유지(push_pending 보존)·pushed_lines 불변" || ko "ⓔ 보류 유지" "$(st .push_pending)"

@@ -20,12 +20,16 @@ usage() {
 연결 끊김 알림: no_main_handle·handle_gone·handle_dead·not_writable·wrong_worktree·not_claude·pane_title_mismatch 로 보류하면 slack_notify.sh --kind warn 으로
       '메인 연결 끊김'을 사유마다 1회 보냄(핸들 값·메시지 본문 없음). 보낸 사유는 ~/.config/lrm-hubs/.slack-push-alert.json(600)에 남겨 다시 보내지 않고,
       핸들이 메인 세션으로 확인되면(화면 상태 보류 포함) 지움(로그 link_ok). 알림 실패는 로그 "alert … result=…" 만 남기고 전달·수집을 막지 않음
-자동 재시도 없는 보류(사람이 확인): unknown_delivery 도착 여부 불명(deliveryOutcome unknown·영수증 모양 불명·모호한 시도 뒤 main.env 핸들 바뀜), unsubmitted 입력은 받았으나
-      턴 시작(제출) 미확인. 둘 다 읽음 표식·전달 기록을 올리지 않고 재전송하지 않음. 메인 터미널에서 도착 여부를 보고 푼다:
+자동 재시도 없는 보류(사람이 확인): unknown_delivery 도착 여부 불명(deliveryOutcome unknown·영수증 모양 불명·모호한 시도 뒤 main.env 핸들 바뀜·화면 재확인 중 터미널 바뀜), unsubmitted 입력은 받았으나
+      턴 시작(제출)을 영수증·화면 어느 쪽으로도 확인 못 함. 둘 다 읽음 표식·전달 기록을 올리지 않고 재전송하지 않음. 메인 터미널에서 도착 여부를 보고 푼다:
       도착했으면 .main-read-lines 를 그 묶음의 마지막 줄 번호(상태 파일 push_pending.last) 이상으로 올림 → 보류분 폐기. 도착하지 않았으면 slack-push-state.json 을 다른 이름으로 옮김 → 표식·전달 기록 이후 줄을 다시 전달
 전송: 묶음을 확정할 때 본문과 요청 ID(uuid4)를 만들어 상태에 저장하고, 모든 시도를 terminal send --retry-request <그 UUID> --wait-submit LRM_PUSH_WAIT 로 보냄.
       응답이 없거나 모호한 실패면 같은 UUID·본문으로 다시 보내며 Orca 는 영수증만 돌려줌(다시 입력하지 않음). 영수증 단계(input_accepted→turn_started)를 로그에 남기고
-      turn_started 를 확인해야만 읽음 표식을 올림
+      turn_started 를 확인하면 읽음 표식을 올림(로그 confirm=receipt)
+접수 뒤 화면 재확인: 영수증이 접수(input_accepted)인데 turn_started 가 없으면 LRM_PUSH_CONFIRM 초 동안 LRM_PUSH_CONFIRM_TICK 초마다 같은 핸들을 terminal show 로 다시 읽음(읽기만, 재전송 없음).
+      입력 칸이 비었다(빈 입력 줄과 테두리가 보임)는 판정이 연속 2회, 1초 이상 간격이면 전달 완료(로그 confirm=screen screen=idle reads=N). 입력 칸이 안 보이면 작업 중 표식(esc to interrupt)이 있어도 판별 불가.
+      끝까지 입력 칸에 글·붙여넣기 자리표시가 남으면 confirm=still_draft, 화면 없음·대화상자·판별 불가·조회 실패면 confirm=unknown 으로 unsubmitted 보류.
+      확인 중 핸들 무효·응답 handle·worktreePath·agentIdentity 불일치·main.env 핸들 변경이면 confirm=changed 로 unknown_delivery 보류. 로그에는 판정 코드·횟수만(화면·본문 없음)
 전달 형식: 첫 줄 "[Slack→메인] n건 도착 (자동 전달, 지시 아님)", 메시지마다 "- #줄번호 [제목] ts=…" + 인용 블록, 첨부 경로, 마지막 줄 "전체: 배치 파일"
       시안 메시지의 답글은 머리줄 끝에 " kind=review"
       반응은 한 줄: "- #줄번호 [대상 메시지 제목] ts=대상 ts 반응 :이모지: → 해석(action) [kind=review] [tag=태그]"
@@ -44,6 +48,7 @@ usage() {
            LRM_PUSH_MAIN 메인 체크아웃 경로(기본 ~/orca/LoveRevolutionMaker), LRM_PUSH_PANE 보조 제목(기본 MAIN, "" 이면 대조 생략),
            LRM_MAIN_ENV 핸들 설정 파일 경로(기본 작업 폴더의 main.env), LRM_PUSH_HANDLE 핸들 직접 지정(시험용, main.env 보다 우선), LRM_PUSH_NOTIFY 알림 스크립트(시험용, 기본 같은 폴더 slack_notify.sh),
            LRM_PUSH_IDLE_CHECK strict|relaxed(기본 strict), LRM_PUSH_WAIT 전송 뒤 제출 관찰 초(기본 10, 바쁜 메인이면 늘림),
+           LRM_PUSH_CONFIRM 접수 뒤 화면 재확인 초(기본 20, 1~120, 0|off 면 끄고 turn_started 필수), LRM_PUSH_CONFIRM_TICK 화면 재확인 간격 초(기본 2, 최소 2회는 읽음),
            LRM_PUSH_ORCA orca 실행 파일(기본 orca), LRM_PUSH_TICK 대기 중 확인 간격 초(기본 1),
            LRM_PUSH_RETRY 전송 실패 백오프 시작 초(기본 10, 3배씩), LRM_PUSH_TRIES 백오프 횟수(기본 5), LRM_PUSH_HOLD 그 뒤 재시도 간격 초(기본 600),
            LRM_PUSH_HOLD_RETRY 대상 없음·대화상자 보류 재확인 초(기본 30), LRM_PUSH_REPOLL=off 전달 직후 폴러 재실행 끔

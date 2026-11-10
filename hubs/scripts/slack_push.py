@@ -44,6 +44,11 @@ RETRY_TRIES = int(env_num("LRM_PUSH_TRIES", 5, 1, 20))  # 이 횟수를 넘으�
 HOLD_GAP = env_num("LRM_PUSH_HOLD", 600, 0, 86400)
 WAIT_SUBMIT = int(env_num("LRM_PUSH_WAIT", 10, 1, 120))  # 전송 뒤 제출·턴 시작을 관찰하는 시간(초). terminal send --wait-submit
 SEND_TIMEOUT = env_num("LRM_PUSH_SEND_TIMEOUT", WAIT_SUBMIT + 25, 1, 600)  # orca 프로세스 제한. Orca 는 --wait-submit 에 10초를 더 기다림
+# 접수 뒤 화면 재확인 시간(초). 0·off 면 끄고 turn_started 필수. Orca 가 Claude 의 턴 시작을 못 잡는 환경(2026-11-10 실측)의 보강 확인
+CONFIRM = 0 if os.environ.get("LRM_PUSH_CONFIRM", "").strip().lower() in OFF else env_num("LRM_PUSH_CONFIRM", 20, 1, 120)
+CONFIRM_GAP = env_num("LRM_PUSH_TEST_CONFIRM_GAP", 1, 0.05, 1)  # 연속 두 판정 사이 최소 간격(초). 렌더 지연 방어라 운영에선 1 고정, 시험만 낮춤
+CONFIRM_TICK = env_num("LRM_PUSH_CONFIRM_TICK", 2, CONFIRM_GAP, 30)  # 화면 재확인 간격
+CONFIRM_STREAK = 2  # 제출 판정이 연속 이 횟수일 때만 확정. 붙여 넣기가 그려지기 전 순간의 빈 입력 칸을 제출로 오판하지 않게 함
 IDLE_CHECK = "relaxed" if os.environ.get("LRM_PUSH_IDLE_CHECK", "").strip().lower() == "relaxed" else "strict"  # 그 밖의 값은 strict
 FOREVER = 10 ** 9                                     # 자동 재시도 없는 보류의 다음 시각 간격(초). 사람이 확인해야 풀림
 LIFE = env_num("LRM_PUSH_LIFE", MAX_WAIT + 60, 1, 7200)  # 워커 최대 수명(초). 더 필요하면 다음 --kick 이 새로 띄움
@@ -88,6 +93,7 @@ DIALOG_RE = re.compile("|".join([
 PROMPT_RE = re.compile(r"^\s*[│┃|]?\s*([>❯›!])(?:\s+(.*?))?\s*[│┃|]?\s*$")  # 입력 줄. 1: 프롬프트 기호(! 는 셸 모드), 2: 입력된 글
 BORDER_RE = re.compile(r"^[\s─━│┃┌┐└┘├┤┬┴┼╭╮╰╯═║╔╗╚╝\-_=+|]+$")
 PLACEHOLDER_RE = re.compile(r"^Try\b")               # 빈 입력 칸에 흐리게 보이는 추천 문구
+PASTED_RE = re.compile(r"\[Pasted text #\d+")       # 입력 칸에 접혀 보이는 붙여 넣은 여러 줄 글
 SCREEN_TAIL, PROMPT_ZONE, FOOTER_MAX, FOOTER_CHARS = 8, 5, 3, 120  # 대화상자 검사 줄 수, 입력 칸을 찾는 끝 줄 수, 입력 칸 아래 허용 줄 수·줄 길이
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 RETRY_KEYS = ("orchestrationRequestId",)              # 모호한 실패 때 Orca 가 error.data 에 담아 알리는 요청 ID(재시도 때 같은 값이어야 함)
@@ -445,6 +451,21 @@ def screen_hold(preview):
     return SCREEN_HOLD[st]
 
 
+def box_state(preview):
+    """접수 뒤 화면 끝으로 본 입력 칸: ('submitted'|'draft'|'unknown', 표식 종류).
+    접수 전 입력 칸이 비어 있었으므로(strict 판별 통과) 칸에 보이는 글은 우리 글로 봄. 양성 근거(빈 입력 칸)만 제출로 보고 칸을 못 찾으면 판별 불가"""
+    st = screen_state(preview)
+    lines = [ln for ln in ANSI_RE.sub("", str(preview or "")).replace("\r", "\n").split("\n") if ln.strip()]
+    if st == "draft":
+        return "draft", "pasted" if any(PASTED_RE.search(ln) for ln in lines[-PROMPT_ZONE:]) else "typed"
+    if st == "idle":
+        return "submitted", "idle"
+    if st in ("empty", "dialog"):
+        return "unknown", st
+    # 입력 칸을 못 찾으면 판별 불가. 작업 중 표식(esc to interrupt)은 제출 증거가 아니므로 보지 않음(작업 중에도 입력 칸은 보임)
+    return "unknown", "no_box"
+
+
 def main_handle():
     """지정된 메인 핸들|None. LRM_PUSH_HANDLE(시험용) 또는 main.env 의 MAIN_TERMINAL 줄만 읽음(다른 줄은 보지도 기록하지도 않음).
     형식이 term_<16진·하이픈> 이 아니거나 서로 다른 값이 둘 이상이면 무효"""
@@ -498,6 +519,58 @@ def find_target():
         return None, "handle_gone", short
     why = target_why(t) or screen_hold(t.get("preview"))
     return (None, why, short) if why else (handle, None, short)
+
+
+def screen_check(handle):
+    """접수 뒤 화면 1회 관찰: (판정, 표식 종류). 판정 'submitted' | 'draft' | 'unknown' | 'changed'(보낸 터미널이 아님). 읽기만 함"""
+    if main_handle() != handle:
+        return "changed", "main_env"
+    rc, d = run_orca(["terminal", "show", "--terminal", handle, "--json"], 20)
+    if rc is None or rc == 127:
+        return "unknown", "show_fail"
+    t = ((d or {}).get("result") or {}).get("terminal") if isinstance(d, dict) else None
+    if rc != 0 or not isinstance(t, dict):
+        err = d.get("error") if isinstance(d, dict) else None
+        code = err.get("code") if isinstance(err, dict) else None
+        return ("changed", "handle_gone") if code in HANDLE_GONE_CODES else ("unknown", "show_fail")
+    if t.get("handle") not in (None, handle):
+        return "changed", "handle_gone"
+    why = target_why(t)
+    if why == "not_writable":  # 같은 터미널의 일시 상태. 다른 터미널이라는 근거도 제출 근거도 아니므로 판별 불가로만 처리
+        return "unknown", why
+    if why:
+        return "changed", why
+    pv = t.get("preview")
+    if not isinstance(pv, str):
+        return "unknown", "no_preview"
+    return box_state(pv)
+
+
+def confirm_screen(handle):
+    """turn_started 없는 접수 영수증의 보강 확인: (판정, 사유 코드, 로그 정보). 판정 'sent' | 'unsubmitted' | 'unknown'.
+    CONFIRM 초 동안 CONFIRM_TICK 마다 화면을 다시 읽어 제출 판정이 연속 CONFIRM_STREAK 회면 전달 완료.
+    재전송하지 않음(입력 칸에 글이 남아 있으면 중복됨). 확정 전에는 최소 CONFIRM_STREAK 회 읽음"""
+    end = time.time() + CONFIRM
+    reads = streak = 0
+    first_ok = 0.0
+    last = ("unknown", "none")
+    while True:
+        res, kind = screen_check(handle)
+        reads += 1
+        if res == "changed":
+            return "unknown", "target_changed", {"confirm": "changed", "screen": kind, "reads": reads}
+        if res == "submitted":
+            streak += 1
+            if streak == 1:
+                first_ok = time.time()
+            if streak >= CONFIRM_STREAK and time.time() - first_ok >= CONFIRM_GAP:
+                return "sent", None, {"confirm": "screen", "screen": kind, "reads": reads}
+        else:
+            streak, last = 0, (res, kind)
+        if reads >= CONFIRM_STREAK and time.time() + CONFIRM_TICK > end:
+            break
+        time.sleep(CONFIRM_TICK)
+    return "unsubmitted", "unsubmitted", {"confirm": "still_draft" if last[0] == "draft" else "unknown", "screen": last[1], "reads": reads}
 
 
 def alert_state():
@@ -577,7 +650,7 @@ def code_of(s):
 def classify(rc, d, request_id):
     """terminal send 응답을 (판정, 사유 코드, 영수증 정보)로. 판정:
     sent        제출·턴 시작까지 확인(stages 에 turn_started)
-    unsubmitted 입력은 받았으나 턴 시작 미확인. 재전송하면 입력 칸에 이미 있는 글이 중복됨 → 보류, 사람이 확인
+    unsubmitted 입력은 받았으나 턴 시작 미확인. 재전송하면 입력 칸에 이미 있는 글이 중복됨 → attempt 가 화면으로 보강 확인, 안 되면 보류
     unknown     도착 여부를 알 수 없음(deliveryOutcome unknown·retrySafe false·ID 불일치·영수증 모양 불명) → 자동 재전송 금지, 보류
     blocked     Orca 가 권한·신뢰 메뉴로 거절(입력 전)
     refused     입력을 받지 않음(accepted=false)
@@ -741,12 +814,22 @@ def attempt(state, lines, mark, now):
     save_state(state)  # 보내기 전에 본문·ID 를 저장. 전송 직후 프로세스가 죽어도 다음 시도가 같은 ID 로 재전송함
     verdict, code, info = send(handle, pp["text"], pp["request_id"])
     if verdict == "sent":
+        info["confirm"] = "receipt"
+    elif verdict == "unsubmitted":  # 접수(input_accepted)된 영수증만 화면으로 보강 확인. 그 밖은 기존 보류
+        if not CONFIRM:
+            info["confirm"] = "off"
+        elif "input_accepted" not in info["stages"].split(","):
+            info["confirm"] = "skip"
+        else:
+            verdict, code, extra = confirm_screen(handle)
+            info.update(extra)
+    if verdict == "sent":
         state["pushed_lines"], state["push_pending"] = pp["last"], None
         state["pending_since"] = state["last_new_ts"] = None
         mark_to = walk_mark(lines, mark, state["pushed_lines"], state.get("skip_to", 0), react_floor(state))
         write_mark(mark_to)
         record_delivery(items, pp["last"])
-        log("ok", n=len(items), lines=span, mark=mark_to, stages=info["stages"])
+        log("ok", n=len(items), lines=span, mark=mark_to, **info)
         return "sent"
     if verdict in ("unknown", "unsubmitted"):  # 자동 재전송 금지. 표식도 올리지 않음(올리면 메인이 못 본 채 읽음 처리됨). 사람이 터미널을 보고 풂
         hold(pp, "unknown_delivery" if verdict == "unknown" else "unsubmitted", now + FOREVER, span, why=code, **info)
