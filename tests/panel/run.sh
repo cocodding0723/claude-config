@@ -223,6 +223,12 @@ colenv "FAKE_ORCA_ALT=workers_c3" --print
 n_wl=$(($(grep -c 'worker-list' "$FAKE/orca.calls") - n_wl))
 [ "$(jq -r '.sources.idle.value.workers.complete' "$SB/out")" = false ] && [ "$(jq -r '.sources.idle.ok' "$SB/out")" = true ] && [ "$(jq -r '.sources.idle.value.workers.seen' "$SB/out")" = 5 ] && [ "$n_wl" = 60 ] \
   && ok "끝나지 않는 커서 → 쪽 수 상한(60쪽)에서 멈춤, complete:false" || ko "쪽 수 상한" "쪽=$n_wl $(jq -c '.sources.idle.value.workers|del(.items)' "$SB/out")"
+# 쪽이 느리면 시간 상한이 쪽 수 상한보다 먼저 멈춤(쪽마다 0.3초, 시험용 상한 1초 → 60쪽 전에 끝)
+n_wl=$(grep -c 'worker-list' "$FAKE/orca.calls"); t0=$(date +%s)
+colenv "FAKE_ORCA_ALT=workers_c3 FAKE_ORCA_SLEEP=0.3 PANEL_WORKER_BUDGET=1" --print
+n_wl=$(($(grep -c 'worker-list' "$FAKE/orca.calls") - n_wl)); el=$(($(date +%s) - t0))
+[ "$(jq -r '.sources.idle.value.workers.complete' "$SB/out")" = false ] && [ "$(jq -r '.sources.idle.ok' "$SB/out")" = true ] && [ "$n_wl" -ge 2 ] && [ "$n_wl" -le 10 ] \
+  && ok "느린 쪽 → 시간 상한에서 멈춤(${n_wl}쪽, ${el}초), complete:false" || ko "시간 상한" "쪽=$n_wl ${el}초 $(jq -c '.sources.idle.value.workers|del(.items)' "$SB/out")"
 colenv "FAKE_ORCA_FAIL=workers_c2" --print
 [ "$(jq -r '.sources.workers.ok' "$SB/out")" = false ] && [ "$(jq -r '.sources.idle.err' "$SB/out")" = "workers:exit" ] \
   && ok "중간 쪽 실패 → 워커 숫자는 실패 처리(부분 숫자를 맞는 값처럼 싣지 않음)" || ko "중간 쪽 실패" "$(jq -c '[.sources.workers.err,.sources.idle.err]' "$SB/out")"

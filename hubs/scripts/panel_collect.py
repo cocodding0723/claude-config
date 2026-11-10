@@ -96,7 +96,8 @@ def usage():
         "  PANEL_DU_INTERVAL 폴더 크기 측정 간격 초(기본 1800, 300~86400), PANEL_DU_TIMEOUT 측정 시간 상한 초(기본 120, 1~600)",
         "쉬는 자원(idle): 워커 상태별 건수·종료 뒤 남은 터미널(worker-list 전 쪽), 터미널 없는 워크스페이스(최대 20개), 디스크 여유.",
         "  목록만 만들고 정리하지 않음",
-        "환경 변수: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs), PANEL_ORCA·PANEL_GH·PANEL_GIT·PANEL_DF·PANEL_DU 실행 파일(시험용)",
+        "환경 변수: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs), PANEL_ORCA·PANEL_GH·PANEL_GIT·PANEL_DF·PANEL_DU 실행 파일(시험용),",
+        "  PANEL_WORKER_BUDGET worker-list 쪽 넘기기 시간 상한 초(시험용, 1~40, 기본 40)",
         "출력: 작업 폴더의 panel-auto.json. 원료마다 ok·err·at(마지막 성공)·tried·stale·value. 실패한 원료는 이전 값 유지 + stale:true",
         "로그: 작업 폴더의 panel-collect.log(원료별 결과 코드만)",
         "종료 코드: 0 정상(일부 원료 실패 포함, 잠금으로 건너뜀 포함), 2 인자·설정 오류",
@@ -396,11 +397,17 @@ def utc_epoch(text):
         return None
 
 
+def worker_budget():
+    """쪽 넘기기 시간 상한(초). PANEL_WORKER_BUDGET 은 시험용으로 줄이기만 함(1~40, 그 밖의 값은 40)"""
+    raw = os.environ.get("PANEL_WORKER_BUDGET", "")
+    return int(raw) if raw.isdigit() and 1 <= int(raw) <= WORKER_BUDGET else WORKER_BUDGET
+
+
 def worker_pages(get):
     """worker-list 전 쪽. 한 쪽은 최신 100건뿐이라 nextCursor 로 넘김. 쪽 수·시간 상한에 걸리면 거기까지만(complete:false).
     중간 쪽 실패는 원료 실패(부분 숫자를 맞는 값처럼 보이지 않게). 쪽 사이에 새 Dispatch 가 끼면 겹친 행은 dispatchId 로 한 번만"""
     def fetch():
-        rows, seen, cursor, start = [], set(), None, time.monotonic()
+        rows, seen, cursor, start, budget = [], set(), None, time.monotonic(), worker_budget()
         total = counts = None
         for n in range(WORKER_PAGES_MAX):
             res = get("orchestration", "worker-list", "--full", "--limit", WORKER_PAGE, *(("--cursor", cursor) if cursor else ()))
@@ -424,7 +431,7 @@ def worker_pages(get):
             cursor = page.get("nextCursor")
             if not page.get("hasMore") or not isinstance(cursor, str) or not cursor:
                 return {"rows": rows, "complete": True, "pages": n + 1, "total": total, "counts": counts}
-            if time.monotonic() - start > WORKER_BUDGET:
+            if time.monotonic() - start > budget:
                 break
         return {"rows": rows, "complete": False, "pages": n + 1, "total": total, "counts": counts}
     return get.once(("worker-pages",), fetch)
