@@ -337,8 +337,10 @@ def collect_pending(now):
     for d in inbox:
         if d.get("type") == "reaction" and isinstance(d.get("parent_ts"), str):
             reactions.setdefault(d["parent_ts"], []).append(d)
+    # 결정 번호가 손상·누락된 기록은 번호 카드로 안 보고 옛 경로(반응 하나로 닫힘, 제목만 표시). slack_pending.sh 와 같음
     cards = {s["ts"]: card_state(s, reactions.get(s["ts"], [])) for s in sent
-             if isinstance(s.get("ts"), str) and s.get("form_kind") == "decide" and "options" in s}
+             if isinstance(s.get("ts"), str) and s.get("form_kind") == "decide" and "options" in s
+             and isinstance(s.get("decision_id"), str) and DECISION_ID_RE.fullmatch(s["decision_id"])}
     done = {t for t in reactions if t not in cards} | {t for t, st in cards.items() if st == "closed"}
     try:
         with open(DONE, encoding="utf-8") as f:
@@ -351,7 +353,8 @@ def collect_pending(now):
     for s in sent:
         ts, title = s.get("ts"), str(s.get("title", ""))
         card = isinstance(ts, str) and ts in cards
-        if not isinstance(ts, str) or not ts or s.get("thread_ts") or not (card or "결정" in title) or ts in done:
+        form_card = s.get("form_kind") == "decide" and "options" in s  # 번호가 손상돼도 번호 카드 기록이면 목록 대상
+        if not isinstance(ts, str) or not ts or s.get("thread_ts") or not (card or form_card or "결정" in title) or ts in done:
             continue
         key = ("card", ts) if card else title
         if key in seen:
@@ -360,7 +363,7 @@ def collect_pending(now):
         at = s.get("at")
         items.append({"title": title.split("\n")[0][:TITLE_MAX],
                       "ageMin": int((now - at) // 60) if isinstance(at, (int, float)) else None,
-                      "id": str(s.get("decision_id"))[:20] if card and s.get("decision_id") else None,
+                      "id": s["decision_id"] if card else None,
                       "state": cards[ts] if card else None})
     return {"count": len(items), "items": items}
 

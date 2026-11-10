@@ -1,5 +1,5 @@
 """번호 카드 형식(slack_notify.sh --options·slack_poll.sh 번호 반응 해석) Slack 기록 생성. 사용: fixtures_cards.py <작업 폴더> <화면 표식>
-main 형식(fixtures.py)과 섞어 둠: 옛 결정 카드 2건 + 번호 카드 7건. 화면 표식은 답 문구에 심어 산출물에 새지 않는지 봄."""
+main 형식(fixtures.py)과 섞어 둠: 옛 결정 카드 2건 + 번호 카드 10건(결정 번호 손상·누락 2건 포함). 화면 표식은 답 문구에 심어 산출물에 새지 않는지 봄."""
 import json
 import os
 import sys
@@ -8,6 +8,7 @@ import time
 hub, mark = sys.argv[1:3]
 now = int(time.time())
 OPTS = {"1": "오전 9시", "2": "오전 10시"}
+BAD_ID = "bad id<script>-0009"  # 산출물에 그대로 실리면 안 되는 손상 번호(run.sh 가 누출 검사)
 
 
 def card(ts, did, title, age):
@@ -34,6 +35,8 @@ sent = [
     card("2.6", "D-0006", "이름 그대로 반응", 200),  # kind 없는 반응(해석 안 된 이모지) → 답 아님, 대기
     card("2.7", "D-0007", "완료 기록", 100),        # slack-done.txt → 닫힘
     card("2.8", "D-0008", "추천대로", 50),          # ✅ approve → 닫힘
+    card("2.9", BAD_ID, "번호 손상", 40),           # 번호 형식 틀림 → 옛 경로: 반응 하나로 닫힘
+    {k: v for k, v in card("3.1", None, "번호 없음", 30).items() if k != "decision_id"},  # 번호 누락 → 옛 경로: 반응 없으니 대기, 제목만
 ]
 inbox = [
     {"type": "reaction", "parent_ts": "1.2", "action": "white_check_mark"},
@@ -43,6 +46,7 @@ inbox = [
     answer("2.3", "D-0003", "pick", 2, conflict=True, choices=[1, 2]),
     {"type": "reaction", "parent_ts": "2.6", "action": "eyes"},
     answer("2.8", "D-0008", "approve", 1),
+    {"type": "reaction", "parent_ts": "2.9", "action": "eyes"},
 ]
 os.makedirs(hub, exist_ok=True)
 with open(os.path.join(hub, "slack-sent.jsonl"), "w", encoding="utf-8") as f:

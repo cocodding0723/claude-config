@@ -79,19 +79,28 @@ python3 -I "$HERE/fixtures_cards.py" "$SB/cards" "$MARK" || ko "번호 카드 �
 colenv "LRM_HUB_DIR=$SB/cards" --print
 cp "$SB/out" "$SB/print-cards.json"
 pc() { jq -r ".sources.pending.value | $1" "$SB/print-cards.json"; }
-[ "$(pc '.count')" = 6 ] && [ "$(pc '[.items[].title] | join("|")')" = "🙋 결정 옛 카드 대기|배포 순서|문서 위치|같은 제목|같은 제목|이름 그대로 반응" ] \
-  && ok "번호 카드: 대기 6건(선택·추천대로·완료 기록은 닫힘, 같은 제목도 카드마다 따로, 옛 카드 규칙 유지)" || ko "번호 카드 대기" "$(pc '[.items[].title]|join("|")')"
-[ "$(pc '[.items[] | "\(.id):\(.state)"] | join(",")')" = "null:null,D-0002:hold,D-0003:conflict,D-0004:null,D-0005:null,D-0006:null" ] \
+[ "$(pc '.count')" = 7 ] && [ "$(pc '[.items[].title] | join("|")')" = "🙋 결정 옛 카드 대기|배포 순서|문서 위치|같은 제목|같은 제목|이름 그대로 반응|번호 없음" ] \
+  && ok "번호 카드: 대기 7건(선택·추천대로·완료 기록은 닫힘, 같은 제목도 카드마다 따로, 옛 카드 규칙 유지)" || ko "번호 카드 대기" "$(pc '[.items[].title]|join("|")')"
+[ "$(pc '[.items[] | "\(.id):\(.state)"] | join(",")')" = "null:null,D-0002:hold,D-0003:conflict,D-0004:null,D-0005:null,D-0006:null,null:null" ] \
   && ok "번호 카드: 결정 번호와 상태(보류 hold·충돌 conflict·답 없음 null)" || ko "번호 카드 상태" "$(pc '[.items[]|"\(.id):\(.state)"]|join(",")')"
+# 결정 번호가 손상·누락된 번호 카드는 옛 경로: 반응 하나로 닫히고(번호 손상), 반응이 없으면 번호 없이 제목만 대기(번호 누락)
+! grep -qF 'bad id' "$SB/print-cards.json" && [ "$(pc '[.items[] | select(.title == "번호 손상")] | length')" = 0 ] \
+  && [ "$(pc '[.items[] | select(.title == "번호 없음") | "\(.id):\(.state)"] | join(",")')" = "null:null" ] \
+  && ok "번호 카드: 결정 번호 손상 → 반응으로 닫힘·번호 안 실음, 누락 → 제목만 대기" || ko "번호 손상·누락" "$(pc '[.items[]|"\(.title):\(.id)"]|join(",")')"
 # slack_pending.sh 판정식이 바뀌면 수집기와 어긋남 → 같은 규칙인지 원본에서 대조(slack_pending.sh 는 수정하지 않고 읽기만).
 # main 형식(옛 카드만)과 번호 카드 형식(이모지 카드 브랜치) 둘 다 인정. 어느 쪽도 아니면 실패
 has() { grep -qF -- "$1" "$PENDING"; }
 if has 'decisions = [s for s in sent if s.get("ts") and not s.get("thread_ts") and "결정" in s.get("title", "")]' \
   && has 'reacted[d.get("parent_ts")] = d' && has 'done_file = os.path.join(H, "slack-done.txt")'; then
   ok "slack_pending.sh 판정식 = 수집기 규칙(main 형식, 바뀌면 이 시험이 실패)"
-elif has 'decisions = [s for s in sent if s.get("ts") and not s.get("thread_ts") and ("결정" in s.get("title", "") or s["ts"] in cards)]' \
+elif has 'decisions = [s for s in sent if s.get("ts") and not s.get("thread_ts")' \
+  && has 'and ("결정" in s.get("title", "") or s["ts"] in cards or (s.get("form_kind") == "decide" and "options" in s))]' \
   && has 'done = {t for t in reacted if t not in cards} | {t for t, st in cards.items() if st and st[0] == "closed"}' \
-  && has 'if s.get("ts") and s.get("form_kind") == "decide" and "options" in s}' \
+  && has 'if s.get("ts") and s.get("form_kind") == "decide" and "options" in s' \
+  && has 'and isinstance(s.get("decision_id"), str) and DECISION_ID_RE.fullmatch(s["decision_id"])}' \
+  && has 'if not isinstance(did, str) or not DECISION_ID_RE.fullmatch(did):' \
+  && has 'key = ("card", s.get("decision_id"), s["ts"]) if card else s["title"]' \
+  && has "$(grep -m1 '^DECISION_ID_RE = ' "$SCRIPTS/panel_collect.py")" \
   && has 'if len(keys) > 1 or any(d.get("conflict") is True for d in ans):' \
   && has 'k = "hold" if d["action"] == "hold" else str(n) if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= 4 else None' \
   && has "$(grep -m1 '^ANSWER_ACTIONS = ' "$SCRIPTS/panel_collect.py")" && has 'done_file = os.path.join(H, "slack-done.txt")'; then
