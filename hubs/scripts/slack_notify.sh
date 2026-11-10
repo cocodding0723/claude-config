@@ -14,6 +14,7 @@ usage() {
   --emoji-set  custom(기본, :비서-a: 등)|std(표준 :a: :regional_indicator_c: 등). 안내 줄 이모지 종류
   --no-check   양식 검사 생략(slack-sent.jsonl 에 unchecked:true 기록)
 환경 변수: LRM_FORMAT=warn|strict|off (기본 warn). warn 은 위반해도 전송하고 stderr 경고, strict 는 위반 시 미전송·종료 코드 2
+  --kind decide 는 결정이 2개 이상이거나 python3 검사가 실패하면 모드와 무관하게 미전송·종료 코드 2(결정 1건 = 메시지 1개). --no-check·off 로 우회하면 로그에 한 줄 남음
 예:
   slack_notify.sh "빌드 완료"
   slack_notify.sh --tag ui-hub "결정1 A/B?" report.html
@@ -90,9 +91,9 @@ if [ -n "$KIND" ]; then
 fi
 
 # 양식 A 검사·안내 줄 부착용 파이썬. 모든 정규식은 여기에만 둠. 구간 제거는 길이를 유지해 줄 위치를 보존함
-#   check  <종류> <안내줄부착예정 0|1>: "수준<TAB>코드<TAB>메시지" 줄 출력. reject 는 위반(strict 에서 거부), warn 은 경고만
+#   check  <종류> <안내줄부착예정 0|1>: "수준<TAB>코드<TAB>메시지" 줄 출력. reject 는 위반(strict 에서 거부), warn 은 경고만, hard 는 모드와 무관하게 거부(decide 다중 결정)
 #   attach <안내줄>: 본문에 '👉 답:' 줄이 없으면 마지막 '참고:' 줄 앞(없으면 맨 끝)에 안내 줄을 끼워 출력
-# 검사 제외 구간: 코드 블록·인라인 코드·URL, 마지막 '참고:' 줄 이후(티켓·커밋 번호 허용, 첫 줄 제외)
+# 검사 제외 구간: 코드 블록·인라인 코드·URL, 마지막 '참고:' 줄 이후(티켓·커밋 번호 허용, 첫 줄 제외). 결정 개수는 예외로 '참고:' 줄 자체만 빼고 그 뒤도 셈
 read -r -d '' FORM_PY <<'PYEOF' || true
 import re, sys, unicodedata
 
@@ -106,12 +107,43 @@ RX = {
     "hex": re.compile(r"(?<![0-9A-Za-z_])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![0-9A-Za-z_])", re.I),
     "bold": re.compile(r"(?<![\w*])\*(?!\s)[^*\n]+?(?<!\s)\*(?![0-9A-Za-z_*])"),
     "answer": re.compile(r"^[ \t]*(?:👉|:point_right:)[ \t]*답[ \t]*:", re.M),
+    # 결정 제목 줄 판정(규칙 고정). 줄머리 접두 = 인용 >·불릿 •-*·· 반복(굵게 * 포함)·머리글 #·대괄호 [. 번호 = ①-⑳·1.·1)·(1)·1️⃣·1번
+    #   head_a: 접두 뒤 '결정' + [-#]? + 번호(①-⑳ 또는 1~2자리 숫자 + 선택 '번', 뒤가 [).:\]*]·공백·줄 끝). '결정 2026-11-01' 같은 날짜·수량은 제외
+    #   head_b: 번호 머리 바로 뒤의 '결정'. 줄 중간의 번호 뒤 '결정'은 선택지 문구('② 결정 변경')라 세지 않음
+    #   mid_a : 줄 중간 '결정 N' — 앞이 글자가 아니고 뒤가 [).:*] 일 때만. 확실하지 않은 신호라 거부 없이 경고만
+    #   접두의 '*' 는 반복 한 곳에서만 먹음(굵게 '**' 도 포함). 뒤에 '\**' 를 또 두면 겹쳐 시간이 제곱으로 늘어남
+    "head_a": re.compile(r"^[ \t]*(?:(?:>|[•\-*·#\[])[ \t]*)*결정[ \t]*[-#]?[ \t]*(?P<n>[①-⑳]|\d{1,2}(?![0-9]))(?:번)?(?=[).:*\]\s]|$)", re.M),
+    "head_b": re.compile(r"^[ \t]*(?:(?:>|[•\-*·])[ \t]*)*(?P<n>[①-⑳]|\d{1,2}(?:[.)]|번)|\(\d{1,2}\)|\d{1,2}\uFE0F?\u20E3)[ \t]*\**[ \t]*결정", re.M),
+    "mid_a": re.compile(r"(?<![0-9A-Za-z_가-힣])결정[ \t]*[-#]?[ \t]*(?P<n>[①-⑳]|\d{1,2}(?![0-9])(?=[).:*]))"),
 }
+
+def num_key(token):
+    """번호 표기 → 정수. ①→1, '2.'·'(2)'·'2번'·키캡 → 2"""
+    if token and "①" <= token[0] <= "⑳":
+        return ord(token[0]) - ord("①") + 1
+    digits = re.search(r"\d+", token)
+    return int(digits.group(0)) if digits else None
 
 def scrub(msg):
     for key in ("fence", "inline", "url"):
         msg = RX[key].sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), msg)
     return msg
+
+def count_decisions(scan):
+    """(확실한 결정 수, 줄 중간에서만 보인 다른 번호 수). 수 = max(답 줄 수, 줄머리 결정 번호 종류 수)
+    '참고:' 줄 이후는 답 줄만 세고, 표(| 시작) 줄은 번호 판정에서 제외. 같은 번호의 반복 참조는 1개"""
+    pos = ref_start(scan)
+    body = scan if pos is None else scan[:pos]
+    heads, mids = set(), set()
+    for ln in body.split("\n"):
+        if ln.lstrip().startswith("|"):
+            continue
+        m = RX["head_a"].match(ln) or RX["head_b"].match(ln)
+        if m:
+            heads.add(num_key(m.group("n")))
+        for x in RX["mid_a"].finditer(ln, m.end() if m else 0):
+            mids.add(num_key(x.group("n")))
+    return max(len(RX["answer"].findall(scan)), len(heads)), len((heads | mids) - heads)
 
 def ref_start(scan):
     """마지막 '참고:' 줄의 시작 위치. 첫 줄은 주제라 제외, 없으면 None"""
@@ -120,6 +152,7 @@ def ref_start(scan):
 
 def check_form(msg, kind, guided):
     out = []
+    msg = unicodedata.normalize("NFC", msg)
     head = RX["code"].sub("", msg.split("\n", 1)[0])
     head = "".join(c for c in head if unicodedata.category(c) not in ("So", "Sk", "Cf", "Mn", "Me") and not c.isspace())
     if len(head) > 40:
@@ -133,6 +166,12 @@ def check_form(msg, kind, guided):
             out.append(("reject", key, "본문에 %s %s — 맨 아래 '참고:' 줄로 옮기세요" % (label, ", ".join(hits[:3]))))
     if kind in ("decide", "todo") and not guided and not RX["answer"].search(body):
         out.append(("reject", "no-answer", "결정·할 일인데 '👉 답:' 줄이 없음 — '👉 답: …' 줄을 쓰거나 --kind decide --choices N 으로 안내 줄을 붙이세요"))
+    if kind == "decide":
+        count, extra = count_decisions(scan)
+        if count > 1:
+            out.append(("hard", "multi", "결정이 %d개임(전송 안 함) — 1건씩 따로 보내세요. 예: --kind decide 로 '결정 1 주제'와 '결정 2 주제'를 각각 한 번씩 호출" % count))
+        elif extra > 0:
+            out.append(("warn", "mid-decide", "줄 중간에 다른 번호의 '결정 N' 이 있음 — 결정이 2건 이상이면 1건씩 따로 보내세요(참조라면 무시)"))
     n = len(RX["bold"].findall(scan))
     if n > 1:
         out.append(("warn", "bold", "굵게가 %d곳 — 메시지당 1곳으로 줄이세요" % n))
@@ -182,9 +221,13 @@ if [ -n "$KIND" ] && [ "$NOCHECK" = 0 ]; then
   MODE="${LRM_FORMAT:-warn}"
   case "$MODE" in warn|strict|off) ;; *) die "LRM_FORMAT 값 오류: $MODE — warn|strict|off 중 하나로 지정" ;; esac
   if [ "$MODE" != off ]; then
-    FORM_N=0 FORM_CODES="" FORM_OUT=""
+    FORM_N=0 HARD_N=0 FORM_CODES="" FORM_OUT="" HARD_TXT=""
     if ! FORM_OUT="$(check_form "$MSG" "$KIND" "$CHOICES_SET")"; then
-      [ "$MODE" != strict ] || die "양식 검사 실패(전송 안 함) — python3 동작 확인 뒤 다시 보내거나 --no-check 로 우회"
+      # decide 는 다중 결정 검사를 건너뛰면 안 되므로 warn 이어도 미전송. 다른 kind 는 warn 에서 검사 없이 전송
+      if [ "$MODE" = strict ] || [ "$KIND" = decide ]; then
+        log_format "$KIND" check-fail "$MODE"
+        die "양식 검사 실패(전송 안 함) — python3 동작 확인 뒤 다시 보내거나 --no-check 로 우회"
+      fi
       echo "양식 검사 실패 — 검사 없이 전송" >&2
       FORM_OUT="" FORM_CODES="check-fail"
     fi
@@ -192,14 +235,25 @@ if [ -n "$KIND" ] && [ "$NOCHECK" = 0 ]; then
       [ -n "$code" ] || continue
       FORM_CODES="$FORM_CODES${FORM_CODES:+,}$code"
       if [ "$lvl" = reject ]; then FORM_N=$((FORM_N + 1)); fi
-      if [ "$lvl" = reject ] && [ "$MODE" = strict ]; then echo "거부: $text" >&2; else echo "경고: $text" >&2; fi
+      if [ "$lvl" = hard ]; then HARD_N=$((HARD_N + 1)); fi
+      if [ "$lvl" = hard ]; then HARD_TXT="$HARD_TXT${HARD_TXT:+$'\n'}거부: $text"  # 다른 위반 뒤에 마지막 줄로 출력
+      elif [ "$lvl" = reject ] && [ "$MODE" = strict ]; then echo "거부: $text" >&2
+      else echo "경고: $text" >&2; fi
     done <<< "$FORM_OUT"
+    [ -z "$HARD_TXT" ] || echo "$HARD_TXT" >&2
     log_format "$KIND" "${FORM_CODES:-ok}" "$MODE"
+    [ "$HARD_N" -eq 0 ] || exit 2  # 결정 다중은 warn 이어도 미전송
     if [ "$FORM_N" -gt 0 ]; then
       if [ "$MODE" = strict ]; then echo "양식 위반 ${FORM_N}건(전송 안 함) — 고치거나 --no-check 로 우회" >&2; exit 2; fi
       echo "양식 위반 ${FORM_N}건(전송함)" >&2
     fi
   fi
+fi
+
+# 우회 기록: decide 의 --no-check·LRM_FORMAT=off 는 허용하되 한 줄 남김(본문 없음). 다중 결정 검사를 건너뛴 흔적용
+if [ "$KIND" = decide ]; then
+  if [ "$NOCHECK" = 1 ]; then log_format "$KIND" bypass-no-check no-check
+  elif [ "${LRM_FORMAT:-warn}" = off ]; then log_format "$KIND" bypass-off off; fi
 fi
 
 # 검사 뒤에 안내 줄 부착. 치환을 이미 마쳤으므로 안내 줄의 이모지 이름은 다시 치환되지 않음
