@@ -134,6 +134,11 @@ done <<< "$entries"
 [ "$rend_bad" = 0 ] && ok "render 항목: 실제 파일·자리표시 전부 치환"
 grep -qF 'VAL&DM_CHANNEL' "$SB/.config/lrm-hubs/roles/role-docs.txt" && grep -q 'VAL_PERSON_FULL' "$SB/.config/lrm-hubs/roles/role-tutorial.txt" && ok "render: 값 파일 값이 들어감" || ko "render 값" "누락"
 grep -q "$SB" "$SB/Library/LaunchAgents/ai.lrm.slackpoll.plist" && ! grep -q '__HOME__' "$SB/Library/LaunchAgents/ai.lrm.slackpoll.plist" && ok "plist __HOME__ 치환" || ko "plist 치환" ""
+# 옆 패널 mod: 링크가 아닌 실제 파일 4개, 패널 데이터·메인 체크아웃 경로가 이 HOME 기준
+MOD="$SB/.config/lrm-hubs/mods/lrm-board"
+mod_bad=0; for f in .claude-plugin/plugin.json hooks/hooks.json hooks/register.tsx types/index.d.ts; do [ -f "$MOD/$f" ] && [ ! -L "$MOD/$f" ] || mod_bad=1; done
+[ "$mod_bad" = 0 ] && jq -e '.name == "lrm-board"' "$MOD/.claude-plugin/plugin.json" >/dev/null && jq -e '.modules' "$MOD/hooks/hooks.json" >/dev/null && ok "lrm-board mod 파일 4개 복사·JSON 정상" || ko "lrm-board 복사" "파일 누락·링크·JSON 오류"
+grep -qF "'$SB/.config/lrm-hubs/panel.json'" "$MOD/hooks/register.tsx" && grep -qF "'$SB/orca/LoveRevolutionMaker'" "$MOD/hooks/register.tsx" && ! grep -q '__HOME__' "$MOD/hooks/register.tsx" && ok "lrm-board: panel.json·메인 체크아웃 경로 __HOME__ 치환" || ko "lrm-board 치환" ""
 SOCKP="$SB/.config/lrm-hubs/ai.lrm.slacksocket.plist"
 grep -q "<string>$SB/.config/lrm-hubs/slack_socket.py</string>" "$SOCKP" && grep -q "<string>$(command -v python3)</string>" "$SOCKP" && ! grep -q '__[A-Z0-9_]*__' "$SOCKP" && plutil -lint "$SOCKP" >/dev/null && cmp -s "$REPO/hubs/scripts/slack_socket.py" "$SB/.config/lrm-hubs/slack_socket.py" && ok "소켓 plist __HOME__·__PYTHON3__ 치환·형식 정상, 수신기 복사" || ko "소켓 plist" "치환·형식 오류"
 [ "$(git config --global core.hooksPath)" = "~/.config/git/hooks" ] && [ "$(git config --global pull.rebase)" = true ] && [ "$(git config --global merge.ff)" = false ] && ok "git 설정 4개 키" || ko "git 설정" ""
