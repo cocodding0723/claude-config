@@ -70,6 +70,21 @@ export type AutoHubs = { rows: AutoHub[]; counts: { busy: number; approval: numb
 export type AutoPending = { count: number; items: Array<{ title: string; ageMin: number | null }> }
 export type AutoPush = { lines: Array<{ at: string; event: string; reason: string | null }> }
 export type AutoWorkers = { live: number; recent: Array<{ title: string | null; status: string; at: number | null }> }
+/** 쉬는 자원. 부분마다 따로 실패해 한 부분이 null 일 수 있음 */
+export type AutoIdle = {
+  terminals: { total: number; agents: number } | null
+  workers: {
+    live: number; succeeded: number; failed: number; stopped: number
+    leftover: number; more: number
+    items: Array<{ dispatch: string; title: string | null; status: string; terminal: string }>
+  } | null
+  workspaces: {
+    total: number; noTerminal: number; more: number; truncated: boolean
+    items: Array<{ name: string; path: string; branch: string; ageDays: number | null; merged: boolean | null }>
+  } | null
+  disk: { freeGB: number; usedPct: number; minGB: number; warn: boolean } | null
+  wsSize: { gb: number | null; at: number | null; dir: string } | null
+}
 export type AutoGh = { repos: Array<{ repo: string; open: number; ciFail: number }>; open: number; ciFail: number }
 
 /** 수집기(panel_collect.sh)가 쓰는 panel-auto.json */
@@ -84,6 +99,7 @@ export type AutoBoard = {
     push?: AutoSource<AutoPush>
     workers?: AutoSource<AutoWorkers>
     gh?: AutoSource<AutoGh>
+    idle?: AutoSource<AutoIdle>
   }
 }
 

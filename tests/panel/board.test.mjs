@@ -81,3 +81,36 @@ test('headCounts: 자동 허브 값 우선, 없으면 메인 칸 hubs', () => {
   assert.deepEqual(b.headCounts(main, undefined), { busy: 1, blocked: 2, source: 'main' })
   assert.deepEqual(b.headCounts(undefined, undefined), { busy: 0, blocked: 0, source: 'main' })
 })
+
+test('idleLines: 값 없음·부분 null 이어도 깨지지 않음, 디스크 경고 표시', () => {
+  assert.deepEqual(b.idleLines(undefined), [])
+  assert.deepEqual(b.idleLines(null), [])
+  assert.deepEqual(b.idleLines({ terminals: null, workers: null, workspaces: null, disk: null, wsSize: null }), [])
+  const v = {
+    terminals: { total: 36, agents: 18 },
+    workers: { live: 7, succeeded: 86, failed: 2, stopped: 5, leftover: 1, more: 0, items: [] },
+    workspaces: {
+      total: 217, noTerminal: 197, more: 177, truncated: false,
+      items: [
+        { name: 'ws-a', path: '~/a', branch: 'feat/a', ageDays: 49, merged: true },
+        { name: 'ws-b', path: '~/b', branch: 'feat/b', ageDays: null, merged: null },
+        { name: 'ws-c', path: '~/c', branch: 'feat/c', ageDays: 3, merged: false },
+        { name: 'ws-d', path: '~/d', branch: 'feat/d', ageDays: 1, merged: false },
+      ],
+    },
+    disk: { freeGB: 27.2, usedPct: 97, minGB: 50, warn: true },
+    wsSize: { gb: null, at: null, dir: '~/orca/workspaces' },
+  }
+  const lines = b.idleLines(v)
+  assert.deepEqual(lines.map(l => l.text), [
+    '터미널 없는 워크스페이스 197/217',
+    '오래 쉰 것: ws-a 49일 병합됨, ws-b, ws-c 3일 외 194개',
+    '종료 뒤 남은 터미널 1 · 살아 있는 워커 7',
+    '디스크 여유 27.2GB (97% 사용) ⚠ 50GB 미만',
+    '터미널 36개 (에이전트 18)',
+  ])
+  assert.deepEqual(lines.map(l => l.warn), [false, false, false, true, false])
+  const ok = b.idleLines({ ...v, disk: { ...v.disk, freeGB: 80, warn: false }, wsSize: { gb: 12.5, at: 1, dir: '~/orca/workspaces' } })
+  assert.equal(ok.some(l => l.warn), false)
+  assert.equal(ok.at(-1).text, '~/orca/workspaces 12.5GB')
+})

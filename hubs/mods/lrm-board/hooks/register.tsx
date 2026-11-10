@@ -8,6 +8,7 @@ import {
   ageMin,
   headCounts,
   hubLine,
+  idleLines,
   mainAge,
   parseAuto,
   parseMain,
@@ -40,6 +41,7 @@ const C = {
   pending: '#FF8A65',
   recent: '#90A4AE',
   pr: '#A5D6A7',
+  idle: '#80CBC4',
   history: '#FFB74D',
   title: '#FFFFFF',
   detail: '#C8C8C8',
@@ -194,6 +196,7 @@ export const register: Register = on => {
     const push = src?.push?.value ?? undefined
     const workers = src?.workers?.value ?? undefined
     const gh = src?.gh
+    const idle = idleLines(src?.idle?.value)
 
     return (
       <Box flexDirection="column">
@@ -248,6 +251,10 @@ export const register: Register = on => {
         ) : (
           <Text dimColor>{gh?.off === true ? 'PANEL_GH_REPOS 설정 없음' : '값 없음'}</Text>
         )}
+
+        {section('😴 쉬는 자원', C.idle, `${sourceNote(src?.idle, nowMs)} · 정리는 사람이`)}
+        {idle.length === 0 && <Text dimColor>값 없음</Text>}
+        {idle.map(l => <Text color={l.warn ? C.error : C.detail} wrap="wrap">{l.text}</Text>)}
 
         {section('🧾 최근 기록', C.recent, sourceNote(src?.workers, nowMs))}
         {workers !== undefined &&

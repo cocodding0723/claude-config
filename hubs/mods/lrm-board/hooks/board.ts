@@ -1,5 +1,5 @@
 // 패널의 순수 함수: 파일 해석·오래됨 판정·표시 문자열. 엔진($) 없이 node 로 시험함(tests/panel/board.test.mjs)
-import type { AutoBoard, AutoHub, AutoSource, Board } from '../types'
+import type { AutoBoard, AutoHub, AutoIdle, AutoSource, Board } from '../types'
 
 /** 자동 칸이 이만큼 갱신되지 않으면 맨 위 경고. 수집 주기 90초의 6배 이상 */
 export const AUTO_STALE_MIN = 10
@@ -105,4 +105,30 @@ export const headCounts = (board: Board | undefined, auto: AutoBoard | undefined
     blocked: rows.filter(r => r.state === 'waiting' || r.state === 'blocked').length,
     source: 'main',
   }
+}
+
+/** 쉬는 자원 칸에서 이름을 보여 줄 오래 쉰 워크스페이스 수 */
+const IDLE_NAMES = 3
+
+export type IdleLine = { text: string; warn: boolean }
+
+/** 😴 쉬는 자원 칸 줄. 값이 없는 부분은 건너뜀(칸이 비어도 패널은 그대로) */
+export const idleLines = (v: AutoIdle | null | undefined): IdleLine[] => {
+  if (v === null || v === undefined) return []
+  const out: IdleLine[] = []
+  if (v.workspaces) {
+    const w = v.workspaces
+    out.push({ text: `터미널 없는 워크스페이스 ${w.noTerminal}/${w.total}`, warn: false })
+    const names = w.items.slice(0, IDLE_NAMES).map(i => `${i.name}${i.ageDays !== null ? ` ${i.ageDays}일` : ''}${i.merged === true ? ' 병합됨' : ''}`)
+    const rest = w.noTerminal - names.length
+    if (names.length > 0) out.push({ text: `오래 쉰 것: ${names.join(', ')}${rest > 0 ? ` 외 ${rest}개` : ''}`, warn: false })
+  }
+  if (v.workers) out.push({ text: `종료 뒤 남은 터미널 ${v.workers.leftover} · 살아 있는 워커 ${v.workers.live}`, warn: false })
+  if (v.disk) {
+    const d = v.disk
+    out.push({ text: `디스크 여유 ${d.freeGB}GB (${d.usedPct}% 사용)${d.warn ? ` ⚠ ${d.minGB}GB 미만` : ''}`, warn: d.warn })
+  }
+  if (v.terminals) out.push({ text: `터미널 ${v.terminals.total}개 (에이전트 ${v.terminals.agents})`, warn: false })
+  if (v.wsSize && v.wsSize.gb !== null) out.push({ text: `${v.wsSize.dir} ${v.wsSize.gb}GB`, warn: false })
+  return out
 }

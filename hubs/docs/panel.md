@@ -4,7 +4,7 @@
 
 ## 쉬운 말 3줄 요약
 
-- 무엇이 바뀌었나: 허브 상태·결정 대기·최근 기록·PR 수는 이제 90초마다 스크립트가 자동으로 채우고, 10분 넘게 안 채워지면 패널 맨 위에 ⚠️ 가 뜬다.
+- 무엇이 바뀌었나: 허브 상태·결정 대기·최근 기록·PR 수·쉬는 자원(터미널 없는 워크스페이스·디스크 여유)은 이제 90초마다 스크립트가 자동으로 채우고, 10분 넘게 안 채워지면 패널 맨 위에 ⚠️ 가 뜬다.
 - 왜: 메인이 손으로 쓰던 패널이 하루 가까이 낡은 채 남은 일이 있었다. 기계가 셀 수 있는 칸은 기계가 채우고, 사람 판단이 필요한 칸(승인할 것·할 일)만 메인이 쓴다.
 - 사용자가 할 일: 병합 뒤 설치기를 한 번 돌리고 수집기를 켜는 명령 한 줄을 실행한 다음, 메인 세션을 새로 시작한다(아래 「라이브 적용 절차」).
 
@@ -17,7 +17,8 @@
  slack-sent/inbox/done.jsonl ───┤          panel_collect.sh --once       panel-auto.json            lrm-board mod
  slack-push.log(결과 코드) ─────┼────────▶ (launchd 90초, 잠금,  ──────▶ (수집기만 씀,     ──┐      (15초 폴링,
  orca worker-list·task-list ────┤           원자 교체)                    원료별 ok·stale)    ├────▶  두 파일 합쳐
- gh pr list(5분마다, 선택) ─────┘                                                             │       그림, ⚠️ 판정)
+ gh pr list(5분마다, 선택) ─────┤
+ orca worktree list·df·du ───────┘                                                             │       그림, ⚠️ 판정)
                                                                          panel.json         ──┘
  메인 코디네이터(손으로) ──────────────────────────────────────────────▶ (메인만 씀)
 ```
@@ -40,9 +41,10 @@
 | 〃 | `sources.push` → `lines[]`(`at`·`event`·`reason`) | 수집기 | `slack-push.log` 끝 5줄의 결과·사유 코드만 |
 | 〃 | `sources.workers` → `live`·`recent[]`(`title` 40자·`status`·`at`) | 수집기 | 최근 종료 워커(완료 보고) |
 | 〃 | `sources.gh` → `repos[]`·`open`·`ciFail` 또는 `off:true` | 수집기 | `PANEL_GH_REPOS` 가 있을 때만 |
+| 〃 | `sources.idle` → `terminals`·`workers`(상태별 건수·`leftover`·`items` 20개)·`workspaces`(`total`·`noTerminal`·`items` 20개·`more`)·`disk`(`freeGB`·`usedPct`·`minGB`·`warn`)·`wsSize` | 수집기 | 부분마다 따로 실패. `err` 는 `부분:종류` 목록 |
 | 〃 | 원료마다 `ok`·`err`·`at`·`tried`·`stale` | 수집기 | 실패하면 `ok:false`·`err`(종류만)·`stale:true` 이고 `value`·`at` 은 마지막 성공 값 그대로 |
-| `~/.config/lrm-hubs/panel.env` | `PANEL_GH_REPOS`·`PANEL_GH_INTERVAL`·`PANEL_HUB_ROOT`·`PANEL_RECENT` | 사용자(선택) | 시크릿 아님. 양식 `panel.env.example`. 환경 변수가 우선 |
-| `panel-collect.log`·`.panel-gh.stamp`·`.panel-collect.lock` | — | 수집기 | 로그는 원료별 결과 코드만. 1MB 넘으면 `.1` 로 돌림 |
+| `~/.config/lrm-hubs/panel.env` | `PANEL_GH_REPOS`·`PANEL_GH_INTERVAL`·`PANEL_HUB_ROOT`·`PANEL_RECENT`·`PANEL_DISK_MIN_GB`·`PANEL_WS_DIR`·`PANEL_DU_INTERVAL` | 사용자(선택) | 시크릿 아님. 양식 `panel.env.example`. 환경 변수가 우선 |
+| `panel-collect.log`·`.panel-gh.stamp`·`.panel-du.stamp`·`.panel-collect.lock` | — | 수집기 | 로그는 원료별 결과 코드만. 1MB 넘으면 `.1` 로 돌림 |
 
 수집기가 저장하지 않는 것: 터미널 화면(preview) 본문, Slack 메시지 본문, 토큰, gh 출력 원문, 터미널 핸들. 수집기는 `slack-bot.env`·`main.env` 를 읽지 않고 Slack API 를 부르지 않는다.
 
@@ -78,6 +80,21 @@
 | 메인 칸 | 파일 수정 시각 | 30분 초과 → 노란 글씨 "메인 칸이 N분 전 갱신됨" |
 
 자동 칸에 파일 안 epoch 를 쓰는 이유: 수집기가 기록하는 순간의 시계라 데이터가 언제 모였는지를 그대로 말한다. 수정 시각은 복사·백업 복원·`touch` 로도 새로워져 낡은 데이터를 새것처럼 보이게 할 수 있다. 메인 칸에 수정 시각을 쓰는 이유: 메인이 글자로 적는 `updatedAt` 은 실제와 42분 어긋난 전례가 있다.
+
+### 쉬는 자원(😴 칸)
+
+쌓이면 디스크·메모리를 먹는 자원을 숫자로 보여 준다. **목록과 숫자만 만들고 정리(삭제·종료)는 하지 않는다.** 수집기 코드에 삭제·종료 명령이 없다는 것을 시험이 고정한다(`rm`·`worktree rm`·`terminal close`·`worker-stop` 등). 수집기가 지우는 것은 자기 임시 파일·잠금 폴더뿐이다.
+
+| 항목 | 원료 | 뜻 |
+|---|---|---|
+| 터미널 없는 워크스페이스 | `orca worktree list --limit 1000` 와 `orca terminal list` 의 `worktreeId` 대조(메인 체크아웃 제외) | 열린 터미널이 0개인 워크스페이스 수. 오래 쉰 것부터 20개를 이름·`~` 경로·브랜치·쉰 일수·병합 여부와 함께 싣고 나머지는 "외 N개" |
+| 병합 여부 | `git -C <경로> merge-base --is-ancestor HEAD <baseRef>` | 기준 ref 가 없거나 git 이 답하지 못하면 모름(null). 목록 20개에만 확인 |
+| 종료 뒤 남은 터미널 | `orca orchestration worker-list --full` | 끝났거나(`succeeded`·`failed`·`stopped`) 실패했는데 터미널이 아직 `retained`·`active` 등인 워커. dispatch id·작업 제목·상태만 |
+| 디스크 여유 | `df -k ~` | 홈 볼륨 여유 GB·사용률. `PANEL_DISK_MIN_GB`(기본 50) 미만이면 빨간 글씨 |
+| 워크스페이스 폴더 크기 | `du -sk <PANEL_WS_DIR>` | 느려서 30분마다만 잰다. 실패하면 직전 값을 두고 경고하지 않는다 |
+| 터미널 수 | `orca terminal list` | 전체·에이전트 붙은 수. 프로세스 메모리는 재지 않는다 |
+
+정리는 사람이 한다. 예: 각 허브가 자기 하위 워크스페이스를 정리하고, 규칙은 "병합됨 + 터미널 없음 + `.claude` 보관 뒤 삭제"를 따른다(`worktree-gc` 스킬).
 
 ### gh 간격
 
@@ -127,6 +144,7 @@
 - 화면 분류는 Orca 가 주는 화면 끝 300자만 본다. 위쪽에 있는 질문은 못 보고, `allow`·`승인` 키워드는 평범한 글에도 걸린다. 확인불가가 나오면 허브 화면을 직접 본다.
 - 결정 대기는 `결정` 제목으로 Slack 에 나간 카드만 센다. 허브 화면에만 있는 결정은 못 센다.
 - 최근 종료 작업 시각은 Orca 의 `releaseCompletedAt`(터미널 정리 시각, UTC 로 읽음)이다. 작업 완료 시각과 몇 분 차이가 날 수 있다.
+- 워크스페이스 목록은 Orca 가 관리하는 것만 센다. Orca 밖에서 만든 git worktree·폴더는 빠진다. 활동 시각(`lastActivityAt`)이 0 이면 만든 시각을 쓰고, 둘 다 없으면 목록 뒤로 보낸다.
 - 작업 제목은 `task-list --run <Run>` 로 얻는다. 최근 기록의 Run 이 셋보다 많으면 나머지는 제목 없이 상태만 나온다.
 - 실제 launchd 적재와 패널 화면 렌더는 이 브랜치에서 확인하지 않았다(라이브 적용 금지). 검증은 샌드박스 시험과 `claude plugin validate` 까지다.
 - mod 의 타입 검사(`tsc`)는 이 맥에 `tsc` 가 없어 하지 못했다. 판정 함수는 node 시험으로, 화면 코드는 `claude plugin validate` 로만 확인했다.
@@ -134,6 +152,7 @@
 ## 8. 후속 제안
 
 - Slack 할 일 목록(리스트) 읽기: 봇 토큰 스코프(`lists:read` 등) 확인이 먼저다. 수집기는 지금 토큰을 읽지 않으므로, 읽게 하려면 토큰을 다루는 별도 단계(폴러 쪽)에 붙이는 편이 맞다.
+- 프로세스별 메모리(에이전트 세션 RSS 합계)를 쉬는 자원 칸에 더하기. `ps` 로 잴 수 있으나 이번 범위 밖이다.
 - 허브별 `decisions.tsv` 의 오늘 줄 수를 자동 칸에 더하면 `catch-up` 없이도 "사람 없이 내린 결정" 수를 볼 수 있다.
 
 ## 참고

@@ -51,6 +51,7 @@ board_run() { # 번호 설명 perl 치환식(mod board.ts 대상, node 시험)
 board_run P9 "오래됨 기준 10분 → 60분" 's/AUTO_STALE_MIN = 10/AUTO_STALE_MIN = 60/'
 board_run P10 "자동 칸 시계를 수정 시각 우선으로" 's/if \(epochMs !== undefined && epochMs > 0 && epochMs <= nowMs \+ FUTURE_SLACK_MS\) return epochMs/if (mtimeMs > 0) return mtimeMs/'
 board_run P11 "파일 없음 경고 제거" "s/if \(autoMtimeMs === 0\) return \{ level: 'missing'/if (false) return { level: 'missing'/"
+board_run P16 "디스크 경고 색 표시 제거" 's/warn: d\.warn \}\)/warn: false })/'
 echo
 [ "$MISSED" = 0 ] && echo "변이 전부 검출" || echo "미검출·정의 오류 ${MISSED}건"
 [ "$MISSED" = 0 ]
