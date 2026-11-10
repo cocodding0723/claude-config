@@ -2,10 +2,11 @@
 # slack_push 시험용 가짜 orca. 실제 Orca·터미널에는 접속하지 않음. 응답 모양은 실제 CLI(번들 소스 handlers/terminal-send.js·
 # runtime/terminal-prompt-mutation-recovery.js)를 따름: 영수증은 result.send.{accepted,prompt.{requestId,stages,observation}},
 # 모호한 실패는 error.data.orchestrationRequestId(UUID), accepted=false 는 종료 코드 1, UUID 가 아닌 --retry-request 는 invalid_argument.
-# 시나리오는 $FAKE_ORCA_DIR 의 파일로 정함: list.mode, send.mode, failn(남은 실패 횟수), send.hook(전송 중 실행할 스크립트), list.preview·list.pane(custom 모드)
-#   list.mode: ok | none | two | two_pane | two_main | notitle | dialog | orphan | conn_off | ro | custom | listfail      (메인 경로는 $FAKE_MAIN)
+# 시나리오는 $FAKE_ORCA_DIR 의 파일로 정함: show.mode, send.mode, failn(남은 실패 횟수), send.hook(전송 중 실행할 스크립트), show.preview·show.pane(custom 모드)
+#   show.mode: ok(paneTitle 키 없음, 실측과 같음) | pane_main | pane_other | gone | notfound | termgone | unavail | invalid | other_handle | dead | orphan | ro | other_wt | codex | noagent | dialog | custom | garbage
+#              (메인 경로는 $FAKE_MAIN, 응답 handle 은 요청한 --terminal 값)
 #   send.mode: ok | fail | failn | ambig | hang | notaccepted | blocked | unknown | unsubmitted | badreceipt
-# 기록: calls.log(list 호출 인자), sends.log(번호<TAB>시각<TAB>핸들<TAB>retry-request<TAB>wait-submit), send.<번호>.txt(전달 본문),
+# 기록: calls.log(send 외 호출의 하위 명령·인자), sends.log(번호<TAB>시각<TAB>핸들<TAB>retry-request<TAB>wait-submit), send.<번호>.txt(전달 본문),
 #       delivered(실제 입력 1건당 1줄), replays(같은 요청 ID 재전송 때 영수증만 돌려준 횟수), ledger/<요청 ID>(Orca 가 기억한 요청),
 #       env.sec(호출마다 SLACK_ 로 시작하는 환경 변수 수)
 set -u
@@ -21,26 +22,30 @@ term() { # 핸들 경로 에이전트 pane 화면끝 orphaned connected writable
     '{handle:$h,worktreePath:$p,connected:$c,writable:$w,orphaned:$o,preview:$pv} + (if $a=="" then {} else {agentIdentity:$a} end) + (if $pane=="" then {} else {paneTitle:$pane} end)'
 }
 case "$sub" in
-  list)
-    printf '%s\n' "$*" >> "$FO/calls.log"
-    mode=$(rd list.mode ok)
-    other=$(term term_other /somewhere/else claude "" "")
-    shell=$(term term_shell "$FAKE_MAIN" "" "" "")
-    case "$mode" in
-      listfail) exit 1 ;;
-      ok) ts="$(term term_main "$FAKE_MAIN" claude MAIN "$IDLE") $other $shell" ;;
-      none) ts="$other $shell" ;;
-      notitle) ts="$(term term_main "$FAKE_MAIN" claude "" "$IDLE") $other $shell" ;;
-      two) ts="$(term term_a "$FAKE_MAIN" claude "" "$IDLE") $(term term_b "$FAKE_MAIN" claude "" "$IDLE") $other" ;;
-      two_pane) ts="$(term term_a "$FAKE_MAIN" claude "" "$IDLE") $(term term_b "$FAKE_MAIN" claude MAIN "$IDLE") $other" ;;
-      two_main) ts="$(term term_a "$FAKE_MAIN" claude MAIN "$IDLE") $(term term_b "$FAKE_MAIN" claude MAIN "$IDLE") $other" ;;
-      dialog) ts="$(term term_main "$FAKE_MAIN" claude MAIN $'Do you want to proceed?\n❯ 1. Yes\n  2. No') $other" ;;
-      orphan) ts="$(term term_main "$FAKE_MAIN" claude MAIN "$IDLE" true) $other" ;;
-      conn_off) ts="$(term term_main "$FAKE_MAIN" claude MAIN "$IDLE" false false true) $other" ;;
-      ro) ts="$(term term_main "$FAKE_MAIN" claude MAIN "$IDLE" false true false) $other" ;;
-      custom) ts="$(term term_main "$FAKE_MAIN" claude "$(cat "$FO/list.pane" 2>/dev/null || echo MAIN)" "$(cat "$FO/list.preview" 2>/dev/null)") $other" ;;
+  show)
+    printf 'show %s\n' "$*" >> "$FO/calls.log"
+    H=""; while [ $# -gt 0 ]; do case "$1" in --terminal) H=$2; shift 2 ;; *) shift ;; esac; done
+    case "$(rd show.mode ok)" in
+      ok) t=$(term "$H" "$FAKE_MAIN" claude "" "$IDLE") ;;
+      pane_main) t=$(term "$H" "$FAKE_MAIN" claude MAIN "$IDLE") ;;
+      pane_other) t=$(term "$H" "$FAKE_MAIN" claude OTHER "$IDLE") ;;
+      gone) echo '{"id":"x","ok":false,"error":{"code":"terminal_handle_stale","message":"x"}}'; exit 1 ;;
+      notfound) echo '{"id":"x","ok":false,"error":{"code":"terminal_not_found","message":"x"}}'; exit 1 ;;
+      termgone) echo '{"id":"x","ok":false,"error":{"code":"terminal_gone","message":"x"}}'; exit 1 ;;
+      unavail) echo '{"id":"x","ok":false,"error":{"code":"runtime_unavailable","message":"x"}}'; exit 1 ;;  # Orca 내려감·재시작 중: 핸들 문제 아님
+      invalid) echo '{"id":"x","ok":false,"error":{"code":"invalid_argument","message":"x"}}'; exit 1 ;;
+      other_handle) t=$(term term_0000dead-0000-4000-8000-0000000000ff "$FAKE_MAIN" claude "" "$IDLE") ;;  # 요청과 다른 핸들의 정보가 돌아옴
+      dead) t=$(term "$H" "$FAKE_MAIN" claude "" "$IDLE" false false true) ;;
+      orphan) t=$(term "$H" "$FAKE_MAIN" claude "" "$IDLE" true) ;;
+      ro) t=$(term "$H" "$FAKE_MAIN" claude "" "$IDLE" false true false) ;;
+      other_wt) t=$(term "$H" /somewhere/else claude "" "$IDLE") ;;
+      codex) t=$(term "$H" "$FAKE_MAIN" codex "" "$IDLE") ;;
+      noagent) t=$(term "$H" "$FAKE_MAIN" "" "" "$IDLE") ;;
+      dialog) t=$(term "$H" "$FAKE_MAIN" claude "" $'Do you want to proceed?\n❯ 1. Yes\n  2. No') ;;
+      custom) t=$(term "$H" "$FAKE_MAIN" claude "$(rd show.pane "")" "$(rd show.preview "")") ;;
+      garbage) echo 'not json'; exit 0 ;;
     esac
-    printf '%s\n' "$ts" | jq -sc '{id:"x",ok:true,result:{terminals:.,totalCount:(.|length),truncated:false}}'
+    jq -nc --argjson t "$t" '{id:"x",ok:true,result:{terminal:$t}}'
     ;;
   send)
     H="" T="" R="" W=""
@@ -92,5 +97,5 @@ case "$sub" in
       badreceipt) deliver; echo '{"id":"x","ok":true,"result":{"accepted":true}}' ;;
     esac
     ;;
-  *) echo '{"ok":false,"error":{"code":"unsupported"}}'; exit 1 ;;
+  *) printf '%s %s\n' "$sub" "$*" >> "$FO/calls.log"; echo '{"ok":false,"error":{"code":"unsupported"}}'; exit 1 ;;
 esac
