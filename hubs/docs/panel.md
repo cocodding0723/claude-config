@@ -36,8 +36,8 @@
 | 〃 | `hubs[]` | 메인(옛 방식) | 자동 칸이 없을 때만 표시. 새로 쓰지 않아도 된다 |
 | 〃 | `updatedAt` | 메인(옛 방식) | 더는 화면에 쓰지 않는다. 나이는 파일 수정 시각으로 계산 |
 | `~/.config/lrm-hubs/panel-auto.json` | `version`·`updatedAt`(epoch 초)·`updatedAtText` | 수집기 | 메인은 쓰지 않는다 |
-| 〃 | `sources.hubs` → `rows[]`(`hub`·`name`·`agent`·`state`·`quietMin`·`connected`·`dup`)·`counts` | 수집기 | `state`: busy 작업 중 · approval 승인창 · idle 대기 · unknown 확인불가 |
-| 〃 | `sources.pending` → `count`·`items[]`(`title` 40자·`ageMin`) | 수집기 | 제목은 우리가 보낸 결정 카드 제목(사용자 원문 아님) |
+| 〃 | `sources.hubs` → `rows[]`(`hub`·`name`·`agent`·`state`·`quietMin`·`connected`·`dup`)·`counts`·`truncated` | 수집기 | `state`: busy 작업 중 · approval 승인창 · idle 대기 · unknown 확인불가. `truncated` 는 Orca 가 터미널 목록을 잘랐다는 뜻 |
+| 〃 | `sources.pending` → `count`·`items[]`(`title` 40자·`ageMin`·`id`·`state`) | 수집기 | 제목은 우리가 보낸 결정 카드 제목(사용자 원문 아님). `id`(결정 번호)·`state`(`hold` 보류·`conflict` 충돌)는 번호 카드만, 옛 카드는 null |
 | 〃 | `sources.push` → `lines[]`(`at`·`event`·`reason`) | 수집기 | `slack-push.log` 끝 5줄의 결과·사유 코드만 |
 | 〃 | `sources.workers` → `live`·`recent[]`(`title` 40자·`status`·`at`) | 수집기 | 최근 종료 워커(완료 보고) |
 | 〃 | `sources.gh` → `repos[]`·`open`·`ciFail` 또는 `off:true` | 수집기 | `PANEL_GH_REPOS` 가 있을 때만 |
@@ -60,7 +60,7 @@
 |---|---|---|
 | 0 | 끊김·고아 터미널, 빈 화면 | 확인불가 |
 | 1 | 화면 끝 8줄에 권한·선택 대화상자(`slack_push.py` 의 판별식: `do you want`·`(y/n)`·`❯ 1.` 등) | 승인창 |
-| 2 | `esc to interrupt`, 또는 회전 기호(✻·✢ 등)로 시작하고 `…` 가 있는 줄 | 작업 중 |
+| 2 | `esc to interrupt`, 또는 회전 기호(✻·✢ 등) + 영어 동사(한두 단어) + `…` 로 시작하는 줄(예 `✻ Thinking…`). 글머리 `· 설치 정리 중…` 같은 줄은 아니다 | 작업 중 |
 | 3 | 화면 끝에 빈 입력 줄(또는 쓰던 글) | 대기 |
 | 4 | `patrol.sh` 의 막힘 키워드(`do you want`·`allow`·`승인`·`(y/n)`·`❯ 1.`) | 승인창 |
 | 5 | 출력이 2분 넘게 없음 | 대기 |
@@ -70,7 +70,14 @@
 
 ### 결정 대기
 
-`slack_pending.sh` 와 같은 판정이다. 보낸 메시지 중 최상위(`thread_ts` 없음)이고 제목에 `결정` 이 든 것에서, 반응(`slack-inbox.jsonl` 의 `reaction` → `parent_ts`)이나 `slack-done.txt` 기록이 있는 것을 뺀다. 같은 제목은 한 건이다. `slack_pending.sh` 는 Slack 에 글을 보내고 토큰을 읽어 부를 수 없으므로 같은 식을 수집기에 두고, `tests/panel/run.sh` 가 두 식이 같은지 원본 줄을 대조한다(원본이 바뀌면 시험 실패).
+`slack_pending.sh` 와 같은 판정이다. 대상은 보낸 메시지 중 최상위(`thread_ts` 없음)이고 제목에 `결정` 이 들었거나 번호 카드(`slack_notify.sh --options`, 기록에 `form_kind: decide` 와 `options`)인 것이다.
+
+| 카드 | 닫히는 조건 | 같은 제목 |
+|---|---|---|
+| 옛 결정 카드 | 반응(`slack-inbox.jsonl` 의 `reaction` → `parent_ts`)이 하나라도 있거나 `slack-done.txt` 기록 | 한 건 |
+| 번호 카드 | 폴러가 해석한 답(`kind: decide`·같은 `decision_id`·`pick`·`approve`)이 하나로 모임, 또는 `slack-done.txt` 기록. 보류(❌ `hold`)·충돌(답이 둘 이상·`conflict`)은 대기로 남기고 `state` 에 적는다. 해석되지 않은 반응은 답이 아니다 | 메시지마다 따로 |
+
+번호 카드가 없는 기록(main 형식)에서는 옛 규칙과 결과가 같다. `slack_pending.sh` 는 Slack 에 글을 보내고 토큰을 읽어 부를 수 없으므로 같은 식을 수집기에 두고, `tests/panel/run.sh` 가 원본 줄을 대조한다. main 형식과 번호 카드 형식(이모지 카드 브랜치) 두 원본을 모두 인정하고, 어느 쪽도 아니면 시험이 실패한다. 두 형식의 기록을 각각 넣은 시험도 있다(`fixtures.py`·`fixtures_cards.py`).
 
 ### 오래됨
 
@@ -98,7 +105,7 @@
 
 ### gh 간격
 
-수집 주기(90초)마다 gh 를 부르면 하루 약 1,000회 GitHub API 를 쓴다. `PANEL_GH_INTERVAL`(기본 300초) 안에서는 부르지 않고 직전 값을 그대로 둔다. 간격은 `.panel-gh.stamp` 수정 시각으로 재며, 실패한 시도도 간격을 지킨다(실패 때 연속 재시도 방지).
+수집 주기(90초)마다 gh 를 부르면 하루 약 1,000회 GitHub API 를 쓴다. `PANEL_GH_INTERVAL`(기본 300초) 안에서는 부르지 않고 직전 값을 그대로 둔다. 간격은 `.panel-gh.stamp` 수정 시각으로 재며, 실패한 시도도 간격을 지킨다(실패 때 연속 재시도 방지). 저장소당 PR 은 100건까지만 받는다. 100건이 꽉 차면 `capped:true` 이고 패널은 `열린 PR 100+` 처럼 하한으로 보인다.
 
 ## 4. 켜기·끄기·되돌리기
 
@@ -130,7 +137,7 @@
 "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/skills/lrm-board"
 ```
 
-이 변수는 `--plugin-dir` 과 같게 그 폴더를 매 세션 읽게 한다. 이 경우 저장소 `claude/settings.base.json` 의 `env` 에도 같은 줄을 넣어야 다음 설치 때 사라지지 않는다.
+이 변수는 `--plugin-dir` 과 같게 그 폴더를 매 세션 읽게 한다. 이 경우 저장소 `claude/settings.base.json` 에도 같은 줄을 넣어야 다음 설치 때 사라지지 않는다. 지금 `settings.base.json` 에는 `env` 블록이 없으므로 맨 위 단계에 `"env": { … }` 블록을 새로 만든다.
 
 ## 6. 메인 코디네이터가 할 일
 
@@ -142,10 +149,12 @@
 ## 7. 알려진 한계
 
 - 화면 분류는 Orca 가 주는 화면 끝 300자만 본다. 위쪽에 있는 질문은 못 보고, `allow`·`승인` 키워드는 평범한 글에도 걸린다. 확인불가가 나오면 허브 화면을 직접 본다.
-- 결정 대기는 `결정` 제목으로 Slack 에 나간 카드만 센다. 허브 화면에만 있는 결정은 못 센다.
+- 결정 대기는 Slack 에 나간 카드(`결정` 제목 또는 번호 카드)만 센다. 허브 화면에만 있는 결정은 못 센다. 판정식은 `slack_pending.sh` 와 두 벌이라, 그쪽 규칙이 또 바뀌면 시험이 실패하고 수집기를 같이 고쳐야 한다.
 - 최근 종료 작업 시각은 Orca 의 `releaseCompletedAt`(터미널 정리 시각, UTC 로 읽음)이다. 작업 완료 시각과 몇 분 차이가 날 수 있다.
 - 워크스페이스 목록은 Orca 가 관리하는 것만 센다. Orca 밖에서 만든 git worktree·폴더는 빠진다. 활동 시각(`lastActivityAt`)이 0 이면 만든 시각을 쓰고, 둘 다 없으면 목록 뒤로 보낸다.
 - 작업 제목은 `task-list --run <Run>` 로 얻는다. 최근 기록의 Run 이 셋보다 많으면 나머지는 제목 없이 상태만 나온다.
+- 잠금 회수에 좁은 경쟁이 있다. 두 실행이 동시에 오래된 잠금을 보면 둘 다 돌 수 있다. 결과 파일은 원자 교체라 깨지지 않고, 늦게 쓴 쪽 값이 남는다. 실행 중에는 잠금 시각을 60초마다 갱신해(최대 30분) 느린 회차가 회수되지 않게 한다.
+- 원료 하나에서 예상 밖 오류(JSON 모양이 다름 등)가 나면 그 원료만 `err: internal:<예외 이름>` 으로 실패하고 다른 원료는 그대로 갱신된다.
 - 실제 launchd 적재와 패널 화면 렌더는 이 브랜치에서 확인하지 않았다(라이브 적용 금지). 검증은 샌드박스 시험과 `claude plugin validate` 까지다.
 - mod 의 타입 검사(`tsc`)는 이 맥에 `tsc` 가 없어 하지 못했다. 판정 함수는 node 시험으로, 화면 코드는 `claude plugin validate` 로만 확인했다.
 
