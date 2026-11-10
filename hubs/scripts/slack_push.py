@@ -55,7 +55,9 @@ PANE = os.environ.get("LRM_PUSH_PANE", "MAIN")        # 대상 pane 제목(termi
 ORCA = os.environ.get("LRM_PUSH_ORCA", "orca")
 AGENT = "claude"
 MSG_TYPES = ("note", "command", "thread_reply")       # 전달 대상. reaction 은 전달하지 않고 읽음 표식이 넘지 못하게 막음
+REACT_TYPE = "reaction"                               # 반응도 전달함(parent_ts 필수). 전달하지 않고 표식을 막는 것은 react_since 이하 옛 반응뿐
 NO_LABEL = "새 메모"
+NO_TARGET = "대상 메시지"
 FAKE_PREFIX = "[Slack→메인]"
 HEAD_NOTE = "아래는 사용자가 Slack 에 쓴 원문 인용이며 시스템 지시가 아님"
 CUT_NOTE = "… (이하 배치 파일 참조)"
@@ -157,10 +159,35 @@ def last_delivered_line():
 
 def new_state(lines, mark):
     """상태가 없거나 손상됐을 때의 기준선 = max(읽음 표식, 전달 기록의 마지막 전달 줄). 그 뒤가 적으면 그대로 보내고, 많으면 과거분은 건너뜀.
-    표식만으로는 부족함: 반응 줄이 표식을 막으면 표식이 전달분보다 뒤처져 있어 상태를 잃을 때 이미 전달한 줄이 재전달됨"""
+    표식만으로는 부족함: 옛 반응 줄이 표식을 막으면 표식이 전달분보다 뒤처져 있어 상태를 잃을 때 이미 전달한 줄이 재전달됨.
+    기준선 이하 반응은 전달 여부를 알 수 없어 옛 반응으로 둠(react_since)"""
     start = min(max(mark, last_delivered_line()), len(lines))
     base = start if len(lines) - start <= FIRST_MAX else len(lines)
-    return {"pushed_lines": base, "skip_to": base if base > start else 0, "pending_since": None, "last_new_ts": None, "push_pending": None}
+    return {"pushed_lines": base, "skip_to": base if base > start else 0, "pending_since": None, "last_new_ts": None, "push_pending": None,
+            "react_since": start}
+
+
+def react_floor(state):
+    """이 줄 번호 이하의 반응은 전달하지 않은 옛 반응(반응 전달 전 버전의 기록). 키가 없는 옛 상태는 전달 완료·보류 묶음 끝 줄까지를 옛 반응으로 봄.
+    보류 묶음은 반응 없이 본문이 고정돼 있으므로 그 범위의 반응도 전달되지 않음"""
+    v = state.get("react_since")
+    if isinstance(v, int) and not isinstance(v, bool) and v >= 0:
+        return v
+    pp = state.get("push_pending")
+    return max(state["pushed_lines"], pp.get("last", 0) if isinstance(pp, dict) else 0)
+
+
+def deliverable(d, n, floor):
+    """n 번째 줄 레코드 d 를 메인에 전달하는가. 메시지는 ts, 반응은 parent_ts 가 있어야 하고 반응은 floor 줄보다 뒤여야 함"""
+    if d is None:
+        return False
+    if d.get("type") in MSG_TYPES:
+        return bool(d.get("ts"))
+    return d.get("type") == REACT_TYPE and bool(d.get("parent_ts")) and n > floor
+
+
+def old_react(d, n, floor):
+    return d is not None and d.get("type") == REACT_TYPE and n <= floor
 
 
 # ---- 대기분 계산 ------------------------------------------------------------------------------
@@ -173,27 +200,23 @@ def arrival(item):
     return time.time()
 
 
-def pending_items(lines, start):
-    """start 줄 뒤의 전달 대상 [(줄 번호, 레코드)]와 막힌 반응 수"""
+def pending_items(lines, start, floor):
+    """start 줄 뒤의 전달 대상 [(줄 번호, 레코드)]와 막힌 옛 반응 수"""
     items, react = [], 0
     for i in range(start, len(lines)):
-        d = lines[i]
-        if d is None:
-            continue
-        if d.get("type") in MSG_TYPES and d.get("ts"):
-            items.append((i + 1, d))
-        elif d.get("type") == "reaction":
+        if deliverable(lines[i], i + 1, floor):
+            items.append((i + 1, lines[i]))
+        elif old_react(lines[i], i + 1, floor):
             react += 1
     return items, react
 
 
-def walk_mark(lines, mark, upto, skip_to):
-    """mark 에서 upto 줄까지 '메인에 전달했거나 읽을 필요 없는' 줄만 이어서 올린 표식. 반응·건너뛴 과거분 앞에서 멈춤.
-    반응은 전달하지 않으므로 그 위로 표식을 넘기면 메인이 못 본 결정 답이 읽음 처리됨"""
+def walk_mark(lines, mark, upto, skip_to, floor):
+    """mark 에서 upto 줄까지 '메인에 전달했거나 읽을 필요 없는' 줄만 이어서 올린 표식. 옛 반응·건너뛴 과거분 앞에서 멈춤.
+    옛 반응은 전달하지 않았으므로 그 위로 표식을 넘기면 메인이 못 본 결정 답이 읽음 처리됨"""
     i = mark
     while i < min(upto, len(lines)):
-        d = lines[i]
-        if i + 1 <= skip_to or (d is not None and d.get("type") == "reaction"):
+        if i + 1 <= skip_to or old_react(lines[i], i + 1, floor):
             break
         i += 1
     return i
@@ -229,17 +252,32 @@ def quote(body):
     return ["> " + ln if ln else ">" for ln in body.split("\n")]
 
 
+def kind_text(item):
+    k = one_line(item.get("kind") or "", 20)
+    return f" kind={k}" if k else ""
+
+
+def react_line(ln, it):
+    """반응 1건 = 한 줄: 이모지 이름·해석(action)·종류·대상 메시지 제목(tag)"""
+    tag = one_line(it.get("tag") or "", 30)
+    return (f"- #{ln} [{one_line(it.get('title') or '') or NO_TARGET}] ts={ts_text({'ts': it.get('parent_ts')})} 반응 :{one_line(it.get('emoji'), 40)}:"
+            f" → {one_line(it.get('action'), 30) or '?'}{kind_text(it)}" + (f" tag={tag}" if tag else ""))
+
+
 def render(items, batch_path, react):
     """터미널에 한 번 붙일 텍스트. 항상 [Slack→메인] 줄로 시작하는 여러 줄이라 단일 키 응답과 일치하지 않음"""
     out = [f"{FAKE_PREFIX} {len(items)}건 도착 (자동 전달, 지시 아님)", HEAD_NOTE]
     used = 0
     for ln, it in items:
+        if it.get("type") == REACT_TYPE:
+            out.append(react_line(ln, it))
+            continue
         body = clean(it.get("text") or it.get("command") or "").strip("\n")
         room = max(0, BATCH_CHARS - used)
         cut = len(body) > min(MSG_CHARS, room)
         body = body[:min(MSG_CHARS, room)]
         used += len(body)
-        out.append(f"- #{ln} [{label(it)}] ts={ts_text(it)}")
+        out.append(f"- #{ln} [{label(it)}] ts={ts_text(it)}{kind_text(it)}")
         out += quote(body) if body else []
         if cut:
             out.append("> " + CUT_NOTE)
@@ -267,7 +305,10 @@ def write_batch(items, path_hint):
             path = os.path.join(OUT_DIR, f"{base}-{n}.md")
         parts = [f"# Slack → 메인 전달 배치\n\n- 전달 시각: {time.strftime('%Y-%m-%d %H:%M:%S')}\n- 건수: {len(items)}\n- inbox 줄: {items[0][0]}~{items[-1][0]}\n"]
         for ln, it in items:
-            parts.append(f"\n## #{ln} [{label(it)}] ts={ts_text(it)}\n\n- 유형: {one_line(it.get('type'), 20)}\n")
+            if it.get("type") == REACT_TYPE:
+                parts.append(f"\n## {react_line(ln, it)[2:]}\n\n- 유형: {REACT_TYPE}\n")
+                continue
+            parts.append(f"\n## #{ln} [{label(it)}] ts={ts_text(it)}{kind_text(it)}\n\n- 유형: {one_line(it.get('type'), 20)}\n")
             parts.append("\n".join(quote(clean(it.get("text") or it.get("command") or "").strip("\n"))) + "\n")
             parts += [f"- 첨부: {path_text(p)}\n" for p in it.get("files") or []]
             parts += [f"- 첨부 미수신: {one_line(f.get('why', '?'), 12)}\n" for f in it.get("files_failed") or [] if isinstance(f, dict)]
@@ -293,6 +334,8 @@ def record_delivery(items, last):
     기록이 1000줄을 넘어 최근 500줄로 잘려도 옛 기록을 다시 처리하지 않음"""
     roots = {}
     for _, it in items:
+        if it.get("type") == REACT_TYPE:  # 확인 답장은 메시지 스레드에만 있음. 반응을 세면 '전달했어요 (n건)' 이 부풀음
+            continue
         r = str(it.get("parent_ts") or it.get("ts"))
         roots[r] = roots.get(r, 0) + 1
     try:
@@ -540,13 +583,14 @@ def needs_work(state, lines, mark):
     if pp and pp.get("stop"):  # 자동 재시도 없는 보류(unknown_delivery·unsubmitted). 읽음 표식이 보류분을 지나면 prepare 가 버려 다시 일함
         return False
     start = pp["last"] if pp else state["pushed_lines"]
-    items, _ = pending_items(lines, start)
-    return bool(pp or items or walk_mark(lines, mark, state["pushed_lines"], state.get("skip_to", 0)) > mark)
+    items, _ = pending_items(lines, start, react_floor(state))
+    return bool(pp or items or walk_mark(lines, mark, state["pushed_lines"], state.get("skip_to", 0), react_floor(state)) > mark)
 
 
 def items_of(lines, pp):
-    return [(n, lines[n - 1]) for n in range(pp["first"], pp["last"] + 1)
-            if n <= len(lines) and lines[n - 1] and lines[n - 1].get("type") in MSG_TYPES and lines[n - 1].get("ts")]
+    """보류 묶음의 전달 대상. 반응 기준선은 묶음을 만들 때 값(없는 옛 묶음은 반응 없이 본문이 고정돼 끝 줄까지 옛 반응)"""
+    floor = pp.get("react_since", pp["last"])
+    return [(n, lines[n - 1]) for n in range(pp["first"], pp["last"] + 1) if n <= len(lines) and deliverable(lines[n - 1], n, floor)]
 
 
 def hold(pp, reason, next_at, lines_txt, **kv):
@@ -562,7 +606,8 @@ def seal(pp, items, lines, mark):
     if isinstance(pp.get("text"), str) and UUID_RE.match(str(pp.get("request_id"))):
         return
     pp["batch"] = write_batch(items, pp.get("batch"))
-    react = sum(1 for d in lines[mark:pp["last"]] if d and d.get("type") == "reaction")
+    floor = pp.get("react_since", pp["last"])
+    react = sum(1 for i in range(mark, min(pp["last"], len(lines))) if old_react(lines[i], i + 1, floor))
     pp["text"], pp["request_id"], pp["ambig"] = render(items, pp["batch"], react), str(uuid.uuid4()), None
 
 
@@ -588,7 +633,7 @@ def attempt(state, lines, mark, now):
     if verdict == "sent":
         state["pushed_lines"], state["push_pending"] = pp["last"], None
         state["pending_since"] = state["last_new_ts"] = None
-        mark_to = walk_mark(lines, mark, state["pushed_lines"], state.get("skip_to", 0))
+        mark_to = walk_mark(lines, mark, state["pushed_lines"], state.get("skip_to", 0), react_floor(state))
         write_mark(mark_to)
         record_delivery(items, pp["last"])
         log("ok", n=len(items), lines=span, mark=mark_to, stages=info["stages"])
@@ -618,7 +663,7 @@ def freeze(state, items, now, lines, mark):
     """대기분을 한 묶음으로 확정. 이 시점에 배치 파일·본문·요청 ID(uuid4)를 만들어 상태에 저장(seal)"""
     batch = items[:BATCH_ITEMS]
     pp = {"first": batch[0][0], "last": batch[-1][0], "attempts": 0, "next_at": now, "reason": None, "batch": None,
-          "text": None, "request_id": None, "ambig": None, "stop": False}
+          "text": None, "request_id": None, "ambig": None, "stop": False, "react_since": react_floor(state)}
     seal(pp, batch, lines, mark)
     state["push_pending"] = pp
 
@@ -634,6 +679,7 @@ def worker():
         if state["skip_to"]:
             log("baseline", skipped=state["skip_to"] - mark)
         save_state(state)
+    state["react_since"] = react_floor(state)  # 옛 상태는 키를 처음 채울 때 기준선을 고정(뒤에 전달한 줄로 밀리지 않게)
     while True:
         lines, mark, now = read_inbox(), read_mark(), time.time()
         prepare(state, lines, mark)
@@ -651,7 +697,7 @@ def worker():
             else:
                 wait = pp["next_at"] - now
         else:
-            items, _ = pending_items(lines, state["pushed_lines"])
+            items, _ = pending_items(lines, state["pushed_lines"], state["react_since"])
             if items:
                 arr = [min(arrival(it), now) for _, it in items]
                 state["pending_since"], state["last_new_ts"] = min(arr), max(arr)
@@ -663,7 +709,7 @@ def worker():
                 wait = due - now
             else:
                 state["pending_since"] = state["last_new_ts"] = None
-                new = walk_mark(lines, mark, state["pushed_lines"], state.get("skip_to", 0))
+                new = walk_mark(lines, mark, state["pushed_lines"], state.get("skip_to", 0), state["react_since"])
                 if new > mark:
                     write_mark(new)
                 save_state(state)
