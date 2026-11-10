@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # 새 워커를 어디서 띄울지 판정: local | remote. 근거를 stderr 로 출력
 set -uo pipefail
-REMOTE="${REMOTE_ENV:-REMOTE_MAC_HOST}"
+# 원격 맥 orca 환경. 내부 주소라 설치 때 values.env 의 REMOTE_ENV 로 채움
+REMOTE="${REMOTE_ENV:-__REMOTE_ENV__}"
 NCPU=$(sysctl -n hw.ncpu)
 LOAD=$(sysctl -n vm.loadavg | awk '{print $2}')
 FREE=$(memory_pressure 2>/dev/null | awk -F': ' '/free percentage/{gsub("%","",$2);print $2}')

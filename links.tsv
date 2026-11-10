@@ -47,7 +47,7 @@ skills/orca-hub-create/references/common-rules.txt.tmpl	.claude/skills/orca-hub-
 skills/orca-hub-create/references/role-prompt.md	.claude/skills/orca-hub-create/references/role-prompt.md	link
 skills/orca-hub-create/scripts/create_hub.sh	.claude/skills/orca-hub-create/scripts/create_hub.sh	link
 skills/orca-hub-create/scripts/create_worker_ws.sh	.claude/skills/orca-hub-create/scripts/create_worker_ws.sh	link
-skills/orca-hub-create/scripts/pick_host.sh	.claude/skills/orca-hub-create/scripts/pick_host.sh	link
+skills/orca-hub-create/scripts/pick_host.sh.tmpl	.claude/skills/orca-hub-create/scripts/pick_host.sh	render
 git/hooks/_chain	.config/git/hooks/_chain	link
 git/hooks/commit-msg	.config/git/hooks/commit-msg	link
 git/hooks/post-checkout	.config/git/hooks/post-checkout	link

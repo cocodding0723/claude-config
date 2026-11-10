@@ -64,7 +64,7 @@ echo DUMMY=1 > "$SB/.config/lrm-hubs/slack-bot.env"
 echo local-role > "$SB/.config/lrm-hubs/roles/role-docs.txt"
 printf '[user]\n\tname = sandbox\n' > "$SB/.gitconfig"
 mkdir -p "$SB/.config/claude-config"
-printf 'OWNER_NAME=VAL_OWNER\nPERSON_FULL=VAL_PERSON_FULL\nPERSON_SHORT=VAL_PERSON_SHORT\nDM_CHANNEL=VAL&DM_CHANNEL\n' > "$SB/.config/claude-config/values.env"
+printf 'OWNER_NAME=VAL_OWNER\nPERSON_FULL=VAL_PERSON_FULL\nPERSON_SHORT=VAL_PERSON_SHORT\nDM_CHANNEL=VAL&DM_CHANNEL\nREMOTE_ENV=VAL_REMOTE\n' > "$SB/.config/claude-config/values.env"
 
 # 현재 설정 = 기본값 + Orca 훅 15개(이벤트 앞·뒤 섞음) + 상태줄. 기본값 훅 7개와 합쳐 22개
 ORCA_CMD='sh -c "$HOME/.orca/agent-hooks/claude-hook.sh"'
@@ -129,10 +129,11 @@ done <<< "$entries"
 rend_bad=0
 while IFS=$'\t' read -r src dst mode; do
   [ "$mode" = render ] || continue
-  if [ -L "$SB/$dst" ] || [ ! -f "$SB/$dst" ] || grep -qE '__(OWNER_NAME|PERSON_FULL|PERSON_SHORT|DM_CHANNEL)__' "$SB/$dst"; then rend_bad=1; ko "render" "$dst"; fi
+  if [ -L "$SB/$dst" ] || [ ! -f "$SB/$dst" ] || grep -qE '__(OWNER_NAME|PERSON_FULL|PERSON_SHORT|DM_CHANNEL|REMOTE_ENV)__' "$SB/$dst"; then rend_bad=1; ko "render" "$dst"; fi
 done <<< "$entries"
 [ "$rend_bad" = 0 ] && ok "render 항목: 실제 파일·자리표시 전부 치환"
 grep -qF 'VAL&DM_CHANNEL' "$SB/.config/lrm-hubs/roles/role-docs.txt" && grep -q 'VAL_PERSON_FULL' "$SB/.config/lrm-hubs/roles/role-tutorial.txt" && ok "render: 값 파일 값이 들어감" || ko "render 값" "누락"
+grep -qF "VAL_REMOTE" "$SB/.claude/skills/orca-hub-create/scripts/pick_host.sh" && [ -x "$SB/.claude/skills/orca-hub-create/scripts/pick_host.sh" ] && ok "pick_host.sh 원격 주소 렌더·실행 권한" || ko "pick_host.sh 원격 주소 렌더·실행 권한" ""
 grep -q "$SB" "$SB/Library/LaunchAgents/ai.lrm.slackpoll.plist" && ! grep -q '__HOME__' "$SB/Library/LaunchAgents/ai.lrm.slackpoll.plist" && ok "plist __HOME__ 치환" || ko "plist 치환" ""
 # 옆 패널 수집기: 스크립트 링크, plist __HOME__ 치환·형식 정상, 링크 경로로 --help 실행
 PCP="$SB/Library/LaunchAgents/ai.lrm.panelcollect.plist"

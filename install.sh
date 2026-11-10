@@ -227,6 +227,8 @@ do_render() {
   if [ "$DRY" = 1 ]; then log "[dry-run] RENDER $dst"; return; fi
   prepare_target "$dst"
   cp "$out" "$t"
+  # 실행 스크립트 템플릿은 실행 권한 유지
+  [ -x "$REPO/$src" ] && chmod +x "$t"
   log "RENDER $dst"
 }
 
