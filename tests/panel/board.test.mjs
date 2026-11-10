@@ -126,3 +126,16 @@ test('idleLines: 값 없음·부분 null 이어도 깨지지 않음, 디스크 �
   assert.equal(ok.some(l => l.warn), false)
   assert.equal(ok.at(-1).text, '~/orca/workspaces 12.5GB')
 })
+
+test('idleLines: 워커를 끝까지 못 셌으면 하한 표시, 목록 잘림, du 시간 초과는 이전 값과 함께 표시', () => {
+  const base = { terminals: null, disk: null, wsSize: null, workspaces: null }
+  const w = { live: 7, succeeded: 1, failed: 0, stopped: 0, leftover: 256, more: 236, items: [] }
+  assert.equal(b.idleLines({ ...base, workers: { ...w, seen: 6000, total: 7000, complete: false } })[0].text, '종료 뒤 남은 터미널 256 · 살아 있는 워커 7 (7000건 중 6000건만 셈)')
+  assert.equal(b.idleLines({ ...base, workers: { ...w, seen: 2034, total: 2034, complete: true } })[0].text, '종료 뒤 남은 터미널 256 · 살아 있는 워커 7')
+  const ws = { total: 9, noTerminal: 1, more: 0, truncated: true, items: [] }
+  assert.equal(b.idleLines({ ...base, workers: null, workspaces: ws })[0].text, '터미널 없는 워크스페이스 1/9 · 목록 잘림')
+  const dir = '~/orca/workspaces'
+  assert.equal(b.idleLines({ ...base, workers: null, wsSize: { gb: 12.5, at: 1, dir, err: 'timeout' } })[0].text, '~/orca/workspaces 12.5GB · ⚠ 측정 시간 초과, 이전 값')
+  assert.equal(b.idleLines({ ...base, workers: null, wsSize: { gb: null, at: null, dir, err: 'timeout' } })[0].text, '~/orca/workspaces 크기 ⚠ 측정 시간 초과')
+  assert.deepEqual(b.idleLines({ ...base, workers: null, wsSize: { gb: null, at: null, dir, err: null } }), [])
+})

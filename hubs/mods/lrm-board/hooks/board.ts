@@ -131,17 +131,27 @@ export const idleLines = (v: AutoIdle | null | undefined): IdleLine[] => {
   const out: IdleLine[] = []
   if (v.workspaces) {
     const w = v.workspaces
-    out.push({ text: `터미널 없는 워크스페이스 ${w.noTerminal}/${w.total}`, warn: false })
+    out.push({ text: `터미널 없는 워크스페이스 ${w.noTerminal}/${w.total}${w.truncated ? ' · 목록 잘림' : ''}`, warn: false })
     const names = w.items.slice(0, IDLE_NAMES).map(i => `${i.name}${i.ageDays !== null ? ` ${i.ageDays}일` : ''}${i.merged === true ? ' 병합됨' : ''}`)
     const rest = w.noTerminal - names.length
     if (names.length > 0) out.push({ text: `오래 쉰 것: ${names.join(', ')}${rest > 0 ? ` 외 ${rest}개` : ''}`, warn: false })
   }
-  if (v.workers) out.push({ text: `종료 뒤 남은 터미널 ${v.workers.leftover} · 살아 있는 워커 ${v.workers.live}`, warn: false })
+  if (v.workers) {
+    const w = v.workers
+    // 쪽 상한에 걸려 전체를 못 셌으면 하한임을 표시(옛 파일은 complete 가 없어 표시 안 함)
+    const part = w.complete === false ? ` (${w.total ?? '?'}건 중 ${w.seen ?? '?'}건만 셈)` : ''
+    out.push({ text: `종료 뒤 남은 터미널 ${w.leftover} · 살아 있는 워커 ${w.live}${part}`, warn: false })
+  }
   if (v.disk) {
     const d = v.disk
     out.push({ text: `디스크 여유 ${d.freeGB}GB (${d.usedPct}% 사용)${d.warn ? ` ⚠ ${d.minGB}GB 미만` : ''}`, warn: d.warn })
   }
   if (v.terminals) out.push({ text: `터미널 ${v.terminals.total}개 (에이전트 ${v.terminals.agents})`, warn: false })
-  if (v.wsSize && v.wsSize.gb !== null) out.push({ text: `${v.wsSize.dir} ${v.wsSize.gb}GB`, warn: false })
+  if (v.wsSize) {
+    const s = v.wsSize
+    const note = s.err === 'timeout' ? '측정 시간 초과' : s.err ? `측정 실패(${s.err})` : ''
+    if (s.gb !== null) out.push({ text: `${s.dir} ${s.gb}GB${note ? ` · ⚠ ${note}, 이전 값` : ''}`, warn: false })
+    else if (note) out.push({ text: `${s.dir} 크기 ⚠ ${note}`, warn: false })
+  }
   return out
 }

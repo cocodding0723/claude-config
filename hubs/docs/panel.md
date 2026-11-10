@@ -41,9 +41,9 @@
 | 〃 | `sources.push` → `lines[]`(`at`·`event`·`reason`) | 수집기 | `slack-push.log` 끝 5줄의 결과·사유 코드만 |
 | 〃 | `sources.workers` → `live`·`recent[]`(`title` 40자·`status`·`at`) | 수집기 | 최근 종료 워커(완료 보고) |
 | 〃 | `sources.gh` → `repos[]`·`open`·`ciFail` 또는 `off:true` | 수집기 | `PANEL_GH_REPOS` 가 있을 때만 |
-| 〃 | `sources.idle` → `terminals`·`workers`(상태별 건수·`leftover`·`items` 20개)·`workspaces`(`total`·`noTerminal`·`items` 20개·`more`)·`disk`(`freeGB`·`usedPct`·`minGB`·`warn`)·`wsSize` | 수집기 | 부분마다 따로 실패. `err` 는 `부분:종류` 목록 |
+| 〃 | `sources.idle` → `terminals`·`workers`(상태별 건수·`leftover`·`items` 20개·`seen`·`total`·`complete`·`terminalStates`)·`workspaces`(`total`·`noTerminal`·`items` 20개·`more`·`truncated`)·`disk`(`freeGB`·`usedPct`·`minGB`·`warn`)·`wsSize`(`gb`·`at`·`err`) | 수집기 | 부분마다 따로 실패. `err` 는 `부분:종류` 목록 |
 | 〃 | 원료마다 `ok`·`err`·`at`·`tried`·`stale` | 수집기 | 실패하면 `ok:false`·`err`(종류만)·`stale:true` 이고 `value`·`at` 은 마지막 성공 값 그대로 |
-| `~/.config/lrm-hubs/panel.env` | `PANEL_GH_REPOS`·`PANEL_GH_INTERVAL`·`PANEL_HUB_ROOT`·`PANEL_RECENT`·`PANEL_DISK_MIN_GB`·`PANEL_WS_DIR`·`PANEL_DU_INTERVAL` | 사용자(선택) | 시크릿 아님. 양식 `panel.env.example`. 환경 변수가 우선 |
+| `~/.config/lrm-hubs/panel.env` | `PANEL_GH_REPOS`·`PANEL_GH_INTERVAL`·`PANEL_HUB_ROOT`·`PANEL_RECENT`·`PANEL_DISK_MIN_GB`·`PANEL_WS_DIR`·`PANEL_DU_INTERVAL`·`PANEL_DU_TIMEOUT` | 사용자(선택) | 시크릿 아님. 양식 `panel.env.example`. 환경 변수가 우선 |
 | `panel-collect.log`·`.panel-gh.stamp`·`.panel-du.stamp`·`.panel-collect.lock` | — | 수집기 | 로그는 원료별 결과 코드만. 1MB 넘으면 `.1` 로 돌림 |
 
 수집기가 저장하지 않는 것: 터미널 화면(preview) 본문, Slack 메시지 본문, 토큰, gh 출력 원문, 터미널 핸들. 수집기는 `slack-bot.env`·`main.env` 를 읽지 않고 Slack API 를 부르지 않는다.
@@ -90,15 +90,15 @@
 
 ### 쉬는 자원(😴 칸)
 
-쌓이면 디스크·메모리를 먹는 자원을 숫자로 보여 준다. **목록과 숫자만 만들고 정리(삭제·종료)는 하지 않는다.** 수집기 코드에 삭제·종료 명령이 없다는 것을 시험이 고정한다(`rm`·`worktree rm`·`terminal close`·`worker-stop` 등). 수집기가 지우는 것은 자기 임시 파일·잠금 폴더뿐이다.
+쌓이면 디스크·메모리를 먹는 자원을 숫자로 보여 준다. **목록과 숫자만 만들고 정리(삭제·종료)는 하지 않는다.** 수집기 코드에 삭제·종료 명령이 없다는 것을 시험이 세 겹으로 고정한다: 문자열(`rm`·`worktree rm`·`terminal close`·`worker-stop`·`branch -D` 등), 구문 트리(`os.remove`·`os.kill`·`unlink` 같은 호출은 정해진 자리에만, `tests/panel/no_delete_check.py`), 시험 중 실제로 부른 orca·git·gh·du·df 명령이 읽기 명령뿐인지. 수집기가 지우는 것은 자기 임시 파일·잠금 폴더뿐이고, 끝내는 것은 시간 상한을 넘긴 자기 자식(du) 묶음뿐이다.
 
 | 항목 | 원료 | 뜻 |
 |---|---|---|
-| 터미널 없는 워크스페이스 | `orca worktree list --limit 1000` 와 `orca terminal list` 의 `worktreeId` 대조(메인 체크아웃 제외) | 열린 터미널이 0개인 워크스페이스 수. 오래 쉰 것부터 20개를 이름·`~` 경로·브랜치·쉰 일수·병합 여부와 함께 싣고 나머지는 "외 N개" |
+| 터미널 없는 워크스페이스 | `orca worktree list --limit 1000` 와 `orca terminal list --limit 1000` 의 `worktreeId` 대조(메인 체크아웃 제외) | 열린 터미널이 0개인 워크스페이스 수. 오래 쉰 것부터 20개를 이름·`~` 경로·브랜치·쉰 일수·병합 여부와 함께 싣고 나머지는 "외 N개". 두 목록 중 하나라도 잘리면 `truncated:true`·"목록 잘림" |
 | 병합 여부 | `git -C <경로> merge-base --is-ancestor HEAD <baseRef>` | 기준 ref 가 없거나 git 이 답하지 못하면 모름(null). 목록 20개에만 확인 |
-| 종료 뒤 남은 터미널 | `orca orchestration worker-list --full` | 끝났거나(`succeeded`·`failed`·`stopped`) 실패했는데 터미널이 아직 `retained`·`active` 등인 워커. dispatch id·작업 제목·상태만 |
+| 종료 뒤 남은 터미널 | `orca orchestration worker-list --full --limit 100`, `nextCursor` 로 끝 쪽까지 | 끝난(`succeeded`·`failed`·`stopped`·`abandoned`) 워커 중 터미널이 아직 `retained`·`active` 등인 것. dispatch id·작업 제목·상태만. Orca 는 한 번에 최신 100건만 주므로(실측 2034건) 쪽을 넘겨 센다. 쪽 수 60·40초 상한에 걸리면 거기까지 세고 `complete:false`, 패널에 "N건 중 M건만 셈". 중간 쪽이 실패하면 숫자를 싣지 않고 원료 실패로 둔다. Orca 가 주는 터미널 상태별 총계(`counts`)는 `terminalStates` 에 그대로 싣는다 |
 | 디스크 여유 | `df -k ~` | 홈 볼륨 여유 GB·사용률. `PANEL_DISK_MIN_GB`(기본 50) 미만이면 빨간 글씨 |
-| 워크스페이스 폴더 크기 | `du -sk <PANEL_WS_DIR>` | 느려서 30분마다만 잰다. 실패하면 직전 값을 두고 경고하지 않는다 |
+| 워크스페이스 폴더 크기 | `du -sk <PANEL_WS_DIR>` | 느려서 30분마다만 잰다(간격 표식은 재기 전에 갱신). `PANEL_DU_TIMEOUT`(기본 120초)을 넘기면 du 와 그 자식까지 끝내고 직전 값을 둔 채 `err:timeout` 과 "측정 시간 초과" 를 표시한다. 원료 전체를 실패로 보지는 않는다. 로그에는 잰 회차에만 `du=timeout` |
 | 터미널 수 | `orca terminal list` | 전체·에이전트 붙은 수. 프로세스 메모리는 재지 않는다 |
 
 정리는 사람이 한다. 예: 각 허브가 자기 하위 워크스페이스를 정리하고, 규칙은 "병합됨 + 터미널 없음 + `.claude` 보관 뒤 삭제"를 따른다(`worktree-gc` 스킬).

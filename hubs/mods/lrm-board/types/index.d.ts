@@ -81,18 +81,27 @@ export type AutoWorkers = { live: number; recent: Array<{ title: string | null; 
 export type AutoIdle = {
   terminals: { total: number; agents: number } | null
   workers: {
-    live: number; succeeded: number; failed: number; stopped: number
+    live: number; succeeded: number; failed: number; stopped: number; abandoned?: number
     leftover: number; more: number
     items: Array<{ dispatch: string; title: string | null; status: string; terminal: string }>
+    /** 센 행 수·Orca 전체 행 수(page.total)·끝 쪽까지 셌는지. 옛 파일엔 없음 */
+    seen?: number; total?: number | null; complete?: boolean
+    /** Orca 가 준 터미널 상태별 총계(worker-list counts) */
+    terminalStates?: Record<string, number> | null
   } | null
   workspaces: {
     total: number; noTerminal: number; more: number; truncated: boolean
     items: Array<{ name: string; path: string; branch: string; ageDays: number | null; merged: boolean | null }>
   } | null
   disk: { freeGB: number; usedPct: number; minGB: number; warn: boolean } | null
-  wsSize: { gb: number | null; at: number | null; dir: string } | null
+  /** err: 마지막 측정 실패 종류(timeout 등). 실패해도 gb·at 은 직전 성공 값 */
+  wsSize: { gb: number | null; at: number | null; dir: string; err?: string | null; tried?: number } | null
 }
-export type AutoGh = { repos: Array<{ repo: string; open: number; ciFail: number }>; open: number; ciFail: number }
+/** capped: gh --limit 만큼 꽉 차 숫자가 하한 */
+export type AutoGh = {
+  repos: Array<{ repo: string; open: number; ciFail: number; capped?: boolean }>
+  open: number; ciFail: number; capped?: boolean
+}
 
 /** 수집기(panel_collect.sh)가 쓰는 panel-auto.json */
 export type AutoBoard = {

@@ -32,11 +32,27 @@ case_run P4 "실패 시 이전 값 삭제" 's/"stale": True, "value": old\.get\(
 case_run P5 "화면 본문(preview) 저장" 's/("connected": connected,\n)/$1            "preview": t.get("preview"),\n/'
 case_run P6 "잠금 제거(항상 획득)" 's/            os\.mkdir\(LOCK\)\n            return True/            return True/'
 case_run P7 "작업 중 판정에서 '…' 조건 제거(끝난 턴도 작업 중)" 's/\(\?: \[a-z\]\+\)\?…"\)/(?: [a-z]+)?")/'
-case_run P8 "결정 대기에서 반응 제외 규칙 제거" 's/done = \{d\.get\("parent_ts"\) for d in inbox if d\.get\("type"\) == "reaction"\}/done = set()/'
+case_run P8 "결정 대기에서 반응 제외 규칙 제거" 's/done = \{t for t in reactions if t not in cards\} \| /done = /'
 case_run P12 "쉬는 워크스페이스 20개 제한 제거" 's/for w in quiet\[:IDLE_LIST_MAX\]:/for w in quiet:/'
 case_run P13 "디스크 경고 기준 뒤집음" 's/"warn": free < min_gb/"warn": free > min_gb/'
 case_run P14 "쉬는 자원 부분 실패 시 이전 값 삭제" 's/            errs\.append\(f"\{name\}:\{error_code\(e\)\}"\)\n            value\[name\] = old_val\.get\(name\)/            errs.append(f"{name}:{error_code(e)}")\n            value[name] = None/'
 case_run P15 "정리 명령 끼워 넣기(워크트리 삭제)" 's/(def merged\(path, base\):\n)/$1    _cleanup = ["worktree", "rm"]\n/'
+# 리뷰 변이 4건(M2·M5a·M5c·M11)과 이번 수정이 막는 결함
+case_run P17 "원자 교체를 직접 쓰기로(임시 파일 내용을 결과 파일에 복사)" 's/        os\.replace\(tmp, OUT\)\n/        with open(tmp, encoding="utf-8") as src, open(OUT, "w", encoding="utf-8") as dst:\n            dst.write(src.read())\n        os.remove(tmp)\n/'
+case_run P18 "쉬는 워크스페이스에 os.remove 삭제 추가" 's/(    for w in quiet\[:IDLE_LIST_MAX\]:\n)/$1        if w.get("cleanup"):\n            os.remove(str(w.get("path")))\n/'
+case_run P19 "쉬는 워커에 os.kill 추가" 's/(            if str\(w\.get\("terminalState"\) or ""\) in LEFT_TERMINAL:\n)/$1                if w.get("pid"):\n                    os.kill(int(w["pid"]), 15)\n/'
+case_run P20 "쓰기 실패 시 기존 파일 삭제" 's/(        except OSError:\n)(            log\("write fail"\))/$1            os.remove(OUT)\n$2/'
+case_run P21 "worker-list 첫 쪽만 셈(쪽 넘기기 제거)" 's/            if not page\.get\("hasMore"\) or not isinstance\(cursor, str\) or not cursor:/            if True:/'
+case_run P22 "worker-list 쪽 수 상한 제거(끝없는 커서에 멈추지 않음)" 's/for n in range\(WORKER_PAGES_MAX\):/for n in range(10 ** 9):/'
+case_run P23 "번호 카드 보류를 닫힘으로" 's/return "hold" if keys == \["hold"\] else "closed"/return "closed"/'
+case_run P24 "번호 카드를 옛 규칙으로(반응 있으면 닫힘)" 's/done = \{t for t in reactions if t not in cards\} \| /done = set(reactions) | /'
+case_run P25 "du 시간 초과 때 자식 묶음 정리 제거" 's/            os\.killpg\(p\.pid, signal\.SIGKILL\)/            p.kill()/'
+case_run P26 "du 시간 초과를 표시하지 않음" 's/        return \{\*\*old, "err": e\.code, "tried": now\}/        return old/'
+case_run P27 "원료 격리를 SourceError 만으로" 's/    except Exception as e:  # noqa: BLE001 — 원료 하나의/    except SourceError as e:  # noqa: BLE001 — 원료 하나의/'
+case_run P28 "terminal list 잘림 무시" 's/return bool\(terminal_list\(get\)\.get\("truncated"\)\)/return False/'
+case_run P29 "결과 파일 권한 0644" 's/os\.chmod\(tmp, 0o600\)/os.chmod(tmp, 0o644)/'
+case_run P30 "글머리 '· …' 도 작업 중(회전 기호 + … 만 봄)" 's/\[A-Z\]\[a-z\]\+\(\?: \[a-z\]\+\)\?…/.*…/'
+case_run P31 "실행 중 잠금 갱신 제거" 's/            os\.utime\(LOCK, None\)/            pass/'
 board_run() { # 번호 설명 perl 치환식(mod board.ts 대상, node 시험)
   local id="$1" desc="$2" expr="$3" out rc first
   if [ -n "${ONLY:-}" ] && [[ " $ONLY " != *" $id "* ]]; then return; fi
@@ -52,6 +68,9 @@ board_run P9 "오래됨 기준 10분 → 60분" 's/AUTO_STALE_MIN = 10/AUTO_STAL
 board_run P10 "자동 칸 시계를 수정 시각 우선으로" 's/if \(epochMs !== undefined && epochMs > 0 && epochMs <= nowMs \+ FUTURE_SLACK_MS\) return epochMs/if (mtimeMs > 0) return mtimeMs/'
 board_run P11 "파일 없음 경고 제거" "s/if \(autoMtimeMs === 0\) return \{ level: 'missing'/if (false) return { level: 'missing'/"
 board_run P16 "디스크 경고 색 표시 제거" 's/warn: d\.warn \}\)/warn: false })/'
+board_run P32 "번호 카드 보류·충돌 표시 제거" 's/const state = p\.state \? /const state = false ? /'
+board_run P33 "워커를 다 못 셌다는 표시 제거" 's/const part = w\.complete === false \?/const part = false ?/'
+board_run P34 "du 시간 초과 표시 제거" "s/const note = s\.err === 'timeout'/const note = s.err === 'never' \&\& false/"
 echo
 [ "$MISSED" = 0 ] && echo "변이 전부 검출" || echo "미검출·정의 오류 ${MISSED}건"
 [ "$MISSED" = 0 ]
