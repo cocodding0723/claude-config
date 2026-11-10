@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 sys.dont_write_bytecode = True
@@ -28,10 +29,15 @@ PUSH_LOG = os.path.join(DIR, "slack-push.log")
 
 VERSION = 1
 LOCK_STALE = 600                 # 10분 넘은 잠금은 죽은 실행의 잔재로 보고 회수(주기 90초의 6배 이상)
+LOCK_BEAT, LOCK_BEAT_MAX = 60, 1800  # 실행 중 잠금 시각 갱신 간격·상한(초). 상한을 넘긴 실행은 갱신을 멈춰 회수될 수 있게 함
 ORCA_TIMEOUT, GH_TIMEOUT = 15, 20
+GH_PR_LIMIT = 100                # gh pr list --limit. 이만큼 나오면 더 있을 수 있음(capped)
 TITLE_MAX = 40                   # 패널에 싣는 제목 길이. 우리가 보낸 카드·작업 제목이며 사용자 원문 아님
 PUSH_LINES, PUSH_TAIL = 5, 64 * 1024
 RECENT_RUNS = 3                  # 최근 기록 제목을 얻으려고 task-list 를 부르는 Run 수 상한
+# 번호 카드(slack_notify.sh --options) 답. slack_pending.sh 의 card_state 와 같은 규칙(시험이 대조)
+DECISION_ID_RE = re.compile(r"D-[0-9A-Za-z]{1,16}", re.ASCII)
+ANSWER_ACTIONS = ("pick", "approve", "hold")
 LOG_MAX = 1 << 20
 CONF_KEYS = ("PANEL_GH_REPOS", "PANEL_GH_INTERVAL", "PANEL_HUB_ROOT", "PANEL_RECENT", "PANEL_DISK_MIN_GB", "PANEL_WS_DIR", "PANEL_DU_INTERVAL")
 # 쉬는 자원 칸. 목록·숫자만 만들고 정리(삭제·종료)는 사람이 함
@@ -44,8 +50,9 @@ WORKTREE_LIMIT = "1000"          # 기본 200개에서 잘림(실측 226개)
 # 허브 화면 분류. preview 는 Orca 가 주는 화면 끝 300자 안팎이라 위쪽 질문은 못 봄
 SCREEN_TAIL = 8
 BUSY_MARK = "esc to interrupt"
-# Claude Code 작업 표시 줄 = 회전 기호 + '…'(예: ✻ Thinking…). 끝난 턴 요약 줄도 같은 기호라 '…' 까지 봄
-SPINNER = frozenset("·✢✳✶✻✽")
+# Claude Code 작업 표시 줄 = 회전 기호 + 영어 동사 + '…'(예: ✻ Thinking…, ✻ Compacting conversation…).
+# 끝난 턴 요약 줄(✻ Worked for 3m)은 '…' 가 없고, 글머리 '· 설치 정리 중…' 은 영어 동사가 아니라 제외
+SPIN_RE = re.compile(r"^[·✢✳✶✻✽] [A-Z][a-z]+(?: [a-z]+)?…")
 QUIET_IDLE_MIN = 2               # 작업 표식·입력 칸이 안 보여도 이만큼 출력이 없으면 입력 대기로 봄(preview 가 입력 칸을 자르는 경우가 많음)
 # patrol.sh 의 막힘 키워드. 'allow'·'승인' 은 평범한 출력에도 나와 오탐이 잦음 → 화면이 작업 중·입력 대기로 판별되지 않을 때만 씀
 PATROL_KEYS = ("do you want", "allow", "승인", "(y/n)", "❯ 1.")
@@ -194,7 +201,7 @@ def classify(preview, quiet_min=None):
     st = screen_state(preview) if screen_state else None
     if st == "dialog":
         return "approval"
-    if BUSY_MARK in tail or any(ln.strip()[0] in SPINNER and "…" in ln for ln in tail_lines):
+    if BUSY_MARK in tail or any(SPIN_RE.match(ln.strip()) for ln in tail_lines):
         return "busy"
     if st in ("idle", "draft"):
         return "idle"
@@ -273,11 +280,38 @@ def jsonl(path):
     return out
 
 
+def card_state(s, reactions):
+    """번호 카드의 답 상태 closed|hold|conflict, 답이 없으면 None. 폴러가 해석한 답(pick·approve·hold)만 봄.
+    답이 하나로 모이고 보류가 아닐 때만 닫힘. 범위 밖·이름 그대로 반응은 답이 아님"""
+    did = s.get("decision_id")
+    if not isinstance(did, str) or not DECISION_ID_RE.fullmatch(did):
+        return None
+    ans = [d for d in reactions if d.get("kind") == "decide" and d.get("decision_id") == did and d.get("action") in ANSWER_ACTIONS]
+    keys = []
+    for d in ans:
+        n = d.get("pick")
+        k = "hold" if d["action"] == "hold" else str(n) if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= 4 else None
+        if k and k not in keys:
+            keys.append(k)
+    if len(keys) > 1 or any(d.get("conflict") is True for d in ans):
+        return "conflict"
+    if not keys:
+        return None
+    return "hold" if keys == ["hold"] else "closed"
+
+
 def collect_pending(now):
-    """slack_pending.sh 와 같은 판정(시험이 두 규칙을 대조): 제목에 '결정'이 든 최상위 보낸 메시지 중
-    반응(reaction parent_ts)도 slack-done.txt 기록도 없는 것. 같은 제목은 한 건"""
+    """slack_pending.sh 와 같은 판정(시험이 두 규칙을 대조). 대상: 최상위 보낸 메시지 중 제목에 '결정'이 들었거나 번호 카드인 것.
+    옛 카드는 반응이 하나라도 있으면 닫힘, 번호 카드는 card_state 가 closed 일 때만 닫힘(보류·충돌은 대기). slack-done.txt 는 둘 다 닫음.
+    같은 제목은 한 건(번호 카드는 메시지마다 따로). 메인 형식(번호 카드 없음)이면 옛 규칙과 같은 결과"""
     sent, inbox = jsonl(SENT), jsonl(INBOX)
-    done = {d.get("parent_ts") for d in inbox if d.get("type") == "reaction"}
+    reactions = {}
+    for d in inbox:
+        if d.get("type") == "reaction" and isinstance(d.get("parent_ts"), str):
+            reactions.setdefault(d["parent_ts"], []).append(d)
+    cards = {s["ts"]: card_state(s, reactions.get(s["ts"], [])) for s in sent
+             if isinstance(s.get("ts"), str) and s.get("form_kind") == "decide" and "options" in s}
+    done = {t for t in reactions if t not in cards} | {t for t, st in cards.items() if st == "closed"}
     try:
         with open(DONE, encoding="utf-8") as f:
             done |= set(f.read().split())
@@ -287,13 +321,19 @@ def collect_pending(now):
         raise SourceError("io")
     items, seen = [], set()
     for s in sent:
-        title = str(s.get("title", ""))
-        if not s.get("ts") or s.get("thread_ts") or "결정" not in title or s["ts"] in done or title in seen:
+        ts, title = s.get("ts"), str(s.get("title", ""))
+        card = isinstance(ts, str) and ts in cards
+        if not isinstance(ts, str) or not ts or s.get("thread_ts") or not (card or "결정" in title) or ts in done:
             continue
-        seen.add(title)
+        key = ("card", ts) if card else title
+        if key in seen:
+            continue
+        seen.add(key)
         at = s.get("at")
         items.append({"title": title.split("\n")[0][:TITLE_MAX],
-                      "ageMin": int((now - at) // 60) if isinstance(at, (int, float)) else None})
+                      "ageMin": int((now - at) // 60) if isinstance(at, (int, float)) else None,
+                      "id": str(s.get("decision_id"))[:20] if card and s.get("decision_id") else None,
+                      "state": cards[ts] if card else None})
     return {"count": len(items), "items": items}
 
 
@@ -496,10 +536,11 @@ def collect_idle(conf, get, prev, now, mark):
 
 # ---- 원료: PR·CI ------------------------------------------------------------------------------
 def collect_gh(repos):
+    """저장소별 열린 PR·CI 실패 수. GH_PR_LIMIT 건이 꽉 차면 더 있을 수 있어 capped:true(숫자는 하한)"""
     out, total_open, total_fail = [], 0, 0
     for repo in repos:
         prs = run_json([os.environ.get("PANEL_GH", "gh"), "pr", "list", "--repo", repo, "--state", "open",
-                        "--limit", "100", "--json", "number,statusCheckRollup"], GH_TIMEOUT)
+                        "--limit", str(GH_PR_LIMIT), "--json", "number,statusCheckRollup"], GH_TIMEOUT)
         if not isinstance(prs, list):
             raise SourceError("parse")
         fail = 0
@@ -507,10 +548,10 @@ def collect_gh(repos):
             checks = pr.get("statusCheckRollup") if isinstance(pr, dict) else None
             if any(isinstance(c, dict) and (c.get("conclusion") in CI_FAIL or c.get("state") in CI_FAIL) for c in checks or []):
                 fail += 1
-        out.append({"repo": repo, "open": len(prs), "ciFail": fail})
+        out.append({"repo": repo, "open": len(prs), "ciFail": fail, "capped": len(prs) >= GH_PR_LIMIT})
         total_open += len(prs)
         total_fail += fail
-    return {"repos": out, "open": total_open, "ciFail": total_fail}
+    return {"repos": out, "open": total_open, "ciFail": total_fail, "capped": any(r["capped"] for r in out)}
 
 
 def gh_due(interval, now):
@@ -533,13 +574,20 @@ def load_prev():
         return {}, "corrupt"
 
 
+def error_code(e):
+    """오류 종류만: SourceError 코드, 설정 오류는 config, 그 밖(예상 밖 JSON 모양 등)은 internal:<예외 이름>. 메시지는 쓰지 않음"""
+    if isinstance(e, SourceError):
+        return e.code
+    if type(e) is ValueError:
+        return "config"
+    return f"internal:{type(e).__name__}"[:40]
+
+
 def run_source(fn, prev, now):
     try:
         return {"ok": True, "err": None, "at": now, "tried": now, "stale": False, "value": fn()}
-    except SourceError as e:
-        code = e.code
-    except ValueError:
-        code = "config"
+    except Exception as e:  # noqa: BLE001 — 원료 하나의 예상 밖 오류는 그 원료만 실패로 둠
+        code = error_code(e)
     old = prev if isinstance(prev, dict) else {}
     return {"ok": False, "err": code, "at": old.get("at"), "tried": now, "stale": True, "value": old.get("value")}
 
@@ -589,7 +637,7 @@ def write_atomic(data):
             f.write("\n")
             f.flush()
             os.fsync(f.fileno())
-        os.chmod(tmp, 0o644)
+        os.chmod(tmp, 0o600)  # 작업 폴더 규칙(panel.json 과 같음). 읽는 mod 는 같은 사용자
         os.replace(tmp, OUT)
     except BaseException:
         try:
@@ -639,6 +687,17 @@ def acquire():
     return False
 
 
+def keep_lock(stop):
+    """실행 중 잠금 시각을 LOCK_BEAT 초마다 갱신. 느린 회차(gh 여러 저장소·du)가 LOCK_STALE 을 넘겨도 다른 실행이 회수하지 않게 함.
+    LOCK_BEAT_MAX 를 넘기면 갱신을 멈춰, 멈춘 실행의 잠금은 그 뒤 LOCK_STALE 이 지나면 회수됨"""
+    start = time.monotonic()
+    while not stop.wait(LOCK_BEAT) and time.monotonic() - start < LOCK_BEAT_MAX:
+        try:
+            os.utime(LOCK, None)
+        except OSError:
+            pass
+
+
 def main(argv):
     if argv in (["-h"], ["--help"]):
         print(usage())
@@ -668,6 +727,8 @@ def main(argv):
     if not acquire():
         log("skip reason=locked")
         return 0
+    stop = threading.Event()
+    threading.Thread(target=keep_lock, args=(stop,), daemon=True).start()
     try:
         prev, prev_state = load_prev()
         data, gh = collect(conf, repos, interval, prev, int(time.time()), True)
@@ -678,6 +739,7 @@ def main(argv):
             return 0
         log("ok " + summary(data, gh, prev_state))
     finally:
+        stop.set()
         try:
             os.rmdir(LOCK)
         except OSError:

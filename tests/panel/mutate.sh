@@ -31,7 +31,7 @@ case_run P3 "gh 간격 스킵 제거(매번 호출)" 's/return now - os\.path\.g
 case_run P4 "실패 시 이전 값 삭제" 's/"stale": True, "value": old\.get\("value"\)\}/"stale": True, "value": None}/'
 case_run P5 "화면 본문(preview) 저장" 's/("connected": connected,\n)/$1            "preview": t.get("preview"),\n/'
 case_run P6 "잠금 제거(항상 획득)" 's/            os\.mkdir\(LOCK\)\n            return True/            return True/'
-case_run P7 "작업 중 판정에서 '…' 조건 제거(끝난 턴도 작업 중)" 's/ln\.strip\(\)\[0\] in SPINNER and "…" in ln/ln.strip()[0] in SPINNER/'
+case_run P7 "작업 중 판정에서 '…' 조건 제거(끝난 턴도 작업 중)" 's/\(\?: \[a-z\]\+\)\?…"\)/(?: [a-z]+)?")/'
 case_run P8 "결정 대기에서 반응 제외 규칙 제거" 's/done = \{d\.get\("parent_ts"\) for d in inbox if d\.get\("type"\) == "reaction"\}/done = set()/'
 case_run P12 "쉬는 워크스페이스 20개 제한 제거" 's/for w in quiet\[:IDLE_LIST_MAX\]:/for w in quiet:/'
 case_run P13 "디스크 경고 기준 뒤집음" 's/"warn": free < min_gb/"warn": free > min_gb/'

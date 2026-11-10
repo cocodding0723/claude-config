@@ -22,7 +22,7 @@ terms = [
     term(f"{W}/coord-esc-hub", "claude", f"{mark} 진행\n  esc to interrupt\n", 0),
     term(f"{W}/coord-idle-hub", "claude", f"{mark} 끝났다\n✻ Worked for 3m\n{B}\n❯ \n{B}\n  ? for shortcuts", 0),
     term(f"{W}/coord-ask-hub", "claude", f"{mark}\nDo you want to proceed?\n❯ 1. Yes\n  2. No", 1),
-    term(f"{W}/coord-unk-hub", "claude", f"{mark} 무언가 출력 중\n진행 로그 한 줄", 0),
+    term(f"{W}/coord-unk-hub", "claude", f"{mark} 무언가 출력 중\n진행 로그 한 줄\n· 설치 정리 중…", 0),
     term(f"{W}/coord-quiet-hub", "claude", f"{mark} 마지막 보고 줄", 12),
     term(f"{W}/coord-gone-hub", "claude", f"{mark}\n✻ Thinking…", 3, connected=False),
     term(f"{W}/coord-dup-hub", "claude", f"{mark}\n{B}\n❯ \n{B}", 5),
@@ -55,6 +55,7 @@ prs = [{"number": 1, "title": f"{mark}-gh", "statusCheckRollup": [{"conclusion":
        {"number": 3, "statusCheckRollup": [{"state": "ERROR"}]},
        {"number": 4, "statusCheckRollup": []}]
 json.dump(prs, open(os.path.join(fake, "prs.json"), "w"), ensure_ascii=False)
+json.dump([{"number": n, "statusCheckRollup": []} for n in range(100)], open(os.path.join(fake, "prs_many.json"), "w"))
 
 now = int(time.time())
 sent = [

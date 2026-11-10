@@ -60,7 +60,7 @@ st() { q ".sources.hubs.value.rows[] | select(.hub == \"$1\") | .state" | head -
 [ "$(st coord-esc-hub)" = busy ] && ok "분류: esc to interrupt → 작업 중" || ko "esc" "$(st coord-esc-hub)"
 [ "$(st coord-idle-hub)" = idle ] && ok "분류: 빈 입력 칸(끝난 턴 요약 줄은 작업 중 아님) → 대기" || ko "idle" "$(st coord-idle-hub)"
 [ "$(st coord-ask-hub)" = approval ] && ok "분류: Do you want·❯ 1. → 승인창" || ko "approval" "$(st coord-ask-hub)"
-[ "$(st coord-unk-hub)" = unknown ] && ok "분류: 표식 없음·방금 출력 → 확인불가" || ko "unknown" "$(st coord-unk-hub)"
+[ "$(st coord-unk-hub)" = unknown ] && ok "분류: 표식 없음·방금 출력(글머리 '· 한국어…' 줄은 작업 표식 아님) → 확인불가" || ko "unknown" "$(st coord-unk-hub)"
 [ "$(st coord-quiet-hub)" = idle ] && [ "$(q '.sources.hubs.value.rows[] | select(.hub=="coord-quiet-hub") | .quietMin')" -ge 11 ] && ok "분류: 표식 없음·12분 출력 없음 → 대기, quietMin 계산" || ko "quiet" "$(st coord-quiet-hub)"
 [ "$(st coord-gone-hub)" = unknown ] && [ "$(q '.sources.hubs.value.rows[] | select(.hub=="coord-gone-hub") | .connected')" = false ] && ok "분류: 끊긴 터미널 → 확인불가 + connected:false" || ko "gone" "$(st coord-gone-hub)"
 [ "$(q '[.sources.hubs.value.rows[] | select(.hub=="coord-dup-hub") | .dup] | all and length == 2')" = true ] && ok "같은 허브 창 2개 → dup:true" || ko "dup" ""
@@ -73,10 +73,32 @@ colenv "PANEL_HUB_ROOT=/ws/proj" --print
 # ---- 4. 결정 대기 -------------------------------------------------------------------------------
 [ "$(q '.sources.pending.value.count')" = 2 ] && ok "결정 대기 2건(반응·완료 기록·답글·비결정·같은 제목 제외)" || ko "pending" "$(q '.sources.pending.value.count')"
 [ "$(q '[.sources.pending.value.items[].title | length <= 40] | all')" = true ] && [ "$(q '.sources.pending.value.items[0].ageMin')" -ge 9 ] && ok "결정 제목 40자 이내·경과 분" || ko "pending 항목" ""
-# slack_pending.sh 판정식이 바뀌면 수집기와 어긋남 → 같은 규칙인지 원본에서 대조(slack_pending.sh 는 수정하지 않고 읽기만)
-grep -qF 'decisions = [s for s in sent if s.get("ts") and not s.get("thread_ts") and "결정" in s.get("title", "")]' "$PENDING" \
-  && grep -qF 'reacted[d.get("parent_ts")] = d' "$PENDING" && grep -qF 'done_file = os.path.join(H, "slack-done.txt")' "$PENDING" \
-  && ok "slack_pending.sh 의 결정 대기 판정식이 수집기와 같은 규칙(바뀌면 이 시험이 실패)" || ko "판정식 대조" "slack_pending.sh 규칙이 바뀜 — panel_collect.py collect_pending 갱신 필요"
+[ "$(q '.sources.pending.value.items[0] | "\(.id) \(.state)"')" = "null null" ] && ok "옛 결정 카드: 결정 번호·상태 없음(null)" || ko "pending 옛 카드" "$(q '.sources.pending.value.items[0]')"
+# 번호 카드 형식(이모지 카드 브랜치) 기록: 제목에 '결정' 이 없어도 대기, 보류·충돌은 대기 + 상태, 해석 안 된 반응은 답 아님
+python3 -I "$HERE/fixtures_cards.py" "$SB/cards" "$MARK" || ko "번호 카드 기록 준비" ""
+colenv "LRM_HUB_DIR=$SB/cards" --print
+cp "$SB/out" "$SB/print-cards.json"
+pc() { jq -r ".sources.pending.value | $1" "$SB/print-cards.json"; }
+[ "$(pc '.count')" = 6 ] && [ "$(pc '[.items[].title] | join("|")')" = "🙋 결정 옛 카드 대기|배포 순서|문서 위치|같은 제목|같은 제목|이름 그대로 반응" ] \
+  && ok "번호 카드: 대기 6건(선택·추천대로·완료 기록은 닫힘, 같은 제목도 카드마다 따로, 옛 카드 규칙 유지)" || ko "번호 카드 대기" "$(pc '[.items[].title]|join("|")')"
+[ "$(pc '[.items[] | "\(.id):\(.state)"] | join(",")')" = "null:null,D-0002:hold,D-0003:conflict,D-0004:null,D-0005:null,D-0006:null" ] \
+  && ok "번호 카드: 결정 번호와 상태(보류 hold·충돌 conflict·답 없음 null)" || ko "번호 카드 상태" "$(pc '[.items[]|"\(.id):\(.state)"]|join(",")')"
+# slack_pending.sh 판정식이 바뀌면 수집기와 어긋남 → 같은 규칙인지 원본에서 대조(slack_pending.sh 는 수정하지 않고 읽기만).
+# main 형식(옛 카드만)과 번호 카드 형식(이모지 카드 브랜치) 둘 다 인정. 어느 쪽도 아니면 실패
+has() { grep -qF -- "$1" "$PENDING"; }
+if has 'decisions = [s for s in sent if s.get("ts") and not s.get("thread_ts") and "결정" in s.get("title", "")]' \
+  && has 'reacted[d.get("parent_ts")] = d' && has 'done_file = os.path.join(H, "slack-done.txt")'; then
+  ok "slack_pending.sh 판정식 = 수집기 규칙(main 형식, 바뀌면 이 시험이 실패)"
+elif has 'decisions = [s for s in sent if s.get("ts") and not s.get("thread_ts") and ("결정" in s.get("title", "") or s["ts"] in cards)]' \
+  && has 'done = {t for t in reacted if t not in cards} | {t for t, st in cards.items() if st and st[0] == "closed"}' \
+  && has 'if s.get("ts") and s.get("form_kind") == "decide" and "options" in s}' \
+  && has 'if len(keys) > 1 or any(d.get("conflict") is True for d in ans):' \
+  && has 'k = "hold" if d["action"] == "hold" else str(n) if isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= 4 else None' \
+  && has "$(grep -m1 '^ANSWER_ACTIONS = ' "$SCRIPTS/panel_collect.py")" && has 'done_file = os.path.join(H, "slack-done.txt")'; then
+  ok "slack_pending.sh 판정식 = 수집기 규칙(번호 카드 형식, 바뀌면 이 시험이 실패)"
+else
+  ko "판정식 대조" "slack_pending.sh 규칙이 바뀜 — panel_collect.py collect_pending·card_state 갱신 필요"
+fi
 
 # ---- 5. 최근 기록 -------------------------------------------------------------------------------
 [ "$(q '[.sources.push.value.lines[].event] | join(",")')" = "hold,off,fail,ok,hold" ] && [ "$(q '.sources.push.value.lines[0].reason')" = dialog ] && ok "slack-push.log 끝 5줄: 결과·사유 코드만" || ko "push" "$(q '[.sources.push.value.lines[].event]|join(",")')"
@@ -96,6 +118,7 @@ colenv "$R" --once
 [ "$(ghn)" = 2 ] && [ "$(q '.sources.gh.value.open')" = 8 ] && [ "$(q '.sources.gh.at')" = "$GH_AT" ] && grep -q 'gh=skip' "$LOG" && ok "gh: 5분 안 재실행 → 호출 안 함, 이전 값·시각 유지" || ko "gh 간격" "calls=$(ghn)"
 touch -t 202601010000 "$H/.panel-gh.stamp"
 colenv "$R FAKE_GH_MODE=fail" --once
+[ "$(q '.sources.gh.value.capped')" = false ] && ok "gh: PR 4건 → capped:false" || ko "gh capped" "$(q '.sources.gh.value.capped')"
 [ "$(ghn)" = 3 ] && [ "$(q '.sources.gh.ok')" = false ] && [ "$(q '.sources.gh.stale')" = true ] && [ "$(q '.sources.gh.err')" = exit ] && [ "$(q '.sources.gh.value.open')" = 8 ] && [ "$(q '.sources.gh.at')" = "$GH_AT" ] && ok "gh 실패 → ok:false·stale·이전 값과 성공 시각 유지" || ko "gh 실패" "$(q '.sources.gh|del(.value)')"
 touch -t 202601010000 "$H/.panel-gh.stamp"
 colenv "$R FAKE_GH_MODE=auth" --once
@@ -103,6 +126,9 @@ colenv "$R FAKE_GH_MODE=auth" --once
 touch -t 202601010000 "$H/.panel-gh.stamp"
 colenv "$R PANEL_GH=$SB/nope" --once
 [ "$(q '.sources.gh.err')" = missing ] && [ "$RC" = 0 ] && ok "gh 미설치 → err:missing, 종료 0" || ko "gh missing" "$(q '.sources.gh.err') rc=$RC"
+touch -t 202601010000 "$H/.panel-gh.stamp"
+colenv "PANEL_GH_REPOS=acme/app FAKE_GH_MODE=many" --once
+[ "$(q '.sources.gh.value.open')" = 100 ] && [ "$(q '.sources.gh.value.capped')" = true ] && [ "$(q '.sources.gh.value.repos[0].capped')" = true ] && ok "gh: --limit 만큼 꽉 차면 capped:true(숫자는 하한)" || ko "gh capped" "$(q '.sources.gh.value|del(.repos)')"
 
 # ---- 7. 원료 실패: 다른 원료는 그대로, 실패한 원료는 이전 값 유지 ------------------------------------
 HUBS_BEFORE=$(q '.sources.hubs.value | tojson'); HUBS_AT=$(q '.sources.hubs.at')
@@ -149,7 +175,7 @@ wait "$P1"
 # ---- 10. 메인 파일·비밀·화면 본문 --------------------------------------------------------------------
 [ "$(shasum "$H/panel.json" | cut -d' ' -f1)" = "$MAIN_SUM" ] && ok "메인 panel.json 바이트 단위 불변" || ko "panel.json" "바뀜"
 leak=0
-for f in "$OUT" "$LOG" "$SB/print.json"; do grep -qF "$MARK" "$f" && leak=1; grep -qF "$TOK" "$f" && leak=1; grep -Eq 'xox[abprs]-|gh[pousr]_[A-Za-z0-9]{20}' "$f" && leak=1; done
+for f in "$OUT" "$LOG" "$SB/print.json" "$SB/print-cards.json"; do grep -qF "$MARK" "$f" && leak=1; grep -qF "$TOK" "$f" && leak=1; grep -Eq 'xox[abprs]-|gh[pousr]_[A-Za-z0-9]{20}' "$f" && leak=1; done
 [ "$leak" = 0 ] && ok "산출물·로그·--print 에 화면 본문·Slack 본문·토큰 모양 없음" || ko "누출" "본문 또는 토큰이 남음"
 ! grep -q 'preview' "$OUT" && ok "panel-auto.json 에 preview 키 없음" || ko "preview 키" ""
 ! grep -q "tok=$TOK" "$FAKE/orca.calls" && ok "orca 자식에 Slack 토큰 상속 안 됨" || ko "토큰 상속" ""
