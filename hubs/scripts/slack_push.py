@@ -76,8 +76,12 @@ ALERT_TEXT = "\n".join([
     "• 무엇: Slack 메시지를 메인 세션에 넘기지 못하고 모아 두는 중이다 (사유: {reason})",
     "• 할 일: 메인 세션에서 set_main_terminal.sh <새 핸들> 로 main.env 의 MAIN_TERMINAL 을 고친다",
 ])
-MSG_TYPES = ("note", "command", "thread_reply")       # 전달 대상. reaction 은 전달하지 않고 읽음 표식이 넘지 못하게 막음
+MSG_TYPES = ("note", "command", "thread_reply")       # 본문 인용으로 전달하는 메시지 종류. 반응은 아래 REACT_TYPE 이 한 줄로 전달
 REACT_TYPE = "reaction"                               # 반응도 전달함(parent_ts 필수). 전달하지 않고 표식을 막는 것은 react_since 이하 옛 반응뿐
+# 번호 카드·할 일 반응의 사람이 읽는 해석. 형식은 slack_poll.sh 와 같음. 하나라도 어긋나면 해석 문장 대신 action 원문을 씀
+DECISION_ID_RE = re.compile(r"D-[0-9A-Za-z]{1,16}", re.ASCII)
+TODO_ID_RE = re.compile(r"T-[0-9A-Za-z]{1,16}", re.ASCII)
+CHOICE_RE = re.compile(r"[1-4]|hold", re.ASCII)
 NO_LABEL = "새 메모"
 NO_TARGET = "대상 메시지"
 FAKE_PREFIX = "[Slack→메인]"
@@ -287,11 +291,37 @@ def kind_text(item):
     return f" kind={k}" if k else ""
 
 
+def answer_text(it):
+    """번호 카드·할 일 반응의 해석 문장. 'D-0001 = 선택 2(문구)' 꼴. 필드가 어긋나면 None(action 원문 표시)"""
+    kind, act = it.get("kind"), it.get("action")
+    if kind == "todo":
+        tid = it.get("todo_id")
+        who = "할 일" + (f" {tid}" if isinstance(tid, str) and TODO_ID_RE.fullmatch(tid) else "")
+        return {"done": f"{who} = 완료", "hold": f"{who} = 보류"}.get(act)
+    did = it.get("decision_id")
+    if kind != "decide" or not isinstance(did, str) or not DECISION_ID_RE.fullmatch(did):
+        return None
+    if it.get("conflict") is True:  # 충돌은 해석보다 먼저. 목록이 손상돼도 충돌 사실은 남김
+        ch = it.get("choices")
+        ok = isinstance(ch, list) and 1 < len(ch) <= 5 and all(isinstance(c, str) and CHOICE_RE.fullmatch(c) for c in ch)
+        listed = "(" + ", ".join("보류" if c == "hold" else c for c in ch) + ")" if ok else ""
+        return f"결정 {did} = 선택이 여러 개{listed} — 사용자에게 확인"
+    if act == "hold":
+        return f"결정 {did} = 보류"
+    n = it.get("pick")
+    if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 4:
+        return None
+    if act == "pick":
+        text = one_line(it.get("option_text") or "", 40)
+        return f"결정 {did} = 선택 {n}" + (f"({text})" if text else "")
+    return f"결정 {did} = 추천대로(선택 {n})" if act == "approve" else None
+
+
 def react_line(ln, it):
-    """반응 1건 = 한 줄: 이모지 이름·해석(action)·종류·대상 메시지 제목(tag)"""
+    """반응 1건 = 한 줄: 이모지 이름·해석(번호 카드·할 일은 해석 문장, 그 밖은 action)·종류·대상 메시지 제목(tag)"""
     tag = one_line(it.get("tag") or "", 30)
     return (f"- #{ln} [{one_line(it.get('title') or '') or NO_TARGET}] ts={ts_text({'ts': it.get('parent_ts')})} 반응 :{one_line(it.get('emoji'), 40)}:"
-            f" → {one_line(it.get('action'), 30) or '?'}{kind_text(it)}" + (f" tag={tag}" if tag else ""))
+            f" → {answer_text(it) or one_line(it.get('action'), 30) or '?'}{kind_text(it)}" + (f" tag={tag}" if tag else ""))
 
 
 def render(items, batch_path, react):
