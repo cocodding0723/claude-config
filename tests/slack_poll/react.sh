@@ -301,8 +301,45 @@ errjson reactions.add missing_scope; pollh "$H" k9; rc=$?; okjson reactions.add
 [ "$rc" = 0 ] && [ "$(inbox_n "$H")" = 2 ] && [ "$(errlines k9)" = 1 ] && grep -q 'missing_scope.*reactions:write' "$SB/k9.err" && ok "ⓚ missing_scope: 반응·댓글 2건 수집, 종료 코드 0, stderr 한 줄(사유·scope 이름)" || ko "ⓚ missing_scope" "rc=$rc $(inbox_n "$H") $(cat "$SB/k9.err")"
 [ "$(st "$H" '.reacted_on["'"$N.002300"'"].s')" = new ] && ok "ⓚ 권한 없음 동안 반응 확인은 new 로 대기(복구 뒤 30분 안이면 👀)" || ko "ⓚ 대기 유지" "$(st "$H" '.reacted_on')"
 
-# ---- ⓖ 토큰 비노출 ------------------------------------------------------------------
-leak=$(grep -rlF -- "$FAKE_TOKEN" "$SB" 2>/dev/null | grep -v '/slack-bot\.env$' || true)
+# ---- 시나리오 R: 메시지 종류별 반응 해석(결정 카드 vs 시안) ------------------------------------
+# 같은 이모지가 종류에 따라 다르게 읽힘. 종류: 보낸 기록의 form_kind·kind(text·file 제외) → 없으면 첨부 기록이고 제목에 '결정'이 없으면 review
+H="$SB/hubR"; mkhub "$H"
+rx_all() { local s="" n; for n in "$@"; do s="$s$([ -n "$s" ] && echo ,){\"name\":\"$n\",\"count\":1,\"users\":[\"$ME\"]}"; done; echo "[$s]"; }
+EM="white_check_mark x 비서-a 비서-b 비서-추천대로 tada"
+botmsg() { # ts [첨부 file_id]
+  local f=""; [ -n "${2:-}" ] && f=",\"subtype\":\"file_share\",\"files\":[{\"id\":\"$2\"}]"
+  printf '{"ts":"%s","user":"%s","bot_id":"B1","text":"m"%s,"reactions":%s}' "$1" "$BOT" "$f" "$(rx_all $EM)"
+}
+hist "$(botmsg "$N.003100"),$(botmsg "$N.003200" F31),$(botmsg "$N.003300" F32),$(botmsg "$N.003400"),$(botmsg "$N.003500"),$(botmsg "$N.003600" F33),$(botmsg "$N.003700" F34),$(botmsg "$N.003900")"
+{
+  printf '{"ts":"%s.003100","at":%s,"kind":"text","title":"결정 1 알림 시각","tag":"t"}\n' "$N" "$N"            # 결정 카드(글)
+  printf '{"ts":"","file_id":"F31","kind":"file","at":%s,"title":"시안 1","tag":"ui"}\n' "$N"                      # 이미지 첨부, 종류 없음 → review 추정
+  printf '{"ts":"","file_id":"F32","kind":"file","at":%s,"title":"결정 2 시안 고르기","tag":"ui"}\n' "$N"          # 첨부 결정 카드 → 결정 해석
+  printf '{"ts":"%s.003400","at":%s,"kind":"review","title":"시안 2","tag":"ui"}\n' "$N" "$N"                     # 글 + 명시 kind=review
+  printf '{"ts":"%s.003500","at":%s,"kind":"text","form_kind":"review","title":"시안 3","tag":"ui"}\n' "$N" "$N"  # 양식 A form_kind=review
+  printf '{"ts":"","file_id":"F33","kind":"file","form_kind":"decide","at":%s,"title":"시안 4","tag":"ui"}\n' "$N"  # 첨부 + form_kind=decide → 결정
+  printf '{"ts":"","file_id":"F34","kind":"file","form_kind":"done","at":%s,"title":"완료 보고","tag":"ui"}\n' "$N"  # 첨부 + 다른 명시 종류 → 결정 표(기존)
+  printf '{"ts":"%s.003900","at":%s,"title":"A/B 골라줘","tag":"t"}\n' "$N" "$N"                                  # 첨부 없는 글 + 종류 키 없음 + 제목에 '결정' 없음 → 결정 해석
+} > "$H/slack-sent.jsonl"
+pollh "$H" r1; rc=$?
+acts() { jq -r --arg p "$1" 'select(.type=="reaction" and .parent_ts==$p) | "\(.emoji)=\(.action)"' "$H/slack-inbox.jsonl" | sort | tr '\n' ' '; }
+kinds() { jq -r --arg p "$1" 'select(.parent_ts==$p) | .kind // "-"' "$H/slack-inbox.jsonl" | sort -u | tr '\n' ' '; }
+DEC="tada=tada white_check_mark=approve x=hold 비서-a=a 비서-b=b 비서-추천대로=approve "
+REV="tada=tada white_check_mark=pass x=fail 비서-a=pick_a 비서-b=pick_b 비서-추천대로=비서-추천대로 "
+[ "$rc" = 0 ] && [ "$(acts "$N.003100")" = "$DEC" ] && [ "$(kinds "$N.003100")" = "- " ] && ok "ⓡ 결정 카드(글): ✅=approve ❌=hold 비서-a/b=a/b, 모르는 이모지는 이름 그대로, kind 키 없음" || ko "ⓡ 결정 카드" "rc=$rc $(acts "$N.003100")|$(kinds "$N.003100")"
+[ "$(acts "$N.003200")" = "$REV" ] && [ "$(kinds "$N.003200")" = "review " ] && ok "ⓡ 첨부 메시지(종류 없음): review 로 추정, ✅=pass ❌=fail 비서-a/b=pick_a/pick_b, 추천대로는 이름 그대로" || ko "ⓡ 시안 추정" "$(acts "$N.003200")|$(kinds "$N.003200")"
+[ "$(acts "$N.003300")" = "$DEC" ] && [ "$(kinds "$N.003300")" = "- " ] && ok "ⓡ 제목에 '결정'이 든 첨부 메시지는 결정 해석 유지(✅=approve)" || ko "ⓡ 첨부 결정 카드" "$(acts "$N.003300")"
+[ "$(acts "$N.003400")" = "$REV" ] && [ "$(acts "$N.003500")" = "$REV" ] && [ "$(kinds "$N.003500")" = "review " ] && ok "ⓡ 명시 kind=review·form_kind=review(글 메시지)도 시안 해석" || ko "ⓡ 명시 review" "$(acts "$N.003400")|$(acts "$N.003500")"
+[ "$(acts "$N.003600")" = "$DEC" ] && [ "$(acts "$N.003700")" = "$DEC" ] && ok "ⓡ 첨부라도 form_kind 가 decide·done 이면 결정 표(명시값이 추정보다 우선)" || ko "ⓡ 명시 우선" "$(acts "$N.003600")|$(acts "$N.003700")"
+[ "$(acts "$N.003900")" = "$DEC" ] && [ "$(kinds "$N.003900")" = "- " ] && ok "ⓡ 첨부 없는 글(종류 키 없음, 제목에 '결정' 없음 \"A/B 골라줘\")은 결정 해석 유지(✅=approve, review 로 오인 안 함)" || ko "ⓡ 첨부 없는 글" "$(acts "$N.003900")|$(kinds "$N.003900")"
+# 시안 메시지 스레드 답글에도 kind=review
+H="$SB/hubR2"; mkhub "$H"
+hist "{\"ts\":\"$N.003800\",\"user\":\"$BOT\",\"bot_id\":\"B1\",\"subtype\":\"file_share\",\"files\":[{\"id\":\"F38\"}],\"reply_count\":1,\"latest_reply\":\"$N.003801\"}"
+printf '{"ok":true,"messages":[{"ts":"%s.003801","user":"%s","text":"색이 진함"}]}' "$N" "$ME" > "$FIX/conversations.replies.$N.003800.json"
+printf '{"ts":"","file_id":"F38","kind":"file","at":%s,"title":"시안 5","tag":"ui"}\n' "$N" > "$H/slack-sent.jsonl"
+pollh "$H" r2
+[ "$(jq -r 'select(.type=="thread_reply") | "\(.kind) \(.title)"' "$H/slack-inbox.jsonl")" = "review 시안 5" ] && ok "ⓡ 시안 메시지 스레드 답글 레코드에도 kind=review·제목" || ko "ⓡ 답글 kind" "$(cat "$H/slack-inbox.jsonl")"
+
 # ---- 시나리오 T: '채널에도 보내기' 답글 수집 경계(thread_broadcast_since) ----------------------------
 # 배포 전에 달린 broadcast 답글("결정 3 A")이 스레드 재조회 때 새 결정 명령으로 재생되면 안 됨. 일반 답글은 기존 동작 유지
 CT=$((N - 7200)).000500; OLDB=$((N - 172800)).000900
@@ -335,6 +372,8 @@ jq --argjson o $((N - 31 * 86400)) --argjson r $((N - 86400)) '. + {reacted_on: 
 pollh "$H" t3
 [ "$(st "$H" '.reacted_on | keys | map(split(".")[0] | tonumber) | map(. > '"$((N - 2 * 86400))"') | join(",")')" = true ] && ok "ⓣ reacted_on: 31일 전 칸은 정리, 1일 전 칸은 유지(RX_KEEP 30일)" || ko "ⓣ reacted_on 정리" "$(st "$H" '.reacted_on')"
 
+# ---- ⓖ 토큰 비노출 ------------------------------------------------------------------
+leak=$(grep -rlF -- "$FAKE_TOKEN" "$SB" 2>/dev/null | grep -v '/slack-bot\.env$' || true)
 [ -z "$leak" ] && ok "ⓖ 토큰이 stdout·stderr·상태·inbox·가짜 API 호출 기록에 없음(설정 파일 제외 전체 검색)" || ko "ⓖ 토큰 노출" "$leak"
 
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"

@@ -28,6 +28,9 @@ usage() {
            완료 표식을 ✅ 와 다르게 둬 사용자의 ✅(승인·합격)와 구분함. 끝난 메시지에 새 반응이 오면 다시 👀
            두 표가 회차당 호출 상한(LRM_REACT_MAX)을 함께 쓰고, 30분 넘게 묵은 대기는 달지 않음(반응은 수집 시각 기준)
            reactions:write scope 가 없으면 조용히 건너뛰고 10분마다 재시도(stderr 에 사유·scope 이름 한 줄, 토큰 없음). 수집·전달은 계속
+반응 해석: 결정 카드 ✅=approve ❌(x)=hold :비서-a~d:=a~d, 시안(kind=review) ✅=pass ❌=fail :비서-a:=pick_a :비서-b:=pick_b.
+           표에 없는 이모지는 이름 그대로. 종류는 slack-sent.jsonl 의 form_kind·kind(text·file 제외) → 없으면 첨부 기록이고 제목에 '결정'이 없을 때 review.
+           review 메시지의 반응·답글 레코드에 "kind":"review" 추가(다른 종류는 키 없음)
 스레드 답글: '채널에도 보내기'를 켠 답글(subtype thread_broadcast)도 thread_reply 로 수집
 수신 확인 답장: 새 사용자 메시지의 스레드에 "📥 메시지 집계 중이에요" 1회(chat:write). 같은 스레드 30초 1회, 60초 3회, 회차 3회. 결정·승인 같은 명령 답글에는 달지 않음.
            slack_cmd.sh 즉답 명령·30분 넘게 묵은 항목은 제외. 권한 부족이면 조용히 건너뛰고 10분마다 재시도(상태: ack_disabled_reason).
@@ -93,7 +96,11 @@ RETRIES = 2
 PAGE_LIMIT = 200
 MAX_PAGES = 5
 SENT, INBOX, STATE = (os.path.join(DIR, n) for n in ("slack-sent.jsonl", "slack-inbox.jsonl", "slack-poll-state.json"))
+# 반응 → 답 해석. 같은 이모지도 메시지 종류에 따라 뜻이 다름(결정 카드 REACTION_ACTION, 시안 REVIEW_ACTION). 표에 없으면 이름 그대로
 REACTION_ACTION = {"white_check_mark": "approve", "x": "hold", "비서-추천대로": "approve", "비서-lgtm": "approve", "비서동의": "approve", "비서-보류": "hold", "비서-a": "a", "비서-b": "b", "비서-c": "c", "비서-d": "d"}
+REVIEW_ACTION = {"white_check_mark": "pass", "x": "fail", "비서-a": "pick_a", "비서-b": "pick_b"}
+REVIEW = "review"
+TRANSPORT_KINDS = ("text", "file")  # slack_notify.sh 기록의 kind 중 전송 방식 값(메시지 종류 아님)
 COMMANDS = [
     ("decision", re.compile(r"^결정\s*(\d+)\s+(\S+)$")),
     ("all_recommended", re.compile(r"^전부\s*추천$")),
@@ -338,6 +345,21 @@ def load_jsonl(path):
                 except json.JSONDecodeError:
                     pass
     return out
+
+def msg_kind(rec):
+    """보낸 기록의 메시지 종류. 명시값 우선: form_kind(양식 A), 전송 방식(text·file)이 아닌 kind.
+    없으면 파일 첨부 기록이고 제목에 '결정'이 없을 때 review(시안), 그 밖은 None(결정 해석 유지).
+    '결정' 제외는 첨부가 달린 결정 카드의 ✅ 를 합격으로 잘못 읽지 않게 함(slack_pending.sh 도 제목의 '결정'으로 결정을 판별)"""
+    for k in ("form_kind", "kind"):
+        v = rec.get(k)
+        if isinstance(v, str) and v and v not in TRANSPORT_KINDS:
+            return v
+    if rec.get("file_id") and "결정" not in str(rec.get("title") or ""):
+        return REVIEW
+    return None
+
+def reaction_action(kind, name):
+    return (REVIEW_ACTION if kind == REVIEW else REACTION_ACTION).get(name, name)
 
 def classify(text):
     t = " ".join(text.split())
@@ -717,6 +739,9 @@ def main():
                 collect_replies(m, {"parent_ts": ts, "title": "", "tag": ""}, own_since)
             continue
         meta = {"parent_ts": ts, "title": rec.get("title", ""), "tag": rec.get("tag", "")}
+        kind = msg_kind(rec)
+        if kind == REVIEW:  # 다른 종류는 기존 레코드 모양 유지
+            meta["kind"] = REVIEW
         reactions = m.get("reactions", [])
         # 응답의 users 는 잘릴 수 있어 본인 반응이 안 보이고 개수가 더 많으면 그 메시지만 reactions.get 으로 보강
         if any(r.get("count", 0) > len(r.get("users", [])) and ME not in r.get("users", []) for r in reactions):
@@ -725,7 +750,7 @@ def main():
             if ME in r.get("users", []):
                 name = r["name"]
                 if add(f"react:{ts}:{name}", {"type": "reaction", "emoji": name,
-                                              "action": REACTION_ACTION.get(name, name), **meta}):
+                                              "action": reaction_action(kind, name), **meta}):
                     mark_on(state, ts, now)
         collect_replies(m, meta)
 
