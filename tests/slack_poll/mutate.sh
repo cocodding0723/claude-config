@@ -16,7 +16,7 @@ fresh_copy() {
   cp -R "$REPO/tests/slack_poll" "$WORK/repo/tests/"
 }
 
-case_run() { # 번호 설명 시험(react|push) 파일 perl 치환식
+case_run() { # 번호 설명 시험(react|push|decide) 파일 perl 치환식
   local id="$1" desc="$2" suite="$3" file="$4" expr="$5" out rc first
   if [ -n "${ONLY:-}" ] && [[ " $ONLY " != *" $id "* ]]; then return; fi
   fresh_copy
@@ -45,6 +45,12 @@ case_run S10 "reacted_on 30일 정리 제거" react "$P" 's/if v\["at"\] < now -
 case_run S11 "첨부 판별을 ts 기준으로(글 메시지도 review)" react "$P" 's/if rec.get\("file_id"\) and "결정"/if rec.get("ts") and "결정"/'
 case_run S12 "전달문 이모지 정제 제거" push "$U" 's/one_line\(it.get\(.emoji.\), 40\)/it.get("emoji")/'
 case_run S13 "전달문 tag 정제 제거" push "$U" 's/tag = one_line\(it.get\("tag"\) or "", 30\)/tag = str(it.get("tag") or "")/'
+case_run S14 "번호 이모지 → pick 오프바이원" decide "$P" 's/PICK_EMOJI = \{"one": 1, "two": 2, "three": 3, "four": 4\}/PICK_EMOJI = {"one": 2, "two": 3, "three": 4, "four": 5}/'
+case_run S15 "✅ 를 추천 번호 대신 1 로 고정" decide "$P" 's/out.update\(action="approve", pick=best\)/out.update(action="approve", pick=1)/'
+case_run S16 "선택지 수 범위 검사 삭제" decide "$P" 's/if PICK_EMOJI\[name\] > len\(opts\):/if False:/'
+case_run S17 "할 일 kind 분기 제거(결정 표로 해석)" decide "$P" 's/    if kind == TODO:\n/    if False:\n/'
+case_run S18 "충돌 표시 제거" decide "$P" 's/    if len\(keys\) > 1:\n/    if False:\n/'
+case_run S19 "옵션 기록 모양 검사 삭제(목록·추천 범위 밖도 해석)" decide "$P" 's/    except ValueError:\n        return \{"action": name, "kind": DECIDE\}, "options"\n/    except ValueError:\n        did, opts, best = rec.get("decision_id"), dict(enumerate(rec.get("options") or [], 1)), rec.get("recommended")\n/'
 echo
 [ "$MISSED" = 0 ] && echo "변이 전부 검출" || echo "미검출·정의 오류 ${MISSED}건"
 [ "$MISSED" = 0 ]

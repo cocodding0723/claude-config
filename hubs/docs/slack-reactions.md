@@ -31,6 +31,25 @@
 
 시험: `tests/slack_poll/react.sh` 시나리오 R(종류 7가지 × 이모지 6개).
 
+### 번호 카드·할 일 카드 (11-10 추가)
+
+보낸 기록에 `options` 가 있는 `form_kind=decide` 카드(`slack_notify.sh --options`)와 `form_kind=todo` 카드는 아래 표로 읽는다. 위 표의 옛 카드·시안 해석은 그대로다. 이모지 표준표 전체는 `slack-format.md` 「이모지 표준표」.
+
+| 이모지 | 번호 카드 | 할 일 |
+|---|---|---|
+| `one`·`two`·`three`·`four` | `pick`, `pick`=N. 선택지 수보다 크면 이름 그대로(stderr `범위 밖` 1줄) | 이름 그대로 |
+| ✅ `white_check_mark` | `approve`, `pick`=보낸 기록의 `recommended` | `done` |
+| ❌ `x` | `hold` | `hold` |
+| 🛠️ `hammer_and_wrench` | 이름 그대로 | `done` |
+| 그 밖 | 이름 그대로 | 이름 그대로 |
+
+- 레코드에 더하는 키: 번호 카드는 `kind:"decide"`·`decision_id`, `pick`·`approve` 면 `pick`·`option_text`(문구 앞 80자). 할 일은 `kind:"todo"`, 기록에 있으면 `todo_id`. `option_text` 는 우리가 보낸 문구이며 사용자 원문이 아니다.
+- **fail-closed.** 보낸 기록의 `options`·`recommended`·`decision_id` 중 하나라도 모양이 틀리면(목록, 번호 빠짐, 추천 번호 범위 밖, 번호 형식 위반) ✅·❌ 까지 포함해 해석하지 않고 이름 그대로 넘긴다(stderr `옵션 정보 오류` 1줄). 보낸 기록을 못 찾은 메시지는 전처럼 수집하지 않는다.
+- **충돌.** 같은 카드(같은 `parent_ts`·`decision_id`)의 답(`pick`·`approve`·`hold`)이 inbox 의 앞선 줄과 이번 회차를 합쳐 둘 이상으로 갈리면, 이번 회차 답 줄 전부에 `conflict:true`·`choices`(예 `["1","2"]`, 보류는 `"hold"`)를 붙인다. 줄은 모두 남긴다. 선택 1 과 ✅(추천 1)은 같은 답이라 충돌이 아니다. 범위 밖·이름 그대로 반응은 답이 아니라 충돌에 세지 않는다.
+- stderr 줄은 새 반응일 때만 한 번 쓰고 문구·제목은 넣지 않는다.
+
+시험: `tests/slack_poll/decide.sh` 시나리오 P, 변이 `tests/slack_poll/mutate.sh` S14~S19.
+
 ## 메시지 종류 판별
 
 `slack-sent.jsonl` 의 기록 한 줄로 정한다. 위에서부터 처음 맞는 규칙을 쓴다.
@@ -126,7 +145,8 @@
 
 ## 한계·후속
 
-- 같은 메시지에 ✅ 와 ❌ 를 모두 눌렀다 번복하면 두 줄이 모두 전달된다. 취소가 보이지 않아 메인은 둘 중 현재 상태를 알 수 없다.
+- 같은 메시지에 ✅ 와 ❌ 를 모두 눌렀다 번복하면 두 줄이 모두 전달된다. 취소가 보이지 않아 메인은 둘 중 현재 상태를 알 수 없다. 번호 카드는 이 경우 충돌로 표시한다(1 을 취소하고 2 를 눌러도 충돌. 사용자 확인 대상).
+- 실제 Slack 의 번호 이모지 반응 이름(`one`~`four`)과 `hammer_and_wrench` 는 확인하지 않았다. 가짜 응답(`conversations.history` 의 `reactions:[{name,users,count}]`)으로만 시험했다. 이름이 다르면 해석하지 않고 이름 그대로 넘어가므로(fail-closed) 잘못된 답은 생기지 않는다.
 - 시안 ❌=`fail`, 결정 ❌=`hold` 를 되돌릴 수 없는 처리로 볼지는 메인 규칙이며 이 문서의 범위 밖이다. 이 문서는 해석과 전달까지만 정한다.
 - 반응 줄은 묶음 글자 상한(`BATCH_CHARS` 3000자)에 세지 않는다. 한 묶음은 건수 상한 20줄이 한계이며 반응만이면 최대 약 3.7천 자다.
 - 업그레이드 설치에서 옛 반응이 읽음 표식을 막는 것은 이전 동작과 같다. 이후 전달한 반응의 ✅·☑️ 는 메인이 옛 반응 줄을 읽기 전까지 바뀌지 않는다.
