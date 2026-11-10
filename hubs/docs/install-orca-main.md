@@ -17,8 +17,8 @@
 | 메인 설정 | `~/.config/lrm-hubs/main.env`. 허브 폴더·스크립트 위치·메인 터미널 핸들. 양식은 `skills/orca-main/references/main.env.example` |
 | 폴러 | launchd 서비스 `ai.lrm.slackpoll`. 2분마다 Slack DM 을 모아 메인에 넘긴다 |
 | Socket Mode 수신기 | launchd 서비스 `ai.lrm.slacksocket`. 메시지가 오면 폴러를 바로 돌린다. 설치만 하고 켜지 않는다 |
-| 옆 패널 | Claude Code mod `lrm-board`. 메인이 쓰는 `panel.json` 과 수집기가 쓰는 `panel-auto.json` 을 15초마다 읽어 승인·할 일·허브 상태·결정 대기를 보여 준다 |
-| 패널 수집기 | launchd 서비스 `ai.lrm.panelcollect`. 90초마다 허브 상태·결정 대기·최근 기록·PR 수를 `panel-auto.json` 에 쓴다. 자세한 것은 `hubs/docs/panel.md` |
+| 옆 패널 | Claude Code mod `lrm-board`. `panel.json` 을 15초마다 읽어 승인·할 일·허브 상태를 보여 준다 |
+| 패널 수집기 | launchd 서비스 `ai.lrm.panelcollect`. 90초마다 허브 상태·결정 대기·최근 기록·쉬는 자원·PR 수를 `panel-auto.json` 에 쓰고, 옆 패널이 `panel.json` 과 함께 읽어 그린다. 자세한 것은 `hubs/docs/panel.md` |
 
 설치기가 까는 것(전부 `links.tsv` 에 있다):
 
