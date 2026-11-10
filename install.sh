@@ -161,11 +161,18 @@ do_merge() {
   log "MERGE  $dst (훅 $(hook_count "$out")개)"
 }
 
-# 파일을 바이트 그대로 읽어 __HOME__ 과 값 파일의 __KEY__ 를 치환해 $2 로 씀(끝 개행 유지)
+# launchd 처럼 PATH 가 짧은 곳에서 쓸 python3 절대 경로. 설치하는 셸의 python3 기준
+PYTHON3="${CLAUDE_CONFIG_PYTHON3:-$(command -v python3 || true)}"
+
+# 파일을 바이트 그대로 읽어 __HOME__·__PYTHON3__ 과 값 파일의 __KEY__ 를 치환해 $2 로 씀(끝 개행 유지)
 subst_file() {
   local src="$1" out="$2" content k v
   content=$(cat "$src"; printf x); content=${content%x}
   content=${content//__HOME__/$HOME}
+  if [[ $content == *__PYTHON3__* ]]; then
+    [ -n "$PYTHON3" ] || die "python3 없음: $src 의 __PYTHON3__ 를 채울 수 없음. python3 설치 또는 CLAUDE_CONFIG_PYTHON3=<절대 경로>"
+    content=${content//__PYTHON3__/$PYTHON3}
+  fi
   if [ "${3:-}" = values ]; then
     while IFS='=' read -r k v; do
       case "$k" in ''|'#'*) continue ;; esac
@@ -198,7 +205,7 @@ do_copy() {
   prepare_target "$dst"
   cp "$out" "$t"
   log "COPY   $dst"
-  reload_hint "$t"
+  reload_hint "$dst"
 }
 
 do_render() {
@@ -214,10 +221,11 @@ do_render() {
   log "RENDER $dst"
 }
 
-# launchd 재적재는 부작용이 커서 플래그가 있을 때만 실행
+# launchd 재적재는 부작용이 커서 플래그가 있을 때만 실행.
+# LaunchAgents 밖에 둔 plist(예: Socket Mode 수신기)는 켜지 않는 보관본이라 재적재·안내 모두 하지 않음
 reload_hint() {
-  local plist="$1" label
-  case "$plist" in *.plist) ;; *) return 0 ;; esac
+  local plist="$HOME/$1" label
+  case "$1" in Library/LaunchAgents/*.plist) ;; *) return 0 ;; esac
   label=$(basename "$plist" .plist)
   if [ "$RELOAD" = 1 ]; then
     launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true

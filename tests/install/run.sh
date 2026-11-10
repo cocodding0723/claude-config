@@ -134,6 +134,8 @@ done <<< "$entries"
 [ "$rend_bad" = 0 ] && ok "render 항목: 실제 파일·자리표시 전부 치환"
 grep -qF 'VAL&DM_CHANNEL' "$SB/.config/lrm-hubs/roles/role-docs.txt" && grep -q 'VAL_PERSON_FULL' "$SB/.config/lrm-hubs/roles/role-tutorial.txt" && ok "render: 값 파일 값이 들어감" || ko "render 값" "누락"
 grep -q "$SB" "$SB/Library/LaunchAgents/ai.lrm.slackpoll.plist" && ! grep -q '__HOME__' "$SB/Library/LaunchAgents/ai.lrm.slackpoll.plist" && ok "plist __HOME__ 치환" || ko "plist 치환" ""
+SOCKP="$SB/.config/lrm-hubs/ai.lrm.slacksocket.plist"
+grep -q "<string>$SB/.config/lrm-hubs/slack_socket.py</string>" "$SOCKP" && grep -q "<string>$(command -v python3)</string>" "$SOCKP" && ! grep -q '__[A-Z0-9_]*__' "$SOCKP" && plutil -lint "$SOCKP" >/dev/null && cmp -s "$REPO/hubs/scripts/slack_socket.py" "$SB/.config/lrm-hubs/slack_socket.py" && ok "소켓 plist __HOME__·__PYTHON3__ 치환·형식 정상, 수신기 복사" || ko "소켓 plist" "치환·형식 오류"
 [ "$(git config --global core.hooksPath)" = "~/.config/git/hooks" ] && [ "$(git config --global pull.rebase)" = true ] && [ "$(git config --global merge.ff)" = false ] && ok "git 설정 4개 키" || ko "git 설정" ""
 grep -q 'name = sandbox' "$SB/.gitconfig" && ok "git 사용자 값 보존" || ko "git 사용자 값" "사라짐"
 BK=$(ls -d "$SB/.claude-config-backup"/*/ | head -1); BK=${BK%/}
@@ -285,6 +287,58 @@ sed -i '' 's#main\.env\.example#config.example.env#g' "$SB7/.claude/skills/orca-
 out=$(env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF HOME="$SB7" "$INSTALL" --diff-live 2>&1); rc=$?
 [ "$rc" = 1 ] && echo "$out" | grep -q 'LIVE-ONLY  .claude/skills/orca-main/references/config.example.env' && ! echo "$out" | grep -qE 'orca-main/(SKILL.md|scripts/patrol.sh)' && ok "orca-main 옛 이름: 문서 2개는 규칙 흡수, 옛 양식 파일만 LIVE-ONLY" || ko "orca-main 라이브 차이" "rc=$rc $(echo "$out" | grep orca-main | head -3 | tr '\n' ' ')"
 rm -rf "${SB7:?}"
+
+# ---- 6h. Socket Mode 수신기: 보관본만 설치, launchd 는 건드리지 않음 -----------
+SB8=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox8.XXXXXX")
+mkdir -p "$SB8/.config/claude-config" "$SB8/.config/lrm-hubs" "$SB8/fakebin"
+cp "$SB/.config/claude-config/values.env" "$SB8/.config/claude-config/values.env"
+SOCK=".config/lrm-hubs/ai.lrm.slacksocket.plist"
+# 이 맥과 같은 상태: 라이브 보관본이 저장소 렌더 결과와 같음
+sed -e "s#__HOME__#$SB8#g" -e "s#__PYTHON3__#/opt/py/bin/python3#g" "$REPO/hubs/launchd/ai.lrm.slacksocket.plist" > "$SB8/$SOCK"
+cp "$REPO/hubs/scripts/slack_socket.py" "$SB8/.config/lrm-hubs/slack_socket.py"
+ino_before=$(ls -i "$SB8/$SOCK" "$SB8/.config/lrm-hubs/slack_socket.py" | awk '{print $1}' | tr '\n' ' ')
+# 진짜 launchctl 대신 호출 기록만 남기는 가짜. PATH 앞에 둬도 가로채지 못하면 시험을 건너뜀
+printf '#!/bin/sh\necho "$*" >> "%s/launchctl.log"\n' "$SB8" > "$SB8/fakebin/launchctl"; chmod +x "$SB8/fakebin/launchctl"
+if [ "$(PATH="$SB8/fakebin:$PATH" command -v launchctl)" = "$SB8/fakebin/launchctl" ]; then
+  out=$(PATH="$SB8/fakebin:$PATH" HOME="$SB8" CLAUDE_CONFIG_PYTHON3=/opt/py/bin/python3 env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF "$INSTALL" --reload-launchd 2>&1); rc=$?
+  ino_after=$(ls -i "$SB8/$SOCK" "$SB8/.config/lrm-hubs/slack_socket.py" | awk '{print $1}' | tr '\n' ' ')
+  [ "$rc" = 0 ] && echo "$out" | grep -q "SKIP   $SOCK (내용 동일)" && echo "$out" | grep -q 'SKIP   .config/lrm-hubs/slack_socket.py (내용 동일)' && [ "$ino_before" = "$ino_after" ] && ok "소켓 보관본: 라이브와 같으면 SKIP(파일 그대로)" || ko "소켓 SKIP" "rc=$rc"
+  grep -q 'bootstrap .*ai.lrm.slackpoll.plist' "$SB8/launchctl.log" 2>/dev/null && ! grep -q slacksocket "$SB8/launchctl.log" && ! echo "$out" | grep -q '재적재.*slacksocket' && ok "--reload-launchd 도 slackpoll 만 적재, slacksocket 은 호출·안내 없음" || ko "소켓 launchd" "$(tr '\n' ' ' < "$SB8/launchctl.log" 2>/dev/null)"
+  [ ! -e "$SB8/Library/LaunchAgents/ai.lrm.slacksocket.plist" ] && ok "소켓 plist 를 LaunchAgents 에 두지 않음(로그인 때 자동 실행 안 됨)" || ko "소켓 LaunchAgents" "생김"
+else
+  printf 'SKIP  소켓 launchd 시험 — 가짜 launchctl 이 PATH 에서 우선하지 않음\n'
+fi
+# 라이브 보관본이 다르면 덮어쓰지 않고 중단
+echo '<!-- local edit -->' >> "$SB8/$SOCK"
+before=$(snapshot "$SB8")
+out=$(HOME="$SB8" CLAUDE_CONFIG_PYTHON3=/opt/py/bin/python3 env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF "$INSTALL" 2>&1); rc=$?
+[ "$rc" != 0 ] && echo "$out" | grep -q "LIVE-NEWER $SOCK" && [ "$before" = "$(snapshot "$SB8")" ] && ok "소켓 보관본이 라이브와 다르면 LIVE-NEWER 로 중단·무변경" || ko "소켓 live-diff" "rc=$rc"
+rm -rf "${SB8:?}"
+# 첫 설치(보관본 없음): 새로 복사하는 경로에서도 --reload-launchd 는 slackpoll 만 적재
+SB8B=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox8b.XXXXXX")
+mkdir -p "$SB8B/.config/claude-config" "$SB8B/fakebin"
+cp "$SB/.config/claude-config/values.env" "$SB8B/.config/claude-config/values.env"
+printf '#!/bin/sh\necho "$*" >> "%s/launchctl.log"\n' "$SB8B" > "$SB8B/fakebin/launchctl"; chmod +x "$SB8B/fakebin/launchctl"
+if [ "$(PATH="$SB8B/fakebin:$PATH" command -v launchctl)" = "$SB8B/fakebin/launchctl" ]; then
+  out=$(PATH="$SB8B/fakebin:$PATH" HOME="$SB8B" env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF "$INSTALL" --reload-launchd 2>&1); rc=$?
+  [ "$rc" = 0 ] && [ -f "$SB8B/.config/lrm-hubs/ai.lrm.slacksocket.plist" ] && grep -q 'bootstrap .*ai.lrm.slackpoll.plist' "$SB8B/launchctl.log" 2>/dev/null && ! grep -q slacksocket "$SB8B/launchctl.log" && ! echo "$out" | grep -q '재적재.*slacksocket' && ok "첫 설치 --reload-launchd: 소켓 보관본은 새로 깔리되 slackpoll 만 적재" || ko "첫 설치 소켓 launchd" "rc=$rc $(tr '\n' ' ' < "$SB8B/launchctl.log" 2>/dev/null)"
+else
+  printf 'SKIP  첫 설치 소켓 launchd 시험 — 가짜 launchctl 이 PATH 에서 우선하지 않음\n'
+fi
+rm -rf "${SB8B:?}"
+# 수신기 연결 실패: traceback 없이 한 줄 로그·종료 코드 2. slack_sdk 는 가짜 모듈로 대체(네트워크 없음)
+SB8C=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox8c.XXXXXX")
+mkdir -p "$SB8C/stub/slack_sdk/socket_mode" "$SB8C/hub"
+: > "$SB8C/stub/slack_sdk/__init__.py"
+printf 'class SocketModeClient:\n    def __init__(self, app_token): self.socket_mode_request_listeners = []\n    def connect(self): raise ConnectionError("FAKE_DETAIL")\n' > "$SB8C/stub/slack_sdk/socket_mode/__init__.py"
+
+printf 'class SocketModeRequest: pass\n' > "$SB8C/stub/slack_sdk/socket_mode/request.py"
+printf 'class SocketModeResponse:\n    def __init__(self, envelope_id): pass\n' > "$SB8C/stub/slack_sdk/socket_mode/response.py"
+printf 'SLACK_APP_TOKEN=xapp-%s\nSLACK_BOT_TOKEN=bot-%s\n' "1-FAKE" "FAKE" > "$SB8C/hub/slack-bot.env"
+out=$(PYTHONPATH="$SB8C/stub" LRM_HUB_DIR="$SB8C/hub" python3 "$REPO/hubs/scripts/slack_socket.py" 2>&1); rc=$?
+[ "$rc" = 2 ] && echo "$out" | grep -q 'ConnectionError' && ! echo "$out" | grep -q 'Traceback' && ! echo "$out" | grep -q 'FAKE_DETAIL' && ok "수신기 연결 실패: 종료 코드 2·한 줄 로그(예외 타입만)·traceback 없음" || ko "수신기 연결 실패" "rc=$rc $(echo "$out" | head -2 | tr '\n' ' ')"
+rm -rf "${SB8C:?}"
+grep -q slacksocket "$REPO/install.sh" && ko "install.sh 소켓 언급" "설치기가 slacksocket 을 직접 다룸" || ok "install.sh 에 slacksocket 전용 처리 없음"
 
 # ---- 6f. 값 파일 공백만 있는 값 ----------------------------------------------
 SB6=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox6.XXXXXX")
