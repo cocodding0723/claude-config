@@ -35,7 +35,9 @@ run_n() { # 인자를 slack_notify.sh 에 그대로 전달. 결과: RC, $SB/out,
   HOME="$HOME_DIR" PATH="$BIN:$PATH" SLACK_API_BASE="$API" FAKE_CURL_LOG="$LOG" bash "$NOTIFY" "$@" > "$SB/out" 2> "$SB/err"
   RC=$?
 }
-text() { jq -r '.text // .initial_comment // empty' "$LOG/post.json" 2>/dev/null; }
+# 본문 조회. 색 띠 본문(attachments[0].text)이 있으면 그것을, 첫 줄 자동 굵게(*…*)는 풀어서 반환. 없으면 text·initial_comment
+text() { jq -r '(.attachments[0].text // .text // .initial_comment // empty) | sub("^\\*(?<a>[^*\n]+)\\*(?<b>\n|$)"; "\(.a)\(.b)")' "$LOG/post.json" 2>/dev/null; }
+payload() { jq -r "$1" "$LOG/post.json" 2>/dev/null; }
 posted() { [ -s "$LOG/post.json" ]; }
 nocall() { [ ! -s "$LOG/calls.log" ]; }
 errn() { grep -c . "$SB/err" || true; }
@@ -571,6 +573,46 @@ run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0402 "$CBODY"
 # '참고:' 줄 뒤에 다른 줄이 더 있으면 결정 번호 줄은 그 뒤(메시지 맨 끝)
 run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0403 $'주제\n\n• 왜: 배경\n\n참고: 샘플-1\n\n추가 설명 줄'
 [ "$RC" = 0 ] && [ "$(text | tail -n 2)" = $'추가 설명 줄\n결정 D-0403' ] && ok "H '참고:' 뒤 추가 줄이 있으면 결정 번호 줄은 메시지 맨 끝(문서 규칙)" || ko "H 참고 뒤 줄" "$(text)"
+
+# ---- I. 색 띠(attachment)·제목 굵게 ------------------------------------------------------------
+newhome i
+for spec in "decide|#F2994A" "todo|#F2994A" "warn|#EB5757" "progress|#2F80ED" "done|#27AE60" "doc|#27AE60"; do
+  k=${spec%%|*}; c=${spec#*|}
+  run_n --kind "$k" $'주제\n\n• 무엇: 본문'"$ANS"
+  [ "$RC" = 0 ] && [ "$(payload '.attachments | length')" = 1 ] && [ "$(payload '.attachments[0].color')" = "$c" ] \
+    && [ "$(payload '.attachments[0].mrkdwn_in | index("text")')" = 0 ] && ok "I --kind $k → 색 띠 $c, mrkdwn 본문" || ko "I 색 $k" "rc=$RC $(cat "$SB/err") $(cat "$SB/out")"
+done
+run_n --kind done $'알림 시각 통일\n\n• 결과: 완료'
+[ "$(payload '.attachments[0].text | split("\n")[0]')" = "*:white_check_mark: 알림 시각 통일*" ] && ok "I 첫 줄(종류 이모지 포함)이 *굵게*" || ko "I 제목 굵게" "$(payload '.attachments[0].text')"
+[ "$(payload '.attachments[0].text | split("\n")[2]')" = "• 결과: 완료" ] && ok "I 둘째 줄 이후 본문은 그대로" || ko "I 본문 불변" "$(payload '.attachments[0].text')"
+[ "$(payload '.text')" = ":white_check_mark: 알림 시각 통일" ] && [ "$(payload '.attachments[0].fallback')" = ":white_check_mark: 알림 시각 통일" ] && ok "I 알림 미리보기 text·fallback 에 제목(별표 없이)" || ko "I fallback" "$(cat "$LOG/post.json")"
+run_n --kind done $'✅ *열린 PR*\n\n• 무엇: 확인'
+[ "$(payload '.attachments[0].text | split("\n")[0]')" = ":white_check_mark: *열린 PR*" ] && [ "$(payload '.text')" = ":white_check_mark: 열린 PR" ] && ok "I 첫 줄이 이미 굵으면 중복 굵게 없음, 미리보기엔 별표 제거" || ko "I 중복 굵게" "$(cat "$LOG/post.json")"
+run_n --kind done $'주제\n\n• 무엇: *핵심* 하나'
+[ "$RC" = 0 ] && [ "$(errn)" = 0 ] && ok "I 제목 줄은 굵게 검사 제외(자동 굵게 + 본문 굵게 1곳 → 경고 없음)" || ko "I 굵게 제외" "$(cat "$SB/err")"
+run_n --kind done $'*주제*\n\n• 무엇: *핵심* 하나'
+[ "$(errn)" = 0 ] && ok "I 제목에 직접 쓴 굵게도 검사 제외" || ko "I 제목 직접 굵게" "$(cat "$SB/err")"
+run_n --kind done $'주제\n\n• 무엇: *하나* 와 *둘*'
+grep -q '^경고: 굵게가 2곳' "$SB/err" && ok "I 본문 굵게 2곳은 여전히 경고" || ko "I 본문 굵게 2곳" "$(cat "$SB/err")"
+run_n --kind warn --thread 1700000000.000001 $'스레드\n\n• 무엇: 답글'
+[ "$(payload '.thread_ts')" = 1700000000.000001 ] && [ "$(payload '.attachments | length')" = 1 ] && ok "I 스레드 답글도 thread_ts 유지 + 색 띠" || ko "I 스레드" "$(cat "$LOG/post.json")"
+run_n --kind decide --choices 3 $'알림 시각\n\n• 왜: 배경'
+[ "$(payload '.attachments[0].text | contains("👉 답: :비서-a: A")')" = true ] && ok "I --choices 안내 줄이 색 띠 본문 안에 있음" || ko "I choices" "$(cat "$LOG/post.json")"
+run_n --kind decide --options "1=가 안,2=나 안" --recommend 1 --decision-id D-0900 $'주제\n\n• 왜: 배경'
+[ "$(payload '.attachments[0].text | contains(":one: 가 안") and contains("결정 D-0900")')" = true ] && [ "$(lastrec | jq -r '.decision_id')" = D-0900 ] && ok "I --options 카드: 선택지·결정 번호가 색 띠 본문에, 기록의 decision_id 유지" || ko "I options" "$(cat "$LOG/post.json")"
+run_n --kind done "끝"
+r=$(lastrec)
+[ "$(printf '%s' "$r" | jq -r '.ts')" = 1700000000.000100 ] && [ "$(printf '%s' "$r" | jq -r '.channel')" = Dfake ] && [ "$(printf '%s' "$r" | jq -r '.title')" = ":white_check_mark: 끝" ] \
+  && ok "I sent 기록에 ts·channel 유지, title 에 별표 없음" || ko "I sent 기록" "$r"
+run_n "종류 없는 호출"
+[ "$(payload 'keys | join(",")')" = "channel,text" ] && [ "$(payload '.text')" = "종류 없는 호출" ] && ok "I --kind 없는 호출은 페이로드 불변(attachments 없음, 굵게 없음)" || ko "I 종류 없음" "$(cat "$LOG/post.json")"
+printf '<html></html>' > "$SB/doc.html"
+run_n --kind doc $'문서\n\n• 무엇: 첨부' "$SB/doc.html"
+[ "$RC" = 0 ] && [ "$(payload 'has("attachments")')" = false ] && [ "$(payload '.initial_comment | split("\n")[0]')" = ":비서-공유합니다: 문서" ] && [ "$(lastrec | jq -r '.file_id')" = Ffake1 ] \
+  && ok "I 파일 첨부는 기존 경로 그대로(색 띠 없음, file_id 기록)" || ko "I 파일 첨부" "rc=$RC $(cat "$LOG/post.json") $(cat "$SB/err")"
+# 색 값은 스크립트 한 곳에만 둠
+n=$(grep -c '#F2994A\|#EB5757\|#2F80ED\|#27AE60' "$NOTIFY")
+[ "$n" = 4 ] && ok "I 색 값은 스크립트의 KIND_COLOR 한 곳(4줄)에만 있음" || ko "I 색 값 위치" "$n"
 
 # ---- Z. 토큰·실제 접속 ----------------------------------------------------------------------
 leak=$(grep -rlF -- "$FAKE_TOKEN" "$SB" 2>/dev/null | grep -v '/slack-bot\.env$' || true)
