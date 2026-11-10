@@ -61,6 +61,16 @@ HANDLE_LOG = 13                                       # 로그에 남기는 핸�
 PANE = os.environ.get("LRM_PUSH_PANE", "MAIN")        # 보조 조건. show 에 paneTitle 이 있고 이 값과 다르면 보류, 키가 없으면 통과. "" 이면 대조 생략
 ORCA = os.environ.get("LRM_PUSH_ORCA", "orca")
 AGENT = "claude"
+NOTIFY = os.environ.get("LRM_PUSH_NOTIFY") or os.path.join(SELF_DIR, "slack_notify.sh")
+ALERT = os.path.join(DIR, ".slack-push-alert.json")  # '메인 연결 끊김' 알림을 보낸 사유 목록. 연결이 확인되면 지움
+# 메인 핸들이 없거나 다른 터미널을 가리키는 사유. 사람이 main.env 를 고쳐야 풀리므로 알림 대상(화면 상태·조회 실패는 제외)
+LINK_LOST = frozenset({"no_main_handle", "handle_gone", "handle_dead", "not_writable", "wrong_worktree", "not_claude", "pane_title_mismatch"})
+ALERT_TEXT = "\n".join([
+    "메인 연결 끊김",
+    "",
+    "• 무엇: Slack 메시지를 메인 세션에 넘기지 못하고 모아 두는 중이다 (사유: {reason})",
+    "• 할 일: 메인 세션의 새 핸들로 main.env 의 MAIN_TERMINAL 줄을 고친다",
+])
 MSG_TYPES = ("note", "command", "thread_reply")       # 전달 대상. reaction 은 전달하지 않고 읽음 표식이 넘지 못하게 막음
 NO_LABEL = "새 메모"
 FAKE_PREFIX = "[Slack→메인]"
@@ -447,6 +457,59 @@ def find_target():
     return (None, why, short) if why else (handle, None, short)
 
 
+def alert_state():
+    try:
+        with open(ALERT, encoding="utf-8") as f:
+            s = json.load(f)
+        return s if isinstance(s, dict) and isinstance(s.get("reasons"), list) else {"reasons": []}
+    except (OSError, ValueError):
+        return None
+
+
+def alert_save(s):
+    tmp = ALERT + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(s, f)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, ALERT)
+
+
+def alert(reason):
+    """'메인 연결 끊김' 경고를 사유마다 한 번만 보냄. 보낸 사유는 상태 파일(600)에 남겨 연결이 확인될 때까지 다시 보내지 않음.
+    알림 실패는 전달·수집을 막지 않음(로그만). 본문에 핸들 값·메시지 내용은 넣지 않음"""
+    s = alert_state() or {"reasons": []}
+    if reason in s["reasons"]:
+        return
+    s["reasons"].append(reason)
+    s["at"] = int(time.time())
+    try:
+        alert_save(s)  # 보내기 전에 기록. 알림이 실패해도 30초마다 다시 보내 Slack 을 채우지 않게 함
+    except OSError:
+        log("alert", reason=reason, result="state_fail")
+        return
+    try:
+        p = subprocess.run(["/bin/bash", NOTIFY, "--kind", "warn", "--tag", "slack-push", "--title", "메인 연결 끊김", ALERT_TEXT.format(reason=reason)],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+        result = "ok" if p.returncode == 0 else f"fail_rc{p.returncode}"
+    except subprocess.TimeoutExpired:
+        result = "timeout"
+    except OSError:
+        result = "fail"
+    log("alert", reason=reason, result=result)
+
+
+def alert_clear():
+    """메인 연결이 확인되면 알림 상태를 지워 다음 끊김 때 다시 알림"""
+    if alert_state() is None:
+        return
+    try:
+        os.remove(ALERT)
+        log("link_ok")
+    except OSError:
+        pass
+
+
 def find_key(d, keys):
     if isinstance(d, dict):
         for k, v in d.items():
@@ -618,6 +681,10 @@ def attempt(state, lines, mark, now):
         state["push_pending"] = None
         return "sent"
     handle, why, short = find_target()
+    if why in LINK_LOST:
+        alert(why)
+    elif why != "show_fail":  # 핸들이 메인 세션임을 확인함(화면 상태 보류 포함). 조회 실패는 판단 보류
+        alert_clear()
     if why:
         hold(pp, why, now + HOLD_RETRY, span, handle=short)
         return "hold"

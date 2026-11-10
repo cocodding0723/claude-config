@@ -17,6 +17,9 @@ usage() {
 보류 사유(로그 "hold reason=… handle=<앞 13자>", 다음 회차에 확인부터 재시도): no_main_handle 핸들 지정 없음·형식 무효, handle_gone 핸들 없음(show 오류),
       handle_dead 끊김·고아, not_writable 쓰기 불가, wrong_worktree 메인 체크아웃 아님, not_claude claude 세션 아님, pane_title_mismatch 제목 불일치,
       show_fail show 시간 초과·응답 불명, empty_preview 화면 비어 있음, dialog 권한·선택 메뉴, draft 입력 칸에 쓰던 글·셸 모드, no_idle_marker strict 에서 입력 대기 표식 없음
+연결 끊김 알림: no_main_handle·handle_gone·handle_dead·not_writable·wrong_worktree·not_claude·pane_title_mismatch 로 보류하면 slack_notify.sh --kind warn 으로
+      '메인 연결 끊김'을 사유마다 1회 보냄(핸들 값·메시지 본문 없음). 보낸 사유는 ~/.config/lrm-hubs/.slack-push-alert.json(600)에 남겨 다시 보내지 않고,
+      핸들이 메인 세션으로 확인되면(화면 상태 보류 포함) 지움(로그 link_ok). 알림 실패는 로그 "alert … result=…" 만 남기고 전달·수집을 막지 않음
 자동 재시도 없는 보류(사람이 확인): unknown_delivery 도착 여부 불명(deliveryOutcome unknown·영수증 모양 불명·모호한 시도 뒤 main.env 핸들 바뀜), unsubmitted 입력은 받았으나
       턴 시작(제출) 미확인. 둘 다 읽음 표식·전달 기록을 올리지 않고 재전송하지 않음. 메인 터미널에서 도착 여부를 보고 푼다:
       도착했으면 .main-read-lines 를 그 묶음의 마지막 줄 번호(상태 파일 push_pending.last) 이상으로 올림 → 보류분 폐기. 도착하지 않았으면 slack-push-state.json 을 다른 이름으로 옮김 → 표식·전달 기록 이후 줄을 다시 전달
@@ -34,7 +37,7 @@ usage() {
       첫 배포는 이 파일을 만들어 꺼 둔 채 시작하고, 실측 1~5 후 삭제함
 환경 변수: LRM_PUSH=off 끔(기본 켜짐), LRM_HUB_DIR 작업 폴더, LRM_PUSH_QUIET 조용 대기 초(기본 20), LRM_PUSH_MAX 최대 대기 초(기본 60),
            LRM_PUSH_MAIN 메인 체크아웃 경로(기본 ~/orca/LoveRevolutionMaker), LRM_PUSH_PANE 보조 제목(기본 MAIN, "" 이면 대조 생략),
-           LRM_MAIN_ENV 핸들 설정 파일 경로(기본 작업 폴더의 main.env), LRM_PUSH_HANDLE 핸들 직접 지정(시험용, main.env 보다 우선),
+           LRM_MAIN_ENV 핸들 설정 파일 경로(기본 작업 폴더의 main.env), LRM_PUSH_HANDLE 핸들 직접 지정(시험용, main.env 보다 우선), LRM_PUSH_NOTIFY 알림 스크립트(시험용, 기본 같은 폴더 slack_notify.sh),
            LRM_PUSH_IDLE_CHECK strict|relaxed(기본 strict), LRM_PUSH_WAIT 전송 뒤 제출 관찰 초(기본 10, 바쁜 메인이면 늘림),
            LRM_PUSH_ORCA orca 실행 파일(기본 orca), LRM_PUSH_TICK 대기 중 확인 간격 초(기본 1),
            LRM_PUSH_RETRY 전송 실패 백오프 시작 초(기본 10, 3배씩), LRM_PUSH_TRIES 백오프 횟수(기본 5), LRM_PUSH_HOLD 그 뒤 재시도 간격 초(기본 600),

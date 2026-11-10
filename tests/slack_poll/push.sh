@@ -16,6 +16,14 @@ SRV=""
 trap '[ -n "$SRV" ] && { kill "$SRV"; wait "$SRV"; } 2>/dev/null; rm -rf "${SB:?}"' EXIT
 FB="$SB/bin"; mkdir -p "$FB"
 cp "$HERE/fake_orca.sh" "$FB/orca"; chmod 755 "$FB/orca"
+cat > "$FB/notify" <<'EOF'
+#!/bin/bash
+# 가짜 slack_notify.sh(실제 전송 없음). 호출마다 인자를 한 줄로 기록, 종료 코드는 notify.rc
+printf '%s' "$*" | tr '\n' ' ' >> "$FAKE_ORCA_DIR/notify.log"; echo >> "$FAKE_ORCA_DIR/notify.log"
+exit "$(cat "$FAKE_ORCA_DIR/notify.rc" 2>/dev/null || echo 0)"
+EOF
+chmod 755 "$FB/notify"
+export LRM_PUSH_NOTIFY="$FB/notify"  # '메인 연결 끊김' 알림이 실제 slack_notify.sh 로 가지 않게 함
 export PATH="$FB:$PATH"
 MAIN="$SB/main-checkout"                 # 가짜 메인 체크아웃 경로(문자열로만 쓰임)
 export FAKE_MAIN="$MAIN" LRM_PUSH_MAIN="$MAIN" LRM_PUSH_REPOLL=off
@@ -50,6 +58,7 @@ idle_wait() { # 분리 워커가 모두 끝날 때까지(최대 30초)
 }
 fmt_bad() { python3 -I "$HERE/push_check.py" "$1" "${2:-}"; }
 UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+nnot() { [ -f "$FO/notify.log" ] && wc -l < "$FO/notify.log" | tr -d ' ' || echo 0; }
 rids() { awk -F'\t' '{print $4}' "$FO/sends.log" | sort -u | wc -l | tr -d ' '; }  # 전송에 쓴 서로 다른 요청 ID 수
 
 # ---- ⓐ 20초(축소 2초) 안에 연속 3건 → 전달 1회 --------------------------------------------------
@@ -99,6 +108,8 @@ hold_case() { # 이름 show.mode 사유 [환경 변수 한 개 NAME=값]
   [ "$(nsend)" = 0 ] && [ "$(st .push_pending.reason)" = "$3" ] && [ "$(plog hold)" = 1 ] && [ "$(hcnt show)" -ge 2 ] && [ "$(st .pushed_lines)" = 0 ] && [ -z "$(mk)" ] \
     && grep -q "push hold reason=$3 .*handle=${HD:0:13}$" "$H/slack-push.log" && ! grep -qF "$HD" "$H/slack-push.log" \
     && ok "ⓓ show.mode=$2 → 전달 0·보류 사유=$3·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변" || ko "ⓓ $2" "sends=$(nsend) $(st .push_pending) log=$(plog hold) mark=$(mk)"
+  local want=1; case "$3" in dialog|show_fail|draft|empty_preview|no_idle_marker) want=0 ;; esac
+  [ "$(nnot)" = "$want" ] && ok "ⓓ $3 → '메인 연결 끊김' 알림 ${want}회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)" || ko "ⓓ $3 알림" "notify=$(nnot)"
 }
 hold_case D1 gone handle_gone
 hold_case D1b notfound handle_gone
@@ -123,7 +134,7 @@ noh_case() { # 이름 main.env 내용(- 이면 파일 없음) 설명
   addmsg note 1310.000001 "핸들 없음"
   LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
   [ "$(nsend)" = 0 ] && [ "$(st .push_pending.reason)" = no_main_handle ] && [ ! -e "$FO/calls.log" ] && grep -q 'push hold reason=no_main_handle .*handle=none$' "$H/slack-push.log" && [ -z "$(mk)" ] \
-    && ok "ⓓ $3 → 보류(no_main_handle)·orca 호출 0·읽음 표식 불변" || ko "ⓓ $3" "sends=$(nsend) $(st .push_pending.reason) $(cat "$FO/calls.log" 2>/dev/null)"
+    && [ "$(nnot)" = 1 ] && ok "ⓓ $3 → 보류(no_main_handle)·orca 호출 0·읽음 표식 불변·알림 1회" || ko "ⓓ $3" "sends=$(nsend) $(st .push_pending.reason) notify=$(nnot) $(cat "$FO/calls.log" 2>/dev/null)"
 }
 noh_case N1 - "main.env 없음"
 newhub N0; addmsg note 1310.000009 "개행 핸들"  # 끝 개행 붙은 값은 무효(정규식 $ 는 개행을 통과시킴)
@@ -150,6 +161,32 @@ newhub Q2; echo pane_main > "$FO/show.mode"; addmsg note 1320.000001 "제목 일
 newhub Q3; echo pane_other > "$FO/show.mode"; addmsg note 1320.000002 "대조 생략"; LRM_PUSH_PANE= LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
 [ "$(nsend)" = 1 ] && ok "ⓓ LRM_PUSH_PANE=\"\" 이면 제목 대조 생략(paneTitle=OTHER 도 전달)" || ko "ⓓ 대조 생략" "sends=$(nsend)"
 hold_case Q4 pane_main pane_title_mismatch LRM_PUSH_PANE=OTHER
+
+# ---- '메인 연결 끊김' 알림: 같은 사유는 연결이 확인될 때까지 1회, 확인되면 초기화. 알림 실패는 전달을 막지 않음 ----------
+newhub A1; mv "$H/main.env" "$H/main.env.off"; addmsg note 1330.000001 "알림 본문 비밀"
+for _ in 1 2 3; do LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W; done; bash "$PUSH" --kick; idle_wait
+[ "$(nnot)" = 1 ] && [ "$(grep -c ' push alert reason=no_main_handle result=ok$' "$H/slack-push.log")" = 1 ] && [ "$(jq -c .reasons "$H/.slack-push-alert.json")" = '["no_main_handle"]' ] \
+  && ok "알림: 워커를 여러 번 돌리고 --kick 해도 같은 사유 알림은 1회(상태 파일에 기록)" || ko "알림 1회" "notify=$(nnot) $(cat "$H/slack-push.log" 2>/dev/null)"
+[ "$(stat -f %Lp "$H/.slack-push-alert.json")" = 600 ] && ok "알림: 상태 파일 권한 600" || ko "알림 권한" "$(stat -f %Lp "$H/.slack-push-alert.json")"
+n1=$(head -1 "$FO/notify.log")
+case "$n1" in --kind\ warn\ *) k=1 ;; *) k=0 ;; esac
+[ "$k" = 1 ] && printf '%s' "$n1" | grep -q '메인 연결 끊김' && printf '%s' "$n1" | grep -q 'MAIN_TERMINAL' && ! printf '%s' "$n1" | grep -q 'term_\|알림 본문 비밀' \
+  && ok "알림: slack_notify.sh --kind warn, 무엇이 안 됐나·할 일(main.env 의 MAIN_TERMINAL) 포함, 핸들 값·메시지 본문 없음" || ko "알림 본문" "$n1"
+printf 'MAIN_TERMINAL=%s\n' "$HD" > "$H/main.env"; echo dialog > "$FO/show.mode"; LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W
+[ "$(nsend)" = 0 ] && [ ! -e "$H/.slack-push-alert.json" ] && [ "$(plog link_ok)" = 1 ] && [ "$(nnot)" = 1 ] && ok "알림: 핸들이 메인 세션으로 확인되면(화면은 대화상자라 보류) 알림 상태 초기화·로그 link_ok" || ko "알림 초기화" "sends=$(nsend) notify=$(nnot)"
+echo ok > "$FO/show.mode"; LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W
+[ "$(nsend)" = 1 ] && [ "$(plog link_ok)" = 1 ] && ok "알림: 복구 뒤 보류분 전달, 상태가 없으면 link_ok 를 다시 남기지 않음" || ko "알림 복구 전달" "sends=$(nsend) link_ok=$(plog link_ok)"
+echo gone > "$FO/show.mode"; addmsg note 1330.000002 "다시 끊김"; for _ in 1 2; do LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W; done
+[ "$(nnot)" = 2 ] && grep -q 'push alert reason=handle_gone result=ok$' "$H/slack-push.log" && ok "알림: 복구 뒤 다시 끊기면 재알림 1회" || ko "재알림" "notify=$(nnot)"
+echo dead > "$FO/show.mode"; for _ in 1 2; do LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W; done
+[ "$(nnot)" = 3 ] && [ "$(jq -c .reasons "$H/.slack-push-alert.json")" = '["handle_gone","handle_dead"]' ] && ok "알림: 끊긴 동안 사유가 바뀌면 새 사유만 1회 더" || ko "사유 변경" "notify=$(nnot)"
+newhub A2; echo gone > "$FO/show.mode"; echo 1 > "$FO/notify.rc"; addmsg note 1330.000003 "알림 실패"; LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W
+[ "$(nnot)" = 1 ] && grep -q 'push alert reason=handle_gone result=fail_rc1$' "$H/slack-push.log" && [ "$(st .push_pending.reason)" = handle_gone ] && ok "알림 실패(종료 코드 1): 로그만 남기고 보류 유지" || ko "알림 실패" "$(cat "$H/slack-push.log")"
+LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W; echo ok > "$FO/show.mode"; LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W
+[ "$(nnot)" = 1 ] && [ "$(nsend)" = 1 ] && ok "알림 실패 뒤에도 같은 사유로 다시 보내지 않고, 복구되면 정상 전달" || ko "알림 실패 뒤" "notify=$(nnot) sends=$(nsend)"
+newhub A3; echo gone > "$FO/show.mode"; addmsg note 1330.000004 "알림 도구 없음"; LRM_PUSH_NOTIFY="$SB/A3/none.sh" LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W
+echo ok > "$FO/show.mode"; LRM_PUSH_NOTIFY="$SB/A3/none.sh" LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W
+grep -q 'push alert reason=handle_gone result=fail_rc127$' "$H/slack-push.log" && [ "$(nsend)" = 1 ] && ok "알림 도구가 없어도(종료 코드 127) 전달 흐름 불변" || ko "알림 도구 없음" "sends=$(nsend) $(cat "$H/slack-push.log")"
 
 # 결함 4·5: 화면(preview) 판별은 fail-closed. 입력 대기(빈 입력 줄)가 보일 때만 전송, 비었거나 대화상자·쓰던 글이면 보류
 screen_case() { # 이름 preview 기대(sent|사유 코드) [환경 변수]
