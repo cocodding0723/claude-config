@@ -69,7 +69,7 @@ ALERT_TEXT = "\n".join([
     "메인 연결 끊김",
     "",
     "• 무엇: Slack 메시지를 메인 세션에 넘기지 못하고 모아 두는 중이다 (사유: {reason})",
-    "• 할 일: 메인 세션의 새 핸들로 main.env 의 MAIN_TERMINAL 줄을 고친다",
+    "• 할 일: 메인 세션에서 set_main_terminal.sh <새 핸들> 로 main.env 의 MAIN_TERMINAL 을 고친다",
 ])
 MSG_TYPES = ("note", "command", "thread_reply")       # 전달 대상. reaction 은 전달하지 않고 읽음 표식이 넘지 못하게 막음
 NO_LABEL = "새 메모"

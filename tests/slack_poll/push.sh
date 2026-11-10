@@ -6,7 +6,7 @@ set -uo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 SCRIPTS=${PUSH_SCRIPTS:-$HERE/../../hubs/scripts}
-PUSH="$SCRIPTS/slack_push.sh" POLL="$SCRIPTS/slack_poll.sh"
+PUSH="$SCRIPTS/slack_push.sh" POLL="$SCRIPTS/slack_poll.sh" SETMAIN="$SCRIPTS/set_main_terminal.sh"
 PASS=0 FAIL=0
 ok() { PASS=$((PASS + 1)); printf 'PASS  %s\n' "$1"; }
 ko() { FAIL=$((FAIL + 1)); printf 'FAIL  %s — %s\n' "$1" "${2:-}"; }
@@ -395,6 +395,39 @@ for _ in $(seq 1 40); do [ -d "$H/.slack-push.lock" ] || break; sleep 0.25; done
 [ "$(grep -c '^chat.postMessage' "$CL")" = 1 ] && [ "$(grep -c '^POST:chat.update' "$CL")" = 1 ] && python3 -I "$HERE/ack_calls.py" "$CL" update | jq -e '.text == "📨 메인에 전달했어요 (1건)" and .channel == "Dfake"' >/dev/null && ok "통합: 확인 답장(집계 중) → 전달 후 같은 답장을 chat.update 로 '📨 메인에 전달했어요 (1건)' 갱신(1회)" || ko "통합 갱신" "$(cat "$CL" | cut -c1-80)"
 LRM_ACK=off LRM_PUSH_REPOLL=off bash "$POLL" --once --json >/dev/null; sleep 0.8
 [ "$(nsend)" = 1 ] && ok "ⓜ 폴러 다음 회차(2분 뒤 가정): 새 항목 없음 → 재전달 0" || ko "ⓜ 다음 회차" "sends=$(nsend)"
+
+# ---- 갱신 도구 set_main_terminal.sh: MAIN_TERMINAL 줄만 추가·교체, 다른 줄 보존, 권한 600, 값 비출력 ------------------
+SM="$SB/setmain"; mkdir -p "$SM/a" "$SM/b" "$SM/c"
+out=$(LRM_MAIN_ENV="$SM/a/main.env" bash "$SETMAIN" "$HD" 2>&1); rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$SM/a/main.env")" = "MAIN_TERMINAL=$HD" ] && [ "$(stat -f %Lp "$SM/a/main.env")" = 600 ] && ! printf '%s' "$out" | grep -q 'term_' \
+  && ok "set_main_terminal: 파일이 없으면 MAIN_TERMINAL 한 줄로 만들고 권한 600, 출력에 핸들 값 없음" || ko "set_main 추가" "rc=$rc out=$out"
+printf 'PROJECT_NAME="fake-proj-v1"\nMAIN_TERMINAL=%s\nHUB_ROOT="$HOME/x"\nFOO=1' "$HD" > "$SM/b/main.env"; chmod 644 "$SM/b/main.env"
+out=$(LRM_MAIN_ENV="$SM/b/main.env" bash "$SETMAIN" "$HD2" 2>&1); rc=$?
+want=$(printf 'PROJECT_NAME="fake-proj-v1"\nHUB_ROOT="$HOME/x"\nFOO=1\nMAIN_TERMINAL=%s' "$HD2")
+[ "$rc" = 0 ] && [ "$(cat "$SM/b/main.env")" = "$want" ] && [ "$(stat -f %Lp "$SM/b/main.env")" = 600 ] && ! printf '%s' "$out" | grep -q 'term_\|fake-proj' \
+  && ok "set_main_terminal: 기존 MAIN_TERMINAL 줄 교체(1줄만 남음), 다른 줄은 순서대로 보존(끝 줄바꿈 없어도), 권한 644→600, 다른 값·핸들 비출력" || ko "set_main 교체" "rc=$rc $(cat "$SM/b/main.env" | tr '\n' '|')"
+[ "$(ls -A "$SM/b")" = main.env ] && ok "set_main_terminal: 임시 파일 남지 않음" || ko "set_main 임시" "$(ls -A "$SM/b")"
+cp "$SM/b/main.env" "$SM/b.before"
+bad=0; for v in "term_XYZ" "term_00;x" "" "x term_00" "term_00 term_11"; do
+  LRM_MAIN_ENV="$SM/b/main.env" bash "$SETMAIN" $v >/dev/null 2>&1; [ $? = 2 ] || bad=1
+done
+LRM_MAIN_ENV="$SM/b/main.env" bash "$SETMAIN" "term_ab" "term_cd" >/dev/null 2>&1; [ $? = 2 ] || bad=1
+[ "$bad" = 0 ] && cmp -s "$SM/b/main.env" "$SM/b.before" && [ "$(ls -A "$SM/b")" = main.env ] && ok "set_main_terminal: 형식 오류·인자 수 오류는 종료 코드 2, 파일 불변" || ko "set_main 형식" "bad=$bad"
+LRM_MAIN_ENV="$SM/c/main.env" bash "$SETMAIN" --help | grep -q '^사용: set_main_terminal.sh <핸들>' && [ ! -e "$SM/c/main.env" ] && ok "set_main_terminal: --help 는 파일을 만들지 않음" || ko "set_main help" ""
+newhub SM1; LRM_MAIN_ENV="$H/main.env" bash "$SETMAIN" "$HD2" >/dev/null; addmsg note 2000.000001 "갱신 뒤"; LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
+[ "$(nsend)" = 1 ] && [ "$(awk -F'\t' '{print $3}' "$FO/sends.log")" = "$HD2" ] && ok "set_main_terminal 로 바꾼 핸들로 push 전달" || ko "set_main 연동" "sends=$(nsend)"
+
+# 링크: main.env 가 심볼릭 링크면 링크는 보존하고 최종 대상을 교체(mv 가 링크를 일반 파일로 바꾸던 결함)
+mkdir -p "$SM/l"; printf 'KEEP=1\nMAIN_TERMINAL=%s\nTAIL=2\n' "$HD" > "$SM/l/real.env"; ln -s real.env "$SM/l/main.env"
+out=$(LRM_MAIN_ENV="$SM/l/main.env" bash "$SETMAIN" "$HD2" 2>&1); rc=$?
+want=$(printf 'KEEP=1\nTAIL=2\nMAIN_TERMINAL=%s' "$HD2")
+[ "$rc" = 0 ] && [ -L "$SM/l/main.env" ] && [ "$(readlink "$SM/l/main.env")" = real.env ] && [ "$(cat "$SM/l/real.env")" = "$want" ] && [ "$(stat -f %Lp "$SM/l/real.env")" = 600 ] && [ "$(ls -A "$SM/l" | tr '\n' ' ')" = "main.env real.env " ] \
+  && ok "set_main_terminal: main.env 가 심볼릭 링크면 링크 보존·대상 내용 갱신·다른 줄 보존·임시 파일 없음" || ko "set_main 링크" "rc=$rc link=$([ -L "$SM/l/main.env" ] && echo y || echo n) $(tr '\n' '|' < "$SM/l/real.env") $(ls -A "$SM/l" | tr '\n' ' ')"
+# CRLF: 교체한 줄만 LF, 다른 줄은 원형(CRLF) 보존
+mkdir -p "$SM/r"; printf 'A=1\r\nMAIN_TERMINAL=%s\r\nB=2\r\n' "$HD" > "$SM/r/main.env"
+LRM_MAIN_ENV="$SM/r/main.env" bash "$SETMAIN" "$HD2" >/dev/null 2>&1; rc=$?
+[ "$rc" = 0 ] && cmp -s "$SM/r/main.env" <(printf 'A=1\r\nB=2\r\nMAIN_TERMINAL=%s\n' "$HD2") \
+  && ok "set_main_terminal: CRLF 파일은 교체한 줄만 LF, 다른 줄은 CRLF 그대로 보존" || ko "set_main CRLF" "rc=$rc $(od -c "$SM/r/main.env" | head -3 | tr '\n' '|')"
 
 printf '\n%d PASS, %d FAIL\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
