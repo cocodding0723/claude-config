@@ -34,21 +34,46 @@ terms = [
 for i, t in enumerate(terms[:3]):
     t["worktreeId"] = f"wt_{i}"
 json.dump({"ok": True, "result": {"terminals": terms}}, open(os.path.join(fake, "terms.json"), "w"), ensure_ascii=False)
+json.dump({"ok": True, "result": {"terminals": terms, "totalCount": 99, "truncated": True}},
+          open(os.path.join(fake, "terms_alt.json"), "w"), ensure_ascii=False)
 
-workers = [
-    {"taskId": "task_live", "runId": "run_a", "workerState": "ready", "projection": {"liveness": {"verdict": "live"}}, "resource": {}},
-    {"taskId": "task_1", "runId": "run_a", "workerState": "succeeded", "projection": {"liveness": {"verdict": "exited"}},
-     "resource": {"releaseCompletedAt": "2026-11-10 05:04:08"}},
-    {"taskId": "task_2", "runId": "run_b", "dispatchId": "ctx_left", "workerState": "failed", "terminalState": "retained",
-     "projection": {"liveness": {"verdict": "exited"}},
-     "resource": {"releaseCompletedAt": None}},
-    {"taskId": "task_3", "runId": "run_a", "workerState": "stopped", "projection": {"liveness": {"verdict": "exited"}}, "resource": None},
-]
-json.dump({"ok": True, "result": {"workers": workers}}, open(os.path.join(fake, "workers.json"), "w"))
+
+def page(rows, cursor, alt=None):
+    """실제 worker-list 모양: 최신이 앞, page.hasMore·nextCursor, counts(터미널 상태별 전체 총계, 첫 쪽부터 같은 값)"""
+    pg = {"limit": 100, "total": 5, "hasMore": cursor is not None, **({"nextCursor": cursor} if cursor else {})}
+    return {"ok": True, "result": {"workers": rows, "page": pg, "scope": {"source": "all"},
+                                   "counts": {"active": 1, "retained": 1, "reclaimable": 1, "released": 3}, "warnings": []}}
+
+
+# 3쪽. 종료 뒤 남은 터미널(ctx_left·ctx_aband)이 둘째·셋째 쪽에만 있어 첫 쪽만 세면 0 이 됨. ctx_t1 은 쪽 사이 겹침(한 번만 셈)
+W1 = {"taskId": "task_1", "runId": "run_a", "dispatchId": "ctx_t1", "workerState": "succeeded", "terminalState": "released",
+      "projection": {"liveness": {"verdict": "exited"}}, "resource": {"releaseCompletedAt": "2026-11-10 05:04:08"}}
+pages = {
+    "workers": page([
+        {"taskId": "task_live", "runId": "run_a", "dispatchId": "ctx_live", "workerState": "ready", "terminalState": "active",
+         "projection": {"liveness": {"verdict": "live"}}, "resource": {}},
+        W1], "c2"),
+    "workers_c2": page([
+        W1,
+        {"taskId": "task_2", "runId": "run_b", "dispatchId": "ctx_left", "workerState": "failed", "terminalState": "retained",
+         "projection": {"liveness": {"verdict": "exited"}}, "resource": {"releaseCompletedAt": None}}], "c3"),
+    "workers_c3": page([
+        {"taskId": "task_3", "runId": "run_a", "dispatchId": "ctx_t3", "workerState": "stopped", "terminalState": "released",
+         "projection": {"liveness": {"verdict": "exited"}}, "resource": None},
+        {"taskId": "task_4", "runId": "run_c", "dispatchId": "ctx_aband", "workerState": "abandoned", "terminalState": "reclaimable",
+         "projection": {"liveness": {"verdict": "exited"}}, "resource": {}}], None),
+}
+# 끝나지 않는 커서(셋째 쪽 뒤로 빈 쪽이 끝없이 이어짐, fake_orca.sh 의 loopN) → 쪽 수 상한에서 멈춰야 함
+pages["workers_c3_alt"] = page(pages["workers_c3"]["result"]["workers"], "loop1")
+for name, body in pages.items():
+    json.dump(body, open(os.path.join(fake, name + ".json"), "w"))
 tasks = [{"id": "task_1", "status": "completed", "title": "수집기 만들기 " + "가" * 60},
          {"id": "task_2", "status": "failed", "title": "설치 정리"},
-         {"id": "task_3", "status": "blocked", "title": "문서"}]
+         {"id": "task_3", "status": "blocked", "title": "문서"},
+         {"id": "task_4", "status": "failed", "title": "버려진 작업"}]
 json.dump({"ok": True, "result": {"tasks": tasks, "runId": "run_a"}}, open(os.path.join(fake, "tasks.json"), "w"), ensure_ascii=False)
+# 예상 밖 모양(tasks 가 숫자) → 수집기 안에서 TypeError. 그 원료만 실패해야 함
+json.dump({"ok": True, "result": {"tasks": 5}}, open(os.path.join(fake, "tasks_alt.json"), "w"))
 
 prs = [{"number": 1, "title": f"{mark}-gh", "statusCheckRollup": [{"conclusion": "SUCCESS"}]},
        {"number": 2, "statusCheckRollup": [{"conclusion": "SUCCESS"}, {"conclusion": "FAILURE"}]},

@@ -9,6 +9,7 @@ import calendar
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -39,13 +40,16 @@ RECENT_RUNS = 3                  # 최근 기록 제목을 얻으려고 task-lis
 DECISION_ID_RE = re.compile(r"D-[0-9A-Za-z]{1,16}", re.ASCII)
 ANSWER_ACTIONS = ("pick", "approve", "hold")
 LOG_MAX = 1 << 20
-CONF_KEYS = ("PANEL_GH_REPOS", "PANEL_GH_INTERVAL", "PANEL_HUB_ROOT", "PANEL_RECENT", "PANEL_DISK_MIN_GB", "PANEL_WS_DIR", "PANEL_DU_INTERVAL")
+CONF_KEYS = ("PANEL_GH_REPOS", "PANEL_GH_INTERVAL", "PANEL_HUB_ROOT", "PANEL_RECENT", "PANEL_DISK_MIN_GB", "PANEL_WS_DIR",
+             "PANEL_DU_INTERVAL", "PANEL_DU_TIMEOUT")
 # 쉬는 자원 칸. 목록·숫자만 만들고 정리(삭제·종료)는 사람이 함
 IDLE_LIST_MAX = 20
-ENDED = ("succeeded", "failed", "stopped")
+ENDED = ("succeeded", "failed", "stopped", "abandoned")
 LEFT_TERMINAL = frozenset({"active", "retained", "reclaimable", "release_pending", "release_unknown"})  # 종료 뒤에도 터미널이 남은 상태
-GIT_TIMEOUT, DF_TIMEOUT, DU_TIMEOUT = 5, 10, 120
-WORKTREE_LIMIT = "1000"          # 기본 200개에서 잘림(실측 226개)
+GIT_TIMEOUT, DF_TIMEOUT = 5, 10
+LIST_LIMIT = "1000"              # terminal·worktree list 기본 개수에서 잘림(실측 워크스페이스 226개)
+# worker-list 는 한 쪽 최대 100건, 최신이 앞(실측 2034건). nextCursor 로 끝까지 넘기되 쪽 수·시간에 상한(실측 21쪽 4.4초)
+WORKER_PAGE, WORKER_PAGES_MAX, WORKER_BUDGET = "100", 60, 40
 
 # 허브 화면 분류. preview 는 Orca 가 주는 화면 끝 300자 안팎이라 위쪽 질문은 못 봄
 SCREEN_TAIL = 8
@@ -89,8 +93,9 @@ def usage():
         "  PANEL_GH_REPOS 공백·쉼표로 구분한 owner/repo 목록(비면 gh 건너뜀), PANEL_GH_INTERVAL gh 간격 초(기본 300, 60~86400)",
         "  PANEL_HUB_ROOT 허브 폴더 상위 경로(비면 폴더 이름 coord-* 만 봄), PANEL_RECENT 최근 기록 건수(기본 5, 1~20)",
         "  PANEL_DISK_MIN_GB 홈 볼륨 여유 경고 기준(기본 50), PANEL_WS_DIR 크기를 잴 워크스페이스 폴더(기본 ~/orca/workspaces),",
-        "  PANEL_DU_INTERVAL 폴더 크기 측정 간격 초(기본 1800, 300~86400)",
-        "쉬는 자원(idle): 워커 상태별 건수·종료 뒤 남은 터미널, 터미널 없는 워크스페이스(최대 20개), 디스크 여유. 목록만 만들고 정리하지 않음",
+        "  PANEL_DU_INTERVAL 폴더 크기 측정 간격 초(기본 1800, 300~86400), PANEL_DU_TIMEOUT 측정 시간 상한 초(기본 120, 1~600)",
+        "쉬는 자원(idle): 워커 상태별 건수·종료 뒤 남은 터미널(worker-list 전 쪽), 터미널 없는 워크스페이스(최대 20개), 디스크 여유.",
+        "  목록만 만들고 정리하지 않음",
         "환경 변수: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs), PANEL_ORCA·PANEL_GH·PANEL_GIT·PANEL_DF·PANEL_DU 실행 파일(시험용)",
         "출력: 작업 폴더의 panel-auto.json. 원료마다 ok·err·at(마지막 성공)·tried·stale·value. 실패한 원료는 이전 값 유지 + stale:true",
         "로그: 작업 폴더의 panel-collect.log(원료별 결과 코드만)",
@@ -165,28 +170,42 @@ class Fetch:
         self.memo = {}
 
     def __call__(self, *args):
-        if args not in self.memo:
+        return self.once(args, lambda: orca(*args))
+
+    def once(self, key, fn):
+        """key 별 결과(또는 SourceError)를 회차 안에서 재사용"""
+        if key not in self.memo:
             try:
-                self.memo[args] = (True, orca(*args))
+                self.memo[key] = (True, fn())
             except SourceError as e:
-                self.memo[args] = (False, e)
-        ok, v = self.memo[args]
+                self.memo[key] = (False, e)
+        ok, v = self.memo[key]
         if not ok:
             raise v
         return v
 
 
 def run_text(argv, timeout):
-    """명령 표준출력 문자열. 실패는 SourceError(종류만)"""
+    """명령 표준출력 문자열. 실패는 SourceError(종류만).
+    시간 초과면 새 세션으로 띄운 프로세스 묶음 전체를 끝냄(du 같은 느린 명령과 그 자식이 남지 않게)"""
     try:
-        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        raise SourceError("timeout")
+        p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                             text=True, start_new_session=True)
     except OSError:
         raise SourceError("missing")
+    try:
+        out, _ = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        p.stdout.close()  # 묶음 밖으로 빠진 손자가 출력 관을 쥐고 있어도 기다리지 않음
+        p.wait()
+        raise SourceError("timeout")
     if p.returncode != 0:
         raise SourceError("exit")
-    return p.stdout
+    return out
 
 
 # ---- 원료: 허브 상태 ---------------------------------------------------------------------------
@@ -216,11 +235,20 @@ def hub_name(base):
     return re.sub(r"(-hub)+$", "", re.sub(r"^(coord-)+", "", base)) or base
 
 
+def terminal_list(get):
+    return get("terminal", "list", "--limit", LIST_LIMIT)
+
+
 def terminals(get):
-    terms = get("terminal", "list").get("terminals")
+    terms = terminal_list(get).get("terminals")
     if not isinstance(terms, list):
         raise SourceError("parse")
     return [t for t in terms if isinstance(t, dict)]
+
+
+def terminals_truncated(get):
+    """Orca 가 터미널 목록을 잘랐는지. 잘리면 허브가 빠지고 터미널 없는 워크스페이스가 과대 집계됨"""
+    return bool(terminal_list(get).get("truncated"))
 
 
 def collect_hubs(conf, now, get):
@@ -257,7 +285,7 @@ def collect_hubs(conf, now, get):
         r["dup"] = seen[r["hub"]] > 1
     rows.sort(key=lambda r: (r["name"], r["quietMin"] if r["quietMin"] is not None else 1 << 30))
     counts = {k: sum(1 for r in rows if r["state"] == k) for k in ("busy", "approval", "idle", "unknown")}
-    return {"rows": rows, "counts": counts}
+    return {"rows": rows, "counts": counts, "truncated": terminals_truncated(get)}
 
 
 # ---- 원료: 결정 대기 ---------------------------------------------------------------------------
@@ -365,11 +393,42 @@ def utc_epoch(text):
         return None
 
 
+def worker_pages(get):
+    """worker-list 전 쪽. 한 쪽은 최신 100건뿐이라 nextCursor 로 넘김. 쪽 수·시간 상한에 걸리면 거기까지만(complete:false).
+    중간 쪽 실패는 원료 실패(부분 숫자를 맞는 값처럼 보이지 않게). 쪽 사이에 새 Dispatch 가 끼면 겹친 행은 dispatchId 로 한 번만"""
+    def fetch():
+        rows, seen, cursor, start = [], set(), None, time.monotonic()
+        total = counts = None
+        for n in range(WORKER_PAGES_MAX):
+            res = get("orchestration", "worker-list", "--full", "--limit", WORKER_PAGE, *(("--cursor", cursor) if cursor else ()))
+            ws, page = res.get("workers"), res.get("page")
+            if not isinstance(ws, list):
+                raise SourceError("parse")
+            page = page if isinstance(page, dict) else {}
+            if n == 0:
+                total = page.get("total") if isinstance(page.get("total"), int) else None
+                c = res.get("counts")
+                counts = {str(k)[:24]: v for k, v in c.items() if isinstance(v, int)} if isinstance(c, dict) else None
+            for w in ws:
+                if not isinstance(w, dict):
+                    continue
+                key = w.get("dispatchId")
+                if isinstance(key, str) and key:
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                rows.append(w)
+            cursor = page.get("nextCursor")
+            if not page.get("hasMore") or not isinstance(cursor, str) or not cursor:
+                return {"rows": rows, "complete": True, "pages": n + 1, "total": total, "counts": counts}
+            if time.monotonic() - start > WORKER_BUDGET:
+                break
+        return {"rows": rows, "complete": False, "pages": n + 1, "total": total, "counts": counts}
+    return get.once(("worker-pages",), fetch)
+
+
 def workers_raw(get):
-    ws = get("orchestration", "worker-list", "--full").get("workers")
-    if not isinstance(ws, list):
-        raise SourceError("parse")
-    return [w for w in ws if isinstance(w, dict)]
+    return worker_pages(get)["rows"]
 
 
 def task_titles(get, runs):
@@ -412,8 +471,10 @@ def tilde(path):
 
 
 def idle_workers(get):
-    ws = workers_raw(get)
-    counts = {"live": 0, "succeeded": 0, "failed": 0, "stopped": 0}
+    """워커 상태별 건수·종료 뒤 남은 터미널. 숫자는 worker-list 전 쪽 기준. terminalStates 는 Orca 가 준 터미널 상태별 총계(그대로)"""
+    pages = worker_pages(get)
+    ws = pages["rows"]
+    counts = {"live": 0, **{k: 0 for k in ENDED}}
     left = []
     for w in ws:
         proj = w.get("projection") if isinstance(w.get("projection"), dict) else {}
@@ -428,7 +489,8 @@ def idle_workers(get):
     titles = task_titles(get, [str(w.get("runId") or "") for w in left[:IDLE_LIST_MAX]])
     items = [{"dispatch": str(w.get("dispatchId") or "")[:24], "title": titles.get(str(w.get("taskId") or "")),
               "status": str(w.get("workerState")), "terminal": str(w.get("terminalState"))} for w in left[:IDLE_LIST_MAX]]
-    return {**counts, "leftover": len(left), "items": items, "more": max(0, len(left) - IDLE_LIST_MAX)}
+    return {**counts, "leftover": len(left), "items": items, "more": max(0, len(left) - IDLE_LIST_MAX),
+            "seen": len(ws), "total": pages["total"], "complete": pages["complete"], "terminalStates": pages["counts"]}
 
 
 def merged(path, base):
@@ -455,7 +517,7 @@ def last_active(w):
 def idle_workspaces(get, now):
     """Orca 워크스페이스 중 열린 터미널이 0개인 것. 오래 쉰 것부터 최대 20개"""
     used = {str(t.get("worktreeId")) for t in terminals(get) if t.get("worktreeId")}
-    res = get("worktree", "list", "--limit", WORKTREE_LIMIT)
+    res = get("worktree", "list", "--limit", LIST_LIMIT)
     rows = res.get("worktrees")
     if not isinstance(rows, list):
         raise SourceError("parse")
@@ -474,7 +536,7 @@ def idle_workspaces(get, now):
             "merged": merged(path, str(w.get("baseRef") or "")) if path else None,
         })
     return {"total": len(rows), "noTerminal": len(quiet), "items": items, "more": max(0, len(quiet) - IDLE_LIST_MAX),
-            "truncated": bool(res.get("truncated"))}
+            "truncated": bool(res.get("truncated")) or terminals_truncated(get)}
 
 
 def idle_disk(conf):
@@ -489,11 +551,13 @@ def idle_disk(conf):
 
 
 def idle_wssize(conf, prev, now, mark):
-    """워크스페이스 폴더 크기. du 는 느려 PANEL_DU_INTERVAL 마다만 재고, 실패·간격 안이면 직전 값"""
+    """워크스페이스 폴더 크기. du 는 느려 PANEL_DU_INTERVAL 마다만 재고 PANEL_DU_TIMEOUT 초에서 끊음.
+    표식은 du 전에 갱신(시간 초과가 나도 다음 측정은 간격 뒤). 실패하면 직전 값 + err(timeout|exit|missing|parse), 간격 안이면 직전 값 그대로"""
     interval = conf_int(conf, "PANEL_DU_INTERVAL", 1800, 300, 86400)
+    limit = conf_int(conf, "PANEL_DU_TIMEOUT", 120, 1, 600)
     folder = os.path.expanduser(conf.get("PANEL_WS_DIR") or "~/orca/workspaces")
     old = prev if isinstance(prev, dict) else {"gb": None, "at": None}
-    old = {**old, "dir": tilde(folder)}
+    old = {"err": None, **old, "dir": tilde(folder)}
     try:
         due = now - os.path.getmtime(DU_STAMP) >= interval
     except OSError:
@@ -502,10 +566,12 @@ def idle_wssize(conf, prev, now, mark):
         return old
     touch(DU_STAMP)
     try:
-        kb = run_text([os.environ.get("PANEL_DU", "du"), "-sk", folder], DU_TIMEOUT).split()[0]
-        return {"gb": round(int(kb) / 1024 / 1024, 1), "at": now, "dir": tilde(folder)}
-    except (SourceError, IndexError, ValueError):
-        return old
+        kb = run_text([os.environ.get("PANEL_DU", "du"), "-sk", folder], limit).split()[0]
+        return {"gb": round(int(kb) / 1024 / 1024, 1), "at": now, "dir": tilde(folder), "err": None, "tried": now}
+    except SourceError as e:
+        return {**old, "err": e.code, "tried": now}
+    except (IndexError, ValueError):
+        return {**old, "err": "parse", "tried": now}
 
 
 def collect_idle(conf, get, prev, now, mark):
@@ -522,11 +588,8 @@ def collect_idle(conf, get, prev, now, mark):
     for name, fn in parts:
         try:
             value[name] = fn()
-        except SourceError as e:
-            errs.append(f"{name}:{e.code}")
-            value[name] = old_val.get(name)
-        except ValueError:
-            errs.append(f"{name}:config")
+        except Exception as e:  # noqa: BLE001 — 부분 하나의 예상 밖 오류가 다른 부분·원료를 막지 않게 함
+            errs.append(f"{name}:{error_code(e)}")
             value[name] = old_val.get(name)
     value["wsSize"] = idle_wssize(conf, old_val.get("wsSize"), now, mark)
     if errs:
@@ -664,6 +727,9 @@ def summary(data, gh, prev_state):
             parts.append(f"gh={gh}")
         else:
             parts.append(f"{k}=ok" if v.get("ok") else f"{k}=fail:{v.get('err')}")
+    ws = ((data["sources"].get("idle") or {}).get("value") or {}).get("wsSize")
+    if isinstance(ws, dict) and ws.get("err") and ws.get("tried") == data["updatedAt"]:  # 이번 회차에 잰 것만
+        parts.append(f"du={ws['err']}")
     if prev_state == "corrupt":
         parts.append("prev=corrupt")
     return " ".join(parts)
@@ -712,6 +778,7 @@ def main(argv):
         conf_int(conf, "PANEL_RECENT", 5, 1, 20)
         conf_int(conf, "PANEL_DISK_MIN_GB", 50, 1, 100000)
         conf_int(conf, "PANEL_DU_INTERVAL", 1800, 300, 86400)
+        conf_int(conf, "PANEL_DU_TIMEOUT", 120, 1, 600)
     except ValueError as e:
         print(f"설정 오류: {e}", file=sys.stderr)
         return 2

@@ -107,6 +107,11 @@ fi
 [ "$(q '.sources.workers.value.recent[0].at')" = "$(python3 -I -c 'import calendar,time; print(calendar.timegm(time.strptime("2026-11-10 05:04:08","%Y-%m-%d %H:%M:%S")))')" ] && [ "$(q '.sources.workers.value.recent[0].title | length')" -le 40 ] && [ "$(q '.sources.workers.value.recent[1].title')" = "설치 정리" ] && ok "작업 제목(task-list, 40자)·종료 시각(UTC→epoch)" || ko "worker 제목·시각" "$(q '.sources.workers.value.recent[0]')"
 colenv "FAKE_ORCA_FAIL=tasks" --print
 [ "$(jq -r '.sources.workers.ok' "$SB/out")" = true ] && [ "$(jq -r '.sources.workers.value.recent[0].title' "$SB/out")" = null ] && [ "$(jq -r '.sources.workers.value.recent[0].status' "$SB/out")" = succeeded ] && ok "task-list 실패 → 제목만 빠지고 상태 유지" || ko "task-list 실패" ""
+# 예상 밖 JSON 모양(tasks 가 숫자) → 그 원료만 실패(오류 종류만), 다른 원료·파일 쓰기는 그대로
+colenv "FAKE_ORCA_ALT=tasks" --print
+[ "$RC" = 0 ] && [ "$(jq -r '.sources.workers.ok' "$SB/out")" = false ] && [ "$(jq -r '.sources.workers.err' "$SB/out")" = "internal:TypeError" ] \
+  && [ "$(jq -r '.sources.hubs.ok' "$SB/out")" = true ] && [ "$(jq -r '.sources.idle.err' "$SB/out")" = "workers:internal:TypeError" ] \
+  && ok "예상 밖 모양 → 그 원료(부분)만 internal:<예외 이름>, 다른 원료 정상" || ko "예상 밖 모양" "rc=$RC $(jq -c '[.sources.workers.err, .sources.idle.err]' "$SB/out" 2>/dev/null)"
 
 # ---- 6. gh: 끔·간격·실패 -------------------------------------------------------------------------
 [ "$(q '.sources.gh.off')" = true ] && [ "$(ghn)" = 0 ] && ok "PANEL_GH_REPOS 없음 → gh 안 부름(off)" || ko "gh off" "calls=$(ghn)"
@@ -194,7 +199,20 @@ colenv "PANEL_RECENT=3" --print
 col --once
 iv() { q ".sources.idle.value | $1"; }
 [ "$(q '.sources.idle.ok')" = true ] && [ "$(iv '.terminals | "\(.total) \(.agents)"')" = "12 11" ] && ok "쉬는 자원: 터미널 총 12·에이전트 11(terminal list 재사용)" || ko "idle 터미널" "$(q '.sources.idle|del(.value)')"
-[ "$(iv '.workers | "\(.live) \(.succeeded) \(.failed) \(.stopped) \(.leftover)"')" = "1 1 1 1 1" ] && [ "$(iv '.workers.items[0] | "\(.dispatch) \(.title) \(.terminal)"')" = "ctx_left 설치 정리 retained" ] && ok "워커 상태별 건수·종료 뒤 남은 터미널 1건(dispatch·제목·터미널 상태만)" || ko "idle 워커" "$(iv '.workers')"
+[ "$(iv '.workers | "\(.live) \(.succeeded) \(.failed) \(.stopped) \(.abandoned) \(.leftover)"')" = "1 1 1 1 1 2" ] && [ "$(iv '.workers.items | map("\(.dispatch) \(.title) \(.terminal)") | join(",")')" = "ctx_left 설치 정리 retained,ctx_aband 버려진 작업 reclaimable" ] && ok "워커 상태별 건수·종료 뒤 남은 터미널 2건(3쪽 전부, 쪽 사이 겹친 행 1번, abandoned 포함)" || ko "idle 워커" "$(iv '.workers|del(.terminalStates)')"
+[ "$(iv '.workers | "\(.seen) \(.total) \(.complete) \(.terminalStates.retained) \(.terminalStates.reclaimable)"')" = "5 5 true 1 1" ] && [ "$(grep -c 'worker-list' "$FAKE/orca.calls")" -ge 3 ] \
+  && ok "worker-list: nextCursor 로 끝 쪽까지, page.total·Orca counts(터미널 상태별 총계) 실음" || ko "worker 쪽 넘기기" "$(iv '.workers|del(.items)')"
+n_wl=$(grep -c 'worker-list' "$FAKE/orca.calls")
+colenv "FAKE_ORCA_ALT=workers_c3" --print
+n_wl=$(($(grep -c 'worker-list' "$FAKE/orca.calls") - n_wl))
+[ "$(jq -r '.sources.idle.value.workers.complete' "$SB/out")" = false ] && [ "$(jq -r '.sources.idle.ok' "$SB/out")" = true ] && [ "$(jq -r '.sources.idle.value.workers.seen' "$SB/out")" = 5 ] && [ "$n_wl" = 60 ] \
+  && ok "끝나지 않는 커서 → 쪽 수 상한(60쪽)에서 멈춤, complete:false" || ko "쪽 수 상한" "쪽=$n_wl $(jq -c '.sources.idle.value.workers|del(.items)' "$SB/out")"
+colenv "FAKE_ORCA_FAIL=workers_c2" --print
+[ "$(jq -r '.sources.workers.ok' "$SB/out")" = false ] && [ "$(jq -r '.sources.idle.err' "$SB/out")" = "workers:exit" ] \
+  && ok "중간 쪽 실패 → 워커 숫자는 실패 처리(부분 숫자를 맞는 값처럼 싣지 않음)" || ko "중간 쪽 실패" "$(jq -c '[.sources.workers.err,.sources.idle.err]' "$SB/out")"
+colenv "FAKE_ORCA_ALT=terms" --print
+[ "$(jq -r '.sources.hubs.value.truncated' "$SB/out")" = true ] && [ "$(jq -r '.sources.idle.value.workspaces.truncated' "$SB/out")" = true ] && [ "$(q '.sources.hubs.value.truncated')" = false ] \
+  && ok "terminal list 가 잘리면 허브·워크스페이스 truncated:true" || ko "terminal 잘림" "$(jq -c '[.sources.hubs.value.truncated,.sources.idle.value.workspaces.truncated]' "$SB/out")"
 [ "$(iv '.workspaces | "\(.total) \(.noTerminal) \(.items | length) \(.more)"')" = "25 22 20 2" ] && ok "터미널 없는 워크스페이스 22/25, 목록 20개 + 외 2개(메인 제외)" || ko "idle 워크스페이스" "$(iv '.workspaces|del(.items)')"
 [ "$(iv '.workspaces.items[0].name')" = ws-03 ] && [ "$(iv '.workspaces.items[-1].name')" != ws-05 ] && [ "$(iv '[.workspaces.items[].path | startswith("~/ws/")] | all')" = true ] && ok "오래 쉰 것부터, 경로는 ~ 표기, 활동 시각 0 은 만든 시각·없으면 뒤로" || ko "idle 정렬·경로" "$(iv '[.workspaces.items[].name]|join(",")')"
 [ "$(iv '.workspaces.items[0].merged')" = true ] && [ "$(iv '.workspaces.items[] | select(.name=="ws-04") | .merged')" = null ] && [ "$(iv '.workspaces.items[] | select(.name=="ws-06") | .merged')" = false ] && [ "$(iv '.workspaces.items[0].branch')" = feat/w3 ] && ok "병합 여부(git merge-base)·기준 없으면 null·브랜치 이름" || ko "idle 병합" ""
@@ -212,13 +230,35 @@ colenv "PANEL_WS_DIR=$FHOME/ws" --print
 [ ! -f "$FAKE/du.calls" ] && ok "--print 는 폴더 크기(du)를 재지 않음" || ko "--print du" ""
 colenv "PANEL_WS_DIR=$FHOME/ws" --once
 colenv "PANEL_WS_DIR=$FHOME/ws" --once
-[ "$(wc -l < "$FAKE/du.calls" | tr -d ' ')" = 1 ] && [ "$(iv '.wsSize.gb == 2')" = true ] && [ "$(iv '.wsSize.dir')" = "~/ws" ] && ok "폴더 크기: 30분 간격으로 du 1회, 값 유지" || ko "du 간격" "calls=$(cat "$FAKE/du.calls" 2>/dev/null | wc -l)"
-# 정리는 사람이 한다: 수집기에 삭제·종료 명령이 들어가면 실패
-if grep -nE '"rm"|\brm -|worktree.{0,4}(rm|remove|delete)|terminal.{0,4}close|worker-stop|orchestration.{0,4}stop|rmtree|"(close|stop|kill|remove)"' "$SCRIPTS/panel_collect.py" "$SCRIPTS/panel_collect.sh" >/dev/null; then
-  ko "삭제 문자열" "$(grep -nE '"rm"|\brm -|worktree.{0,4}(rm|remove|delete)|terminal.{0,4}close|worker-stop|orchestration.{0,4}stop|rmtree|"(close|stop|kill|remove)"' "$SCRIPTS/panel_collect.py" "$SCRIPTS/panel_collect.sh" | head -2 | cut -c1-80)"
+[ "$(wc -l < "$FAKE/du.calls" | tr -d ' ')" = 1 ] && [ "$(iv '.wsSize.gb == 2')" = true ] && [ "$(iv '.wsSize.dir')" = "~/ws" ] && [ "$(iv '.wsSize.err')" = null ] && ok "폴더 크기: 30분 간격으로 du 1회, 값 유지" || ko "du 간격" "calls=$(cat "$FAKE/du.calls" 2>/dev/null | wc -l)"
+# du 가 시간 상한을 넘김: 자식까지 끝내고 직전 값 유지 + err:timeout, 간격 표식은 갱신(다음 측정은 30분 뒤)
+WS_AT=$(iv '.wsSize.at'); touch -t 202601010000 "$H/.panel-du.stamp"; t0=$(date +%s)
+colenv "PANEL_WS_DIR=$FHOME/ws PANEL_DU_TIMEOUT=1 FAKE_DU_SLEEP=20" --once
+el=$(($(date +%s) - t0)); child=$(cat "$FAKE/du.child" 2>/dev/null || echo 0)
+if [ "$child" != 0 ] && kill -0 "$child" 2>/dev/null; then alive=1; kill "$child" 2>/dev/null; else alive=0; fi
+[ "$el" -lt 10 ] && [ "$alive" = 0 ] && [ "$(iv '.wsSize.err')" = timeout ] && [ "$(iv '.wsSize.gb == 2')" = true ] && [ "$(iv '.wsSize.at')" = "$WS_AT" ] \
+  && [ "$(q '.sources.idle.ok')" = true ] && tail -1 "$LOG" | grep -q 'du=timeout' \
+  && ok "du 시간 초과 → ${el}초 안에 자식까지 정리, 직전 값 유지 + err:timeout, 로그 du=timeout" || ko "du 시간 초과" "${el}초 자식생존=$alive $(iv '.wsSize|tojson')"
+n_du=$(wc -l < "$FAKE/du.calls" | tr -d ' ')
+colenv "PANEL_WS_DIR=$FHOME/ws PANEL_DU_TIMEOUT=1 FAKE_DU_SLEEP=20" --once
+[ "$(wc -l < "$FAKE/du.calls" | tr -d ' ')" = "$n_du" ] && [ "$(iv '.wsSize.err')" = timeout ] && ! tail -1 "$LOG" | grep -q 'du=' \
+  && ok "시간 초과 뒤에도 30분 간격 유지(바로 다시 재지 않음), 표시는 남고 로그는 잰 회차만" || ko "du 시간 초과 뒤 간격" "calls=$(wc -l < "$FAKE/du.calls")"
+colenv "PANEL_DU_TIMEOUT=0" --once; [ "$RC" = 2 ] && ok "PANEL_DU_TIMEOUT 범위 밖 → 종료 2" || ko "du 상한 범위" "rc=$RC"
+# 정리는 사람이 한다: 수집기에 삭제·종료 명령이 들어가면 실패(문자열 + 구문 트리 + 실제로 부른 명령)
+DEL_RE='"rm"|\brm -|worktree.{0,4}(rm|remove|delete|prune)|terminal.{0,4}close|worker-stop|orchestration.{0,4}stop|rmtree|branch.{0,4}-[dD]\b|"(close|stop|kill|remove|unlink|prune)"'
+if grep -nE "$DEL_RE" "$SCRIPTS/panel_collect.py" "$SCRIPTS/panel_collect.sh" >/dev/null; then
+  ko "삭제 문자열" "$(grep -nE "$DEL_RE" "$SCRIPTS/panel_collect.py" "$SCRIPTS/panel_collect.sh" | head -2 | cut -c1-80)"
 else
-  ok "수집기에 rm·worktree rm·terminal close·worker-stop 같은 삭제·종료 명령 없음"
+  ok "수집기에 rm·worktree rm·terminal close·worker-stop·branch -D 같은 삭제·종료 문자열 없음"
 fi
+r=$(python3 -I "$HERE/no_delete_check.py" "$SCRIPTS/panel_collect.py" 2>&1)
+[ "$r" = ok ] && ok "구문 트리: os.remove·os.kill·unlink 등은 임시 파일·잠금·로그 회전·시간 초과 자식 정리 자리에만" || ko "삭제 호출" "$r"
+bad_calls=$( { sed 's/ tok=.*//' "$FAKE/orca.calls" | grep -vE '^(terminal list|orchestration (worker-list|task-list)|worktree list)( |$)'
+  grep -vE '^merge-base --is-ancestor HEAD ' "$FAKE/git.calls" 2>/dev/null
+  grep -vE '^pr list ' "$FAKE/gh.calls" 2>/dev/null
+  grep -vE '^-sk ' "$FAKE/du.calls" 2>/dev/null
+  grep -vE '^-k <path>$' "$FAKE/df.calls" 2>/dev/null; } | head -3)
+[ -z "$bad_calls" ] && [ -s "$FAKE/git.calls" ] && [ -s "$FAKE/df.calls" ] && ok "이번 시험에서 부른 orca·git·gh·du·df 명령은 읽기 명령뿐" || ko "부른 명령" "$(echo "$bad_calls" | cut -c1-60 | tr '\n' ' ')"
 
 # ---- 12. mod 순수 함수(합치기·오래됨 판정) — node 내장 러너 ------------------------------------------
 if command -v node >/dev/null && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 23 ? 0 : 1)'; then
