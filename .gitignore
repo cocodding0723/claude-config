@@ -50,3 +50,6 @@ skills/synced/
 .pending-last
 .main-read-lines
 todo.md
+
+# 의존성 설치물
+node_modules/
