@@ -41,7 +41,7 @@ description: Orca 메인 코디네이터를 운영한다 — 허브 순찰, 허�
 | 허브 간 요청·겹침 | 메인이 담당·순서 결정 후 양쪽에 통보 |
 | 출력 60분 이상 정지 | 허브에 상태 질의 1회 → 응답 없으면 사용자에게 재시작 제안 |
 
-변화가 있을 때마다 옆 패널 데이터(`PANEL_JSON`)를 갱신한다.
+옆 패널의 허브 상태·결정 대기·최근 기록·PR 수는 수집기(launchd `ai.lrm.panelcollect`)가 90초마다 `panel-auto.json` 에 쓴다. 메인은 `PANEL_JSON` 의 손 칸(`headline`·`approvals`·`todos`·`history`)만, 결정 카드를 보내거나 답을 받을 때 고친다. `panel-auto.json` 은 쓰지 않는다. 패널 맨 위 ⚠️ 는 수집기가 멈췄다는 뜻이다(`$HUB_SCRIPTS/docs/panel.md`).
 
 ## 3. 허브 관리
 

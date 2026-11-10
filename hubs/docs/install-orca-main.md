@@ -18,6 +18,7 @@
 | 폴러 | launchd 서비스 `ai.lrm.slackpoll`. 2분마다 Slack DM 을 모아 메인에 넘긴다 |
 | Socket Mode 수신기 | launchd 서비스 `ai.lrm.slacksocket`. 메시지가 오면 폴러를 바로 돌린다. 연결이 끊기면 스스로 다시 연결한다. 설치만 하고 켜지 않는다 |
 | 옆 패널 | Claude Code mod `lrm-board`. `panel.json` 을 15초마다 읽어 승인·할 일·허브 상태를 보여 준다 |
+| 패널 수집기 | launchd 서비스 `ai.lrm.panelcollect`. 90초마다 허브 상태·결정 대기·최근 기록·쉬는 자원·PR 수를 `panel-auto.json` 에 쓰고, 옆 패널이 `panel.json` 과 함께 읽어 그린다. 자세한 것은 `hubs/docs/panel.md` |
 
 설치기가 까는 것(전부 `links.tsv` 에 있다):
 
@@ -29,7 +30,8 @@
 | pick_host.sh | `skills/orca-hub-create/scripts` | `~/.claude/skills/orca-hub-create/scripts` | 링크 |
 | Slack 폴러 plist | `hubs/launchd/ai.lrm.slackpoll.plist` | `~/Library/LaunchAgents` | 복사(`__HOME__` 치환) |
 | Socket Mode 수신기·plist | `hubs/scripts/slack_socket.py`, `hubs/launchd/ai.lrm.slacksocket.plist` | `~/.config/lrm-hubs` (LaunchAgents 아님) | 복사(`__HOME__`·`__PYTHON3__` 치환) |
-| 옆 패널 mod | `hubs/mods/lrm-board` | `~/.config/lrm-hubs/mods/lrm-board` | 복사(`__HOME__` 치환) |
+| 옆 패널 mod | `hubs/mods/lrm-board` | `~/.claude/skills/lrm-board` (사용자 전역 mod 위치) | 복사(`__HOME__` 치환) |
+| 패널 수집기·plist | `hubs/scripts/panel_collect.{sh,py}`, `hubs/launchd/ai.lrm.panelcollect.plist` | `~/.config/lrm-hubs`, `~/Library/LaunchAgents` | 링크, plist 는 복사(`__HOME__` 치환) |
 
 ## 1. 설치 순서
 
@@ -56,10 +58,12 @@
    chmod 600 ~/.config/lrm-hubs/main.env
    ```
    `main.env` 는 열어서 `HUB_ROOT` 같은 경로를 이 맥에 맞춘다. 토큰은 `main.env` 에 넣지 않는다.
-7. **Slack 폴러 켜기.** 이것만 켠다.
+7. **Slack 폴러·패널 수집기 켜기.** 둘 다 읽기·수집만 한다.
    ```sh
    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.lrm.slackpoll.plist
+   launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.lrm.panelcollect.plist
    ```
+   PR·CI 수를 보려면 `~/.config/lrm-hubs/panel.env.example` 을 `panel.env` 로 복사해 `PANEL_GH_REPOS=owner/repo` 를 채운다(비우면 gh 를 부르지 않는다).
 8. **Orca·메인 시작.** Orca 앱을 열고(`orca open`, `orca status` 로 확인) 메인 체크아웃(기본 `~/orca/LoveRevolutionMaker`) 터미널에서 Claude Code 를 띄워 `/orca-main` 을 실행한다. 메인 터미널 핸들을 한 번 기록한다.
    ```sh
    ~/.config/lrm-hubs/set_main_terminal.sh <orca terminal list --json 의 메인 핸들>
@@ -68,7 +72,8 @@
    - `./install.sh --check` → `점검 통과: 문제 없음`
    - `./install.sh --doctor` → `요약: 필수 누락 0`
    - `tail -5 ~/.config/lrm-hubs/slack-poll.log` 에 수집 기록이 쌓인다.
-   - Claude Code 에서 `/lrm-board` 로 옆 패널이 열린다.
+   - `tail -3 ~/.config/lrm-hubs/panel-collect.log` 에 `collect ok hubs=ok …` 가 쌓인다.
+   - 새 Claude Code 세션에서 `/lrm-board` 로 옆 패널이 열리고 맨 위에 ⚠️ 가 없다.
 
 ## 2. Socket Mode 켜기(나중에)
 
@@ -145,7 +150,7 @@
 ## 5. 알려진 한계
 
 - 다른 맥 실설치는 아직 해 보지 않았다. 검증은 임시 HOME 샌드박스 시험(`tests/install/run.sh`)까지다.
-- 옆 패널 mod 는 파일만 깐다. Claude Code 가 mod 를 읽어 들이게 등록하는 절차는 이 맥에서 확인하지 못했다. 패널이 안 보이면 Claude Code 의 mod 만들기 기능(plugin-authoring)으로 `~/.config/lrm-hubs/mods/lrm-board` 를 등록한다.
+- 옆 패널 mod 는 `~/.claude/skills/lrm-board` 에 깔린다. Claude Code 는 이 폴더의 플러그인을 모든 세션에 자동으로 읽는다(plugin-authoring 참고 문서 기준, 이 맥 실측은 아직). 새 세션에서 `/lrm-board` 가 없으면 `hubs/docs/panel.md` 의 「안 보일 때」를 따른다. 옛 위치 `~/.config/lrm-hubs/mods/lrm-board` 는 더 쓰지 않으며 설치기가 지우지도 않는다.
 - 옆 패널은 `~/orca/LoveRevolutionMaker` 에서 띄운 세션에서만 자동으로 열린다. 메인 체크아웃이 다른 곳이면 `/lrm-board` 로 연다.
 - 이미 쓰던 맥에서는 `--dry-run` 도 라이브 파일과 차이가 있으면(`LIVE-NEWER`·`LIVE-ONLY`) 설치 목록 없이 멈춘다. 미리 보려면 `./install.sh --dry-run --allow-live-diff`.
 - 이미 쓰던 맥에서 다시 설치하면, 라이브 orca-main 폴더에 옛 양식 이름 `config.example.env` 가 남아 있어 `LIVE-ONLY` 로 한 번 멈춘다. 그 파일은 `main.env.example` 로 이름만 바뀐 것이라 `./install.sh --allow-live-diff` 로 진행하면 된다(원래 폴더는 백업된다).
