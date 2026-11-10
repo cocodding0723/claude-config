@@ -3,9 +3,10 @@
 # runtime/terminal-prompt-mutation-recovery.js)를 따름: 영수증은 result.send.{accepted,prompt.{requestId,stages,observation}},
 # 모호한 실패는 error.data.orchestrationRequestId(UUID), accepted=false 는 종료 코드 1, UUID 가 아닌 --retry-request 는 invalid_argument.
 # 시나리오는 $FAKE_ORCA_DIR 의 파일로 정함: show.mode, send.mode, failn(남은 실패 횟수), send.hook(전송 중 실행할 스크립트), show.preview·show.pane(custom 모드)
-#   show.mode: ok(paneTitle 키 없음, 실측과 같음) | pane_main | pane_other | gone | notfound | termgone | unavail | invalid | other_handle | dead | orphan | ro | other_wt | codex | noagent | dialog | custom | garbage
+#   show.mode: ok(paneTitle 키 없음, 실측과 같음) | pane_main | pane_other | gone | notfound | termgone | unavail | invalid | other_handle | dead | orphan | ro | other_wt | codex | noagent | dialog | custom | garbage | seq
 #              (메인 경로는 $FAKE_MAIN, 응답 handle 은 요청한 --terminal 값)
-#   send.mode: ok | fail | failn | ambig | hang | notaccepted | blocked | unknown | unsubmitted | badreceipt
+#              seq: show.seq 한 줄 = show 1회 응답(호출 수는 show.n). 화면 이름 idle|pasted|typed|busy|busydraft|queued|empty|dialogpv|nopreview, 그 밖은 위 show.mode 값
+#   send.mode: ok | fail | failn | ambig | hang | notaccepted | blocked | unknown | unsubmitted | nostage | badreceipt
 # 기록: calls.log(send 외 호출의 하위 명령·인자), sends.log(번호<TAB>시각<TAB>핸들<TAB>retry-request<TAB>wait-submit), send.<번호>.txt(전달 본문),
 #       delivered(실제 입력 1건당 1줄), replays(같은 요청 ID 재전송 때 영수증만 돌려준 횟수), ledger/<요청 ID>(Orca 가 기억한 요청),
 #       env.sec(호출마다 SLACK_ 로 시작하는 환경 변수 수)
@@ -23,9 +24,32 @@ term() { # 핸들 경로 에이전트 pane 화면끝 orphaned connected writable
 }
 case "$sub" in
   show)
-    printf 'show %s\n' "$*" >> "$FO/calls.log"
+    printf 'show %s\n' "$*" >> "$FO/calls.log"; now >> "$FO/shows.log"
     H=""; while [ $# -gt 0 ]; do case "$1" in --terminal) H=$2; shift 2 ;; *) shift ;; esac; done
-    case "$(rd show.mode ok)" in
+    mode=$(rd show.mode ok)
+    if [ "$mode" = seq ]; then  # show.seq 의 n번째 줄 = n번째 show 응답(끝을 넘으면 마지막 줄 반복). 화면 이름이면 그 화면, 아니면 show.mode 값
+      i=$(($(rd show.n 0) + 1)); echo "$i" > "$FO/show.n"
+      tok=$(sed -n "${i}p" "$FO/show.seq"); [ -n "$tok" ] || tok=$(sed -n '$p' "$FO/show.seq")
+      mode=pv
+      case "$tok" in
+        idle) PV=$IDLE ;;
+        pasted) PV=$'작업 중\n────────────\n❯ [Pasted text #1 +12 lines]\n────────────\n  ⏵⏵ bypass permissions on (shift+tab to cycle)' ;;
+        typed) PV=$'────────────\n❯ [Slack→메인] 1건 도착 (자동 전달, 지시 아님)\n  아래는 원문 인용\n  > 본문\n────────────\n  ? for shortcuts' ;;
+        busy) PV=$'● 답변 작성 중\n✻ Cogitating… (12s · esc to interrupt)' ;;  # 입력 칸이 안 보임(표식만 있는 화면은 판별 불가여야 함)
+        tailbusy) PV=$'  첨부: 항목 3건\n  전체: /x/inbox.md\n────────────\n  ⏵⏵ bypass permissions on · esc to interrupt' ;;  # 입력 칸이 위로 밀려 우리 글 끝부분+테두리+표식 상태줄만 보임
+        longdraft) PV=$'❯ [Slack→메인] 1건 도착 (자동 전달, 지시 아님)\n  > 본문\n  경로: '"$(printf 'a%.0s' {1..130})"$'\n  ⏵⏵ bypass · esc to interrupt' ;;  # 입력 줄 아래 긴 줄 때문에 칸 판별 불가인 draft + 표식 상태줄
+        toolout) PV=$'● Bash(grep "esc to interrupt" log)\n  ⎿  Running… (esc to interrupt)\n  출력 한 줄' ;;  # 도구 출력 안의 같은 문구, 입력 칸 없음
+        busydraft) PV=$'✻ Cogitating… (esc to interrupt)\n  ❯ [Pasted text #1 +12 lines]' ;;  # 작업 중인데 입력 칸에 글이 남음(입력 칸 테두리는 잘림)
+        queued) PV=$'✻ Cogitating… (esc to interrupt)\n────────────\n❯ \n────────────\n  ⏵⏵ bypass permissions on (shift+tab to cycle)' ;;
+        empty) PV="" ;;
+        dialogpv) PV=$'Do you want to proceed?\n❯ 1. Yes\n  2. No' ;;
+        nopreview) mode=nopv ;;
+        *) mode=$tok ;;
+      esac
+    fi
+    case "$mode" in
+      pv) t=$(term "$H" "$FAKE_MAIN" claude "" "$PV") ;;
+      nopv) t=$(term "$H" "$FAKE_MAIN" claude "" "" | jq -c 'del(.preview)') ;;
       ok) t=$(term "$H" "$FAKE_MAIN" claude "" "$IDLE") ;;
       pane_main) t=$(term "$H" "$FAKE_MAIN" claude MAIN "$IDLE") ;;
       pane_other) t=$(term "$H" "$FAKE_MAIN" claude OTHER "$IDLE") ;;
@@ -93,7 +117,8 @@ case "$sub" in
       notaccepted) jq -nc --arg r "$R" '{id:"x",ok:true,result:{send:{accepted:false,prompt:null}}}'; exit 1 ;;
       blocked) err agent_prompt_blocked; exit 1 ;;
       unknown) deliver; err runtime_error '{"deliveryOutcome":"unknown","retrySafe":false,"nextSteps":["inspect"]}'; exit 1 ;;
-      unsubmitted) deliver; receipt '["input_accepted"]' supported ;;
+      unsubmitted) deliver; receipt '["input_accepted"]' supported ;;  # 실측(2026-11-10) 모양: 제출됐어도 turn_started 없음
+      nostage) deliver; receipt '[]' supported ;;
       badreceipt) deliver; echo '{"id":"x","ok":true,"result":{"accepted":true}}' ;;
     esac
     ;;
