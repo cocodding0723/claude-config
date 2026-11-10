@@ -12,19 +12,20 @@ ok() { PASS=$((PASS + 1)); printf 'PASS  %s\n' "$1"; }
 ko() { FAIL=$((FAIL + 1)); printf 'FAIL  %s — %s\n' "$1" "${2:-}"; }
 
 SB=$(mktemp -d "${TMPDIR:-/tmp}/cc-panel.XXXXXX")
-trap 'rm -rf "${SB:?}"' EXIT
-FAKE="$SB/fake" H="$SB/hub"
-mkdir -p "$FAKE" "$H"
+trap '[ -n "${KEEP:-}" ] || rm -rf "${SB:?}"' EXIT
+FAKE="$SB/fake" H="$SB/hub" FHOME="$SB/home"
+mkdir -p "$FAKE" "$H" "$FHOME/ws"
 # 산출물에 새면 안 되는 값. 저장소 검사에 걸리지 않게 조각으로 만듦
 MARK="SCREEN-$(printf '%s' BODY)-7f3a"
 TOK="xox""b-1234567890-abcdefghijklmnop"
-python3 -I "$HERE/fixtures.py" "$FAKE" "$H" "$MARK" "$TOK" || { echo "시험 준비 실패"; exit 1; }
+FIX_HOME="$FHOME" python3 -I "$HERE/fixtures.py" "$FAKE" "$H" "$MARK" "$TOK" || { echo "시험 준비 실패"; exit 1; }
 printf '{"updatedAt":"손으로 쓴 값","approvals":[],"todos":[]}\n' > "$H/panel.json"
 MAIN_SUM=$(shasum "$H/panel.json" | cut -d' ' -f1)
 OUT="$H/panel-auto.json" LOG="$H/panel-collect.log"
 
 run_c() { # 인자를 수집기에 전달. 결과: RC, $SB/out, $SB/err
-  env -u PANEL_GH_REPOS -u PANEL_HUB_ROOT LRM_HUB_DIR="$H" FAKE_ORCA_DIR="$FAKE" PANEL_ORCA="$HERE/fake_orca.sh" PANEL_GH="$HERE/fake_gh.sh" \
+  env -u PANEL_GH_REPOS -u PANEL_HUB_ROOT -u PANEL_WS_DIR -u PANEL_DISK_MIN_GB HOME="$FHOME" LRM_HUB_DIR="$H" FAKE_ORCA_DIR="$FAKE" \
+    PANEL_ORCA="$HERE/fake_orca.sh" PANEL_GH="$HERE/fake_gh.sh" PANEL_DF="$HERE/fake_df.sh" PANEL_DU="$HERE/fake_du.sh" PANEL_GIT="$HERE/fake_git.sh" \
     SLACK_BOT_TOKEN="$TOK" "$@" > "$SB/out" 2> "$SB/err"
   RC=$?
 }
@@ -162,6 +163,36 @@ col --once
 [ "$(($(ghn) - g0))" = 1 ] && [ "$(q '.sources.workers.value.recent | length')" = 2 ] && ! grep -qF "$TOK" "$OUT" && ok "panel.env: 정해진 키만 읽음(저장소 1개·최근 2건), 다른 줄 무시" || ko "panel.env" "gh=$(($(ghn) - g0))"
 colenv "PANEL_RECENT=3" --print
 [ "$(jq '.sources.workers.value.recent | length' "$SB/out")" = 3 ] && ok "환경 변수가 panel.env 보다 우선" || ko "우선순위" ""
+
+# ---- 13. 쉬는 자원(idle): 목록·숫자만, 정리는 사람이 ------------------------------------------------
+col --once
+iv() { q ".sources.idle.value | $1"; }
+[ "$(q '.sources.idle.ok')" = true ] && [ "$(iv '.terminals | "\(.total) \(.agents)"')" = "12 11" ] && ok "쉬는 자원: 터미널 총 12·에이전트 11(terminal list 재사용)" || ko "idle 터미널" "$(q '.sources.idle|del(.value)')"
+[ "$(iv '.workers | "\(.live) \(.succeeded) \(.failed) \(.stopped) \(.leftover)"')" = "1 1 1 1 1" ] && [ "$(iv '.workers.items[0] | "\(.dispatch) \(.title) \(.terminal)"')" = "ctx_left 설치 정리 retained" ] && ok "워커 상태별 건수·종료 뒤 남은 터미널 1건(dispatch·제목·터미널 상태만)" || ko "idle 워커" "$(iv '.workers')"
+[ "$(iv '.workspaces | "\(.total) \(.noTerminal) \(.items | length) \(.more)"')" = "25 22 20 2" ] && ok "터미널 없는 워크스페이스 22/25, 목록 20개 + 외 2개(메인 제외)" || ko "idle 워크스페이스" "$(iv '.workspaces|del(.items)')"
+[ "$(iv '.workspaces.items[0].name')" = ws-03 ] && [ "$(iv '.workspaces.items[-1].name')" != ws-05 ] && [ "$(iv '[.workspaces.items[].path | startswith("~/ws/")] | all')" = true ] && ok "오래 쉰 것부터, 경로는 ~ 표기, 활동 시각 0 은 만든 시각·없으면 뒤로" || ko "idle 정렬·경로" "$(iv '[.workspaces.items[].name]|join(",")')"
+[ "$(iv '.workspaces.items[0].merged')" = true ] && [ "$(iv '.workspaces.items[] | select(.name=="ws-04") | .merged')" = null ] && [ "$(iv '.workspaces.items[] | select(.name=="ws-06") | .merged')" = false ] && [ "$(iv '.workspaces.items[0].branch')" = feat/w3 ] && ok "병합 여부(git merge-base)·기준 없으면 null·브랜치 이름" || ko "idle 병합" ""
+[ "$(iv '.disk | "\(.freeGB == 100) \(.usedPct) \(.warn)"')" = "true 89 false" ] && ok "디스크: 여유 100GB·사용률 89%, 50GB 이상이면 경고 없음" || ko "idle 디스크" "$(iv '.disk')"
+colenv "FAKE_DF_AVAIL=20971520" --print
+[ "$(jq -r '.sources.idle.value.disk.warn' "$SB/out")" = true ] && ok "디스크 여유 20GB < 50GB → warn" || ko "디스크 경고" "$(jq -c '.sources.idle.value.disk' "$SB/out")"
+colenv "FAKE_DF_AVAIL=20971520 PANEL_DISK_MIN_GB=10" --print
+[ "$(jq -r '.sources.idle.value.disk.warn' "$SB/out")" = false ] && ok "경고 기준 PANEL_DISK_MIN_GB 로 변경" || ko "디스크 기준" ""
+WS_BEFORE=$(iv '.workspaces | tojson'); IAT=$(q '.sources.idle.at'); sleep 1
+colenv "FAKE_DF_MODE=fail FAKE_ORCA_FAIL=worktrees" --once
+[ "$(q '.sources.idle.ok')" = false ] && [ "$(q '.sources.idle.stale')" = true ] && [ "$(q '.sources.idle.err')" = "workspaces:exit,disk:exit" ] && [ "$(iv '.workspaces | tojson')" = "$WS_BEFORE" ] && [ "$(iv '.disk.freeGB == 100')" = true ] && [ "$(q '.sources.idle.at')" = "$IAT" ] && [ "$(iv '.terminals.total')" = 12 ] && ok "부분 실패 → 그 부분만 이전 값 유지, ok:false·stale·err 에 부분:종류" || ko "idle 부분 실패" "$(q '.sources.idle|del(.value)')"
+colenv "FAKE_DF_MODE=bad" --print
+[ "$(jq -r '.sources.idle.err' "$SB/out")" = "disk:parse" ] && ok "df 출력 모양 이상 → disk:parse" || ko "df 파싱" "$(jq -r '.sources.idle.err' "$SB/out")"
+colenv "PANEL_WS_DIR=$FHOME/ws" --print
+[ ! -f "$FAKE/du.calls" ] && ok "--print 는 폴더 크기(du)를 재지 않음" || ko "--print du" ""
+colenv "PANEL_WS_DIR=$FHOME/ws" --once
+colenv "PANEL_WS_DIR=$FHOME/ws" --once
+[ "$(wc -l < "$FAKE/du.calls" | tr -d ' ')" = 1 ] && [ "$(iv '.wsSize.gb == 2')" = true ] && [ "$(iv '.wsSize.dir')" = "~/ws" ] && ok "폴더 크기: 30분 간격으로 du 1회, 값 유지" || ko "du 간격" "calls=$(cat "$FAKE/du.calls" 2>/dev/null | wc -l)"
+# 정리는 사람이 한다: 수집기에 삭제·종료 명령이 들어가면 실패
+if grep -nE '"rm"|\brm -|worktree.{0,4}(rm|remove|delete)|terminal.{0,4}close|worker-stop|orchestration.{0,4}stop|rmtree|"(close|stop|kill|remove)"' "$SCRIPTS/panel_collect.py" "$SCRIPTS/panel_collect.sh" >/dev/null; then
+  ko "삭제 문자열" "$(grep -nE '"rm"|\brm -|worktree.{0,4}(rm|remove|delete)|terminal.{0,4}close|worker-stop|orchestration.{0,4}stop|rmtree|"(close|stop|kill|remove)"' "$SCRIPTS/panel_collect.py" "$SCRIPTS/panel_collect.sh" | head -2 | cut -c1-80)"
+else
+  ok "수집기에 rm·worktree rm·terminal close·worker-stop 같은 삭제·종료 명령 없음"
+fi
 
 # ---- 12. mod 순수 함수(합치기·오래됨 판정) — node 내장 러너 ------------------------------------------
 if command -v node >/dev/null && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 23 ? 0 : 1)'; then

@@ -31,13 +31,16 @@ terms = [
     term(f"{W}/feature-branch", "claude", f"{mark} 워커", 0),
     term(f"/other/coord-elsewhere-hub", "codex", f"{mark}\n✻ Thinking…", 0),
 ]
+for i, t in enumerate(terms[:3]):
+    t["worktreeId"] = f"wt_{i}"
 json.dump({"ok": True, "result": {"terminals": terms}}, open(os.path.join(fake, "terms.json"), "w"), ensure_ascii=False)
 
 workers = [
     {"taskId": "task_live", "runId": "run_a", "workerState": "ready", "projection": {"liveness": {"verdict": "live"}}, "resource": {}},
     {"taskId": "task_1", "runId": "run_a", "workerState": "succeeded", "projection": {"liveness": {"verdict": "exited"}},
      "resource": {"releaseCompletedAt": "2026-11-10 05:04:08"}},
-    {"taskId": "task_2", "runId": "run_b", "workerState": "failed", "projection": {"liveness": {"verdict": "exited"}},
+    {"taskId": "task_2", "runId": "run_b", "dispatchId": "ctx_left", "workerState": "failed", "terminalState": "retained",
+     "projection": {"liveness": {"verdict": "exited"}},
      "resource": {"releaseCompletedAt": None}},
     {"taskId": "task_3", "runId": "run_a", "workerState": "stopped", "projection": {"liveness": {"verdict": "exited"}}, "resource": None},
 ]
@@ -82,3 +85,12 @@ with open(os.path.join(hub, "slack-push.log"), "w", encoding="utf-8") as f:
     ]):
         f.write(f"2026-11-10 10:0{i}:00 {line}\n")
     f.write("형식이 다른 줄\n")
+
+# 워크스페이스 25개(+메인 1개). wt_0~2 는 터미널이 있음 → 터미널 없는 것 22개. 번호가 작을수록 오래 쉼
+home = os.environ["FIX_HOME"]
+wts = [{"id": "wt_main", "path": f"{home}/repo", "isMainWorktree": True, "lastActivityAt": now_ms, "branch": "refs/heads/main"}]
+for i in range(25):
+    wts.append({"id": f"wt_{i}", "displayName": f"ws-{i:02d}", "path": f"{home}/ws/ws-{i:02d}" + ("-merged" if i == 3 else ""),
+                "isMainWorktree": False, "branch": f"refs/heads/feat/w{i}", "baseRef": "" if i == 4 else "origin/main",
+                "lastActivityAt": now_ms - (100 - i) * 86400000 if i != 5 else 0})
+json.dump({"ok": True, "result": {"worktrees": wts, "truncated": False}}, open(os.path.join(fake, "worktrees.json"), "w"))

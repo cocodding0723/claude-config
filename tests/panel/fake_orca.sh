@@ -7,6 +7,7 @@ case "$*" in
   "terminal list --json") f=terms ;;
   "orchestration worker-list --full --json") f=workers ;;
   "orchestration task-list --run "*" --json") f=tasks ;;
+  "worktree list --limit 1000 --json") f=worktrees ;;
   *) echo '{"ok":false}'; exit 1 ;;
 esac
 case " ${FAKE_ORCA_FAIL:-} " in *" $f "*) echo "fake failure" >&2; exit 1 ;; esac

@@ -33,6 +33,10 @@ case_run P5 "화면 본문(preview) 저장" 's/("connected": connected,\n)/$1   
 case_run P6 "잠금 제거(항상 획득)" 's/            os\.mkdir\(LOCK\)\n            return True/            return True/'
 case_run P7 "작업 중 판정에서 '…' 조건 제거(끝난 턴도 작업 중)" 's/ln\.strip\(\)\[0\] in SPINNER and "…" in ln/ln.strip()[0] in SPINNER/'
 case_run P8 "결정 대기에서 반응 제외 규칙 제거" 's/done = \{d\.get\("parent_ts"\) for d in inbox if d\.get\("type"\) == "reaction"\}/done = set()/'
+case_run P12 "쉬는 워크스페이스 20개 제한 제거" 's/for w in quiet\[:IDLE_LIST_MAX\]:/for w in quiet:/'
+case_run P13 "디스크 경고 기준 뒤집음" 's/"warn": free < min_gb/"warn": free > min_gb/'
+case_run P14 "쉬는 자원 부분 실패 시 이전 값 삭제" 's/            errs\.append\(f"\{name\}:\{e\.code\}"\)\n            value\[name\] = old_val\.get\(name\)/            errs.append(f"{name}:{e.code}")\n            value[name] = None/'
+case_run P15 "정리 명령 끼워 넣기(워크트리 삭제)" 's/(def merged\(path, base\):\n)/$1    _cleanup = ["worktree", "rm"]\n/'
 board_run() { # 번호 설명 perl 치환식(mod board.ts 대상, node 시험)
   local id="$1" desc="$2" expr="$3" out rc first
   if [ -n "${ONLY:-}" ] && [[ " $ONLY " != *" $id "* ]]; then return; fi
