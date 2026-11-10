@@ -66,8 +66,15 @@ export type AutoHub = {
   dup: boolean
 }
 
-export type AutoHubs = { rows: AutoHub[]; counts: { busy: number; approval: number; idle: number; unknown: number } }
-export type AutoPending = { count: number; items: Array<{ title: string; ageMin: number | null }> }
+export type AutoHubs = {
+  rows: AutoHub[]
+  counts: { busy: number; approval: number; idle: number; unknown: number }
+  /** Orca 가 터미널 목록을 잘랐으면 true(허브가 빠졌을 수 있음). 옛 파일엔 없음 */
+  truncated?: boolean
+}
+/** 결정 대기 한 건. id·state 는 번호 카드(slack_notify.sh --options)만, 옛 카드는 null(옛 파일엔 키 없음) */
+export type AutoPendingItem = { title: string; ageMin: number | null; id?: string | null; state?: 'hold' | 'conflict' | null }
+export type AutoPending = { count: number; items: AutoPendingItem[] }
 export type AutoPush = { lines: Array<{ at: string; event: string; reason: string | null }> }
 export type AutoWorkers = { live: number; recent: Array<{ title: string | null; status: string; at: number | null }> }
 /** 쉬는 자원. 부분마다 따로 실패해 한 부분이 null 일 수 있음 */

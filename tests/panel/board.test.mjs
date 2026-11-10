@@ -74,6 +74,18 @@ test('hubLine: 상태·출력 없음·중복·끊김', () => {
   assert.equal(b.hubLine({ hub: 'coord-a-hub', name: 'a', agent: 'claude', state: 'approval', quietMin: 12, connected: false, dup: true }), '승인창 · 12분 출력 없음 · 👥중복 · 🔌끊김')
 })
 
+test('pendingLine: 옛 카드는 제목·나이만, 번호 카드는 결정 번호·보류·충돌', () => {
+  assert.equal(b.pendingLine({ title: '🙋 결정 A', ageMin: 3 }), '🙋 결정 A  · 3분 전')
+  assert.equal(b.pendingLine({ title: '배포 순서', ageMin: null, id: 'D-0002', state: 'hold' }), '배포 순서 · D-0002 — 보류')
+  assert.equal(b.pendingLine({ title: '문서 위치', ageMin: 0, id: 'D-0003', state: 'conflict' }), '문서 위치 · D-0003 — 선택이 여러 개, 확인 필요  · 방금')
+  assert.equal(b.pendingLine({ title: '알림', ageMin: null, id: 'D-0004', state: null }), '알림 · D-0004')
+})
+
+test('ghLine: --limit 만큼 꽉 차면 숫자 뒤에 +', () => {
+  assert.equal(b.ghLine({ repos: [], open: 8, ciFail: 4 }), '열린 PR 8 · CI 실패 4')
+  assert.equal(b.ghLine({ repos: [], open: 100, ciFail: 0, capped: true }), '열린 PR 100+ · CI 실패 0')
+})
+
 test('headCounts: 자동 허브 값 우선, 없으면 메인 칸 hubs', () => {
   const a = auto(1, { sources: { hubs: { ok: true, err: null, at: 1, stale: false, value: { rows: [], counts: { busy: 2, approval: 1, idle: 3, unknown: 0 } } } } })
   const main = { hubs: [{ name: 'x', state: 'busy' }, { name: 'y', state: 'blocked' }, { name: 'z', state: 'waiting' }] }

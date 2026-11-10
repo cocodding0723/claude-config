@@ -93,6 +93,19 @@ export const hubLine = (h: AutoHub): string => {
   return parts.join(' · ')
 }
 
+const PENDING_STATE: Record<string, string> = { hold: '보류', conflict: '선택이 여러 개, 확인 필요' }
+
+/** ⏳ 결정 대기 한 줄. 번호 카드는 결정 번호와 보류·충돌 상태를 붙임 */
+export const pendingLine = (p: import('../types').AutoPendingItem): string => {
+  const head = p.id ? `${p.title} · ${p.id}` : p.title
+  const state = p.state ? ` — ${PENDING_STATE[p.state] ?? p.state}` : ''
+  return `${head}${state}${p.ageMin !== null ? `  · ${fmtAge(p.ageMin)}` : ''}`
+}
+
+/** 🔀 PR 줄. gh 가 --limit 만큼 꽉 차서 더 있을 수 있으면 숫자 뒤에 + */
+export const ghLine = (g: { open: number; ciFail: number; capped?: boolean }): string =>
+  `열린 PR ${g.open}${g.capped === true ? '+' : ''} · CI 실패 ${g.ciFail}`
+
 /** 맨 위 숫자. 자동 허브 값이 있으면 그것, 없으면 메인 칸의 옛 hubs */
 export const headCounts = (board: Board | undefined, auto: AutoBoard | undefined): { busy: number; blocked: number; source: 'auto' | 'main' } => {
   const hubs = auto?.sources.hubs?.value

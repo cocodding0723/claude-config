@@ -6,12 +6,14 @@ import {
   autoBanner,
   fmtAge,
   ageMin,
+  ghLine,
   headCounts,
   hubLine,
   idleLines,
   mainAge,
   parseAuto,
   parseMain,
+  pendingLine,
   sourceNote,
 } from './board'
 
@@ -219,11 +221,11 @@ export const register: Register = on => {
 
         {section(`⏳ 결정 대기 (${pending?.count ?? '?'})`, C.pending, sourceNote(src?.pending, nowMs))}
         {pending !== undefined && pending.items.length === 0 && <Text dimColor>없음</Text>}
-        {pending !== undefined && tree(pending.items.map(p => [`${p.title}${p.ageMin !== null ? `  · ${fmtAge(p.ageMin)}` : ''}`, C.detail]))}
+        {pending !== undefined && tree(pending.items.map(p => [pendingLine(p), C.detail]))}
 
         {autoHubs !== undefined ? (
           <Box flexDirection="column">
-            {section(`🔄 허브 (${autoHubs.rows.length})`, C.hub, sourceNote(src?.hubs, nowMs))}
+            {section(`🔄 허브 (${autoHubs.rows.length})`, C.hub, `${sourceNote(src?.hubs, nowMs)}${autoHubs.truncated === true ? ' · 터미널 목록 잘림' : ''}`)}
             {autoHubs.rows.map(h => (
               <Text wrap="wrap">
                 <Text color={STATE_COLOR[h.state] ?? C.meta}>{'● '}</Text>
@@ -247,7 +249,7 @@ export const register: Register = on => {
 
         {section('🔀 PR', C.pr, sourceNote(gh, nowMs))}
         {gh?.value !== undefined && gh.value !== null ? (
-          <Text wrap="wrap">{`열린 PR ${gh.value.open} · CI 실패 ${gh.value.ciFail}`}</Text>
+          <Text wrap="wrap">{ghLine(gh.value)}</Text>
         ) : (
           <Text dimColor>{gh?.off === true ? 'PANEL_GH_REPOS 설정 없음' : '값 없음'}</Text>
         )}
