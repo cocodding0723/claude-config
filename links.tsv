@@ -87,6 +87,7 @@ hubs/slack-bot-manifest.yml	.config/lrm-hubs/slack-bot-manifest.yml	link
 hubs/docs/slack-format.md	.config/lrm-hubs/docs/slack-format.md	link
 hubs/docs/slack-push.md	.config/lrm-hubs/docs/slack-push.md	link
 hubs/docs/install-orca-main.md	.config/lrm-hubs/docs/install-orca-main.md	link
+hubs/docs/panel.md	.config/lrm-hubs/docs/panel.md	link
 hubs/launchd/ai.lrm.slackpoll.plist	Library/LaunchAgents/ai.lrm.slackpoll.plist	copy
 hubs/launchd/ai.lrm.panelcollect.plist	Library/LaunchAgents/ai.lrm.panelcollect.plist	copy
 hubs/scripts/slack_socket.py	.config/lrm-hubs/slack_socket.py	copy

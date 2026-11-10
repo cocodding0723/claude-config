@@ -27,7 +27,7 @@
 
 - Slack 수신: launchd `ai.lrm.slackpoll`(폴러) + 켜져 있으면 `ai.lrm.slacksocket`(Socket Mode, 설치만 하고 기본은 꺼짐) → `slack-inbox.jsonl`
 - 봇 명령 즉답: `slack_cmd.sh`
-- 옆 패널: mod `lrm-board` 가 `panel.json` 을 읽음
+- 옆 패널: mod `lrm-board` 가 `panel.json`(메인 손 칸)과 `panel-auto.json`(launchd `ai.lrm.panelcollect` 가 90초마다 씀)을 합쳐 그림. 런북 `$HUB_SCRIPTS/docs/panel.md`
 - 따라잡기: `catch-up` / 현황: `work-brief`
 - 반복 실수 구조화: `make-mistakes-impossible`, 문서·현실 대조: `repo-reality-check`
 
