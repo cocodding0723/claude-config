@@ -147,8 +147,8 @@ LRM_FORMAT=strict run_n --kind done "✅ 깨끗한 완료"
 LRM_FORMAT=off run_n --kind decide "✅ $K41"
 n0=$(logn)
 [ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "C off: 위반해도 검사 없이 전송, stderr 없음" || ko "C off" "rc=$RC $(cat "$SB/err")"
-LRM_FORMAT=off run_n --kind decide "✅ $K41"
-[ "$(logn)" = "$n0" ] && ok "C off: 검사 로그에 줄을 안 남김" || ko "C off 로그" ""
+LRM_FORMAT=off run_n --kind todo "✅ $K41"
+[ "$(logn)" = "$n0" ] && ok "C off: decide 가 아닌 kind 는 검사 로그에 줄을 안 남김" || ko "C off 로그" ""
 LRM_FORMAT=bogus run_n --kind done "끝"
 [ "$RC" = 2 ] && nocall && grep -q 'LRM_FORMAT 값 오류: bogus' "$SB/err" && ok "C LRM_FORMAT 잘못된 값 + --kind → 종료 코드 2, 원인·조치" || ko "C 잘못된 모드" "rc=$RC"
 LRM_FORMAT=bogus run_n "그냥 보냄 $K41"
@@ -156,8 +156,8 @@ LRM_FORMAT=bogus run_n "그냥 보냄 $K41"
 LRM_FORMAT=strict run_n --no-check --kind decide "✅ $K41"
 n1=$(logn)
 [ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && [ "$(lastrec | jq -r '.unchecked')" = true ] && [ "$(lastrec | jq -r '.form_kind')" = decide ] && ok "C --no-check: strict 에서도 검사 없이 전송, sent 기록 unchecked:true" || ko "C --no-check" "rc=$RC $(lastrec)"
-run_n --no-check --kind decide "✅ $K41"
-[ "$(logn)" = "$n1" ] && ok "C --no-check: 검사를 안 했으므로 로그 줄 없음" || ko "C --no-check 로그" ""
+run_n --no-check --kind todo "✅ $K41"
+[ "$(logn)" = "$n1" ] && ok "C --no-check: 검사를 안 했으므로 decide 가 아닌 kind 는 로그 줄 없음" || ko "C --no-check 로그" ""
 run_n --no-check "kind 없이도 기록"
 [ "$(lastrec | jq -r '.unchecked')" = true ] && ok "C --no-check 만 줘도 unchecked:true 기록" || ko "C --no-check 단독" "$(lastrec)"
 newhome pyfail
@@ -307,6 +307,130 @@ run_n --kind decide --choices 2 --emoji-set bogus "$BODY"
 [ "$RC" = 2 ] && nocall && grep -q '알 수 없는 --emoji-set: bogus' "$SB/err" && ok "F 모르는 --emoji-set → 종료 코드 2" || ko "F 잘못된 emoji-set" "rc=$RC"
 run_n --kind decide --choices 2 "$BODY"; r_a=$(lastrec | jq -c 'del(.at)')
 [ "$(printf '%s' "$r_a" | jq -r '.form_kind')" = decide ] && ok "F --choices 호출도 sent 기록에 form_kind=decide" || ko "F form_kind" "$r_a"
+
+# ---- G. 결정 1건 = 메시지 1개 ------------------------------------------------------------------
+newhome g
+MULTI_RX='^거부: 결정이 2개임(전송 안 함) — 1건씩 따로 보내세요'
+two_ans=$'주제\n\n• 무엇: 가\n\n👉 답: :비서-a: A\n\n• 무엇: 나\n\n👉 답: :비서-b: B'
+for mode in warn strict; do
+  LRM_FORMAT=$mode run_n --kind decide "$two_ans"
+  [ "$RC" = 2 ] && ! posted && nocall && grep -q "$MULTI_RX" "$SB/err" && [ "$(lastlog | cut -f3)" = multi ] && ok "G 👉 답 줄 2개 → $mode 에서도 거부(종료 코드 2, 전송·API 호출 0회, 로그 multi)" || ko "G 답 줄 2개 $mode" "rc=$RC $(cat "$SB/err")"
+done
+run_n --kind decide $'주제\n\n결정 1) 시각\n👉 답: 확인 가\n\n결정 2) 장소'
+[ "$RC" = 2 ] && ! posted && grep -q "$MULTI_RX" "$SB/err" && ok "G '결정 1)·결정 2)' 제목 줄 2개 → 거부(답 줄은 1개여도)" || ko "G 결정 N)" "rc=$RC $(cat "$SB/err")"
+run_n --kind decide $'주제\n\n① 결정: 시각\n② 결정: 장소\n\n👉 답: 확인'
+[ "$RC" = 2 ] && ! posted && grep -q "$MULTI_RX" "$SB/err" && ok "G '① ②' 번호 결정 제목 줄 → 거부" || ko "G ①②" "rc=$RC $(cat "$SB/err")"
+run_n --kind decide $'주제\n\n1. 결정 시각\n2. 결정 장소\n\n👉 답: 확인'
+[ "$RC" = 2 ] && ! posted && ok "G '1. 2.' 번호 결정 제목 줄 → 거부" || ko "G 1. 2." "rc=$RC $(cat "$SB/err")"
+run_n --kind decide $'주제\n\n결정 1) 시각\n결정 2) 장소\n결정 3) 문구\n\n👉 답: 확인'
+[ "$RC" = 2 ] && grep -q '^거부: 결정이 3개임' "$SB/err" && ok "G 결정 3개 → 개수를 3으로 안내" || ko "G 3개" "$(cat "$SB/err")"
+grep -q '예: ' "$SB/err" && ok "G 거부 메시지에 분할 예시 포함" || ko "G 예시" "$(cat "$SB/err")"
+run_n --kind decide $'주제\n\n• 무엇: 시각 정하기\n• 선택지: A 9시 / B 10시 / C 11시\n\n👉 답: :비서-a: A · :비서-b: B · :비서-c: C'
+[ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "G 결정 1건 + 선택지 A/B/C 나열 → 통과(오탐 없음)" || ko "G 선택지 오탐" "rc=$RC $(cat "$SB/err")"
+run_n --kind decide $'주제\n\n• 무엇: 시각 정하기\n1. 현재는 9시\n2. 바꾸면 10시\n3. 영향은 없음\n\n👉 답: 확인'
+[ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "G 결정 낱말 없는 번호 목록(1. 2. 3.) → 통과(오탐 없음)" || ko "G 번호 목록 오탐" "rc=$RC $(cat "$SB/err")"
+run_n --kind decide $'주제\n\n① A안 9시\n② B안 10시\n\n👉 답: 확인'
+[ "$RC" = 0 ] && posted && ok "G ①② 선택지 나열 → 통과(오탐 없음)" || ko "G ①② 선택지" "rc=$RC $(cat "$SB/err")"
+run_n --kind decide $'주제\n\n```\n👉 답: 가\n👉 답: 나\n```\n• 무엇: x\n\n👉 답: 확인'
+[ "$RC" = 0 ] && posted && ok "G 코드 블록 안의 답 줄 2개는 세지 않음" || ko "G 코드 블록" "rc=$RC $(cat "$SB/err")"
+run_n --kind decide $'주제\n\n👉 답: 확인\n\n참고: 결정 1) 결정 2) LRM-1 https://x.example/결정 3'
+[ "$RC" = 0 ] && posted && ok "G '참고:' 줄 자체의 결정 번호·링크는 세지 않음" || ko "G 참고 줄 자체" "rc=$RC $(cat "$SB/err")"
+run_n --kind decide $'주제\n\n👉 답: 확인\n\n참고: 티켓\n결정 2) 장소\n👉 답: 가'
+[ "$RC" = 2 ] && ! posted && grep -q "$MULTI_RX" "$SB/err" && ok "G [의도 변경] '참고:' 줄 뒤의 둘째 결정은 셈 → 거부" || ko "G 참고 뒤 둘째" "rc=$RC $(cat "$SB/err")"
+run_n --kind decide --choices 3 $'주제\n\n• 무엇: 정할 것'
+[ "$RC" = 0 ] && posted && ok "G --choices 안내 줄 1개는 통과(부착 줄은 개수에 안 셈)" || ko "G choices" "rc=$RC $(cat "$SB/err")"
+# G2. 오탐 방지(정상 카드는 통과) / 누락 방지(변형 표기는 거부). 입력은 모두 가짜 내용
+pass_case() { # 이름, 본문
+  run_n --kind decide "$2"
+  [ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "G2 통과: $1" || ko "G2 오탐 $1" "rc=$RC $(cat "$SB/err")"
+}
+rej_case() { # 이름, 본문
+  run_n --kind decide "$2"
+  [ "$RC" = 2 ] && ! posted && nocall && grep -q "$MULTI_RX" "$SB/err" && ok "G2 거부: $1" || ko "G2 누락 $1" "rc=$RC $(cat "$SB/err")"
+}
+pass_case "선택지 '1. 기존 결정 유지 / 2. 결정 철회'" $'주제\n\n• 선택지: 1. 기존 결정 유지 / 2. 결정 철회\n\n👉 답: 확인'
+pass_case "선택지 '① 기존 결정 유지 / ② 결정 변경'" $'주제\n\n• 선택지: ① 기존 결정 유지 / ② 결정 변경\n\n👉 답: 확인'
+pass_case "선택지 줄 나눔 '1. 기존 결정 유지' 줄 + '2. 결정 철회' 줄" $'주제\n\n1. 기존 결정 유지\n2. 결정 철회\n\n👉 답: 확인'
+pass_case "선택지 줄 나눔 '① 기존 결정 유지' 줄 + '② 결정 변경' 줄" $'주제\n\n① 기존 결정 유지\n② 결정 변경\n\n👉 답: 확인'
+pass_case "배경 '1. 이미 결정된 것 / 2. 미결정'" $'주제\n\n1. 이미 결정된 것\n2. 미결정\n\n👉 답: 확인'
+pass_case "날짜 '결정 2026-11-01:' 두 줄" $'주제\n\n• 결정 2026-11-01: 가\n• 결정 2026-11-02: 나\n\n👉 답: 확인'
+pass_case "수량 '결정 100건'·'결정 2026'" $'주제\n\n• 무엇: 결정 100건 대기\n• 왜: 결정 2026 년 기준\n\n👉 답: 확인'
+rej_case "'• *결정 1*' 불릿+굵게" $'주제\n\n• *결정 1*\n• *결정 2*\n\n👉 답: 확인'
+rej_case "'결정 ①·결정 ②'" $'주제\n\n결정 ① 시각\n결정 ② 장소\n\n👉 답: 확인'
+rej_case "'결정-1·결정-2'" $'주제\n\n결정-1 시각\n결정-2 장소\n\n👉 답: 확인'
+rej_case "'결정 #1·결정 #2'" $'주제\n\n결정 #1 시각\n결정 #2 장소\n\n👉 답: 확인'
+rej_case "'(1) 결정·(2) 결정'" $'주제\n\n(1) 결정 시각\n(2) 결정 장소\n\n👉 답: 확인'
+rej_case "키캡 '1️⃣ 결정·2️⃣ 결정'" $'주제\n\n1\xef\xb8\x8f\xe2\x83\xa3 결정 시각\n2\xef\xb8\x8f\xe2\x83\xa3 결정 장소\n\n👉 답: 확인'
+rej_case "'**결정 1**·**결정 2**'" $'주제\n\n**결정 1**\n**결정 2**\n\n👉 답: 확인'
+rej_case "인용 '> 결정 1)·> 결정 2)'" $'주제\n\n> 결정 1) 시각\n> 결정 2) 장소\n\n👉 답: 확인'
+rej_case "'· 결정 1·· 결정 2'" $'주제\n\n· 결정 1 시각\n· 결정 2 장소\n\n👉 답: 확인'
+# [의도 변경] 줄 중간 '결정 N' 은 불확실한 신호라 거부 대신 경고(warn·strict 모두 전송)
+warn_case() { # 이름, 본문 — 전송하되 mid-decide 경고 한 줄
+  for mode in warn strict; do
+    LRM_FORMAT=$mode run_n --kind decide "$2"
+    [ "$RC" = 0 ] && posted && grep -q '^경고: 줄 중간에 다른 번호의' "$SB/err" && ! grep -q '^거부:' "$SB/err" && ok "G2 경고만($mode): $1" || ko "G2 경고 $mode $1" "rc=$RC $(cat "$SB/err")"
+  done
+}
+warn_case "한 줄 '결정 1) … 결정 2) …'" $'주제\n\n결정 1) 시각 정하기 결정 2) 장소 정하기\n\n👉 답: 확인'
+warn_case "정상 1건 + 본문 '지난주 결정 3) 과 충돌'" $'주제\n\n결정 1) 알림 시각\n• 왜: 지난주 결정 3) 과 충돌\n\n👉 답: 확인'
+pass_case "같은 번호 반복 '결정 1) 시각' + '• 무엇: 결정 1: 9시'" $'주제\n\n결정 1) 시각\n• 무엇: 결정 1: 9시\n\n👉 답: 확인'
+pass_case "같은 번호 머리 반복 '결정 1)' + '1. 결정 시각'" $'주제\n\n결정 1) 시각\n1. 결정 시각 상세\n\n👉 답: 확인'
+rej_case "줄 머리 서로 다른 번호 + 줄 중간 참조" $'주제\n\n결정 1) 시각\n결정 2) 장소 — 지난주 결정 3) 참고\n\n👉 답: 확인'
+rej_case "'참고:' 줄 뒤 둘째 '👉 답:' 줄" $'주제\n\n결정 1) 시각\n👉 답: 가\n\n참고: 티켓\n👉 답: 나'
+# [의도 변경] 참고 블록 안의 번호 머리·불릿 결정 참조는 세지 않음
+pass_case "참고 블록 '- 결정 1)'·'- 결정 2)' 문서 목록" $'주제\n\n결정 1) 시각\n\n👉 답: 확인\n\n참고:\n- 결정 1) 지난 회의 문서\n- 결정 2) 지난 회의 문서'
+pass_case "참고 블록 '• 결정 1: 회의록'·'• 결정 2: 회의록'" $'주제\n\n결정 1) 시각\n\n👉 답: 확인\n\n참고:\n• 결정 1: 회의록\n• 결정 2: 회의록'
+pass_case "표 안 예시 '| 결정 1) | 결정 2) |'" $'주제\n\n| 결정 1) | 결정 2) |\n| a | b |\n\n👉 답: 확인'
+rej_case "'결정 1번:·결정 2번:'" $'주제\n\n결정 1번: 시각\n결정 2번: 장소\n\n👉 답: 확인'
+rej_case "'1번 결정:·2번 결정:'" $'주제\n\n1번 결정: 시각\n2번 결정: 장소\n\n👉 답: 확인'
+rej_case "머리글 '### 결정 1·### 결정 2'" $'주제\n\n### 결정 1\n### 결정 2\n\n👉 답: 확인'
+rej_case "대괄호 '[결정 1]·[결정 2]'" $'주제\n\n[결정 1] 시각\n[결정 2] 장소\n\n👉 답: 확인'
+pass_case "줄 머리 '결정 2026 년 기준'·'결정 2027 년 기준'(자릿수 제한)" $'주제\n\n결정 2026 년 기준\n결정 2027 년 기준\n\n👉 답: 확인'
+# NFD(조합형) 한글도 NFC 로 맞춰 같은 결과
+nfd=$(printf '주제\n\n결정 1) 시각\n결정 2) 장소\n\n👉 답: 확인' | python3 -I -c 'import sys,unicodedata;sys.stdout.write(unicodedata.normalize("NFD",sys.stdin.read()))')
+rej_case "조합형(NFD) 한글 '결정 1)·결정 2)'" "$nfd"
+# 정규식 시간 상한: 4만 자 한 줄(제곱 증가 회귀 방지)
+timed_case() { # 이름, 접두 문자열
+  body="$(python3 -I -c 'import sys;sys.stdout.write("주제\n\n"+sys.argv[1]*(40000//len(sys.argv[1]))+"\n\n👉 답: 확인")' "$2")"
+  t0=$(python3 -I -c 'import time;print(time.time())')
+  run_n --kind decide "$body"
+  t1=$(python3 -I -c 'import time;print(time.time())')
+  python3 -I -c 'import sys;sys.exit(0 if float(sys.argv[2])-float(sys.argv[1])<1.0 else 1)' "$t0" "$t1" && ok "G2 시간 상한(1초 미만): 4만 자 '$1' 줄" || ko "G2 시간 $1" "$t0 $t1"
+}
+timed_case '*' '*'
+timed_case '**' '**'
+timed_case '> ' '> '
+timed_case '[' '['
+# 접두 불릿 삭제 변이(m5) 검출용
+rej_case "'• 결정 1 / • 결정 2' 불릿" $'주제\n\n• 결정 1 시각\n• 결정 2 장소\n\n👉 답: 확인'
+# --choices 시 검사 생략 변이(m9) 검출용
+run_n --kind decide --choices 2 $'주제\n\n• 결정 1 시각\n• 결정 2 장소'
+[ "$RC" = 2 ] && ! posted && nocall && grep -q "$MULTI_RX" "$SB/err" && ok "G2 거부: --choices 2 + 결정 2개(안내 줄 부착 전에 검사)" || ko "G2 choices+다중" "rc=$RC $(cat "$SB/err")"
+# 거부 요약이 다른 위반 뒤 마지막 줄에 보임
+run_n --kind decide $'주제 LRM-123\n\n• *가* *나*\n• 결정 1 시각\n• 결정 2 장소\n\n👉 답: 확인'
+[ "$RC" = 2 ] && grep -q '^경고:' "$SB/err" && tail -n 1 "$SB/err" | grep -q "$MULTI_RX" && ok "G2 warn 에서 다른 위반과 겹쳐도 거부 문구가 마지막 줄" || ko "G2 거부 마지막 줄" "$(cat "$SB/err")"
+# python3 검사 실패: decide 는 미전송, 다른 kind 는 기존대로
+n3=$(logn)
+FAKE_PY_FAIL=check run_n --kind decide "주제$ANS"
+[ "$RC" = 2 ] && ! posted && nocall && grep -q '^양식 검사 실패(전송 안 함)' "$SB/err" && [ "$(logn)" = $((n3 + 1))  ] && printf '%s\n' "$(lastlog)" | grep -Eq "${TABS}decide${TABS}check-fail${TABS}warn" && ok "G2 python3 검사 실패 + decide + warn → 미전송·종료 코드 2·로그 check-fail" || ko "G2 decide 검사 실패" "rc=$RC $(cat "$SB/err")"
+FAKE_PY_FAIL=check run_n --no-check --kind decide "주제$ANS"
+[ "$RC" = 0 ] && posted && ok "G2 --no-check 우회는 검사 실패와 무관하게 유지" || ko "G2 no-check" "rc=$RC"
+FAKE_PY_FAIL=check LRM_FORMAT=off run_n --kind decide "주제$ANS"
+[ "$RC" = 0 ] && posted && ok "G2 LRM_FORMAT=off 우회 유지" || ko "G2 off" "rc=$RC"
+FAKE_PY_FAIL=check run_n --kind todo "주제$ANS"
+[ "$RC" = 0 ] && posted && grep -qx '양식 검사 실패 — 검사 없이 전송' "$SB/err" && ok "G2 python3 검사 실패 + todo + warn → 기존대로 전송" || ko "G2 todo 검사 실패" "rc=$RC $(cat "$SB/err")"
+n2=$(logn)
+run_n --no-check --kind decide "$two_ans"
+[ "$RC" = 0 ] && posted && [ "$(logn)" = $((n2 + 1)) ] && printf '%s\n' "$(lastlog)" | grep -Eq "${TABS}decide${TABS}bypass-no-check${TABS}no-check${TABS}-\$" && ok "G --no-check 우회 → 전송하고 로그 한 줄(bypass-no-check)" || ko "G no-check 우회" "rc=$RC $(lastlog)"
+LRM_FORMAT=off run_n --kind decide --tag t9 "$two_ans"
+[ "$RC" = 0 ] && posted && printf '%s\n' "$(lastlog)" | grep -Eq "${TABS}decide${TABS}bypass-off${TABS}off${TABS}t9\$" && ok "G LRM_FORMAT=off 우회 → 전송하고 로그 한 줄(bypass-off)" || ko "G off 우회" "rc=$RC $(lastlog)"
+[ "$(grep -c '비서-a\|결정 1' "$CFG/slack-format.log" || true)" = 0 ] && ok "G 우회 로그에 본문 없음" || ko "G 우회 로그 본문" "$(cat "$CFG/slack-format.log")"
+for k in todo done progress warn doc; do
+  run_n --kind "$k" "$two_ans"
+  [ "$RC" = 0 ] && posted && ! grep -q '결정이' "$SB/err" && ok "G --kind $k 는 답 줄 2개여도 영향 없음(전송)" || ko "G kind $k" "rc=$RC $(cat "$SB/err")"
+done
+run_n "$two_ans"
+[ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "G --kind 없는 호출은 영향 없음" || ko "G kind 없음" "rc=$RC"
 
 # ---- Z. 토큰·실제 접속 ----------------------------------------------------------------------
 leak=$(grep -rlF -- "$FAKE_TOKEN" "$SB" 2>/dev/null | grep -v '/slack-bot\.env$' || true)
