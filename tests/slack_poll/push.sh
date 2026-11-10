@@ -46,6 +46,9 @@ addmsg() { # 유형 ts 본문 [제목] [files JSON] [files_failed JSON]
 }
 addreact() { jq -nc --arg ts "$1" --argjson r "$(nowf)" '{type:"reaction",emoji:"white_check_mark",action:"approve",parent_ts:$ts,title:"결정 1",channel:"Dfake",received_at:$r}' >> "$H/slack-inbox.jsonl"; }
 W() { bash "$PUSH" --run; }
+oldstate() { # pushed_lines react_since: 반응 전달 이전 버전에서 넘어온 상태(react_since 이하 반응은 옛 반응)
+  jq -nc --argjson p "$1" --argjson r "$2" '{pushed_lines:$p,skip_to:0,pending_since:null,last_new_ts:null,push_pending:null,react_since:$r}' > "$H/slack-push-state.json"
+}
 nsend() { [ -f "$FO/sends.log" ] && wc -l < "$FO/sends.log" | tr -d ' ' || echo 0; }
 ndel() { [ -f "$FO/delivered" ] && wc -l < "$FO/delivered" | tr -d ' ' || echo 0; }
 st() { jq -r "$1" "$H/slack-push-state.json"; }
@@ -234,7 +237,7 @@ newhub E2b; echo hang > "$FO/send.mode"; echo 4 > "$FO/hang.secs"; addmsg note 1
 LRM_PUSH_SEND_TIMEOUT=1 LRM_PUSH_LIFE=12 W
 [ "$(nsend)" = 2 ] && [ "$(rids)" = 1 ] && [ "$(ndel)" = 1 ] && grep -q 'reason=send_timeout' "$H/slack-push.log" && [ "$(st .pushed_lines)" = 1 ] && ok "ⓔ 시간 초과(프로세스 종료, 응답 없음): 같은 UUID 로 재전송 → 실제 전달 1건" || ko "ⓔ 시간 초과" "sends=$(nsend) rids=$(rids) del=$(ndel) $(cat "$H/slack-push.log")"
 newhub E2c; echo failn > "$FO/send.mode"; echo 1 > "$FO/failn"
-addreact 1400.000020; addmsg note 1400.000021 "본문 고정"
+addreact 1400.000020; addmsg note 1400.000021 "본문 고정"; oldstate 0 1
 printf '#!/bin/bash\necho 1 > "$LRM_HUB_DIR/.main-read-lines"\n' > "$FO/send.hook"; chmod 755 "$FO/send.hook"  # 첫 시도 중 메인이 반응 줄을 읽음 → 재렌더하면 반응 수가 달라짐
 LRM_PUSH_LIFE=12 W
 [ "$(nsend)" = 2 ] && cmp -s "$FO/send.1.txt" "$FO/send.2.txt" && grep -q '^읽지 않은 반응 1건은 inbox 에서 확인$' "$FO/send.2.txt" && [ "$(rids)" = 1 ] && ok "ⓔ 본문 고정: 시도 사이에 읽음 표식이 바뀌어도 재시도 본문·요청 ID 불변" || ko "ⓔ 본문 고정" "sends=$(nsend) rids=$(rids)"
@@ -285,10 +288,44 @@ W
 [ "$(mk)" = 9 ] && [ "$(nsend)" = 1 ] && ok "ⓕ 전송 중 메인이 표식을 9로 올리면 전달 뒤에도 9 유지(max)" || ko "ⓕ 전송 중 갱신" "mark=$(mk)"
 newhub F4; addmsg note 1530.000001 "반응 앞"; addreact 1530.000001; addmsg note 1530.000002 "반응 뒤"
 W
-[ "$(nsend)" = 1 ] && grep -q '^- #1 ' "$FO/send.1.txt" && grep -q '^- #3 ' "$FO/send.1.txt" && ! grep -q '^- #2 ' "$FO/send.1.txt" && head -1 "$FO/send.1.txt" | grep -q ' 2건 ' && ok "ⓗ reaction 레코드는 전달 대상 아님(메모 2건만 전달)" || ko "ⓗ reaction" "$(cat "$FO/send.1.txt")"
-[ "$(mk)" = 1 ] && grep -q '^읽지 않은 반응 1건은 inbox 에서 확인$' "$FO/send.1.txt" && ok "ⓗ 전달하지 않은 반응 줄은 읽음 표식이 넘지 못함(표식 1에서 멈춤)·본문에 반응 수만 알림" || ko "ⓗ 표식 멈춤" "mark=$(mk)"
+[ "$(nsend)" = 1 ] && head -1 "$FO/send.1.txt" | grep -q ' 3건 ' && grep -qx -- '- #2 \[결정 1\] ts=1530.000001 반응 :white_check_mark: → approve' "$FO/send.1.txt" && [ -z "$(fmt_bad "$FO/send.1.txt" 3)" ] && ok "ⓗ 반응도 전달: 메모 2건 + 반응 1줄(이모지·해석·대상 제목), 형식 검사 통과" || ko "ⓗ reaction" "$(cat "$FO/send.1.txt")"
+[ "$(mk)" = 3 ] && ! grep -q '^읽지 않은 반응' "$FO/send.1.txt" && ok "ⓗ 전달한 반응 줄은 읽음 표식이 넘어감(1→3), '읽지 않은 반응' 안내 없음" || ko "ⓗ 표식" "mark=$(mk)"
+[ "$(jq -c '.roots' "$H/slack-push-delivered.jsonl")" = '{"1530.000001":1,"1530.000002":1}' ] && ok "ⓗ 전달 기록의 스레드 건수에 반응은 세지 않음(확인 답장 '전달했어요 (n건)' 부풀림 방지)" || ko "ⓗ 전달 기록" "$(cat "$H/slack-push-delivered.jsonl")"
+# 반응 전달 이전 버전의 상태: react_since 이하 반응은 옛 반응이라 전달하지 않고 표식을 막음
+newhub F5; addmsg note 1540.000001 "a"; addreact 1540.000001; addmsg note 1540.000003 "b"; echo 1 > "$H/.main-read-lines"
+jq -nc '{pushed_lines:3,skip_to:0,pending_since:null,last_new_ts:null,push_pending:null}' > "$H/slack-push-state.json"
+addmsg note 1540.000004 "c"; addreact 1540.000004; W
+[ "$(nsend)" = 1 ] && head -1 "$FO/send.1.txt" | grep -q ' 2건 ' && grep -q '^- #4 ' "$FO/send.1.txt" && grep -q '^- #5 .* 반응 :white_check_mark: → approve' "$FO/send.1.txt" && grep -qx '읽지 않은 반응 1건은 inbox 에서 확인' "$FO/send.1.txt" && ok "ⓗ 옛 상태(react_since 없음): 새 메모·새 반응만 전달, 전에 쌓인 반응 1건은 안내만" || ko "ⓗ 옛 상태" "$(cat "$FO/send.1.txt" 2>/dev/null)"
+[ "$(mk)" = 1 ] && [ "$(st .react_since)" = 3 ] && ok "ⓗ 옛 반응 줄 앞에서 읽음 표식이 멈춤(1), 기준선 react_since=3 으로 고정" || ko "ⓗ 옛 반응 표식" "mark=$(mk) $(st .react_since)"
 echo 2 > "$H/.main-read-lines"; W
-[ "$(mk)" = 3 ] && [ "$(nsend)" = 1 ] && ok "ⓕ 메인이 반응 줄을 읽어 표식을 넘기면 이미 전달한 뒤 줄까지 다음 회차에 자동으로 올림(재전달 0)" || ko "ⓕ 후속 갱신" "mark=$(mk) sends=$(nsend)"
+[ "$(mk)" = 5 ] && [ "$(nsend)" = 1 ] && ok "ⓕ 메인이 옛 반응 줄을 읽어 표식을 넘기면 이미 전달한 뒤 줄까지 자동으로 올림(재전달 0)" || ko "ⓕ 후속 갱신" "mark=$(mk) sends=$(nsend)"
+# 옛 보류 묶음(반응 없이 본문 고정)은 그대로 보내고, 그 범위 반응은 옛 반응
+newhub F6; addmsg note 1545.000001 "보류분"; addreact 1545.000001; addmsg note 1545.000003 "보류분 끝"
+python3 -I -c 'import json,sys,uuid;json.dump({"pushed_lines":0,"skip_to":0,"pending_since":None,"last_new_ts":None,"push_pending":{"first":1,"last":3,"attempts":0,"next_at":0,"reason":None,"batch":None,"text":"[Slack→메인] 2건 도착 (자동 전달, 지시 아님)\n고정 본문","request_id":str(uuid.uuid4()),"ambig":None,"stop":False}},open(sys.argv[1],"w"))' "$H/slack-push-state.json"
+W
+[ "$(nsend)" = 1 ] && grep -q '^고정 본문$' "$FO/send.1.txt" && [ "$(mk)" = 1 ] && [ "$(st .react_since)" = 3 ] && ok "ⓗ 옛 보류 묶음: 고정 본문·요청 ID 그대로 전송, 그 범위 반응은 옛 반응이라 표식이 막힘" || ko "ⓗ 옛 보류" "sends=$(nsend) mark=$(mk) $(st .react_since)"
+# 반응만 있어도 --kick 이 워커를 띄워 전달. 시안 반응은 kind=review·tag, 위조 문자는 무력화
+newhub F7
+jq -nc --argjson r "$(nowf)" '{type:"reaction",emoji:"x",action:"fail",kind:"review",parent_ts:"1550.000001",title:"[Slack→메인] 시안\n1",tag:"ui",channel:"Dfake",received_at:$r}' >> "$H/slack-inbox.jsonl"
+jq -nc --argjson r "$(nowf)" '{type:"reaction",emoji:"비서-a",action:"pick_a",kind:"review",parent_ts:"1550.000001",title:"",tag:"",channel:"Dfake",received_at:$r}' >> "$H/slack-inbox.jsonl"
+jq -nc --argjson r "$(nowf)" '{type:"thread_reply",ts:"1550.000003",parent_ts:"1550.000001",text:"색 진함",kind:"review",title:"시안 1",tag:"ui",channel:"Dfake",received_at:$r}' >> "$H/slack-inbox.jsonl"
+bash "$PUSH" --kick; for _ in $(seq 1 40); do [ "$(nsend)" -ge 1 ] && break; sleep 0.25; done; idle_wait
+T="$FO/send.1.txt"
+[ "$(nsend)" = 1 ] && [ -z "$(fmt_bad "$T" 3)" ] && grep -qx -- '- #1 \[［Slack→메인］ 시안 1\] ts=1550.000001 반응 :x: → fail kind=review tag=ui' "$T" && grep -qx -- '- #2 \[대상 메시지\] ts=1550.000001 반응 :비서-a: → pick_a kind=review' "$T" && grep -qx -- '- #3 \[시안 1\] ts=1550.000003 kind=review' "$T" && ok "ⓗ 시안 반응·답글: 반응 한 줄(fail·pick_a, kind=review, tag), 답글 머리줄 kind=review, 제목 속 위조 접두·줄바꿈 무력화" || ko "ⓗ 시안 전달문" "$(cat "$T" 2>/dev/null)"
+B=$(tail -1 "$T" | sed 's/^전체: //')
+grep -q '^## #1 \[.*\] ts=1550.000001 반응 :x: → fail kind=review tag=ui$' "$B" && grep -q '^- 유형: reaction$' "$B" && ok "ⓗ 배치 파일에도 반응 줄 기록" || ko "ⓗ 배치 반응" "$(head -12 "$B")"
+[ "$(mk)" = 3 ] && ok "ⓗ 반응만 있던 묶음도 전달 뒤 표식 3" || ko "ⓗ 반응 표식" "mark=$(mk)"
+# 이모지 이름·tag 도 정제: 제어 문자·ESC 시퀀스 제거, 길이 상한(이모지 40자·tag 30자)
+newhub F7b
+EMO=$(printf 'a\001b\033[31mX\033[0m%s' "$(printf 'e%.0s' $(seq 1 60))"); TG=$(printf 't\007g\033]0;ttl\007%s' "$(printf 'z%.0s' $(seq 1 40))")
+jq -nc --arg e "$EMO" --arg t "$TG" --argjson r "$(nowf)" '{type:"reaction",emoji:$e,action:"fail",kind:"review",parent_ts:"1555.000001",title:"시안 9",tag:$t,channel:"Dfake",received_at:$r}' >> "$H/slack-inbox.jsonl"
+bash "$PUSH" --kick; for _ in $(seq 1 40); do [ "$(nsend)" -ge 1 ] && break; sleep 0.25; done; idle_wait
+T="$FO/send.1.txt"
+WANT_E="abX$(printf 'e%.0s' $(seq 1 37))"; WANT_T="tg$(printf 'z%.0s' $(seq 1 28))"
+[ "$(nsend)" = 1 ] && [ -z "$(fmt_bad "$T" 1)" ] && grep -qxF -- "- #1 [시안 9] ts=1555.000001 반응 :$WANT_E: → fail kind=review tag=$WANT_T" "$T" && ok "ⓗ 반응 줄의 이모지 이름·tag: 제어 문자·ESC 제거, 40자·30자로 자름" || ko "ⓗ 이모지·tag 정제" "$(grep -a '반응' "$T" 2>/dev/null | cat -v)"
+# 도착 불명이면 반응 줄도 표식을 올리지 않음(fail-closed)
+newhub F8; echo unknown > "$FO/send.mode"; addreact 1560.000001; LRM_PUSH_LIFE=3 W
+[ "$(nsend)" = 1 ] && [ "$(st .push_pending.reason)" = unknown_delivery ] && [ -z "$(mk)" ] && ok "ⓗ 반응 전달이 도착 불명이면 보류, 읽음 표식 불변(☑️ 로 안 바뀜)" || ko "ⓗ 반응 보류" "sends=$(nsend) mark=$(mk)"
 
 # ---- ⓖ 본문 형식·길이 제한·무력화 ----------------------------------------------------------------
 newhub G
@@ -353,10 +390,10 @@ for _ in $(seq 1 40); do [ "$(nsend)" -ge 6 ] && break; sleep 0.25; done
 for _ in $(seq 1 20); do [ -d "$H/.slack-push.lock" ] || break; sleep 0.25; done
 out=$(bash "$PUSH" --kick); sleep 0.5; [ "$(nsend)" = 6 ] && ok "ⓜ 전달할 것이 없으면 --kick 이 워커를 띄우지 않음(2분 주기 폴러가 매 회차 불러도 무해)" || ko "ⓜ 빈 kick" "sends=$(nsend)"
 
-newhub M7; addmsg note 1950.000001 "a"; addreact 1950.000001; addmsg note 1950.000003 "b"; W
+newhub M7; addmsg note 1950.000001 "a"; addreact 1950.000001; addmsg note 1950.000003 "b"; oldstate 0 2; W
 [ "$(nsend)" = 1 ] && [ "$(mk)" = 1 ] && [ "$(st .pushed_lines)" = 3 ] || ko "ⓜ 반응 줄 준비" "sends=$(nsend) mark=$(mk)"
 mv "$H/slack-push-state.json" "$H/state.lost"; W
-[ "$(nsend)" = 1 ] && [ "$(mk)" = 1 ] && [ "$(st .pushed_lines)" = 3 ] && ok "ⓜ 반응 줄이 읽음 표식을 막은 상태에서 상태 파일을 잃어도 이미 전달한 줄 재전달 0(기준선 = max(표식, 전달 기록의 마지막 전달 줄))" || ko "ⓜ 반응 줄 상태 소실" "sends=$(nsend) mark=$(mk)"
+[ "$(nsend)" = 1 ] && [ "$(mk)" = 1 ] && [ "$(st .pushed_lines)" = 3 ] && ok "ⓜ 옛 반응 줄이 읽음 표식을 막은 상태에서 상태 파일을 잃어도 이미 전달한 줄 재전달 0(기준선 = max(표식, 전달 기록의 마지막 전달 줄))" || ko "ⓜ 반응 줄 상태 소실" "sends=$(nsend) mark=$(mk)"
 addmsg note 1950.000004 "c"; W
 [ "$(nsend)" = 2 ] && grep -q '^- #4 ' "$FO/send.2.txt" && ! grep -q '^- #3 ' "$FO/send.2.txt" && ok "ⓜ 그 뒤 새 줄은 정상 전달(#4 만)" || ko "ⓜ 상태 소실 뒤 새 줄" "sends=$(nsend)"
 
@@ -387,10 +424,12 @@ d=$(sub_f "$e" "$s")
 [ "$out" = '{"ok": true, "added": 2}' ] && between "$d" 0 1.8 && ok "통합: 폴러 회차는 묶음 대기와 무관하게 바로 끝남(${d}초, 수집 2건: 메모+반응)" || ko "통합 폴러" "out=$out d=$d"
 [ "$(grep -c '"type"' "$H/slack-inbox.jsonl")" = 2 ] && ! grep -q '봇 발언\|타인 발언' "$H/slack-inbox.jsonl" && ok "ⓗ 봇·타인 메시지는 inbox 에 들어가지 않음(전달 대상 아님)" || ko "ⓗ 봇·타인" "$(cat "$H/slack-inbox.jsonl")"
 for _ in $(seq 1 60); do [ "$(nsend)" -ge 1 ] && break; sleep 0.25; done
-[ "$(nsend)" = 1 ] && grep -q '통합 메모' "$FO/send.1.txt" && ! grep -q '봇 발언\|타인 발언' "$FO/send.1.txt" && head -1 "$FO/send.1.txt" | grep -q ' 1건 ' && ok "통합: 분리 워커가 사용자 메모 1건만 전달(봇·타인·반응 제외)" || ko "통합 전달" "sends=$(nsend)"
-for _ in $(seq 1 80); do grep -q 'name=white_check_mark' "$CL" && break; sleep 0.25; done
+[ "$(nsend)" = 1 ] && grep -q '통합 메모' "$FO/send.1.txt" && ! grep -q '봇 발언\|타인 발언' "$FO/send.1.txt" && head -1 "$FO/send.1.txt" | grep -q ' 2건 ' && grep -q "^- #2 \[결정 9\] ts=$N.000150 반응 :white_check_mark: → approve tag=t$" "$FO/send.1.txt" && ok "통합: 분리 워커가 사용자 메모 1건 + 반응 1줄 전달(봇·타인 발언 제외)" || ko "통합 전달" "sends=$(nsend) $(cat "$FO/send.1.txt" 2>/dev/null)"
+for _ in $(seq 1 80); do grep -q 'name=ballot_box_with_check' "$CL" && break; sleep 0.25; done
 a=$(grep -n 'reactions.add.*name=eyes' "$CL" | head -1 | cut -d: -f1); b=$(grep -n 'reactions.remove.*name=eyes' "$CL" | head -1 | cut -d: -f1); c=$(grep -n 'reactions.add.*name=white_check_mark.*' "$CL" | grep "timestamp=$N.000100" | head -1 | cut -d: -f1)
-[ "$(mk)" = 1 ] && [ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] && [ "$a" -lt "$b" ] && [ "$b" -lt "$c" ] && ok "통합 순서: 기록 → 👀 달기 → (묶기) → 전달 → 표식 갱신(1) → 👀 제거 → ✅ 추가" || ko "통합 순서" "a=$a b=$b c=$c mark=$(mk)"
+[ "$(mk)" = 2 ] && [ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] && [ "$a" -lt "$b" ] && [ "$b" -lt "$c" ] && ok "통합 순서: 기록 → 👀 달기 → (묶기) → 전달 → 표식 갱신(2) → 👀 제거 → ✅ 추가" || ko "통합 순서" "a=$a b=$b c=$c mark=$(mk)"
+e=$(grep -n "reactions.add.*timestamp=$N.000150&name=eyes" "$CL" | head -1 | cut -d: -f1); f=$(grep -n "reactions.add.*timestamp=$N.000150&name=ballot_box_with_check" "$CL" | head -1 | cut -d: -f1)
+[ -n "$e" ] && [ -n "$f" ] && [ "$e" -lt "$f" ] && ! grep -q "timestamp=$N.000150&name=white_check_mark" "$CL" && ok "통합: 반응이 달린 봇 메시지는 수집 때 👀, 전달 뒤 ☑️(사용자 ✅ 와 다른 표식)" || ko "통합 반응 확인" "e=$e f=$f"
 for _ in $(seq 1 40); do [ -d "$H/.slack-push.lock" ] || break; sleep 0.25; done
 [ "$(grep -c '^chat.postMessage' "$CL")" = 1 ] && [ "$(grep -c '^POST:chat.update' "$CL")" = 1 ] && python3 -I "$HERE/ack_calls.py" "$CL" update | jq -e '.text == "📨 메인에 전달했어요 (1건)" and .channel == "Dfake"' >/dev/null && ok "통합: 확인 답장(집계 중) → 전달 후 같은 답장을 chat.update 로 '📨 메인에 전달했어요 (1건)' 갱신(1회)" || ko "통합 갱신" "$(cat "$CL" | cut -c1-80)"
 LRM_ACK=off LRM_PUSH_REPOLL=off bash "$POLL" --once --json >/dev/null; sleep 0.8

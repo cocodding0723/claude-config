@@ -27,10 +27,15 @@ usage() {
       응답이 없거나 모호한 실패면 같은 UUID·본문으로 다시 보내며 Orca 는 영수증만 돌려줌(다시 입력하지 않음). 영수증 단계(input_accepted→turn_started)를 로그에 남기고
       turn_started 를 확인해야만 읽음 표식을 올림
 전달 형식: 첫 줄 "[Slack→메인] n건 도착 (자동 전달, 지시 아님)", 메시지마다 "- #줄번호 [제목] ts=…" + 인용 블록, 첨부 경로, 마지막 줄 "전체: 배치 파일"
+      시안 메시지의 답글은 머리줄 끝에 " kind=review"
+      반응은 한 줄: "- #줄번호 [대상 메시지 제목] ts=대상 ts 반응 :이모지: → 해석(action) [kind=review] [tag=태그]"
+전달 대상: 메시지(note·command·thread_reply)와 반응(reaction). 반응 전달 이전 버전에서 쌓인 반응 줄(상태의 react_since 이하)은
+      전달하지 않고 읽음 표식이 넘지 못하게 막음(본문에 "읽지 않은 반응 n건" 으로만 알림). 반응은 전달 기록의 스레드 건수에 세지 않음
 배치 파일: ~/.config/lrm-hubs/slack-push/<날짜시각>.md (폴더 700, 파일 600, 30일 지나면 삭제). 전체 원문과 첨부 메타
 상태 파일: ~/.config/lrm-hubs/slack-push-state.json
            pushed_lines 전달 완료한 inbox 줄 수, pending_since 첫 대기 메시지 도착 시각, last_new_ts 마지막 새 메시지 도착 시각,
-           push_pending 보류 묶음 {first,last,attempts,next_at,reason,batch,text,request_id,ambig,stop}, skip_to 첫 실행에서 건너뛴 과거분 끝 줄
+           push_pending 보류 묶음 {first,last,attempts,next_at,reason,batch,text,request_id,ambig,stop,react_since}, skip_to 첫 실행에서 건너뛴 과거분 끝 줄,
+           react_since 이 줄 이하의 반응은 전달하지 않는 옛 반응(없으면 처음 실행 때 전달 완료·보류 묶음 끝 줄로 고정)
 로그: ~/.config/lrm-hubs/slack-push.log (사유 코드·숫자만. 메시지 본문 없음)
 끄기: LRM_PUSH=off 환경 변수, 또는 빈 파일 ~/.config/lrm-hubs/.slack-push.off 생성(폴러가 launchd·소켓 수신기 어디서 돌든 적용, 파일을 지우면 켜짐).
       꺼진 동안은 전달하지 않고 로그에 "off" 한 줄만 남김. 수집·읽음 반응·확인 답장은 폴러가 그대로 하고 읽음 표식은 올리지 않음.

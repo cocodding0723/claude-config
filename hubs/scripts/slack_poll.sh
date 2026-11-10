@@ -18,12 +18,20 @@ usage() {
 첨부 저장: ~/.config/lrm-hubs/slack-files/<file_id>_<정리한 이름> (폴더 700, 파일 600, 25MB 상한, 봇 파일 제외)
 상태 파일: ~/.config/lrm-hubs/slack-poll-state.json (중복 방지, 스레드별 마지막 답글 시각,
            file_share_since = 첨부 메시지 수집을 시작한 시각. 그 이전 첨부 메시지는 기록·내려받기 없이 건너뜀,
-           reacted = 읽음 반응 진행 표 {메시지 ts: new|eyes|done|skip}, reactions_disabled_reason = 반응 권한 부족 사유,
+           reacted = 읽음 반응 진행 표 {메시지 ts: new|eyes|done|skip}, reacted_on = 반응 확인 진행 표 {봇 메시지 ts: {s,at}},
+           reactions_disabled_reason = 반응 권한 부족 사유,
            acked = {스레드 루트 ts: 확인 답장 시각}, ack_sent = 최근 확인 답장 시각 목록,
            ack_msgs = {스레드 루트 ts: {ts,ch,n}} 확인 답장 메시지 ts·채널·누적 전달 건수, upd_pos = 처리한 전달 기록의 마지막 seq,
            upd_part = 처리 중인 기록 {seq,k}(회차 상한으로 중단된 위치))
 읽음 반응: 새 사용자 메시지(note·command·thread_reply)에 👀, 메인이 읽음 처리(.main-read-lines 의 줄 수가 그 줄을 지남)하면 ✅ 로 교체.
-           reactions:write scope 가 없으면 조용히 건너뛰고 10분마다 재시도
+           사용자가 봇 메시지에 단 반응(이모지)은 반응에 반응을 달 수 없어 그 봇 메시지에 👀, 그 반응 줄이 모두 읽히면 ☑️(ballot_box_with_check)로 교체.
+           완료 표식을 ✅ 와 다르게 둬 사용자의 ✅(승인·합격)와 구분함. 끝난 메시지에 새 반응이 오면 다시 👀
+           두 표가 회차당 호출 상한(LRM_REACT_MAX)을 함께 쓰고, 30분 넘게 묵은 대기는 달지 않음(반응은 수집 시각 기준)
+           reactions:write scope 가 없으면 조용히 건너뛰고 10분마다 재시도(stderr 에 사유·scope 이름 한 줄, 토큰 없음). 수집·전달은 계속
+반응 해석: 결정 카드 ✅=approve ❌(x)=hold :비서-a~d:=a~d, 시안(kind=review) ✅=pass ❌=fail :비서-a:=pick_a :비서-b:=pick_b.
+           표에 없는 이모지는 이름 그대로. 종류는 slack-sent.jsonl 의 form_kind·kind(text·file 제외) → 없으면 첨부 기록이고 제목에 '결정'이 없을 때 review.
+           review 메시지의 반응·답글 레코드에 "kind":"review" 추가(다른 종류는 키 없음)
+스레드 답글: '채널에도 보내기'를 켠 답글(subtype thread_broadcast)도 thread_reply 로 수집
 수신 확인 답장: 새 사용자 메시지의 스레드에 "📥 메시지 집계 중이에요" 1회(chat:write). 같은 스레드 30초 1회, 60초 3회, 회차 3회. 결정·승인 같은 명령 답글에는 달지 않음.
            slack_cmd.sh 즉답 명령·30분 넘게 묵은 항목은 제외. 권한 부족이면 조용히 건너뛰고 10분마다 재시도(상태: ack_disabled_reason).
            전송 전에 상태(acked·ack_sent)부터 저장하므로 실패해도 다시 보내지 않음. 이미 보낸 답장은 지우거나 고치지 않음(아래 전달 완료 표시만 예외)
@@ -88,7 +96,11 @@ RETRIES = 2
 PAGE_LIMIT = 200
 MAX_PAGES = 5
 SENT, INBOX, STATE = (os.path.join(DIR, n) for n in ("slack-sent.jsonl", "slack-inbox.jsonl", "slack-poll-state.json"))
+# 반응 → 답 해석. 같은 이모지도 메시지 종류에 따라 뜻이 다름(결정 카드 REACTION_ACTION, 시안 REVIEW_ACTION). 표에 없으면 이름 그대로
 REACTION_ACTION = {"white_check_mark": "approve", "x": "hold", "비서-추천대로": "approve", "비서-lgtm": "approve", "비서동의": "approve", "비서-보류": "hold", "비서-a": "a", "비서-b": "b", "비서-c": "c", "비서-d": "d"}
+REVIEW_ACTION = {"white_check_mark": "pass", "x": "fail", "비서-a": "pick_a", "비서-b": "pick_b"}
+REVIEW = "review"
+TRANSPORT_KINDS = ("text", "file")  # slack_notify.sh 기록의 kind 중 전송 방식 값(메시지 종류 아님)
 COMMANDS = [
     ("decision", re.compile(r"^결정\s*(\d+)\s+(\S+)$")),
     ("all_recommended", re.compile(r"^전부\s*추천$")),
@@ -122,6 +134,11 @@ DL = {"ok": 0, "fail": {}, "spent": 0.0}  # 회차 집계: 성공 수, 사유별
 # 읽음 반응 설정. 진행 표 state["reacted"][ts] = new(👀 대기) → eyes(👀 달림) → done(✅) | skip(포기)
 RX_SEEN, RX_DONE = "eyes", "white_check_mark"
 RX_TYPES = ("note", "command", "thread_reply")  # 반응 대상 레코드. type=reaction·봇 줄은 제외
+# 사용자 반응(이모지)의 확인 표식. Slack 은 반응에 반응을 못 달아 반응이 달린 봇 메시지에 👀 → ☑️ 를 닮.
+# 완료 표식을 ✅ 와 다르게 둔 이유: 사용자가 결정·시안에 누른 ✅(승인·합격)와 한 칩으로 합쳐져 구분이 안 됨
+RX_ON_DONE = "ballot_box_with_check"
+BCAST_SINCE_KEY = "thread_broadcast_since"  # 상태 파일 키: '채널에도 보내기' 답글 수집 시작 시각(초). 이전 broadcast 답글은 seen 에만 기록
+REPLY_SUBTYPES = USER_SUBTYPES + ("thread_broadcast",)  # 스레드 답글로 인정할 subtype. '채널에도 보내기'를 켠 답글은 thread_broadcast
 def env_int(name, default, lo, hi):
     """정수 환경 변수. 정수가 아니면 default, 범위 밖이면 경계값. 잘못된 설정 하나가 수집 전체를 죽이지 않게 함"""
     try:
@@ -329,6 +346,21 @@ def load_jsonl(path):
                     pass
     return out
 
+def msg_kind(rec):
+    """보낸 기록의 메시지 종류. 명시값 우선: form_kind(양식 A), 전송 방식(text·file)이 아닌 kind.
+    없으면 파일 첨부 기록이고 제목에 '결정'이 없을 때 review(시안), 그 밖은 None(결정 해석 유지).
+    '결정' 제외는 첨부가 달린 결정 카드의 ✅ 를 합격으로 잘못 읽지 않게 함(slack_pending.sh 도 제목의 '결정'으로 결정을 판별)"""
+    for k in ("form_kind", "kind"):
+        v = rec.get(k)
+        if isinstance(v, str) and v and v not in TRANSPORT_KINDS:
+            return v
+    if rec.get("file_id") and "결정" not in str(rec.get("title") or ""):
+        return REVIEW
+    return None
+
+def reaction_action(kind, name):
+    return (REVIEW_ACTION if kind == REVIEW else REACTION_ACTION).get(name, name)
+
 def classify(text):
     t = " ".join(text.split())
     for name, pat in COMMANDS:
@@ -360,25 +392,28 @@ def load_state():
         return {"seen": seen_from_inbox()}
 
 def read_ts():
-    """메인이 읽은 inbox 줄(READ_MARK 의 줄 수)까지의 사용자 메시지 ts 집합. 표식이 없거나 깨졌으면 빈 집합"""
+    """(메시지 ts 집합, 반응 대상 메시지 ts 집합). 메인이 읽은 inbox 줄(READ_MARK 의 줄 수)까지 기준. 표식이 없거나 깨졌으면 둘 다 빈 집합.
+    반응 대상은 그 메시지의 반응 줄이 모두 읽혔을 때만 읽음(뒤에 온 반응이 안 읽혔으면 ☑️ 로 바꾸지 않음)"""
     try:
         with open(os.path.join(DIR, READ_MARK), encoding="utf-8") as f:
             n = int(f.read().strip())
-        out = set()
+        out, on, unread = set(), set(), set()
         # n 이 inbox 줄 수보다 크면 전부 읽음으로 봄. inbox 를 회전·자르면 표식(.main-read-lines)도 0 으로 함께 리셋할 것
         with open(INBOX, encoding="utf-8") as f:
             for i, line in enumerate(f):
-                if i >= n:
-                    break
                 try:
                     d = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if isinstance(d, dict) and d.get("type") in RX_TYPES and d.get("ts"):
+                if not isinstance(d, dict):
+                    continue
+                if d.get("type") == "reaction" and d.get("parent_ts"):
+                    (on if i < n else unread).add(str(d["parent_ts"]))
+                elif i < n and d.get("type") in RX_TYPES and d.get("ts"):
                     out.add(d["ts"])
-        return out
+        return out, on - unread
     except (OSError, ValueError):
-        return set()
+        return set(), set()
 
 def rx_map(state):
     r = state.get("reacted")
@@ -386,22 +421,45 @@ def rx_map(state):
         r = state["reacted"] = {}
     return r
 
+def on_map(state):
+    """반응 확인 진행 표 {봇 메시지 ts: {"s": new|eyes|done|skip, "at": 반응 수집 시각}}. 메시지 ts 가 아니라 수집 시각으로
+    묵음·보관을 판정함(결정 카드는 몇 시간 전 메시지라 ts 기준이면 바로 묵음 처리됨). 형식이 틀린 칸은 버림"""
+    r = state.get("reacted_on")
+    num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool)
+    r = {k: v for k, v in (r if isinstance(r, dict) else {}).items()
+         if isinstance(k, str) and k.replace(".", "", 1).isdigit() and isinstance(v, dict)
+         and v.get("s") in ("new", "eyes", "done", "skip") and num(v.get("at"))}
+    state["reacted_on"] = r
+    return r
+
+def mark_on(state, ts, now):
+    """새 반응이 수집된 봇 메시지에 확인 표식 대기(new). 끝난(done·skip) 메시지에 새 반응이 오면 다시 대기로 돌림"""
+    on = on_map(state)
+    if on.get(ts, {}).get("s") not in ("new", "eyes"):
+        on[ts] = {"s": "new", "at": now}
+
 def react_phase(state, ch, now):
     """👀 달기(new → eyes), 읽힌 줄은 👀 제거 + ✅ 추가(→ done). 호출은 회차당 RX_MAX 개까지.
     다른 반응은 건드리지 않음(제거는 이 봇의 👀 만). 예외는 호출부가 삼킴"""
-    rx = rx_map(state)
+    rx, on = rx_map(state), on_map(state)
     for k in [k for k in rx if not (isinstance(k, str) and k.replace(".", "", 1).isdigit()) or float(k) < now - RX_KEEP]:
         del rx[k]
+    for k in [k for k, v in on.items() if v["at"] < now - RX_KEEP]:
+        del on[k]
     # 권한 정지·호출 상한과 무관하게 묵은 new 를 정리. 정지 중 쌓인 과거 메시지에 복구 뒤 소급 반응이 달리는 것을 막음
     for k, s in rx.items():
         if s == "new" and float(k) < now - RX_STALE:
             rx[k] = "skip"
-    if not any(s in ("new", "eyes") for s in rx.values()):
+    for v in on.values():
+        if v["s"] == "new" and v["at"] < now - RX_STALE:
+            v["s"] = "skip"
+    on_s = {k: v["s"] for k, v in on.items()}
+    if not any(s in ("new", "eyes") for s in list(rx.values()) + list(on_s.values())):
         return
     at = state.get("reactions_disabled_at")
     if state.get("reactions_disabled_reason") and isinstance(at, (int, float)) and now - at < RX_RETRY:
         return
-    read = read_ts()
+    read, read_on = read_ts()
     calls = 0
 
     def call(op, ts, name):
@@ -424,25 +482,33 @@ def react_phase(state, ch, now):
         state.pop("reactions_disabled_at", None)
         return "ok"
 
-    for ts in sorted(k for k, s in rx.items() if s == "new" and k not in read):
-        r = call("add", ts, RX_SEEN)
-        if r == "stop":
-            return
-        rx[ts] = "eyes" if r == "ok" else "skip"
-    for ts in sorted(k for k, s in rx.items() if s in ("new", "eyes") and k in read):
-        if rx[ts] == "eyes":
-            if calls + 2 > RX_MAX:  # 제거만 하고 추가가 상한에 걸리면 👀·✅ 둘 다 없는 회차가 생김. 한 쌍이 들어갈 때만 시작
-                return
-            r = call("remove", ts, RX_SEEN)
-            if r == "stop":
-                return
-            if r == "skip":
-                rx[ts] = "skip"
-                continue
-        r = call("add", ts, RX_DONE)
-        if r == "stop":
-            return
-        rx[ts] = "done" if r == "ok" else "skip"
+    # 사용자 메시지 표(✅) → 반응 확인 표(☑️) 순. 두 표가 호출 상한 RX_MAX 를 함께 씀
+    tables = ((rx, read, RX_DONE), (on_s, read_on, RX_ON_DONE))
+    try:
+        for tab, rd, _ in tables:
+            for ts in sorted(k for k, s in tab.items() if s == "new" and k not in rd):
+                r = call("add", ts, RX_SEEN)
+                if r == "stop":
+                    return
+                tab[ts] = "eyes" if r == "ok" else "skip"
+        for tab, rd, done in tables:
+            for ts in sorted(k for k, s in tab.items() if s in ("new", "eyes") and k in rd):
+                if tab[ts] == "eyes":
+                    if calls + 2 > RX_MAX:  # 제거만 하고 추가가 상한에 걸리면 👀·완료 표식 둘 다 없는 회차가 생김. 한 쌍이 들어갈 때만 시작
+                        return
+                    r = call("remove", ts, RX_SEEN)
+                    if r == "stop":
+                        return
+                    if r == "skip":
+                        tab[ts] = "skip"
+                        continue
+                r = call("add", ts, done)
+                if r == "stop":
+                    return
+                tab[ts] = "done" if r == "ok" else "skip"
+    finally:
+        for k, s in on_s.items():
+            on[k]["s"] = s
 
 def ack_text():
     """LRM_ACK_TEXT 를 정리한 답장 문구. 제어 문자·짝 없는 서로게이트(잘못된 UTF-8)는 제거, ACK_TEXT_MAX 자로 자름. 비면 기본 문구"""
@@ -596,6 +662,12 @@ def main():
         state[OWN_SINCE_KEY] = int(time.time()) - SHARE_GRACE
         save_state(state)
     own_since = state[OWN_SINCE_KEY]
+    # broadcast 답글 수집 시작 시각. 배포 전에 달린 broadcast 답글(옛 결정 명령 등)이 스레드 재조회 때 새 명령으로 재생되지 않게 하는 경계.
+    # 여유(SHARE_GRACE) 없이 지금: 배포 전 답글은 전부 옛 것이며 상태를 잃은 첫 회차도 같은 규칙
+    if not isinstance(state.get(BCAST_SINCE_KEY), (int, float)):
+        state[BCAST_SINCE_KEY] = int(time.time())
+        save_state(state)
+    bcast_since = state[BCAST_SINCE_KEY]
     seen = state.setdefault("seen", {})
     latest = state.setdefault("latest", {})  # 스레드 부모 ts → 마지막으로 읽은 latest_reply
     ch = api("conversations.open", users=ME)["channel"]["id"]
@@ -611,11 +683,12 @@ def main():
         return msg.get("subtype") == "file_share" and float(msg["ts"]) < since
 
     def add(key, item, files=None, backlog=False):
+        """새 항목이면 기록하고 True"""
         if key in seen:
-            return
+            return False
         seen[key] = now
         if backlog:
-            return
+            return False
         item.update({"channel": ch, "received_at": now})
         # 새 항목일 때만 내려받음(주기 재조회에서 반복 방지). 파일이 없으면 기존 레코드 모양 유지
         paths, failed = fetch_files(files)
@@ -626,6 +699,7 @@ def main():
         new.append(item)
         if item["type"] in RX_TYPES:
             rx_map(state).setdefault(item["ts"], "new")
+        return True
 
     def collect_replies(m, meta, floor=None):
         """답글이 바뀐 스레드만 조회해 사용자 답글을 thread_reply 로 추가. latest_reply 가 응답에 없을 수 있어 없으면 reply_count 로 비교.
@@ -636,12 +710,13 @@ def main():
             lr = m.get("latest_reply")
             if not (floor and lr and float(lr) < floor):  # 마지막 답글이 경계 이전이면 조회 자체를 생략
                 for rp in api("conversations.replies", channel=ch, ts=ts, limit=200).get("messages", []):
-                    if rp["ts"] != ts and rp.get("user") == ME and not rp.get("bot_id") and rp.get("subtype") in USER_SUBTYPES:
+                    if rp["ts"] != ts and rp.get("user") == ME and not rp.get("bot_id") and rp.get("subtype") in REPLY_SUBTYPES:
                         kind, cmd, args = classify(rp.get("text", ""))
                         item = {"type": "thread_reply", "ts": rp["ts"], "text": rp.get("text", ""), **meta}
                         if cmd:
                             item.update({"command": cmd, "args": args})
-                        add(f"msg:{rp['ts']}", item, rp.get("files"), is_backlog(rp) or bool(floor and float(rp["ts"]) < floor))
+                        add(f"msg:{rp['ts']}", item, rp.get("files"), is_backlog(rp) or bool(floor and float(rp["ts"]) < floor)
+                            or (rp.get("subtype") == "thread_broadcast" and float(rp["ts"]) < bcast_since))
             latest[ts] = marker
 
     # 반응·답글 수는 목록 응답에 들어 있어 메시지별 조회가 필요 없음. 반응은 오래된 메시지에도 달리므로 매번 기간 전체를 읽음
@@ -664,6 +739,9 @@ def main():
                 collect_replies(m, {"parent_ts": ts, "title": "", "tag": ""}, own_since)
             continue
         meta = {"parent_ts": ts, "title": rec.get("title", ""), "tag": rec.get("tag", "")}
+        kind = msg_kind(rec)
+        if kind == REVIEW:  # 다른 종류는 기존 레코드 모양 유지
+            meta["kind"] = REVIEW
         reactions = m.get("reactions", [])
         # 응답의 users 는 잘릴 수 있어 본인 반응이 안 보이고 개수가 더 많으면 그 메시지만 reactions.get 으로 보강
         if any(r.get("count", 0) > len(r.get("users", [])) and ME not in r.get("users", []) for r in reactions):
@@ -671,8 +749,9 @@ def main():
         for r in reactions:
             if ME in r.get("users", []):
                 name = r["name"]
-                add(f"react:{ts}:{name}", {"type": "reaction", "emoji": name,
-                                           "action": REACTION_ACTION.get(name, name), **meta})
+                if add(f"react:{ts}:{name}", {"type": "reaction", "emoji": name,
+                                              "action": reaction_action(kind, name), **meta}):
+                    mark_on(state, ts, now)
         collect_replies(m, meta)
 
     # 30일 지난 중복 방지 키 정리, 기간 밖 스레드 기록 정리
