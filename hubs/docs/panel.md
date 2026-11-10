@@ -77,6 +77,8 @@
 | 옛 결정 카드 | 반응(`slack-inbox.jsonl` 의 `reaction` → `parent_ts`)이 하나라도 있거나 `slack-done.txt` 기록 | 한 건 |
 | 번호 카드 | 폴러가 해석한 답(`kind: decide`·같은 `decision_id`·`pick`·`approve`)이 하나로 모임, 또는 `slack-done.txt` 기록. 보류(❌ `hold`)·충돌(답이 둘 이상·`conflict`)은 대기로 남기고 `state` 에 적는다. 해석되지 않은 반응은 답이 아니다 | 메시지마다 따로 |
 
+결정 번호가 형식(`D-` 와 영숫자 1~16자)에 맞지 않거나 없는 번호 카드 기록은 옛 결정 카드로 본다. 반응 하나로 닫히고, 대기 목록에는 번호 없이 제목만 싣는다(`id` null). `slack_pending.sh` 와 같다.
+
 번호 카드가 없는 기록(main 형식)에서는 옛 규칙과 결과가 같다. `slack_pending.sh` 는 Slack 에 글을 보내고 토큰을 읽어 부를 수 없으므로 같은 식을 수집기에 두고, `tests/panel/run.sh` 가 원본 줄을 대조한다. main 형식과 번호 카드 형식(이모지 카드 브랜치) 두 원본을 모두 인정하고, 어느 쪽도 아니면 시험이 실패한다. 두 형식의 기록을 각각 넣은 시험도 있다(`fixtures.py`·`fixtures_cards.py`).
 
 ### 오래됨
