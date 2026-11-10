@@ -54,7 +54,7 @@ launchd plist 가 바뀌면 재적재 명령을 안내한다. 실행까지 맡�
 비밀(`*.env`, 토큰, 자격 증명), 이 맥의 기록(`state`·`cache`·`logs`·`history`·`projects`·`sessions`), 백업(`*.bak*`), 캐시(`__pycache__`), 외부 도구 관리분(`skills/synced`, `plugins`), 허브 실행 상태(slack-inbox·sent·poll-state), 문서 허브 작업물(`HANDOFF.md`·`decisions.tsv`)은 `.gitignore` 로 막는다. 로컬 값 두 가지는 자리표시본으로만 둔다.
 
 - `hubs/slack-bot.env.example`: 값 없는 양식. 실제 값은 `~/.config/lrm-hubs/slack-bot.env`(권한 600)에만 둔다.
-- `values.env.example`: 값 없는 양식. 실제 값은 `~/.config/claude-config/values.env`(권한 600, `*.env` 라 미추적)에 둔다. 키는 `OWNER_NAME`·`PERSON_FULL`·`PERSON_SHORT`·`DM_CHANNEL`. 값 파일이 없거나 키가 비면 `install.sh` 는 아무것도 바꾸기 전에 중단한다.
+- `values.env.example`: 값 없는 양식. 실제 값은 `~/.config/claude-config/values.env`(권한 600, `*.env` 라 미추적)에 둔다. 키는 `OWNER_NAME`·`PERSON_FULL`·`PERSON_SHORT`·`DM_CHANNEL`·`REMOTE_ENV`(원격 맥 orca 환경). 값 파일이 없거나 키가 비면 `install.sh` 는 아무것도 바꾸기 전에 중단한다.
 
 ### 실명·채널 ID 처리 방식과 이유
 

@@ -15,7 +15,7 @@ W=$(mktemp -d "${TMPDIR:-/tmp}/cc-dockit-livediff.XXXXXX")
 trap 'rm -rf "${W:?}"' EXIT
 export HOME="$W/home"
 mkdir -p "$HOME/.config/claude-config"
-printf 'OWNER_NAME=VAL_OWNER\nPERSON_FULL=VAL_PERSON_FULL\nPERSON_SHORT=VAL_PERSON_SHORT\nDM_CHANNEL=VAL&DM_CHANNEL\n' > "$HOME/.config/claude-config/values.env"
+printf 'OWNER_NAME=VAL_OWNER\nPERSON_FULL=VAL_PERSON_FULL\nPERSON_SHORT=VAL_PERSON_SHORT\nDM_CHANNEL=VAL&DM_CHANNEL\nREMOTE_ENV=VAL_REMOTE\n' > "$HOME/.config/claude-config/values.env"
 printf '[user]\n\tname = sandbox\n' > "$HOME/.gitconfig"
 
 # 치환 대상 13개(repo 줄)의 설치 방식: links.tsv 의 모드로 link/render 를 가름
