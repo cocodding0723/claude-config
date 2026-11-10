@@ -16,12 +16,13 @@ export GIT_CONFIG_GLOBAL="${GIT_CONFIG_GLOBAL:-$HOME/.gitconfig}"
 
 usage() {
   cat <<'E'
-사용: install.sh [--dry-run | --check | --diff-live | --restore <백업폴더>] [--reload-launchd] [--allow-live-diff]
+사용: install.sh [--dry-run | --check | --doctor | --diff-live | --restore <백업폴더>] [--reload-launchd] [--allow-live-diff]
 
   (옵션 없음)        links.tsv 항목 설치. 이미 같은 상태면 건너뜀(반복 실행 안전).
                      라이브가 저장소보다 앞선 항목이 있으면 변경 전에 중단
   --dry-run          바뀔 내용만 출력. 파일을 만들거나 바꾸지 않음
   --check            끊어진 링크·어긋난 설정 점검. 문제가 있으면 종료 코드 1
+  --doctor           설치 전 의존성 점검(scripts/doctor.sh). 필수 누락이면 종료 코드 1. 읽기 전용
   --diff-live        라이브 파일이 저장소 원본과 다른(라이브가 더 최신인) 항목만 출력. 있으면 종료 코드 1
   --allow-live-diff  라이브가 앞선 항목이 있어도 설치를 진행(백업 후 저장소 내용으로 덮어씀)
   --restore <폴더>   그 설치 때 만든 링크·병합 결과를 지우고 백업 원본 복원
@@ -31,7 +32,7 @@ render 항목(실명·채널 ID 가 든 파일)은 로컬 값 파일로 자리�
 값 파일: ~/.config/claude-config/values.env (CLAUDE_CONFIG_VALUES 로 변경). 양식은 values.env.example.
 
 환경: HOME 아래만 처리. CLAUDE_CONFIG_BACKUP_ROOT 로 백업 위치 변경(기본 ~/.claude-config-backup).
-예시: ./install.sh --dry-run && ./install.sh && ./install.sh --check
+예시: ./install.sh --doctor && ./install.sh --dry-run && ./install.sh && ./install.sh --check
       ./install.sh --restore ~/.claude-config-backup/20261106-153000
 E
 }
@@ -43,6 +44,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1; shift ;;
     --check) ACTION=check; shift ;;
+    --doctor) exec bash "$REPO/scripts/doctor.sh" ;;
     --restore) ACTION=restore; RESTORE_DIR="${2:-}"; [ -n "$RESTORE_DIR" ] || die "--restore 에 백업 폴더 경로가 필요함"; shift 2 ;;
     --diff-live) ACTION=difflive; shift ;;
     --allow-live-diff) ALLOW_LIVE_DIFF=1; shift ;;
@@ -335,6 +337,28 @@ do_install() {
   log "---"
   log "요약: 링크 $N_LINK, 병합 $N_MERGE, 복사 $N_COPY, 건너뜀 $N_SKIP"
   if [ -n "$BACKUP" ]; then log "백업: $BACKUP (되돌리기: ./install.sh --restore $BACKUP)"; fi
+  [ "$DRY" = 1 ] || next_steps
+}
+
+# 설치 뒤 사용자가 직접 할 일. 시크릿 파일은 존재·권한만 보고 내용은 읽지 않으며, 값을 묻거나 저장하지 않음
+next_steps() {
+  local bot=".config/lrm-hubs/slack-bot.env" main=".config/lrm-hubs/main.env" f p
+  log "---"
+  log "설치 뒤 할 일(값은 직접 입력. 이 설치기는 값을 묻거나 저장·출력하지 않음)"
+  for f in "$bot" "$main"; do
+    if [ ! -f "$HOME/$f" ]; then
+      case "$f" in
+        "$bot") log "  [필요] ~/$f 없음: 파일을 만들고 SLACK_BOT_TOKEN=·SLACK_USER_ID= 두 줄에 값을 직접 채운 뒤 chmod 600 ~/$f" ;;
+        *) log "  [필요] ~/$f 없음: skills/orca-main/references/main.env.example 을 복사해 채운 뒤 chmod 600 ~/$f" ;;
+      esac
+    else
+      p=$(stat -f '%Lp' "$HOME/$f" 2>/dev/null || echo '?')
+      if [ "$p" = 600 ]; then log "  [확인] ~/$f 있음(권한 600)"; else log "  [권한] ~/$f 권한 $p: chmod 600 ~/$f"; fi
+    fi
+  done
+  log "  Slack 폴러 켜기(꺼져 있을 때만): launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/ai.lrm.slackpoll.plist"
+  log "  Socket Mode 수신기는 파일만 설치하고 켜지 않음. 켜는 법: hubs/docs/install-orca-main.md 의 'Socket Mode 켜기'"
+  log "  의존성 점검: ./install.sh --doctor"
 }
 
 # 점검 전용. 문제 수를 종료 코드로 반환
