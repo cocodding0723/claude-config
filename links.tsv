@@ -26,6 +26,7 @@ skills/jira-issue	.claude/skills/jira-issue	link
 skills/make-mistakes-impossible	.claude/skills/make-mistakes-impossible	link
 skills/manage-issues	.claude/skills/manage-issues	link
 skills/orca-coordinator	.claude/skills/orca-coordinator	link
+skills/orca-main	.claude/skills/orca-main	link
 skills/pr-review-game	.claude/skills/pr-review-game	link
 skills/pretty-code	.claude/skills/pretty-code	link
 skills/prose-lint	.claude/skills/prose-lint	link
@@ -82,8 +83,15 @@ hubs/roles/role-ui.txt	.config/lrm-hubs/roles/role-ui.txt	link
 hubs/slack-bot-manifest.yml	.config/lrm-hubs/slack-bot-manifest.yml	link
 hubs/docs/slack-format.md	.config/lrm-hubs/docs/slack-format.md	link
 hubs/docs/slack-push.md	.config/lrm-hubs/docs/slack-push.md	link
+hubs/docs/install-orca-main.md	.config/lrm-hubs/docs/install-orca-main.md	link
 hubs/launchd/ai.lrm.slackpoll.plist	Library/LaunchAgents/ai.lrm.slackpoll.plist	copy
+hubs/scripts/slack_socket.py	.config/lrm-hubs/slack_socket.py	copy
+hubs/launchd/ai.lrm.slacksocket.plist	.config/lrm-hubs/ai.lrm.slacksocket.plist	copy
 hubs/roles/role-vfx.txt.tmpl	.config/lrm-hubs/roles/role-vfx.txt	render
 hubs/roles/role-tutorial.txt.tmpl	.config/lrm-hubs/roles/role-tutorial.txt	render
 hubs/roles/role-docs.txt.tmpl	.config/lrm-hubs/roles/role-docs.txt	render
 hubs/docs/slack-reactions.md	.config/lrm-hubs/docs/slack-reactions.md	link
+hubs/mods/lrm-board/.claude-plugin/plugin.json	.config/lrm-hubs/mods/lrm-board/.claude-plugin/plugin.json	copy
+hubs/mods/lrm-board/hooks/hooks.json	.config/lrm-hubs/mods/lrm-board/hooks/hooks.json	copy
+hubs/mods/lrm-board/hooks/register.tsx	.config/lrm-hubs/mods/lrm-board/hooks/register.tsx	copy
+hubs/mods/lrm-board/types/index.d.ts	.config/lrm-hubs/mods/lrm-board/types/index.d.ts	copy

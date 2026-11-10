@@ -112,6 +112,11 @@ out=$("$INSTALL" --check 2>&1); rc=$?
 [ "$rc" = 1 ] && echo "$out" | grep -q 'doc-kit' && ok "--check: doc-kit 링크가 없으면 지적" || ko "--check doc-kit" "rc=$rc"
 ln -s "$REPO/skills/doc-kit" "$DK"
 check "doc-kit 링크 되돌린 뒤 점검 통과" "$INSTALL" --check
+# orca-main: 스킬 폴더 링크, 설정 없으면 patrol.sh 가 orca 호출 전에 종료 코드 2 와 양식 파일 이름 안내
+OM="$SB/.claude/skills/orca-main"
+[ "$(readlink "$OM")" = "$REPO/skills/orca-main" ] && [ -f "$OM/references/main.env.example" ] && ok "orca-main 스킬 링크·설정 양식 설치" || ko "orca-main 링크" "원본을 가리키지 않음"
+out=$(ORCA_MAIN_CONFIG="$SB/없는설정.env" bash "$OM/scripts/patrol.sh" 2>&1); rc=$?
+[ "$rc" = 2 ] && echo "$out" | grep -q 'main.env.example' && ok "orca-main patrol.sh: 설정 없으면 종료 코드 2·양식 안내" || ko "patrol.sh 설정 없음" "rc=$rc"
 linkbad=0; while IFS=$'\t' read -r src dst mode; do
   [ "$mode" = link ] || continue
   [ -L "$SB/$dst" ] && [ -e "$SB/$dst" ] && [ "$(readlink "$SB/$dst")" = "$REPO/$src" ] || { linkbad=1; ko "링크" "$dst"; }
@@ -129,6 +134,13 @@ done <<< "$entries"
 [ "$rend_bad" = 0 ] && ok "render 항목: 실제 파일·자리표시 전부 치환"
 grep -qF 'VAL&DM_CHANNEL' "$SB/.config/lrm-hubs/roles/role-docs.txt" && grep -q 'VAL_PERSON_FULL' "$SB/.config/lrm-hubs/roles/role-tutorial.txt" && ok "render: 값 파일 값이 들어감" || ko "render 값" "누락"
 grep -q "$SB" "$SB/Library/LaunchAgents/ai.lrm.slackpoll.plist" && ! grep -q '__HOME__' "$SB/Library/LaunchAgents/ai.lrm.slackpoll.plist" && ok "plist __HOME__ 치환" || ko "plist 치환" ""
+# 옆 패널 mod: 링크가 아닌 실제 파일 4개, 패널 데이터·메인 체크아웃 경로가 이 HOME 기준
+MOD="$SB/.config/lrm-hubs/mods/lrm-board"
+mod_bad=0; for f in .claude-plugin/plugin.json hooks/hooks.json hooks/register.tsx types/index.d.ts; do [ -f "$MOD/$f" ] && [ ! -L "$MOD/$f" ] || mod_bad=1; done
+[ "$mod_bad" = 0 ] && jq -e '.name == "lrm-board"' "$MOD/.claude-plugin/plugin.json" >/dev/null && jq -e '.modules' "$MOD/hooks/hooks.json" >/dev/null && ok "lrm-board mod 파일 4개 복사·JSON 정상" || ko "lrm-board 복사" "파일 누락·링크·JSON 오류"
+grep -qF "'$SB/.config/lrm-hubs/panel.json'" "$MOD/hooks/register.tsx" && grep -qF "'$SB/orca/LoveRevolutionMaker'" "$MOD/hooks/register.tsx" && ! grep -q '__HOME__' "$MOD/hooks/register.tsx" && ok "lrm-board: panel.json·메인 체크아웃 경로 __HOME__ 치환" || ko "lrm-board 치환" ""
+SOCKP="$SB/.config/lrm-hubs/ai.lrm.slacksocket.plist"
+grep -q "<string>$SB/.config/lrm-hubs/slack_socket.py</string>" "$SOCKP" && grep -q "<string>$(command -v python3)</string>" "$SOCKP" && ! grep -q '__[A-Z0-9_]*__' "$SOCKP" && plutil -lint "$SOCKP" >/dev/null && cmp -s "$REPO/hubs/scripts/slack_socket.py" "$SB/.config/lrm-hubs/slack_socket.py" && ok "소켓 plist __HOME__·__PYTHON3__ 치환·형식 정상, 수신기 복사" || ko "소켓 plist" "치환·형식 오류"
 [ "$(git config --global core.hooksPath)" = "~/.config/git/hooks" ] && [ "$(git config --global pull.rebase)" = true ] && [ "$(git config --global merge.ff)" = false ] && ok "git 설정 4개 키" || ko "git 설정" ""
 grep -q 'name = sandbox' "$SB/.gitconfig" && ok "git 사용자 값 보존" || ko "git 사용자 값" "사라짐"
 BK=$(ls -d "$SB/.claude-config-backup"/*/ | head -1); BK=${BK%/}
@@ -158,7 +170,9 @@ out=$("$INSTALL" 2>&1); rc=$?
 after=$(snapshot "$SB")
 [ "$rc" = 0 ] && [ "$before" = "$after" ] && ok "재설치 무변경(멱등)" || ko "재설치 멱등" "rc=$rc 지문 불일치"
 [ "$(ls -d "$SB/.claude-config-backup"/*/ | wc -l | tr -d ' ')" = 1 ] && ok "재설치 후에도 백업 폴더 1개" || ko "재설치 백업 폴더" "늘어남"
-echo "$out" | grep -q '요약: 링크 0, 병합 0, 복사 0' && ok "재설치 요약 0건 변경" || ko "재설치 요약" "$(echo "$out" | tail -2 | head -1)"
+echo "$out" | grep -q '요약: 링크 0, 병합 0, 복사 0' && ok "재설치 요약 0건 변경" || ko "재설치 요약" "$(echo "$out" | grep '요약:')"
+# 설치 뒤 할 일: 시크릿은 권한만 지적하고 내용(DUMMY=1)은 출력하지 않음, 없는 main.env 는 양식 안내, 소켓은 켜지 않는다고 안내
+echo "$out" | grep -q '\[권한\] ~/.config/lrm-hubs/slack-bot.env 권한 644' && echo "$out" | grep -q '\[필요\] ~/.config/lrm-hubs/main.env 없음: skills/orca-main/references/main.env.example' && ! echo "$out" | grep -q 'DUMMY' && echo "$out" | grep -q 'Socket Mode 수신기는 파일만 설치하고 켜지 않음' && ok "설치 뒤 할 일: 시크릿 권한·main.env 양식·소켓 미적재 안내, 내용 미출력" || ko "설치 뒤 할 일" "$(echo "$out" | grep -A6 '설치 뒤 할 일' | tr '\n' ' ')"
 
 # ---- 5. 훅 state 경로 -------------------------------------------------------
 st=$(bash -c 'source "$HOME/.claude/hooks/lib/common.sh"; printf "%s" "$STATE_DIR"' 2>/dev/null)
@@ -269,6 +283,114 @@ env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF HOME="$SB5" "$INSTALL" --dry-run >/dev/null
 env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF HOME="$SB5" "$INSTALL" --allow-live-diff >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && [ -L "$SB5/.config/lrm-hubs/slack_poll.sh" ] && ok "--allow-live-diff 로 진행하면 백업 후 링크" || ko "allow-live-diff" "rc=$rc"
 rm -rf "${SB5:?}"
+
+# ---- 6g. orca-main 옛 양식 이름: 문서 차이는 규칙이 흡수, 라이브에만 남은 옛 파일은 지적 ----
+SB7=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox7.XXXXXX")
+mkdir -p "$SB7/.config/claude-config" "$SB7/.claude/skills"
+cp "$SB/.config/claude-config/values.env" "$SB7/.config/claude-config/values.env"
+cp -R "$REPO/skills/orca-main" "$SB7/.claude/skills/orca-main"
+mv "$SB7/.claude/skills/orca-main/references/main.env.example" "$SB7/.claude/skills/orca-main/references/config.example.env"
+sed -i '' 's#main\.env\.example#config.example.env#g' "$SB7/.claude/skills/orca-main/SKILL.md" "$SB7/.claude/skills/orca-main/scripts/patrol.sh"
+out=$(env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF HOME="$SB7" "$INSTALL" --diff-live 2>&1); rc=$?
+[ "$rc" = 1 ] && echo "$out" | grep -q 'LIVE-ONLY  .claude/skills/orca-main/references/config.example.env' && ! echo "$out" | grep -qE 'orca-main/(SKILL.md|scripts/patrol.sh)' && ok "orca-main 옛 이름: 문서 2개는 규칙 흡수, 옛 양식 파일만 LIVE-ONLY" || ko "orca-main 라이브 차이" "rc=$rc $(echo "$out" | grep orca-main | head -3 | tr '\n' ' ')"
+rm -rf "${SB7:?}"
+
+# ---- 6h. Socket Mode 수신기: 보관본만 설치, launchd 는 건드리지 않음 -----------
+SB8=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox8.XXXXXX")
+mkdir -p "$SB8/.config/claude-config" "$SB8/.config/lrm-hubs" "$SB8/fakebin"
+cp "$SB/.config/claude-config/values.env" "$SB8/.config/claude-config/values.env"
+SOCK=".config/lrm-hubs/ai.lrm.slacksocket.plist"
+# 이 맥과 같은 상태: 라이브 보관본이 저장소 렌더 결과와 같음
+sed -e "s#__HOME__#$SB8#g" -e "s#__PYTHON3__#/opt/py/bin/python3#g" "$REPO/hubs/launchd/ai.lrm.slacksocket.plist" > "$SB8/$SOCK"
+cp "$REPO/hubs/scripts/slack_socket.py" "$SB8/.config/lrm-hubs/slack_socket.py"
+ino_before=$(ls -i "$SB8/$SOCK" "$SB8/.config/lrm-hubs/slack_socket.py" | awk '{print $1}' | tr '\n' ' ')
+# 진짜 launchctl 대신 호출 기록만 남기는 가짜. PATH 앞에 둬도 가로채지 못하면 시험을 건너뜀
+printf '#!/bin/sh\necho "$*" >> "%s/launchctl.log"\n' "$SB8" > "$SB8/fakebin/launchctl"; chmod +x "$SB8/fakebin/launchctl"
+if [ "$(PATH="$SB8/fakebin:$PATH" command -v launchctl)" = "$SB8/fakebin/launchctl" ]; then
+  out=$(PATH="$SB8/fakebin:$PATH" HOME="$SB8" CLAUDE_CONFIG_PYTHON3=/opt/py/bin/python3 env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF "$INSTALL" --reload-launchd 2>&1); rc=$?
+  ino_after=$(ls -i "$SB8/$SOCK" "$SB8/.config/lrm-hubs/slack_socket.py" | awk '{print $1}' | tr '\n' ' ')
+  [ "$rc" = 0 ] && echo "$out" | grep -q "SKIP   $SOCK (내용 동일)" && echo "$out" | grep -q 'SKIP   .config/lrm-hubs/slack_socket.py (내용 동일)' && [ "$ino_before" = "$ino_after" ] && ok "소켓 보관본: 라이브와 같으면 SKIP(파일 그대로)" || ko "소켓 SKIP" "rc=$rc"
+  grep -q 'bootstrap .*ai.lrm.slackpoll.plist' "$SB8/launchctl.log" 2>/dev/null && ! grep -q slacksocket "$SB8/launchctl.log" && ! echo "$out" | grep -q '재적재.*slacksocket' && ok "--reload-launchd 도 slackpoll 만 적재, slacksocket 은 호출·안내 없음" || ko "소켓 launchd" "$(tr '\n' ' ' < "$SB8/launchctl.log" 2>/dev/null)"
+  [ ! -e "$SB8/Library/LaunchAgents/ai.lrm.slacksocket.plist" ] && ok "소켓 plist 를 LaunchAgents 에 두지 않음(로그인 때 자동 실행 안 됨)" || ko "소켓 LaunchAgents" "생김"
+  echo "$out" | grep -q '\[필요\] ~/.config/lrm-hubs/slack-bot.env 없음: 파일을 만들고 SLACK_BOT_TOKEN=·SLACK_USER_ID=' && ok "설치 뒤 할 일: slack-bot.env 없으면 키 이름만 안내" || ko "slack-bot.env 안내" ""
+else
+  printf 'SKIP  소켓 launchd 시험 — 가짜 launchctl 이 PATH 에서 우선하지 않음\n'
+fi
+# 라이브 보관본이 다르면 덮어쓰지 않고 중단
+echo '<!-- local edit -->' >> "$SB8/$SOCK"
+before=$(snapshot "$SB8")
+out=$(HOME="$SB8" CLAUDE_CONFIG_PYTHON3=/opt/py/bin/python3 env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF "$INSTALL" 2>&1); rc=$?
+[ "$rc" != 0 ] && echo "$out" | grep -q "LIVE-NEWER $SOCK" && [ "$before" = "$(snapshot "$SB8")" ] && ok "소켓 보관본이 라이브와 다르면 LIVE-NEWER 로 중단·무변경" || ko "소켓 live-diff" "rc=$rc"
+rm -rf "${SB8:?}"
+# 첫 설치(보관본 없음): 새로 복사하는 경로에서도 --reload-launchd 는 slackpoll 만 적재
+SB8B=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox8b.XXXXXX")
+mkdir -p "$SB8B/.config/claude-config" "$SB8B/fakebin"
+cp "$SB/.config/claude-config/values.env" "$SB8B/.config/claude-config/values.env"
+printf '#!/bin/sh\necho "$*" >> "%s/launchctl.log"\n' "$SB8B" > "$SB8B/fakebin/launchctl"; chmod +x "$SB8B/fakebin/launchctl"
+if [ "$(PATH="$SB8B/fakebin:$PATH" command -v launchctl)" = "$SB8B/fakebin/launchctl" ]; then
+  out=$(PATH="$SB8B/fakebin:$PATH" HOME="$SB8B" env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF "$INSTALL" --reload-launchd 2>&1); rc=$?
+  [ "$rc" = 0 ] && [ -f "$SB8B/.config/lrm-hubs/ai.lrm.slacksocket.plist" ] && grep -q 'bootstrap .*ai.lrm.slackpoll.plist' "$SB8B/launchctl.log" 2>/dev/null && ! grep -q slacksocket "$SB8B/launchctl.log" && ! echo "$out" | grep -q '재적재.*slacksocket' && ok "첫 설치 --reload-launchd: 소켓 보관본은 새로 깔리되 slackpoll 만 적재" || ko "첫 설치 소켓 launchd" "rc=$rc $(tr '\n' ' ' < "$SB8B/launchctl.log" 2>/dev/null)"
+else
+  printf 'SKIP  첫 설치 소켓 launchd 시험 — 가짜 launchctl 이 PATH 에서 우선하지 않음\n'
+fi
+rm -rf "${SB8B:?}"
+# 수신기 연결 실패: traceback 없이 한 줄 로그·종료 코드 2. slack_sdk 는 가짜 모듈로 대체(네트워크 없음)
+SB8C=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox8c.XXXXXX")
+mkdir -p "$SB8C/stub/slack_sdk/socket_mode" "$SB8C/hub"
+: > "$SB8C/stub/slack_sdk/__init__.py"
+printf 'class SocketModeClient:\n    def __init__(self, app_token): self.socket_mode_request_listeners = []\n    def connect(self): raise ConnectionError("FAKE_DETAIL")\n' > "$SB8C/stub/slack_sdk/socket_mode/__init__.py"
+
+printf 'class SocketModeRequest: pass\n' > "$SB8C/stub/slack_sdk/socket_mode/request.py"
+printf 'class SocketModeResponse:\n    def __init__(self, envelope_id): pass\n' > "$SB8C/stub/slack_sdk/socket_mode/response.py"
+printf 'SLACK_APP_TOKEN=xapp-%s\nSLACK_BOT_TOKEN=bot-%s\n' "1-FAKE" "FAKE" > "$SB8C/hub/slack-bot.env"
+out=$(PYTHONPATH="$SB8C/stub" LRM_HUB_DIR="$SB8C/hub" python3 "$REPO/hubs/scripts/slack_socket.py" 2>&1); rc=$?
+[ "$rc" = 2 ] && echo "$out" | grep -q 'ConnectionError' && ! echo "$out" | grep -q 'Traceback' && ! echo "$out" | grep -q 'FAKE_DETAIL' && ok "수신기 연결 실패: 종료 코드 2·한 줄 로그(예외 타입만)·traceback 없음" || ko "수신기 연결 실패" "rc=$rc $(echo "$out" | head -2 | tr '\n' ' ')"
+rm -rf "${SB8C:?}"
+grep -q slacksocket "$REPO/install.sh" && ko "install.sh 소켓 언급" "설치기가 slacksocket 을 직접 다룸" || ok "install.sh 에 slacksocket 전용 처리 없음"
+
+# ---- 6i. 의존성 점검(doctor): 형식·누락 감지·시크릿 내용 미출력 ----------------
+SB9=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox9.XXXXXX")
+mkdir -p "$SB9/.config/lrm-hubs" "$SB9/bin"
+echo 'SLACK_BOT_TOKEN=SENTINEL_NOT_PRINTED' > "$SB9/.config/lrm-hubs/slack-bot.env"; chmod 644 "$SB9/.config/lrm-hubs/slack-bot.env"
+out=$(HOME="$SB9" bash "$REPO/scripts/doctor.sh" 2>&1)
+[ -z "$(echo "$out" | grep -vE '^(OK|MISS|WARN)  |^요약: 필수 누락 [0-9]+, 경고 [0-9]+$')" ] && ok "doctor: 모든 줄이 OK·MISS·WARN·요약 형식" || ko "doctor 형식" "$(echo "$out" | grep -vE '^(OK|MISS|WARN)  |^요약' | head -2 | tr '\n' ' ')"
+echo "$out" | grep -q '^MISS  ~/.config/claude-config/values.env — 원인: 파일 없음' && echo "$out" | grep -q '^WARN  ~/.config/lrm-hubs/slack-bot.env — 원인: 권한 644' && ok "doctor: 값 파일 없음은 MISS, 시크릿 권한 644 는 WARN" || ko "doctor 값 파일" ""
+! echo "$out" | grep -qE "SENTINEL_NOT_PRINTED|$SB9" && ok "doctor: 시크릿 내용·HOME 절대 경로 미출력" || ko "doctor 개인 값" "출력에 내용 또는 경로"
+# jq·claude 만 뺀 PATH: 실제 PATH 의 실행 파일을 링크로 모은 폴더
+IFS=: read -ra pdirs <<< "$PATH"
+for d in "${pdirs[@]}"; do [ -d "$d" ] || continue; for f in "$d"/*; do
+  n=${f##*/}; case "$n" in jq|claude) continue ;; esac
+  [ -x "$f" ] && [ ! -e "$SB9/bin/$n" ] && ln -s "$f" "$SB9/bin/$n"
+done; done
+out=$(PATH="$SB9/bin" HOME="$SB9" bash "$REPO/scripts/doctor.sh" 2>&1); rc=$?
+[ "$rc" = 1 ] && echo "$out" | grep -q '^MISS  jq — 원인: 명령 없음(.*) / 조치: brew install jq$' && echo "$out" | grep -q '^MISS  claude — 원인: 명령 없음' && ok "doctor: jq·claude 없으면 원인·조치와 종료 코드 1" || ko "doctor 누락" "rc=$rc"
+cp "$REPO/values.env.example" "$SB9/values.env"; chmod 600 "$SB9/values.env"
+a=$(CLAUDE_CONFIG_VALUES="$SB9/values.env" HOME="$SB9" bash "$REPO/scripts/doctor.sh" 2>&1 | grep -c '^OK    ~/values.env (권한 600)')
+b=$(HOME="$SB9" "$INSTALL" --doctor 2>&1 | head -1)
+[ "$a" = 1 ] && [ "$b" = "$(HOME="$SB9" bash "$REPO/scripts/doctor.sh" 2>&1 | head -1)" ] && ok "doctor: CLAUDE_CONFIG_VALUES 반영, install.sh --doctor 가 같은 점검 실행" || ko "doctor 연결" "a=$a"
+HOME="$SB9" bash "$REPO/scripts/doctor.sh" --bogus >/dev/null 2>&1; rc=$?
+[ "$rc" = 2 ] && ok "doctor: 알 수 없는 인자는 종료 코드 2" || ko "doctor 인자" "rc=$rc"
+rm -rf "${SB9:?}"
+# 읽기 전용 증명: 빈 HOME 에서 돌려도 HOME 아래에 아무것도 생기지 않음(gh 등 외부 도구의 상태 파일 포함)
+SB9B=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox9b.XXXXXX")
+HOME="$SB9B" bash "$REPO/scripts/doctor.sh" >/dev/null 2>&1
+made=$(find "$SB9B" -mindepth 1 | wc -l | tr -d ' ')
+[ "$made" = 0 ] && ok "doctor: 빈 HOME 에서 실행해도 HOME 아래 항목 0개(읽기 전용)" || ko "doctor 읽기 전용" "생성 ${made}개: $(find "$SB9B" -mindepth 1 | sed "s#$SB9B/##" | head -3 | tr '\n' ' ')"
+# slack_sdk 확인은 plist 가 쓰는 python3(CLAUDE_CONFIG_PYTHON3)를 -I 로 실행
+printf '#!/bin/sh\n[ "$1 $2 $3" = "-I -c import slack_sdk" ] && exit 0\nexit 1\n' > "$SB9B/py-ok"; chmod +x "$SB9B/py-ok"
+printf '#!/bin/sh\nexit 1\n' > "$SB9B/py-no"; chmod +x "$SB9B/py-no"
+o1=$(CLAUDE_CONFIG_PYTHON3="$SB9B/py-ok" HOME="$SB9B" bash "$REPO/scripts/doctor.sh" 2>&1 | grep 'python3 slack_sdk')
+o2=$(CLAUDE_CONFIG_PYTHON3="$SB9B/py-no" HOME="$SB9B" bash "$REPO/scripts/doctor.sh" 2>&1 | grep 'python3 slack_sdk')
+echo "$o1" | grep -q '^OK    python3 slack_sdk' && echo "$o2" | grep -q '^WARN  python3 slack_sdk .*install-orca-main.md 2절' && ok "doctor: slack_sdk 를 지정한 python3 -I 로 확인, 실패 조치는 문서 2절" || ko "doctor slack_sdk" "o1=$o1 o2=$o2"
+rm -rf "${SB9B:?}"
+# --doctor 는 다른 인자와 함께 쓰면 오류(뒤 인자를 조용히 버리지 않음)
+SB9C=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox9c.XXXXXX")
+rcs=""; leak=0
+for args in "--doctor --dry-run" "--dry-run --doctor" "--doctor --check"; do
+  o=$(HOME="$SB9C" "$INSTALL" $args 2>&1); rcs="$rcs $?"; echo "$o" | grep -q '^요약' && leak=1
+done
+[ "$rcs" = " 2 2 2" ] && [ "$leak" = 0 ] && [ -z "$(find "$SB9C" -mindepth 1)" ] && ok "install.sh --doctor 와 다른 인자 조합은 종료 코드 2·점검 미실행·무변경" || ko "--doctor 인자 조합" "rc=$rcs leak=$leak"
+rm -rf "${SB9C:?}"
 
 # ---- 6f. 값 파일 공백만 있는 값 ----------------------------------------------
 SB6=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox6.XXXXXX")

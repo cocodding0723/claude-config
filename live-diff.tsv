@@ -4,3 +4,5 @@
 .claude/hooks/lib/common.sh	s#^STATE_DIR="\$HOOKS_DIR/state"#STATE_DIR="\${CLAUDE_HOOKS_STATE:-\$HOME/.claude/hooks/state}"#
 .claude/skills/orca-hub-create/scripts/create_hub.sh	s#/Users/[^/]+/#\$HOME/#g
 .claude/skills/orca-hub-create/scripts/create_worker_ws.sh	s#/Users/[^/]+/#\$HOME/#g
+.claude/skills/orca-main/SKILL.md	s#config\.example\.env#main.env.example#g
+.claude/skills/orca-main/scripts/patrol.sh	s#config\.example\.env#main.env.example#g

@@ -10,7 +10,7 @@ description: 같은 지적이 두 번 나오면 규칙 문장을 더하지 않�
 ## 1. 반복 찾기
 
 - `~/.claude/skills/orca-hub-create/references/common-rules.txt` 를 읽는다.
-- 메모리 폴더 `~/.claude/projects/-Users-USER-orca-LoveRevolutionMaker/memory/` 의 `MEMORY.md` 와 개별 파일을 읽는다. 날짜·"지적"·"사고"·"번복"·"금지" 표시가 단서다.
+- 메모리 폴더 `~/.claude/projects/<프로젝트 경로의 / 를 - 로 바꾼 폴더>/memory/` 의 `MEMORY.md` 와 개별 파일을 읽는다. 날짜·"지적"·"사고"·"번복"·"금지" 표시가 단서다.
 - 필요하면 최근 커밋·되돌림·리뷰 코멘트도 본다.
 - 같은 뜻의 규칙을 하나의 실수 유형으로 묶는다. **두 번 이상 나온 것만** 후보다(중복 항목, 여러 곳에 같은 규칙, 같은 사고가 다시 난 기록).
 

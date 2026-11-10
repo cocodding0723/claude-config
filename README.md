@@ -6,16 +6,18 @@
 
 ```
 claude-config/
-├─ install.sh           링크·병합·복사 + git 설정 (--dry-run·--check·--restore)
+├─ install.sh           링크·병합·복사 + git 설정 (--dry-run·--check·--doctor·--restore)
 ├─ links.tsv            원본 → 대상($HOME 기준) → 방식(link|merge|copy|render)
 ├─ gitconfig.tsv        git config --global 키 4개
 ├─ merge/               설정 병합 식 (orca-keep.jq, merge.jq)
 ├─ claude/              CLAUDE.md, keybindings.json, settings.base.json, hooks/(+lib), meat-proxy/
 ├─ skills/<이름>/       직접 작성한 스킬 35개 (synced·외부 링크 제외). `doc-kit` 은 문서 규칙 통합본
 ├─ git/hooks/           전역 git 훅 9개
-├─ hubs/                scripts/ roles/ launchd/ slack-bot-manifest.yml slack-bot.env.example
+├─ hubs/                scripts/ roles/ launchd/ mods/(옆 패널 lrm-board) docs/ slack-bot-manifest.yml slack-bot.env.example
+├─ scripts/             저장소 도구: doctor.sh(의존성 점검), make_dist_zip.sh(배포 zip, 시크릿 검사 후 생성)
 ├─ values.env.example   로컬 값 양식(실명·채널 ID). 실제 값은 저장소 밖
 ├─ tests/install/       샌드박스 검증 (run.sh)
+├─ tests/dist/          배포 zip 검증 (run.sh, 임시 폴더에만 생성)
 ├─ tests/doc-kit/       doc-kit 검증 (run.sh·sample.sh·rename.sh, fixtures/, check_unique.sh)
 ├─ tests/mutate.sh      변이 검증(결함을 심어 위 검증이 잡는지 확인)
 ├─ migrate/             옛 문서 스킬 이름 → doc-kit 치환 도구(rename_skills.sh, 대상·규칙 tsv)
@@ -25,7 +27,7 @@ claude-config/
 방식:
 - `link` 는 대상을 저장소 원본으로 가리키는 링크로 만든다. 스킬은 폴더째가 아니라 스킬마다 링크해 `skills/synced` 같은 외부 항목이 섞이지 않는다.
 - `merge` 는 `settings.base.json`(내 설정)에 현재 파일의 Orca 훅·상태줄을 얹어 새 파일로 쓴다. 훅 배열은 순서를 유지해 이어붙인다.
-- `copy` 는 `__HOME__` 을 현재 HOME 으로 치환해 복사한다(launchd plist).
+- `copy` 는 `__HOME__` 을 현재 HOME 으로, `__PYTHON3__` 를 설치하는 셸의 python3 절대 경로로 치환해 복사한다(launchd plist, Socket Mode 수신기, 옆 패널 mod). 같으면 건너뛴다. Socket Mode plist 는 `~/Library/LaunchAgents` 가 아닌 `~/.config/lrm-hubs` 에 두어 켜지 않는다.
 - `render` 는 `*.tmpl` 의 `__KEY__` 자리표시를 로컬 값 파일로 채워 실제 파일로 복사한다. 실명·DM 채널 ID 가 든 파일 4개(역할 3개, 스킬 파일 1개)가 이 방식이다. 스킬 `orca-hub-create` 는 폴더째가 아니라 파일마다 링크한다.
 
 ## 설치·동기화
@@ -33,10 +35,13 @@ claude-config/
 ```sh
 git clone git@github.com:cocodding0723/claude-config.git ~/orca/claude-config   # 새 맥만
 cd ~/orca/claude-config
+./install.sh --doctor       # 의존성 점검(읽기 전용). 빠진 것은 원인·조치 출력
 ./install.sh --dry-run      # 바뀔 항목 확인
 ./install.sh                # 설치. 덮어쓸 파일은 ~/.claude-config-backup/<시각>/ 으로 이동
 ./install.sh --check        # 끊어진 링크·어긋난 설정 점검
 ```
+
+새 맥에 orca-main 까지 까는 전체 순서(값 파일·시크릿 입력·폴러 켜기·Socket Mode 는 나중에)는 [설치 안내](hubs/docs/install-orca-main.md).
 
 갱신은 `git pull` 뒤 `./install.sh`. 같은 상태면 아무것도 바꾸지 않는다(반복 실행 안전). 설정을 바꿨으면 `claude/settings.base.json` 도 같이 고친다.
 
