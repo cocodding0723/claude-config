@@ -33,6 +33,20 @@ case_run P5 "화면 본문(preview) 저장" 's/("connected": connected,\n)/$1   
 case_run P6 "잠금 제거(항상 획득)" 's/            os\.mkdir\(LOCK\)\n            return True/            return True/'
 case_run P7 "작업 중 판정에서 '…' 조건 제거(끝난 턴도 작업 중)" 's/ln\.strip\(\)\[0\] in SPINNER and "…" in ln/ln.strip()[0] in SPINNER/'
 case_run P8 "결정 대기에서 반응 제외 규칙 제거" 's/done = \{d\.get\("parent_ts"\) for d in inbox if d\.get\("type"\) == "reaction"\}/done = set()/'
+board_run() { # 번호 설명 perl 치환식(mod board.ts 대상, node 시험)
+  local id="$1" desc="$2" expr="$3" out rc first
+  if [ -n "${ONLY:-}" ] && [[ " $ONLY " != *" $id "* ]]; then return; fi
+  mkdir -p "$WORK/mod/hooks" && cp "$REPO/hubs/mods/lrm-board/hooks/board.ts" "$WORK/mod/hooks/board.ts"
+  perl -0pi -e "$expr" "$WORK/mod/hooks/board.ts"
+  if cmp -s "$REPO/hubs/mods/lrm-board/hooks/board.ts" "$WORK/mod/hooks/board.ts"; then printf '| %s | %s | 정의 오류 | - |\n' "$id" "$desc"; MISSED=$((MISSED + 1)); return; fi
+  out=$(BOARD_TS="$WORK/mod/hooks/board.ts" node --test "$REPO/tests/panel/board.test.mjs" 2>&1); rc=$?
+  first=$(echo "$out" | grep -m1 '^✖' | sed 's/^✖ //' | cut -c1-70)
+  if [ "$rc" != 0 ]; then printf '| %s | %s | 검출 | %s |\n' "$id" "$desc" "$first"
+  else printf '| %s | %s | **미검출** | - |\n' "$id" "$desc"; MISSED=$((MISSED + 1)); fi
+}
+board_run P9 "오래됨 기준 10분 → 60분" 's/AUTO_STALE_MIN = 10/AUTO_STALE_MIN = 60/'
+board_run P10 "자동 칸 시계를 수정 시각 우선으로" 's/if \(epochMs !== undefined && epochMs > 0 && epochMs <= nowMs \+ FUTURE_SLACK_MS\) return epochMs/if (mtimeMs > 0) return mtimeMs/'
+board_run P11 "파일 없음 경고 제거" "s/if \(autoMtimeMs === 0\) return \{ level: 'missing'/if (false) return { level: 'missing'/"
 echo
 [ "$MISSED" = 0 ] && echo "변이 전부 검출" || echo "미검출·정의 오류 ${MISSED}건"
 [ "$MISSED" = 0 ]

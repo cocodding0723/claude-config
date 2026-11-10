@@ -98,4 +98,5 @@ hubs/docs/slack-reactions.md	.config/lrm-hubs/docs/slack-reactions.md	link
 hubs/mods/lrm-board/.claude-plugin/plugin.json	.config/lrm-hubs/mods/lrm-board/.claude-plugin/plugin.json	copy
 hubs/mods/lrm-board/hooks/hooks.json	.config/lrm-hubs/mods/lrm-board/hooks/hooks.json	copy
 hubs/mods/lrm-board/hooks/register.tsx	.config/lrm-hubs/mods/lrm-board/hooks/register.tsx	copy
+hubs/mods/lrm-board/hooks/board.ts	.config/lrm-hubs/mods/lrm-board/hooks/board.ts	copy
 hubs/mods/lrm-board/types/index.d.ts	.config/lrm-hubs/mods/lrm-board/types/index.d.ts	copy

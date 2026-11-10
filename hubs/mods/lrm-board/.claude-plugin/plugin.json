@@ -1,6 +1,6 @@
 {
   "name": "lrm-board",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "연애혁명 오케스트레이션 현황·승인할 일·할 일을 우선순위로 보여 주는 옆 패널",
   "types": "./types/index.d.ts"
 }

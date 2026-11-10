@@ -163,6 +163,15 @@ col --once
 colenv "PANEL_RECENT=3" --print
 [ "$(jq '.sources.workers.value.recent | length' "$SB/out")" = 3 ] && ok "환경 변수가 panel.env 보다 우선" || ko "우선순위" ""
 
+# ---- 12. mod 순수 함수(합치기·오래됨 판정) — node 내장 러너 ------------------------------------------
+if command -v node >/dev/null && node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 23 ? 0 : 1)'; then
+  out=$(node --test "$HERE/board.test.mjs" 2>&1); rc=$?
+  n=$(echo "$out" | sed -n 's/^ℹ pass //p')
+  [ "$rc" = 0 ] && ok "mod 순수 함수 node 시험 ${n}건 통과" || ko "mod 순수 함수" "$(echo "$out" | grep -m2 '✖' | tr '\n' ' ')"
+else
+  printf 'SKIP  mod 순수 함수 시험 — node 23 이상(타입 제거 내장) 없음\n'
+fi
+
 echo
 echo "결과: 통과 $PASS, 실패 $FAIL"
 [ "$FAIL" = 0 ]
