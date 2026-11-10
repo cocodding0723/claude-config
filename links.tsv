@@ -83,3 +83,4 @@ hubs/launchd/ai.lrm.slackpoll.plist	Library/LaunchAgents/ai.lrm.slackpoll.plist	
 hubs/roles/role-vfx.txt.tmpl	.config/lrm-hubs/roles/role-vfx.txt	render
 hubs/roles/role-tutorial.txt.tmpl	.config/lrm-hubs/roles/role-tutorial.txt	render
 hubs/roles/role-docs.txt.tmpl	.config/lrm-hubs/roles/role-docs.txt	render
+hubs/docs/slack-reactions.md	.config/lrm-hubs/docs/slack-reactions.md	link
