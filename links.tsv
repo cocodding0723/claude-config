@@ -95,8 +95,8 @@ hubs/roles/role-vfx.txt.tmpl	.config/lrm-hubs/roles/role-vfx.txt	render
 hubs/roles/role-tutorial.txt.tmpl	.config/lrm-hubs/roles/role-tutorial.txt	render
 hubs/roles/role-docs.txt.tmpl	.config/lrm-hubs/roles/role-docs.txt	render
 hubs/docs/slack-reactions.md	.config/lrm-hubs/docs/slack-reactions.md	link
-hubs/mods/lrm-board/.claude-plugin/plugin.json	.config/lrm-hubs/mods/lrm-board/.claude-plugin/plugin.json	copy
-hubs/mods/lrm-board/hooks/hooks.json	.config/lrm-hubs/mods/lrm-board/hooks/hooks.json	copy
-hubs/mods/lrm-board/hooks/register.tsx	.config/lrm-hubs/mods/lrm-board/hooks/register.tsx	copy
-hubs/mods/lrm-board/hooks/board.ts	.config/lrm-hubs/mods/lrm-board/hooks/board.ts	copy
-hubs/mods/lrm-board/types/index.d.ts	.config/lrm-hubs/mods/lrm-board/types/index.d.ts	copy
+hubs/mods/lrm-board/.claude-plugin/plugin.json	.claude/skills/lrm-board/.claude-plugin/plugin.json	copy
+hubs/mods/lrm-board/hooks/hooks.json	.claude/skills/lrm-board/hooks/hooks.json	copy
+hubs/mods/lrm-board/hooks/register.tsx	.claude/skills/lrm-board/hooks/register.tsx	copy
+hubs/mods/lrm-board/hooks/board.ts	.claude/skills/lrm-board/hooks/board.ts	copy
+hubs/mods/lrm-board/types/index.d.ts	.claude/skills/lrm-board/types/index.d.ts	copy
