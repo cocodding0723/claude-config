@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PR 리뷰 게임</title>
+<link rel="icon" href="data:,">
+<style>
+@font-face{font-family:Jua;src:url(data:font/woff2;base64,__FONT__) format("woff2")}
+:root{--ink:#2B2140;--bg:#FFF4FA;--bg2:#E9F6FF;--card:#FFFFFF;--pink:#FF7EB6;--pinkS:#FFD6E8;--sky:#7CC8FF;--skyS:#DDF1FF;--lemon:#FFE066;--mint:#5ED6A0;--mintS:#D9F7E6;--red:#FF5A7A;--redS:#FFE0E6;--mut:#6B5E80}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg) linear-gradient(160deg,var(--bg) 0%,var(--bg2) 100%);color:var(--ink);font-family:Jua,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;min-height:100vh;overflow-x:hidden}
+#stage{max-width:760px;margin:0 auto;padding:14px 16px 40px}
+a{color:inherit}
+.box{background:var(--card);border:3px solid var(--ink);border-radius:18px;box-shadow:5px 5px 0 var(--ink)}
+button{font-family:inherit;color:var(--ink);cursor:pointer}
+.btn{border:3px solid var(--ink);border-radius:14px;background:var(--lemon);box-shadow:4px 4px 0 var(--ink);font-size:18px;padding:10px 18px;transition:transform .08s}
+.btn:active{transform:translate(3px,3px);box-shadow:1px 1px 0 var(--ink)}
+.btn.pink{background:var(--pink);color:#fff;text-shadow:0 2px 0 var(--ink)}
+.btn.plain{background:#fff}
+.btn.sm{font-size:14px;padding:6px 12px;box-shadow:3px 3px 0 var(--ink)}
+.hud{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.pips{display:flex;gap:5px;flex:1}
+.pip{flex:1;height:12px;border:2px solid var(--ink);border-radius:8px;background:#fff}
+.pip.ok{background:var(--mint)}.pip.no{background:var(--red)}.pip.gs{background:var(--sky)}.pip.cur{background:var(--lemon);animation:pulse 1s infinite}
+.score{background:#fff;border:3px solid var(--ink);border-radius:12px;padding:3px 10px;font-size:18px;min-width:70px;text-align:center}
+.mute{width:42px;height:38px;border:3px solid var(--ink);border-radius:12px;background:#fff;font-size:18px;box-shadow:3px 3px 0 var(--ink)}
+.lobby{padding:22px;text-align:center}
+.lobby h1{font-size:30px;margin:6px 0 4px;color:var(--pink);-webkit-text-stroke:1.5px var(--ink);text-shadow:3px 3px 0 var(--ink)}
+.tag{display:inline-block;background:var(--skyS);border:2px solid var(--ink);border-radius:10px;padding:2px 10px;font-size:14px}
+.lobby ul{text-align:left;list-style:none;padding:0;margin:14px 0;line-height:1.7}
+.lobby li:before{content:"• ";color:var(--pink)}
+.go{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px}
+input,textarea{font-family:inherit;font-size:16px;border:3px solid var(--ink);border-radius:12px;padding:8px 10px;width:100%;color:var(--ink);background:#fff}
+.note{font-size:13px;color:var(--mut);margin-top:10px;line-height:1.5}
+.brief{padding:18px;line-height:1.6;font-size:16px}
+.brief p{margin:0 0 8px}
+.q{padding:16px}
+.qhead{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+.qno{background:var(--pink);color:#fff;border:3px solid var(--ink);border-radius:12px;padding:2px 10px;font-size:18px;text-shadow:0 2px 0 var(--ink);white-space:nowrap}
+.kind{font-size:13px;background:var(--lemon);border:2px solid var(--ink);border-radius:8px;padding:1px 8px;white-space:nowrap}
+.file{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:var(--skyS);border:2px solid var(--ink);border-radius:8px;padding:2px 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.ask{font-size:21px;line-height:1.4;margin:6px 0 10px}
+.learn{font-size:16px;line-height:1.55;background:var(--mintS);border:3px solid var(--ink);border-radius:14px;padding:10px 12px;margin:0 0 12px}
+.learn .h{font-size:15px;margin-bottom:4px}
+.terms{margin:6px 0 0;padding-left:18px;font-size:15px;line-height:1.5}
+.terms b{color:var(--pink)}
+.track{display:grid;gap:10px;margin-top:16px;text-align:left}
+.track .btn{text-align:left;width:100%}
+.track small{display:block;font-size:13px;margin-top:2px;text-shadow:none}
+.open{font-size:14px;background:var(--skyS);border:2px dashed var(--ink);border-radius:10px;padding:6px 10px;margin-bottom:10px}
+pre.code{margin:0 0 12px;background:#FFFDF5;border:3px solid var(--ink);border-radius:12px;padding:8px 0;overflow-x:auto;font:12.5px/1.55 ui-monospace,Menlo,monospace}
+pre.code span{display:block;padding:0 10px;white-space:pre;min-width:max-content}
+pre.code .a{background:var(--mintS)}pre.code .d{background:var(--redS)}
+.guess{display:inline-flex;align-items:center;gap:6px;font-size:15px;border:3px solid var(--ink);border-radius:12px;background:#fff;padding:5px 12px;margin-bottom:10px}
+.guess[aria-pressed=true]{background:var(--sky);color:#fff;text-shadow:0 1px 0 var(--ink)}
+.opts{display:grid;gap:10px}
+.opt{text-align:left;font-size:17px;line-height:1.35;padding:12px 14px 12px 46px;border:3px solid var(--ink);border-radius:14px;background:#fff;box-shadow:4px 4px 0 var(--ink);position:relative;opacity:0;transform:translateY(40px) scale(.8)}
+.opt b{position:absolute;left:10px;top:50%;transform:translateY(-50%);width:26px;height:26px;border:2px solid var(--ink);border-radius:50%;background:var(--lemon);display:flex;align-items:center;justify-content:center;font-size:14px}
+.opt.in{animation:popIn .45s cubic-bezier(.34,1.8,.5,1) forwards}
+.opt:hover:not(:disabled){transform:translateY(-3px);box-shadow:5px 7px 0 var(--ink)}
+.opt:disabled{cursor:default;color:var(--ink)}
+.opt.right{background:var(--mintS);animation:punch .5s cubic-bezier(.34,1.8,.5,1)}
+.opt.wrong{background:var(--redS);animation:shake .45s}
+.opt.dim{opacity:.45 !important}
+.fb{margin-top:12px;padding:12px 14px;border:3px solid var(--ink);border-radius:14px;font-size:16px;line-height:1.5;display:none}
+.fb.on{display:block;animation:popIn .35s cubic-bezier(.34,1.8,.5,1)}
+.fb.good{background:var(--mintS)}.fb.bad{background:var(--redS)}
+.fb .h{font-size:20px}
+.fb .re{display:block;margin-top:6px;font:12px/1.5 ui-monospace,Menlo,monospace;word-break:break-all}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:12px}
+.memo{display:none;margin-top:8px}.memo.on{display:block}
+#fx{position:fixed;inset:0;pointer-events:none;z-index:50}
+#flash{position:fixed;inset:0;pointer-events:none;z-index:49;opacity:0}
+.combo{position:fixed;left:50%;top:38%;z-index:60;pointer-events:none;font-size:56px;color:var(--lemon);-webkit-text-stroke:2.5px var(--ink);text-shadow:4px 4px 0 var(--ink);transform:translate(-50%,-50%);animation:comboUp 1s ease-out forwards;white-space:nowrap}
+.shake{animation:scr .35s}
+.res{padding:18px}
+.big{text-align:center}
+.big .n{font-size:64px;color:var(--pink);-webkit-text-stroke:2px var(--ink);text-shadow:4px 4px 0 var(--ink);animation:punch .6s cubic-bezier(.34,1.8,.5,1)}
+.grade{display:inline-block;font-size:20px;background:var(--lemon);border:3px solid var(--ink);border-radius:12px;padding:2px 12px;margin-top:4px}
+h2{font-size:20px;margin:22px 0 8px;display:flex;align-items:center;gap:8px}
+h2:before{content:"";width:12px;height:12px;background:var(--pink);border:2px solid var(--ink);border-radius:4px;flex:none}
+.axes{display:grid;gap:8px}
+.axis{display:grid;grid-template-columns:64px 1fr auto;align-items:center;gap:8px;font-size:15px}
+.bar{height:16px;border:2px solid var(--ink);border-radius:8px;background:#fff;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--mint)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.tab{border:3px solid var(--ink);border-radius:12px;background:#fff;padding:5px 12px;font-size:15px}
+.tab.on{background:var(--sky);color:#fff;text-shadow:0 1px 0 var(--ink)}
+.dia{background:#fff;border:3px solid var(--ink);border-radius:14px;padding:8px;overflow-x:auto;margin-bottom:10px}
+.dia svg{display:block;margin:0 auto;max-width:none}
+.dia g.n[data-id]{cursor:pointer}
+.dia g.n[data-id]:hover rect{stroke:var(--pink);stroke-width:4}
+.dia text{font-family:Jua,"Apple SD Gothic Neo",sans-serif}
+.cap{font-size:13px;color:var(--mut);margin:6px 2px;line-height:1.5}
+.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:13px;margin:6px 2px}
+.legend i{display:inline-block;width:14px;height:14px;border:2px solid var(--ink);border-radius:4px;vertical-align:-2px;margin-right:4px}
+#nodeInfo{display:none;font-size:14px;line-height:1.5;background:var(--skyS);border:2px solid var(--ink);border-radius:10px;padding:8px 10px;margin-bottom:10px;word-break:break-word}
+#nodeInfo.on{display:block;animation:popIn .3s}
+ol.read{margin:0;padding-left:22px;line-height:1.6}
+ol.read li{margin-bottom:8px}
+ol.read a{font:12px/1.5 ui-monospace,Menlo,monospace;word-break:break-all}
+ol.read span{display:block;font-size:15px}
+ol.why{margin:0;padding-left:22px;line-height:1.6}
+ol.why li{margin-bottom:8px}
+ol.why span{display:block;font-size:15px}
+.k{display:inline-block;font-size:12px;border:2px solid var(--ink);border-radius:6px;padding:0 5px;margin-right:4px;background:var(--skyS);font-style:normal}
+.k.y{background:var(--lemon)}.k.g{background:var(--mintS)}
+.cmp{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.cmp>div{border:3px solid var(--ink);border-radius:12px;padding:6px 8px;font:12px/1.5 ui-monospace,Menlo,monospace;overflow-x:auto;white-space:pre}
+.cmp .b{background:var(--redS)}.cmp .f{background:var(--mintS)}
+.cmp .t{font-family:Jua,sans-serif;font-size:13px;display:block;margin-bottom:2px}
+.where{font-size:15px;margin:6px 0 4px}
+.media img,.media video{width:100%;border:3px solid var(--ink);border-radius:12px;display:block}
+.media .pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+ul.miss{padding-left:20px;line-height:1.6;margin:0;overflow-wrap:anywhere}
+ul.miss a{word-break:break-all}
+ul.plain{padding-left:20px;line-height:1.6;margin:0}
+#out{font:13px/1.5 ui-monospace,Menlo,monospace;height:170px}
+@keyframes popIn{0%{opacity:0;transform:translateY(40px) scale(.8)}100%{opacity:1;transform:none}}
+@keyframes punch{0%{transform:scale(1)}30%{transform:scale(1.12)}60%{transform:scale(.96)}100%{transform:scale(1)}}
+@keyframes shake{0%,100%{transform:none}20%{transform:translateX(-10px) rotate(-2deg)}40%{transform:translateX(9px) rotate(2deg)}60%{transform:translateX(-6px)}80%{transform:translateX(4px)}}
+@keyframes scr{0%,100%{transform:none}25%{transform:translate(-6px,3px)}50%{transform:translate(5px,-4px)}75%{transform:translate(-3px,2px)}}
+@keyframes pulse{50%{filter:brightness(1.15)}}
+@keyframes comboUp{0%{opacity:0;transform:translate(-50%,-50%) scale(.3)}25%{opacity:1;transform:translate(-50%,-50%) scale(1.25)}45%{transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(-50%,-150%) scale(1)}}
+@media (max-width:480px){.ask{font-size:19px}.opt{font-size:16px}.cmp{grid-template-columns:1fr}.media .pair{grid-template-columns:1fr}.lobby h1{font-size:26px}}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01s !important}.opt{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+<canvas id="fx"></canvas><div id="flash"></div>
+<div id="stage"></div>
+<script id="data" type="application/json">__DATA__</script>
+<script>
+var D=JSON.parse(document.getElementById("data").textContent);
+var $=function(i){return document.getElementById(i)};
+var KINDS={code:"코드",structure:"구조",impact:"영향"};
+var LV=D.q.some(function(q){return q.level});
+var TRACK={learn:"📘 배우며 풀기",check:"✅ 확인 문제",all:"전체"};
+/* level 이 있으면 배우기·확인 중 하나를 골라 그 문항만 푼다. 없으면 예전처럼 전체를 푼다. */
+function idsOf(t){return D.q.map(function(_,k){return k}).filter(function(k){return t==="all"||(D.q[k].level||"check")===t})}
+function fresh(who,muted){return {i:0,queue:[],base:[],track:"all",retry:false,score:0,combo:0,best:0,res:{},memo:{},who:who||"",muted:!!muted,guess:false,seen:false,fixed:{}}}
+var st=fresh();
+try{st.muted=localStorage.getItem("prg_mute")==="1"}catch(e){}
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]})}
+function codeHtml(lines){return lines.map(function(l){var c=l[0]==="+"?"a":l[0]==="-"?"d":"";return '<span class="'+c+'">'+esc(l)+'</span>'}).join("")}
+function shuffle(a){a=a.slice();for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1)),t=a[i];a[i]=a[j];a[j]=t}return a}
+/* 파일 위치는 PR 의 head 커밋 고정 링크로 건다. 브랜치가 지워져도 열려야 한다. */
+function refUrl(ref){var p=String(ref).split(":");var u="https://github.com/"+D.pr.repo+"/blob/"+D.pr.head+"/"+p[0].split("/").map(encodeURIComponent).join("/");return p[1]?u+"#L"+encodeURIComponent(p[1]):u}
+function refLink(ref){return '<a href="'+esc(refUrl(ref))+'" target="_blank" rel="noopener">'+esc(ref)+'</a>'}
+function filesUrl(){return D.pr.url+"/files"}
+/* 소리: 외부 파일 없이 합성. 첫 클릭 이후에만 생성 */
+var AC=null;
+function ac(){if(!AC){var C=window.AudioContext||window.webkitAudioContext;if(C)AC=new C()}if(AC&&AC.state==="suspended")AC.resume();return AC}
+function tone(f,t0,d,type,vol,f2){var a=ac();if(!a||st.muted)return;var o=a.createOscillator(),g=a.createGain();o.type=type||"sine";o.frequency.setValueAtTime(f,a.currentTime+t0);if(f2)o.frequency.exponentialRampToValueAtTime(f2,a.currentTime+t0+d);g.gain.setValueAtTime(0.0001,a.currentTime+t0);g.gain.exponentialRampToValueAtTime(vol||.2,a.currentTime+t0+.01);g.gain.exponentialRampToValueAtTime(0.0001,a.currentTime+t0+d);o.connect(g).connect(a.destination);o.start(a.currentTime+t0);o.stop(a.currentTime+t0+d+.02)}
+function noise(t0,d,vol){var a=ac();if(!a||st.muted)return;var n=Math.floor(a.sampleRate*d),b=a.createBuffer(1,n,a.sampleRate),x=b.getChannelData(0);for(var i=0;i<n;i++)x[i]=(Math.random()*2-1)*Math.pow(1-i/n,3);var s=a.createBufferSource(),g=a.createGain();s.buffer=b;g.gain.value=vol||.3;s.connect(g).connect(a.destination);s.start(a.currentTime+t0)}
+var SFX={
+ pick:function(){tone(660,0,.08,"square",.08)},
+ deal:function(k){tone(380+k*90,0,.07,"triangle",.07)},
+ ok:function(){noise(0,.18,.4);tone(150,0,.25,"sine",.4,60);tone(784,.04,.12,"triangle",.18);tone(1046,.12,.22,"triangle",.18)},
+ no:function(){noise(0,.12,.3);tone(220,0,.35,"sawtooth",.12,110)},
+ combo:function(n){for(var i=0;i<Math.min(n,5);i++)tone(880+i*120,i*.06,.1,"square",.07)},
+ end:function(){[523,659,784,1046].forEach(function(f,i){tone(f,i*.12,.3,"triangle",.18)});noise(.5,.3,.3)}
+};
+/* 이펙트 */
+var cv=$("fx"),cx=cv.getContext("2d"),parts=[];
+function fit(){cv.width=innerWidth;cv.height=innerHeight}fit();addEventListener("resize",fit);
+function burst(x,y,n,cols){var idle=!parts.length;for(var i=0;i<n;i++){var a=Math.random()*Math.PI*2,s=3+Math.random()*7;parts.push({x:x,y:y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-3,r:4+Math.random()*6,c:cols[i%cols.length],l:1,sq:Math.random()<.5})}if(idle)requestAnimationFrame(tick)}
+function tick(){cx.clearRect(0,0,cv.width,cv.height);parts=parts.filter(function(p){return p.l>0});parts.forEach(function(p){p.x+=p.vx;p.y+=p.vy;p.vy+=.35;p.l-=.022;cx.globalAlpha=Math.max(p.l,0);cx.fillStyle=p.c;cx.strokeStyle="#2B2140";cx.lineWidth=2;cx.beginPath();if(p.sq)cx.rect(p.x-p.r,p.y-p.r,p.r*2,p.r*2);else cx.arc(p.x,p.y,p.r,0,Math.PI*2);cx.fill();cx.stroke()});cx.globalAlpha=1;if(parts.length)requestAnimationFrame(tick)}
+function flash(c){var f=$("flash");f.style.transition="none";f.style.background=c;f.style.opacity=".55";requestAnimationFrame(function(){requestAnimationFrame(function(){f.style.transition="opacity .35s";f.style.opacity="0"})})}
+function shakeScreen(){var s=$("stage");s.classList.remove("shake");void s.offsetWidth;s.classList.add("shake")}
+function comboPop(t){var e=document.createElement("div");e.className="combo";e.textContent=t;document.body.appendChild(e);setTimeout(function(){e.remove()},1000)}
+/* 구조 도식: 데이터에서 직접 그린다. 글자 크기를 지키려고 축소하지 않고 넓으면 가로 스크롤한다. */
+function tw(s,size){cx.font=size+'px Jua,"Apple SD Gothic Neo",sans-serif';return cx.measureText(s).width*1.08}
+function wrapLabel(s,max){if(tw(s,13)<=max)return [s];var a="",i=0;while(i<s.length&&tw(a+s[i],13)<=max)a+=s[i++];var b=s.slice(i);while(tw(b,13)>max&&b.length>1)b=b.slice(0,-1);if(b.length<s.length-i)b=b.slice(0,-1)+"…";return [a,b]}
+function graphSvg(view,hide,interactive){
+ var G=D.graph,ns=G.nodes.filter(function(n){return view==="before"?n.state!=="added":n.state!=="removed"}),by={};
+ var layers={};ns.forEach(function(n){by[n.id]=n;(layers[n.layer]=layers[n.layer]||[]).push(n)});
+ var es=G.edges.filter(function(e){return by[e.from]&&by[e.to]&&(view==="before"?e.state!=="added":e.state!=="removed")});
+ var keys=Object.keys(layers).map(Number).sort(function(a,b){return a-b}),H=46,GX=46,GY=64,W=0,box={};
+ keys.forEach(function(k,ri){var row=layers[k],x=0;row.forEach(function(n){var w=Math.min(190,Math.max(92,tw(n.label,13)+22));n._w=w;x+=w+GX});x-=GX;W=Math.max(W,x);row._w=x;row._y=ri*(H+GY)+10});
+ W=Math.max(W+20,300);
+ keys.forEach(function(k){var row=layers[k],x=(W-row._w)/2;row.forEach(function(n){box[n.id]={x:x,y:row._y,w:n._w,h:H};x+=n._w+GX})});
+ var HT=keys.length*(H+GY)-GY+20;
+ function fill(n){if(n.id===hide)return "#FFD6E8";if(view==="before")return n.problem?"#FFE0E6":n.state==="removed"?"#FFE0E6":"#fff";return n.state==="added"?"#D9F7E6":n.state==="changed"?"#FFE066":"#fff"}
+ function ecol(e){if(view==="before")return e.problem||e.state==="removed"?"#FF5A7A":"#2B2140";return e.state==="added"?"#1FA06A":"#2B2140"}
+ /* 한 상자에 선이 몰려도 겹치지 않게 닿는 점을 상대 위치 순서로 나눈다. */
+ var outs={},ins={};es.forEach(function(e){(outs[e.from]=outs[e.from]||[]).push(e);(ins[e.to]=ins[e.to]||[]).push(e)});
+ function spread(list,key,id){list.sort(function(a,b){return box[a[key]].x-box[b[key]].x});var b=box[id];list.forEach(function(e,i){e["_"+key]=b.x+b.w*(i+1)/(list.length+1)})}
+ Object.keys(outs).forEach(function(id){spread(outs[id],"to",id)});Object.keys(ins).forEach(function(id){spread(ins[id],"from",id)});
+ var paths="",labels="";
+ es.forEach(function(e){var a=box[e.from],b=box[e.to],x1=e._to,x2=e._from,y1,y2,c1,c2,col=ecol(e),dash=e.state==="removed"?' stroke-dasharray="6 5"':'',d;
+  if(a.y===b.y){var ltr=a.x<b.x;x1=ltr?a.x+a.w:a.x;x2=ltr?b.x:b.x+b.w;y1=y2=a.y+H/2;d="M"+x1+" "+y1+" L"+x2+" "+y2;c1=y1;c2=y2}
+  else{var down=a.y<b.y;y1=down?a.y+H:a.y;y2=down?b.y-6:b.y+H+6;var m=(y1+y2)/2;d="M"+x1+" "+y1+" C"+x1+" "+m+" "+x2+" "+m+" "+x2+" "+y2}
+  paths+='<path d="'+d+'" fill="none" stroke="'+col+'" stroke-width="2.5"'+dash+' marker-end="url(#ar'+(col==="#2B2140"?"":col==="#FF5A7A"?"r":"g")+')"/>';
+  if(e.label){var lx=(x1+x2)/2,ly=(y1+y2)/2,lw=tw(e.label,11)+10;labels+='<rect x="'+(lx-lw/2)+'" y="'+(ly-9)+'" width="'+lw+'" height="18" rx="5" fill="#fff" opacity=".94"/><text x="'+lx+'" y="'+(ly+4)+'" font-size="11" text-anchor="middle" fill="'+col+'">'+esc(e.label)+'</text>'}});
+ var nodes=ns.map(function(n){var b=box[n.id],hid=n.id===hide,L=hid?["?"]:wrapLabel(n.label,b.w-14),dash=n.state==="removed"?' stroke-dasharray="6 5"':'',y0=b.y+H/2+(L.length>1?-3:4);
+  var t=L.map(function(s,i){return '<text x="'+(b.x+b.w/2)+'" y="'+(y0+i*15)+'" font-size="'+(hid?22:13)+'" text-anchor="middle" fill="#2B2140">'+esc(s)+'</text>'}).join("");
+  return '<g class="n'+(hid?" hid":"")+'"'+(interactive&&!hid?' data-id="'+esc(n.id)+'" tabindex="0" role="button" aria-label="'+esc(n.label)+'"':'')+'><rect x="'+b.x+'" y="'+b.y+'" width="'+b.w+'" height="'+H+'" rx="10" fill="'+fill(n)+'" stroke="#2B2140" stroke-width="2.5"'+dash+'/>'+t+'</g>'}).join("");
+ function mk(i,c){return '<marker id="ar'+i+'" viewBox="0 0 10 10" refX="8" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto"><path d="M0 0 L10 5 L0 10z" fill="'+c+'"/></marker>'}
+ return '<svg role="img" aria-label="구조 도식" xmlns="http://www.w3.org/2000/svg" width="'+W+'" height="'+HT+'" viewBox="0 0 '+W+' '+HT+'"><defs>'+mk("","#2B2140")+mk("r","#FF5A7A")+mk("g","#1FA06A")+'</defs>'+paths+labels+nodes+'</svg>'}
+function legend(view){var i=function(c,t){return '<span><i style="background:'+c+'"></i>'+t+'</span>'};return view==="before"?i("#FFE0E6","문제 위치·이번에 사라짐")+i("#fff","그대로"):i("#D9F7E6","추가")+i("#FFE066","변경")+i("#fff","그대로")}
+function diagramBlock(prefix){return '<div class="tabs">'+[["before","이전"],["after","현재"]].map(function(t){return '<button class="tab'+(t[0]==="after"?" on":"")+'" data-k="'+t[0]+'">'+t[1]+'</button>'}).join("")+'</div><div class="dia" id="dia"></div><div class="legend" id="lg"></div><div class="cap">화살표는 호출·데이터 방향. 상자를 누르면 역할과 코드 위치가 나온다.</div><div id="nodeInfo"></div>'}
+function wireDiagram(){var cur="after";function draw(){$("dia").innerHTML=graphSvg(cur,null,true);$("lg").innerHTML=legend(cur);Array.prototype.forEach.call(document.querySelectorAll("#dia g.n[data-id]"),function(g){function open(){var n=D.graph.nodes.filter(function(x){return x.id===g.getAttribute("data-id")})[0],e=$("nodeInfo");e.className="on";e.innerHTML=esc(n.label)+(n.role?" · "+esc(n.role):"")+(n.ref?'<br>'+refLink(n.ref):"")}g.onclick=open;g.onkeydown=function(ev){if(ev.key==="Enter")open()}})}
+ Array.prototype.forEach.call(document.querySelectorAll(".tab"),function(b){b.onclick=function(){Array.prototype.forEach.call(document.querySelectorAll(".tab"),function(x){x.classList.remove("on")});b.classList.add("on");cur=b.dataset.k;draw();SFX.pick()}});draw()}
+function hud(hidePips){var p=st.queue.map(function(qi,k){var r=st.retry?(st.fixed[qi]===undefined?null:{ok:st.fixed[qi]}):st.res[qi];var c=r?(r.ok?(r.guess?"gs":"ok"):"no"):k===st.i?"cur":"";return '<div class="pip '+c+'"></div>'}).join("");return '<div class="hud"><div class="pips"'+(hidePips?' style="visibility:hidden"':'')+'>'+p+'</div><div class="score" id="sc">'+st.score+'</div><button class="mute" id="mute" aria-label="소리 켜고 끄기">'+(st.muted?"🔇":"🔊")+'</button></div>'}
+function bindMute(){$("mute").onclick=function(){st.muted=!st.muted;try{localStorage.setItem("prg_mute",st.muted?"1":"0")}catch(e){}this.textContent=st.muted?"🔇":"🔊";if(!st.muted)SFX.pick()}}
+function start(t){st.track=t;st.base=idsOf(t);st.queue=st.base.slice();st.i=0;st.score=0;st.combo=0;st.best=0;st.retry=false;st.fixed={};ac();SFX.pick();show()}
+function trackButtons(){if(!LV)return '<div class="go"><button class="btn pink" data-t="all">문제 풀기 · '+D.q.length+'문항 →</button></div>';
+ return '<div class="track"><button class="btn pink" data-t="learn">'+TRACK.learn+' · '+idsOf("learn").length+'문항<small>설명을 읽으면서 푼다. 배경 지식이 없어도 된다. 처음이면 이쪽부터.</small></button>'+
+ '<button class="btn" data-t="check">'+TRACK.check+' · '+idsOf("check").length+'문항<small>PR 을 직접 열어 봐야 풀린다. 제대로 읽었는지 잰다.</small></button></div>'}
+function bindTracks(before){Array.prototype.forEach.call(document.querySelectorAll("[data-t]"),function(b){b.onclick=function(){if(before)before();start(b.dataset.t)}})}
+function lobby(){var P=D.pr,B=D.brief;$("stage").innerHTML=hud(true)+
+ '<div class="box lobby"><span class="tag">PR #'+esc(P.num)+'</span><h1>제대로 읽었을까?</h1><div style="font-size:18px">'+esc(P.title)+'</div><ul>'+B.summary.map(function(s){return "<li>"+esc(s)+"</li>"}).join("")+'</ul>'+
+ '<div style="text-align:left;font-size:15px;margin-bottom:6px">리뷰어 이름</div><input id="who" placeholder="이름 (선택)" maxlength="20" value="'+esc(st.who)+'">'+
+ '<div class="go"><button class="btn plain" id="read">① 브리핑부터 읽기</button></div>'+trackButtons()+
+ '<div class="note">'+(LV?'배우며 풀기는 문항마다 먼저 알아 둘 설명이 나온다. 확인 문제는 코드를 일부러 뺐다.<br>':'')+'코드·구조·영향 축으로 따로 잰다. 코드가 안 보이는 문항은 PR을 열어 보고 풀어도 된다.<br>찍었으면 표시한다. 찍어서 맞힌 문항은 이해로 세지 않는다.<br>Slack 미리보기에서는 동작하지 않는다. 내려받아 브라우저로 연다.</div></div>';
+ bindMute();function who(){st.who=$("who").value.trim()}
+ $("read").onclick=function(){who();ac();SFX.pick();brief()};bindTracks(who)}
+function brief(){var B=D.brief;$("stage").innerHTML=hud(true)+'<div class="box brief">'+(B.background?'<h2 style="margin-top:0">처음 보는 말</h2><ul class="terms">'+B.background.map(function(t){return '<li><b>'+esc(t.t)+'</b> — '+esc(t.d)+'</li>'}).join("")+'</ul>':"")+'<h2'+(B.background?'':' style="margin-top:0"')+'>무엇이 문제였나</h2><p>'+esc(B.problem)+'</p><h2>이제 어떻게 동작하나</h2><p>'+esc(B.change)+'</p><h2>구조</h2>'+diagramBlock()+
+ '<h2>바뀌지 않는 것</h2><ul class="plain">'+B.unchanged.map(function(s){return "<li>"+esc(s)+"</li>"}).join("")+'</ul>'+
+ '<h2>읽는 순서</h2><ol class="read">'+B.reading.map(function(r){return '<li>'+refLink(r.ref)+'<span>'+esc(r.why)+'</span></li>'}).join("")+'</ol>'+
+ '<div class="note">브리핑은 지도일 뿐이다. 문제는 위 파일을 실제로 읽어야 풀린다. <a href="'+esc(filesUrl())+'" target="_blank" rel="noopener">PR 변경 파일 열기</a></div>'+
+ trackButtons()+'</div>';
+ bindMute();wireDiagram();bindTracks();scrollTo(0,0)}
+function show(){var qi=st.queue[st.i],q=D.q[qi],order=shuffle(q.opts.map(function(_,k){return k}));st.guess=false;st.seen=false;
+ var learn=q.level==="learn",closed=!learn&&!q.code&&!q.diagram;
+ $("stage").innerHTML=hud()+'<div class="box q"><div class="qhead"><span class="qno">Q'+(st.i+1)+'</span><span class="kind">'+(learn?"배우기 · ":"")+KINDS[q.kind]+(st.retry?" · 다시":"")+'</span>'+(q.file?'<span class="file">'+esc(q.file)+'</span>':'<span></span>')+'</div>'+
+ (learn?'<div class="learn"><div class="h">📘 먼저 알아 둘 것</div>'+esc(q.learn)+(q.terms?'<ul class="terms">'+q.terms.map(function(t){return '<li><b>'+esc(t.t)+'</b> — '+esc(t.d)+'</li>'}).join("")+'</ul>':"")+'</div>':"")+
+ '<div class="ask">'+esc(q.ask)+'</div>'+
+ (q.diagram?'<div class="dia">'+graphSvg(q.diagram,q.hide||null,false)+'</div>':"")+
+ (q.code?'<pre class="code">'+codeHtml(q.code)+'</pre>':"")+
+ (closed?'<div class="open">코드를 일부러 뺀 문항이다. <a href="'+esc(filesUrl())+'" target="_blank" rel="noopener">PR을 열어</a> 찾아봐도 된다.</div>':"")+
+ '<button class="guess" id="guess" aria-pressed="false">🎲 찍는 중이면 눌러 표시</button>'+
+ '<div class="opts">'+order.map(function(o,k){return '<button class="opt" data-i="'+o+'"><b>'+"ABCD"[k]+'</b>'+esc(q.opts[o])+'</button>'}).join("")+'</div>'+
+ '<div class="fb" id="fb"></div><div class="row"><button class="btn sm plain" id="memoB">💬 질문 메모</button><button class="btn pink" id="next" style="display:none">'+(st.i+1<st.queue.length?"다음 문항 →":"결과 보기 →")+'</button></div>'+
+ '<textarea class="memo" id="memo" rows="2" placeholder="작성자에게 물어볼 것">'+esc(st.memo[qi]||"")+'</textarea></div>';
+ bindMute();
+ $("guess").onclick=function(){if(st.seen)return;st.guess=!st.guess;this.setAttribute("aria-pressed",st.guess);SFX.pick()};
+ var os=document.querySelectorAll(".opt");Array.prototype.forEach.call(os,function(b,k){setTimeout(function(){b.classList.add("in");SFX.deal(k)},120+k*110);b.onclick=function(){pick(+b.dataset.i,b)}});
+ $("memoB").onclick=function(){$("memo").classList.toggle("on");$("memo").focus()};
+ $("memo").oninput=function(){st.memo[qi]=this.value};
+ $("next").onclick=function(){st.i++;SFX.pick();if(st.i<st.queue.length)show();else result()};scrollTo(0,0);
+ /* 좁은 화면에서도 묻는 자리가 먼저 보여야 한다. */
+ var mark=document.querySelector(".dia g.n.hid"),wrap=document.querySelector(".dia");if(mark&&wrap){var m=mark.getBoundingClientRect(),w=wrap.getBoundingClientRect();wrap.scrollLeft+=m.left+m.width/2-w.left-w.width/2}}
+function pick(k,b){if(st.seen)return;st.seen=true;var qi=st.queue[st.i],q=D.q[qi],ok=k===q.ans,os=document.querySelectorAll(".opt");
+ Array.prototype.forEach.call(os,function(o){var j=+o.dataset.i;o.disabled=true;o.style.opacity=1;o.style.transform="none";if(j===q.ans)o.classList.add("right");else if(j!==k)o.classList.add("dim")});
+ var r=b.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,fb=$("fb"),re=q.ref?'<span class="re">다시 읽을 곳: '+refLink(q.ref)+'</span>':"",guess=st.guess;
+ $("guess").disabled=true;
+ if(ok){
+  var gain=0;
+  if(!st.retry){
+   /* 찍어서 맞히면 콤보를 올리지 않는다. 표시한 쪽이 손해 보지 않게 끊지도 않는다. */
+   if(guess)gain=30;else{st.combo++;st.best=Math.max(st.best,st.combo);gain=100+(st.combo>1?(st.combo-1)*50:0)}
+   st.score+=gain}
+  SFX.ok();burst(x,y,36,["#FF7EB6","#FFE066","#7CC8FF","#5ED6A0","#fff"]);flash("#FFFFFF");shakeScreen();
+  if(gain)comboPop(st.combo>1&&!guess?st.combo+" COMBO! +"+gain:"+"+gain);if(st.combo>1&&!guess&&!st.retry)setTimeout(function(){SFX.combo(st.combo)},180);
+  fb.className="fb good on";fb.innerHTML='<div class="h">⭕ 정답'+(guess?" · 찍어서 맞힘, 근거를 확인할 것":"")+'</div>'+esc(q.why)+re}
+ else{if(!st.retry)st.combo=0;b.classList.add("wrong");SFX.no();flash("#FF5A7A");shakeScreen();burst(x,y,10,["#FF5A7A","#2B2140"]);
+  fb.className="fb bad on";fb.innerHTML='<div class="h">❌ 아깝다</div>'+esc(q.miss[k]||"")+'<br><b>정답</b> '+esc(q.opts[q.ans])+'<br>'+esc(q.why)+re}
+ if(st.retry)st.fixed[qi]=ok;else st.res[qi]={ok:ok,pick:k,guess:guess};
+ $("sc").textContent=st.score;
+ var pp=document.querySelectorAll(".pip");pp[st.i].className="pip "+(ok?(guess?"gs":"ok"):"no");
+ $("next").style.display=""}
+function stats(){var A={};Object.keys(KINDS).forEach(function(k){A[k]={n:0,sure:0,guess:0}});st.base.forEach(function(i){var q=D.q[i],r=st.res[i],a=A[q.kind];a.n++;if(r&&r.ok){if(r.guess)a.guess++;else a.sure++}});return A}
+function verdict(A){var n=st.base.length,sure=A.code.sure+A.structure.sure+A.impact.sure,pct=sure*100/n,sp=A.structure.n?A.structure.sure/A.structure.n:1,ip=A.impact.n?A.impact.sure/A.impact.n:1;
+ if(st.track==="learn")return pct>=80?"배경 잡힘 · 확인 문제로":pct>=50?"절반 잡힘 · 브리핑 다시":"처음 보는 말부터 다시";if(pct>=80&&sp*3>=2&&ip>=.5)return "구조까지 파악";if(pct>=50&&sp*3<2)return "코드는 읽음, 구조 재확인";if(pct>=50)return "핵심 파악, 약한 축 재확인";return "PR 다시 읽기"}
+function result(){if(st.retry)st.retry=false;SFX.end();var n=st.base.length,A=stats(),sure=A.code.sure+A.structure.sure+A.impact.sure,grade=verdict(A);
+ var best=0;try{var bk="prg_best_"+D.pr.num+(st.track==="all"?"":"_"+st.track);best=+localStorage.getItem(bk)||0;if(st.score>best)localStorage.setItem(bk,st.score)}catch(e){}
+ var no=function(i){return st.base.indexOf(i)+1};var weak=st.base.filter(function(i){var r=st.res[i];return !r||!r.ok||r.guess});
+ var axisRows=Object.keys(KINDS).filter(function(k){return A[k].n}).map(function(k){var a=A[k];return '<div class="axis"><span>'+KINDS[k]+'</span><div class="bar"><i style="width:'+Math.round(a.sure*100/a.n)+'%"></i></div><span>'+a.sure+'/'+a.n+(a.guess?" · 찍음 "+a.guess:"")+'</span></div>'}).join("");
+ var C=D.compare,cmp=C?'<h2>전/후 비교</h2>'+(C.note?'<div class="cap">'+esc(C.note)+'</div>':"")+C.rows.map(function(r){return '<div class="where">'+esc(r.where)+'</div><div class="cmp"><div class="b"><span class="t">이전</span>'+esc(r.before.join("\n"))+'</div><div class="f"><span class="t">현재</span>'+esc(r.after.join("\n"))+'</div></div>'}).join(""):"";
+ function mediaEl(u,alt){return /^data:video/.test(u)?'<video src="'+esc(u)+'" controls></video>':'<img src="'+esc(u)+'" alt="'+alt+'">'}
+ var M=D.media,med=M?'<h2>화면 전/후</h2><div class="media"><div class="pair">'+(M.before?'<div><div class="cap">이전</div>'+mediaEl(M.before,"이전 화면")+'</div>':"")+(M.after?'<div><div class="cap">현재</div>'+mediaEl(M.after,"현재 화면")+'</div>':"")+'</div></div>':"";
+ $("stage").innerHTML=hud()+'<div class="box res" id="result"><div class="big"><div class="n">'+st.score+'</div><div class="grade">'+(LV?esc(TRACK[st.track])+' · ':'')+esc(grade)+' · 확신 정답 '+sure+'/'+n+'</div><div class="cap">최고 콤보 '+st.best+' · 최고 점수 '+Math.max(best,st.score)+'</div></div>'+
+ '<h2>축별 결과</h2><div class="axes">'+axisRows+'</div>'+
+ (weak.length?'<h2>다시 볼 문항</h2><ul class="miss">'+weak.map(function(i){var q=D.q[i];return '<li>Q'+no(i)+' '+esc(q.ask)+'<br><span class="cap">'+(st.res[i]&&st.res[i].ok?"찍어서 맞힘":"틀림")+' · 정답: '+esc(q.opts[q.ans])+(q.ref?' · '+refLink(q.ref):"")+'</span></li>'}).join("")+'</ul><div class="row"><button class="btn" id="retry">이 문항만 다시 ('+weak.length+')</button></div>':"")+
+ '<h2>구조</h2>'+diagramBlock()+
+ '<h2>왜 이 구조인가</h2><ol class="why">'+D.why.map(function(w){return '<li>'+esc(w.what)+'<span><i class="k y">왜</i>'+esc(w.reason)+'</span><span><i class="k g">결과</i>'+esc(w.result)+'</span></li>'}).join("")+'</ol>'+
+ cmp+med+
+ '<h2>질문 메모</h2><textarea id="memoAll" rows="3" placeholder="작성자에게 물어볼 것">'+esc(Object.keys(st.memo).map(function(k){return st.memo[k]}).filter(Boolean).join("\n"))+'</textarea>'+
+ '<h2>Slack·PR 댓글용</h2><textarea id="out" readonly></textarea><div class="row"><button class="btn pink" id="cp">결과 복사</button><button class="btn plain" id="brief">브리핑 다시</button><button class="btn plain" id="again">처음부터</button></div>'+(LV&&st.track==="learn"?'<div class="track"><button class="btn pink" data-t="check">이어서 '+TRACK.check+' · '+idsOf("check").length+'문항<small>이제 PR 을 열어 직접 확인한다.</small></button></div>':'')+'</div>';
+ bindMute();wireDiagram();
+ function txt(){var L=["PR #"+D.pr.num+" 리뷰 게임 결과"+(LV?" ("+TRACK[st.track]+")":"")+(st.who?" — "+st.who:""),grade+" · 확신 정답 "+sure+"/"+n];
+  L.push(Object.keys(KINDS).filter(function(k){return A[k].n}).map(function(k){return KINDS[k]+" "+A[k].sure+"/"+A[k].n}).join(" · "));
+  if(weak.length){L.push("다시 볼 문항:");weak.forEach(function(i){L.push("- Q"+no(i)+" "+D.q[i].ask)})}else L.push("다시 볼 문항: 없음");
+  var m=$("memoAll").value.trim();L.push(m?"질문 메모:":"질문 메모: 없음");if(m)m.split("\n").forEach(function(s){if(s.trim())L.push("- "+s.trim())});L.push(D.pr.url);return L.join("\n")}
+ 
+ $("out").value=txt();$("memoAll").oninput=function(){$("out").value=txt()};
+ $("cp").onclick=function(){var t=$("out").value,b=this;function done(){b.textContent="복사됨 ✓";SFX.pick()}
+  function fall(){$("out").select();try{document.execCommand("copy")}catch(e){}done()}
+  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(done,fall);else fall()};
+ $("again").onclick=function(){st=fresh(st.who,st.muted);lobby()};
+ $("brief").onclick=brief;
+ bindTracks();if($("retry"))$("retry").onclick=function(){st.retry=true;st.fixed={};st.queue=shuffle(weak);st.i=0;SFX.pick();show()};
+ var r=$("result").getBoundingClientRect();burst(innerWidth/2,Math.min(r.top+80,innerHeight/3),60,["#FF7EB6","#FFE066","#7CC8FF","#5ED6A0"]);scrollTo(0,0)}
+lobby();
+</script>
+</body>
+</html>
