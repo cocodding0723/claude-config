@@ -67,6 +67,7 @@ hubs/scripts/slack_pending.sh	.config/lrm-hubs/slack_pending.sh	link
 hubs/scripts/slack_poll.sh	.config/lrm-hubs/slack_poll.sh	link
 hubs/scripts/slack_push.sh	.config/lrm-hubs/slack_push.sh	link
 hubs/scripts/slack_push.py	.config/lrm-hubs/slack_push.py	link
+hubs/scripts/set_main_terminal.sh	.config/lrm-hubs/set_main_terminal.sh	link
 hubs/scripts/unity_slot.sh	.config/lrm-hubs/unity_slot.sh	link
 hubs/roles/role-arch.txt	.config/lrm-hubs/roles/role-arch.txt	link
 hubs/roles/role-doc-kit.txt	.config/lrm-hubs/roles/role-doc-kit.txt	link
@@ -80,6 +81,7 @@ hubs/roles/role-test.txt	.config/lrm-hubs/roles/role-test.txt	link
 hubs/roles/role-ui.txt	.config/lrm-hubs/roles/role-ui.txt	link
 hubs/slack-bot-manifest.yml	.config/lrm-hubs/slack-bot-manifest.yml	link
 hubs/docs/slack-format.md	.config/lrm-hubs/docs/slack-format.md	link
+hubs/docs/slack-push.md	.config/lrm-hubs/docs/slack-push.md	link
 hubs/launchd/ai.lrm.slackpoll.plist	Library/LaunchAgents/ai.lrm.slackpoll.plist	copy
 hubs/roles/role-vfx.txt.tmpl	.config/lrm-hubs/roles/role-vfx.txt	render
 hubs/roles/role-tutorial.txt.tmpl	.config/lrm-hubs/roles/role-tutorial.txt	render

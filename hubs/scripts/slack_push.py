@@ -5,6 +5,7 @@
 메인 터미널에 1회 전달 → 성공하면 .main-read-lines 를 전달한 줄까지 올림(그러면 폴러의 읽음 반응이 👀→✅).
 토큰은 읽지 않음. 수신 본문은 데이터로만 다루며 실행·eval 하지 않음.
 """
+import hashlib
 import json
 import os
 import re
@@ -51,9 +52,25 @@ BATCH_ITEMS, MSG_CHARS, BATCH_CHARS = 20, 400, 3000
 FIRST_MAX = 20                                        # 첫 실행에서 안 읽은 줄이 이보다 많으면 과거분은 보내지 않음
 KEEP_DAYS, LOCK_STALE = 30, 900
 MAIN_PATH = (os.environ.get("LRM_PUSH_MAIN") or os.path.expanduser("~/orca/LoveRevolutionMaker")).rstrip("/")
-PANE = os.environ.get("LRM_PUSH_PANE", "MAIN")        # 대상 pane 제목(terminal set-pane-title). 비어 있지 않으면 후보 수와 무관하게 이 제목일 때만 전달. 제목 없이 받으려면 ""
+MAIN_ENV = os.environ.get("LRM_MAIN_ENV") or os.path.join(DIR, "main.env")  # 메인 터미널 핸들(MAIN_TERMINAL=…) 설정. 메인 재시작 때 set_main_terminal.sh 가 갱신
+MAIN_KEY = "MAIN_TERMINAL="
+HANDLE_RE = re.compile(r"term_[0-9a-f-]+")  # fullmatch 로만 씀. $ 는 끝 개행을 통과시킴
+# Orca CLI 가 터미널 핸들 무효로 취급하는 오류 코드(번들 handlers/orchestration/terminal-identity.js). 그 밖(runtime_unavailable·시간 초과 등)은 일시 오류
+HANDLE_GONE_CODES = frozenset({"terminal_handle_stale", "terminal_gone", "terminal_not_found"})
+HANDLE_LOG = 13                                       # 로그에 남기는 핸들 앞 글자 수
+PANE = os.environ.get("LRM_PUSH_PANE", "MAIN")        # 보조 조건. show 에 paneTitle 이 있고 이 값과 다르면 보류, 키가 없으면 통과. "" 이면 대조 생략
 ORCA = os.environ.get("LRM_PUSH_ORCA", "orca")
 AGENT = "claude"
+NOTIFY = os.environ.get("LRM_PUSH_NOTIFY") or os.path.join(SELF_DIR, "slack_notify.sh")
+ALERT = os.path.join(DIR, ".slack-push-alert.json")  # '메인 연결 끊김' 알림을 보낸 사유 목록. 연결이 확인되면 지움
+# 메인 핸들이 없거나 다른 터미널을 가리키는 사유. 사람이 main.env 를 고쳐야 풀리므로 알림 대상(화면 상태·조회 실패는 제외)
+LINK_LOST = frozenset({"no_main_handle", "handle_gone", "handle_dead", "not_writable", "wrong_worktree", "not_claude", "pane_title_mismatch"})
+ALERT_TEXT = "\n".join([
+    "메인 연결 끊김",
+    "",
+    "• 무엇: Slack 메시지를 메인 세션에 넘기지 못하고 모아 두는 중이다 (사유: {reason})",
+    "• 할 일: 메인 세션에서 set_main_terminal.sh <새 핸들> 로 main.env 의 MAIN_TERMINAL 을 고친다",
+])
 MSG_TYPES = ("note", "command", "thread_reply")       # 전달 대상. reaction 은 전달하지 않고 읽음 표식이 넘지 못하게 막음
 NO_LABEL = "새 메모"
 FAKE_PREFIX = "[Slack→메인]"
@@ -135,9 +152,16 @@ def load_state():
 
 def save_state(s):
     tmp = STATE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(s, f)
+    os.chmod(tmp, 0o600)
     os.replace(tmp, STATE)
+
+
+def handle_tag(h):
+    """상태 파일에 핸들 원문 대신 남기는 식별값(SHA-256 앞 16자). 같은 터미널인지 비교하는 데만 씀"""
+    return "sha256:" + hashlib.sha256(h.encode()).hexdigest()[:16]
 
 
 def last_delivered_line():
@@ -378,30 +402,112 @@ def screen_hold(preview):
     return SCREEN_HOLD[st]
 
 
+def main_handle():
+    """지정된 메인 핸들|None. LRM_PUSH_HANDLE(시험용) 또는 main.env 의 MAIN_TERMINAL 줄만 읽음(다른 줄은 보지도 기록하지도 않음).
+    형식이 term_<16진·하이픈> 이 아니거나 서로 다른 값이 둘 이상이면 무효"""
+    v = os.environ.get("LRM_PUSH_HANDLE")
+    if v is None:
+        vals = set()
+        try:
+            with open(MAIN_ENV, encoding="utf-8", errors="replace") as f:
+                for ln in f:
+                    if ln.startswith(MAIN_KEY):
+                        vals.add(ln[len(MAIN_KEY):].strip())
+        except OSError:
+            return None
+        if len(vals) != 1:
+            return None
+        v = vals.pop()
+    return v if HANDLE_RE.fullmatch(v) else None
+
+
+def target_why(t):
+    """show 로 받은 터미널이 메인 세션이 아니면 사유 코드. 끊김·고아·쓰기 불가·다른 체크아웃·claude 아님·제목 불일치 순"""
+    if t.get("connected") is not True or t.get("orphaned"):
+        return "handle_dead"
+    if t.get("writable") is not True:
+        return "not_writable"
+    if str(t.get("worktreePath") or "").rstrip("/") != MAIN_PATH:
+        return "wrong_worktree"
+    if t.get("agentIdentity") != AGENT:
+        return "not_claude"
+    if PANE and "paneTitle" in t and t.get("paneTitle") != PANE:  # set-pane-title 이 show 에 안 보이는 경우가 있어 키가 없으면 통과
+        return "pane_title_mismatch"
+    return None
+
+
 def find_target():
-    """(handle|None, 사유 코드|None). 매번 새로 조회. 메인 체크아웃의 claude 터미널 중 pane 제목이 PANE 인 것이 정확히 1개이고
-    입력 대기 상태일 때만 대상. PANE="" 이면 제목 없이 후보가 정확히 1개일 때"""
-    rc, d = run_orca(["terminal", "list", "--worktree", "path:" + MAIN_PATH, "--json"], 20)
-    if rc != 0:
-        rc, d = run_orca(["terminal", "list", "--json"], 20)
-    terms = ((d or {}).get("result") or {}).get("terminals") if rc == 0 else None
-    if not isinstance(terms, list):
-        return None, "list_fail"
-    cand = [t for t in terms if isinstance(t, dict) and str(t.get("worktreePath") or "").rstrip("/") == MAIN_PATH
-            and t.get("agentIdentity") == AGENT and t.get("connected") is not False and t.get("writable") is not False
-            and not t.get("orphaned") and t.get("handle")]
-    if not cand:
-        return None, "no_target"
-    if PANE:  # 후보가 1개여도 제목을 요구함. MAIN 터미널을 닫으면 제목 없는 다른 claude 터미널이 유일한 후보가 돼 전달받는 일을 막음
-        cand = [t for t in cand if t.get("paneTitle") == PANE]
-        if not cand:
-            return None, "no_pane_title"
-    if len(cand) != 1:
-        return None, "multi_target"
-    why = screen_hold(cand[0].get("preview"))
-    if why:
-        return None, why
-    return str(cand[0]["handle"]), None
+    """(handle|None, 사유 코드|None, 로그용 핸들 앞부분). 매번 새로 확인. main.env 가 가리키는 터미널이 살아 있고 메인 체크아웃의
+    claude 세션이며 입력 대기 상태일 때만 대상. 제목으로 후보를 고르지 않음(제목이 사라지면 다른 터미널이 대상이 되는 일을 막음)"""
+    handle = main_handle()
+    if not handle:
+        return None, "no_main_handle", "none"
+    short = handle[:HANDLE_LOG]
+    rc, d = run_orca(["terminal", "show", "--terminal", handle, "--json"], 20)
+    if rc is None or rc == 127:
+        return None, "show_fail", short
+    t = ((d or {}).get("result") or {}).get("terminal") if isinstance(d, dict) else None
+    if rc != 0 or not isinstance(t, dict):
+        err = d.get("error") if isinstance(d, dict) else None
+        code = err.get("code") if isinstance(err, dict) else None
+        return None, ("handle_gone" if code in HANDLE_GONE_CODES else "show_fail"), short
+    if t.get("handle") not in (None, handle):  # 다른 터미널의 정보를 돌려받음
+        return None, "handle_gone", short
+    why = target_why(t) or screen_hold(t.get("preview"))
+    return (None, why, short) if why else (handle, None, short)
+
+
+def alert_state():
+    try:
+        with open(ALERT, encoding="utf-8") as f:
+            s = json.load(f)
+        return s if isinstance(s, dict) and isinstance(s.get("reasons"), list) else {"reasons": []}
+    except (OSError, ValueError):
+        return None
+
+
+def alert_save(s):
+    tmp = ALERT + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(s, f)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, ALERT)
+
+
+def alert(reason):
+    """'메인 연결 끊김' 경고를 사유마다 한 번만 보냄. 보낸 사유는 상태 파일(600)에 남겨 연결이 확인될 때까지 다시 보내지 않음.
+    알림 실패는 전달·수집을 막지 않음(로그만). 본문에 핸들 값·메시지 내용은 넣지 않음"""
+    s = alert_state() or {"reasons": []}
+    if reason in s["reasons"]:
+        return
+    s["reasons"].append(reason)
+    s["at"] = int(time.time())
+    try:
+        alert_save(s)  # 보내기 전에 기록. 알림이 실패해도 30초마다 다시 보내 Slack 을 채우지 않게 함
+    except OSError:
+        log("alert", reason=reason, result="state_fail")
+        return
+    try:
+        p = subprocess.run(["/bin/bash", NOTIFY, "--kind", "warn", "--tag", "slack-push", "--title", "메인 연결 끊김", ALERT_TEXT.format(reason=reason)],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+        result = "ok" if p.returncode == 0 else f"fail_rc{p.returncode}"
+    except subprocess.TimeoutExpired:
+        result = "timeout"
+    except OSError:
+        result = "fail"
+    log("alert", reason=reason, result=result)
+
+
+def alert_clear():
+    """메인 연결이 확인되면 알림 상태를 지워 다음 끊김 때 다시 알림"""
+    if alert_state() is None:
+        return
+    try:
+        os.remove(ALERT)
+        log("link_ok")
+    except OSError:
+        pass
 
 
 def find_key(d, keys):
@@ -574,11 +680,15 @@ def attempt(state, lines, mark, now):
     if not items:  # 보류분이 사라짐(inbox 가 바뀜). 보낼 것 없음
         state["push_pending"] = None
         return "sent"
-    handle, why = find_target()
+    handle, why, short = find_target()
+    if why in LINK_LOST:
+        alert(why)
+    elif why != "show_fail":  # 핸들이 메인 세션임을 확인함(화면 상태 보류 포함). 조회 실패는 판단 보류
+        alert_clear()
     if why:
-        hold(pp, why, now + HOLD_RETRY, span)
+        hold(pp, why, now + HOLD_RETRY, span, handle=short)
         return "hold"
-    if pp.get("ambig") and pp["ambig"] != handle:  # 도착 여부를 모르는 시도를 한 터미널과 다름. 요청 ID 는 터미널에 묶이므로 다른 곳에 보내면 중복될 수 있음
+    if pp.get("ambig") and pp["ambig"] not in (handle_tag(handle), handle):  # 원문은 이전 버전이 남긴 상태 호환  # 도착 여부를 모르는 시도를 한 터미널과 다름. 요청 ID 는 터미널에 묶이므로 다른 곳에 보내면 중복될 수 있음
         hold(pp, "unknown_delivery", now + FOREVER, span, why="target_changed")
         pp["stop"] = True
         return "hold"
@@ -595,7 +705,7 @@ def attempt(state, lines, mark, now):
         return "sent"
     if verdict in ("unknown", "unsubmitted"):  # 자동 재전송 금지. 표식도 올리지 않음(올리면 메인이 못 본 채 읽음 처리됨). 사람이 터미널을 보고 풂
         hold(pp, "unknown_delivery" if verdict == "unknown" else "unsubmitted", now + FOREVER, span, why=code, **info)
-        pp["stop"], pp["ambig"] = True, handle
+        pp["stop"], pp["ambig"] = True, handle_tag(handle)
         return "hold"
     if verdict == "blocked":  # Orca 가 권한·신뢰 메뉴로 판단해 거절. 실패 횟수에 넣지 않고 보류
         hold(pp, "dialog", now + HOLD_RETRY, span)
@@ -603,7 +713,7 @@ def attempt(state, lines, mark, now):
             pp["request_id"] = str(uuid.uuid4())  # 입력 전 거절이라 ID 를 바꿔도 중복 없음(앞선 모호한 시도가 있으면 같은 ID 유지)
         return "hold"
     if verdict == "retry":
-        pp["ambig"] = handle
+        pp["ambig"] = handle_tag(handle)
     elif not pp.get("ambig"):  # refused: 입력을 받지 않았으므로 새 ID
         pp["request_id"] = str(uuid.uuid4())
     pp["attempts"] = pp.get("attempts", 0) + 1

@@ -6,7 +6,7 @@ set -uo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 SCRIPTS=${PUSH_SCRIPTS:-$HERE/../../hubs/scripts}
-PUSH="$SCRIPTS/slack_push.sh" POLL="$SCRIPTS/slack_poll.sh"
+PUSH="$SCRIPTS/slack_push.sh" POLL="$SCRIPTS/slack_poll.sh" SETMAIN="$SCRIPTS/set_main_terminal.sh"
 PASS=0 FAIL=0
 ok() { PASS=$((PASS + 1)); printf 'PASS  %s\n' "$1"; }
 ko() { FAIL=$((FAIL + 1)); printf 'FAIL  %s — %s\n' "$1" "${2:-}"; }
@@ -16,12 +16,21 @@ SRV=""
 trap '[ -n "$SRV" ] && { kill "$SRV"; wait "$SRV"; } 2>/dev/null; rm -rf "${SB:?}"' EXIT
 FB="$SB/bin"; mkdir -p "$FB"
 cp "$HERE/fake_orca.sh" "$FB/orca"; chmod 755 "$FB/orca"
+cat > "$FB/notify" <<'EOF'
+#!/bin/bash
+# 가짜 slack_notify.sh(실제 전송 없음). 호출마다 인자를 한 줄로 기록, 종료 코드는 notify.rc
+printf '%s' "$*" | tr '\n' ' ' >> "$FAKE_ORCA_DIR/notify.log"; echo >> "$FAKE_ORCA_DIR/notify.log"
+exit "$(cat "$FAKE_ORCA_DIR/notify.rc" 2>/dev/null || echo 0)"
+EOF
+chmod 755 "$FB/notify"
+export LRM_PUSH_NOTIFY="$FB/notify"  # '메인 연결 끊김' 알림이 실제 slack_notify.sh 로 가지 않게 함
 export PATH="$FB:$PATH"
 MAIN="$SB/main-checkout"                 # 가짜 메인 체크아웃 경로(문자열로만 쓰임)
 export FAKE_MAIN="$MAIN" LRM_PUSH_MAIN="$MAIN" LRM_PUSH_REPOLL=off
 export LRM_PUSH_QUIET=2 LRM_PUSH_MAX=6 LRM_PUSH_TICK=0.2 LRM_PUSH_HOLD_RETRY=0.5 LRM_PUSH_RETRY=0.5 LRM_PUSH_LIFE=4
 FAKE_TOKEN="fake-token-0123456789-abcdefghij"
 ME=Uuser1; BOT=Ubot1; OTHER=Uother1
+HD=term_0000feed-0000-4000-8000-000000000001 HD2=term_0000beef-0000-4000-8000-000000000002  # 가짜 핸들(형식만 실제와 같음)
 
 nowf() { python3 -I -c 'import time;print(f"{time.time():.3f}")'; }
 between() { awk -v v="$1" -v lo="$2" -v hi="$3" 'BEGIN{exit !(v>=lo && v<=hi)}'; }
@@ -29,6 +38,7 @@ sub_f() { awk -v a="$1" -v b="$2" 'BEGIN{printf "%.3f", a-b}'; }
 newhub() { # 이름: 허브 폴더·가짜 orca 상태 폴더를 새로 만들고 H·FO 를 설정
   H="$SB/$1/hub" FO="$SB/$1/fo"; mkdir -p "$H" "$FO"
   export LRM_HUB_DIR="$H" FAKE_ORCA_DIR="$FO"; : > "$H/slack-inbox.jsonl"
+  printf 'MAIN_TERMINAL=%s\n' "$HD" > "$H/main.env"; chmod 600 "$H/main.env"  # 기본 대상(LRM_MAIN_ENV 기본값 = 허브 폴더의 main.env)
 }
 addmsg() { # 유형 ts 본문 [제목] [files JSON] [files_failed JSON]
   jq -nc --arg t "$1" --arg ts "$2" --arg x "$3" --arg ti "${4:-}" --argjson f "${5:-null}" --argjson ff "${6:-null}" --argjson r "$(nowf)" \
@@ -48,6 +58,7 @@ idle_wait() { # 분리 워커가 모두 끝날 때까지(최대 30초)
 }
 fmt_bad() { python3 -I "$HERE/push_check.py" "$1" "${2:-}"; }
 UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+nnot() { [ -f "$FO/notify.log" ] && wc -l < "$FO/notify.log" | tr -d ' ' || echo 0; }
 rids() { awk -F'\t' '{print $4}' "$FO/sends.log" | sort -u | wc -l | tr -d ' '; }  # 전송에 쓴 서로 다른 요청 ID 수
 
 # ---- ⓐ 20초(축소 2초) 안에 연속 3건 → 전달 1회 --------------------------------------------------
@@ -85,38 +96,101 @@ d=$(sub_f "$(stime 1)" "$t0")
 tot=$(cat "$FO"/send.*.txt | grep -o '^- #[0-9]*' | sort | wc -l | tr -d ' '); uniq=$(cat "$FO"/send.*.txt | grep -o '^- #[0-9]*' | sort -u | wc -l | tr -d ' ')
 [ "$tot" = 10 ] && [ "$uniq" = 10 ] && ok "ⓑ 전달 합계 10건·중복 0·유실 0" || ko "ⓑ 중복·유실" "tot=$tot uniq=$uniq"
 
-# ---- ⓓ 대상 터미널 0개/2개 이상/대화상자/조회 실패 → 전달 없음·보류·다음 회차 재시도 ---------------------------
-hold_case() { # 이름 list.mode 사유 [환경 변수 한 개 NAME=값]
-  newhub "$1"; echo "$2" > "$FO/list.mode"
+# ---- ⓓ 대상 = main.env 의 MAIN_TERMINAL 핸들. show 로 메인 세션인지 확인하고 아니면 전달 없음·보류·다음 회차 재시도 ----------
+hcnt() { grep -c "^$1" "$FO/calls.log" 2>/dev/null || true; }
+newhub D0; addmsg note 1300.000000 "핸들 전달"; LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
+[ "$(nsend)" = 1 ] && [ "$(awk -F'\t' '{print $3}' "$FO/sends.log")" = "$HD" ] && grep -qx "show --terminal $HD --json" "$FO/calls.log" && [ "$(hcnt list)" = 0 ] \
+  && ok "ⓓ main.env 의 MAIN_TERMINAL 핸들로 전달: 보내기 전에 terminal show 로 확인(paneTitle 키 없음 → 통과), terminal list 호출 0" || ko "ⓓ 핸들 전달" "sends=$(nsend) $(cat "$FO/calls.log" 2>/dev/null | tr '\n' '|')"
+hold_case() { # 이름 show.mode 사유 [환경 변수 한 개 NAME=값]
+  newhub "$1"; echo "$2" > "$FO/show.mode"
   addmsg note 1300.000001 "보류"
   env "${4:-X=1}" LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 bash "$PUSH" --run
-  [ "$(nsend)" = 0 ] && [ "$(st .push_pending.reason)" = "$3" ] && [ "$(plog hold)" = 1 ] && [ "$(wc -l < "$FO/calls.log" | tr -d ' ')" -ge 2 ] && [ "$(st .pushed_lines)" = 0 ] && [ -z "$(mk)" ] \
-    && ok "ⓓ list.mode=$2 → 전달 0·보류 사유=$3·로그 1줄·워커 안에서 재조회·읽음 표식 불변" || ko "ⓓ $2" "sends=$(nsend) $(st .push_pending) log=$(plog hold) mark=$(mk)"
+  [ "$(nsend)" = 0 ] && [ "$(st .push_pending.reason)" = "$3" ] && [ "$(plog hold)" = 1 ] && [ "$(hcnt show)" -ge 2 ] && [ "$(st .pushed_lines)" = 0 ] && [ -z "$(mk)" ] \
+    && grep -q "push hold reason=$3 .*handle=${HD:0:13}$" "$H/slack-push.log" && ! grep -qF "$HD" "$H/slack-push.log" \
+    && ok "ⓓ show.mode=$2 → 전달 0·보류 사유=$3·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변" || ko "ⓓ $2" "sends=$(nsend) $(st .push_pending) log=$(plog hold) mark=$(mk)"
+  local want=1; case "$3" in dialog|show_fail|draft|empty_preview|no_idle_marker) want=0 ;; esac
+  [ "$(nnot)" = "$want" ] && ok "ⓓ $3 → '메인 연결 끊김' 알림 ${want}회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)" || ko "ⓓ $3 알림" "notify=$(nnot)"
 }
-hold_case D1 none no_target
-echo ok > "$FO/list.mode"; LRM_PUSH_LIFE=3 W
-[ "$(nsend)" = 1 ] && [ "$(awk -F'\t' '{print $3}' "$FO/sends.log")" = term_main ] && [ "$(st .push_pending)" = null ] && [ "$(st .pushed_lines)" = 1 ] && ok "ⓓ 다음 회차(대상 1개)에 보류분 전달 1회, 대상 핸들=조회한 메인 claude 터미널" || ko "ⓓ 재시도" "sends=$(nsend)"
-hold_case D2 two no_pane_title
-echo two_pane > "$FO/list.mode"; LRM_PUSH_LIFE=3 W
-[ "$(nsend)" = 1 ] && [ "$(awk -F'\t' '{print $3}' "$FO/sends.log")" = term_b ] && ok "ⓓ 후보 2개(제목 없음) → 보류, pane 제목 MAIN 인 1개가 생기면 그 터미널로 전달" || ko "ⓓ pane" "sends=$(nsend)"
-hold_case D2b two_main multi_target
-# 결함 3: 후보가 1개여도 pane 제목이 PANE 이어야 함. 제목 없이 받으려면 LRM_PUSH_PANE="" 로 명시
-hold_case D6 notitle no_pane_title
-newhub D6b; echo notitle > "$FO/list.mode"; addmsg note 1300.000002 "제목 없이"
-LRM_PUSH_PANE= LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
-[ "$(nsend)" = 1 ] && ok "ⓓ 후보 1개·제목 없음: LRM_PUSH_PANE=\"\" 로 명시하면 전달" || ko "ⓓ 제목 없이" "sends=$(nsend)"
-newhub D6c; echo notitle > "$FO/list.mode"; addmsg note 1300.000003 "MAIN 닫음"; LRM_PUSH_PANE=OTHER LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
-[ "$(nsend)" = 0 ] && ok "ⓓ LRM_PUSH_PANE=OTHER 이면 다른 제목 터미널은 대상 아님" || ko "ⓓ 다른 제목" "sends=$(nsend)"
-# 결함 9: 끊긴·쓰기 불가·고아 터미널은 후보에서 제외(필터 제거 변이 검출용)
-hold_case D7 conn_off no_target
-hold_case D8 ro no_target
-hold_case D3 orphan no_target
-hold_case D4 dialog dialog
-hold_case D5 listfail list_fail
+hold_case D1 gone handle_gone
+hold_case D1b notfound handle_gone
+hold_case D1c termgone handle_gone
+hold_case D1d other_handle handle_gone  # 응답 handle 이 요청과 다르면 보류
+hold_case D1e unavail show_fail  # 일시 오류는 오탐 알림 없이 조회 실패로만 보류
+hold_case D1f invalid show_fail
+echo ok > "$FO/show.mode"; LRM_PUSH_LIFE=3 W
+[ "$(nsend)" = 1 ] && [ "$(awk -F'\t' '{print $3}' "$FO/sends.log")" = "$HD" ] && [ "$(st .push_pending)" = null ] && [ "$(st .pushed_lines)" = 1 ] && ok "ⓓ 다음 회차(핸들이 다시 살아남)에 보류분 전달 1회, 대상 = main.env 핸들" || ko "ⓓ 재시도" "sends=$(nsend)"
+hold_case D2 dead handle_dead
+hold_case D3 orphan handle_dead
+hold_case D4 ro not_writable
+hold_case D5 other_wt wrong_worktree
+hold_case D6 codex not_claude
+hold_case D6b noagent not_claude
+hold_case D7 dialog dialog
+hold_case D8 garbage show_fail
+# 핸들 지정이 없거나 무효면 orca 를 부르지 않고 보류
+noh_case() { # 이름 main.env 내용(- 이면 파일 없음) 설명
+  newhub "$1"
+  if [ "$2" = - ]; then mv "$H/main.env" "$H/main.env.off"; else printf '%s' "$2" > "$H/main.env"; fi
+  addmsg note 1310.000001 "핸들 없음"
+  LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
+  [ "$(nsend)" = 0 ] && [ "$(st .push_pending.reason)" = no_main_handle ] && [ ! -e "$FO/calls.log" ] && grep -q 'push hold reason=no_main_handle .*handle=none$' "$H/slack-push.log" && [ -z "$(mk)" ] \
+    && [ "$(nnot)" = 1 ] && ok "ⓓ $3 → 보류(no_main_handle)·orca 호출 0·읽음 표식 불변·알림 1회" || ko "ⓓ $3" "sends=$(nsend) $(st .push_pending.reason) notify=$(nnot) $(cat "$FO/calls.log" 2>/dev/null)"
+}
+noh_case N1 - "main.env 없음"
+newhub N0; addmsg note 1310.000009 "개행 핸들"  # 끝 개행 붙은 값은 무효(정규식 $ 는 개행을 통과시킴)
+LRM_PUSH_HANDLE="$HD"$'\n' LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
+[ "$(nsend)" = 0 ] && [ "$(st .push_pending.reason)" = no_main_handle ] && [ ! -e "$FO/calls.log" ] && ok "ⓓ 끝 개행이 붙은 핸들 값은 무효(no_main_handle)·orca 호출 0" || ko "ⓓ 개행 핸들" "sends=$(nsend) $(st .push_pending.reason)"
+noh_case N2 $'OTHER_KEY=1\n' "MAIN_TERMINAL 줄 없음"
+noh_case N3 $'MAIN_TERMINAL=term_XYZ;x\n' "무효 형식(term_ 뒤 16진·하이픈 밖 문자)"
+noh_case N4 $'MAIN_TERMINAL=\n' "빈 값"
+noh_case N5 "MAIN_TERMINAL=$HD"$'\n'"MAIN_TERMINAL=$HD2"$'\n' "서로 다른 값 두 줄"
+noh_case N6 " MAIN_TERMINAL=$HD"$'\n'"export MAIN_TERMINAL=$HD"$'\n' "줄 머리가 MAIN_TERMINAL= 이 아닌 줄만 있음"
+newhub N7; printf 'FAKE_SECRET=fake-secret-zz9\nMAIN_TERMINAL=%s\nNOTE=x\n' "$HD" > "$H/main.env"; addmsg note 1310.000002 "다른 줄"; LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
+[ "$(nsend)" = 1 ] && [ "$(awk -F'\t' '{print $3}' "$FO/sends.log")" = "$HD" ] && [ -z "$(grep -rlF --exclude=main.env fake-secret-zz9 "$H" "$FO")" ] && ok "ⓓ main.env 의 다른 줄은 무시: MAIN_TERMINAL 만 쓰고 다른 값은 상태·로그·호출 어디에도 없음" || ko "ⓓ 다른 줄" "sends=$(nsend)"
+newhub N8; mv "$H/main.env" "$H/main.env.off"; printf 'MAIN_TERMINAL=%s\n' "$HD2" > "$SB/N8/alt.env"; addmsg note 1310.000003 "경로 지정"
+LRM_MAIN_ENV="$SB/N8/alt.env" LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
+[ "$(nsend)" = 1 ] && [ "$(awk -F'\t' '{print $3}' "$FO/sends.log")" = "$HD2" ] && ok "ⓓ LRM_MAIN_ENV 로 설정 파일 경로 지정" || ko "ⓓ LRM_MAIN_ENV" "sends=$(nsend)"
+newhub N9; addmsg note 1310.000004 "핸들 직접"; LRM_PUSH_HANDLE="$HD2" LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
+[ "$(nsend)" = 1 ] && [ "$(awk -F'\t' '{print $3}' "$FO/sends.log")" = "$HD2" ] && ok "ⓓ LRM_PUSH_HANDLE 이 main.env 보다 우선" || ko "ⓓ LRM_PUSH_HANDLE" "sends=$(nsend)"
+newhub N10; addmsg note 1310.000005 "핸들 무효"; LRM_PUSH_HANDLE="term_ZZ" LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
+[ "$(nsend)" = 0 ] && [ "$(st .push_pending.reason)" = no_main_handle ] && [ ! -e "$FO/calls.log" ] && ok "ⓓ LRM_PUSH_HANDLE 도 형식 검사(무효면 main.env 로 넘어가지 않고 보류)" || ko "ⓓ LRM_PUSH_HANDLE 무효" "sends=$(nsend)"
+# 제목은 보조 조건: show 에 paneTitle 이 보이면 PANE(기본 MAIN)과 대조, 키가 없으면 무시
+hold_case Q1 pane_other pane_title_mismatch
+newhub Q2; echo pane_main > "$FO/show.mode"; addmsg note 1320.000001 "제목 일치"; LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
+[ "$(nsend)" = 1 ] && ok "ⓓ paneTitle=MAIN 이면 전달" || ko "ⓓ 제목 일치" "sends=$(nsend)"
+newhub Q3; echo pane_other > "$FO/show.mode"; addmsg note 1320.000002 "대조 생략"; LRM_PUSH_PANE= LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
+[ "$(nsend)" = 1 ] && ok "ⓓ LRM_PUSH_PANE=\"\" 이면 제목 대조 생략(paneTitle=OTHER 도 전달)" || ko "ⓓ 대조 생략" "sends=$(nsend)"
+hold_case Q4 pane_main pane_title_mismatch LRM_PUSH_PANE=OTHER
+
+# ---- '메인 연결 끊김' 알림: 같은 사유는 연결이 확인될 때까지 1회, 확인되면 초기화. 알림 실패는 전달을 막지 않음 ----------
+newhub A1; mv "$H/main.env" "$H/main.env.off"; addmsg note 1330.000001 "알림 본문 비밀"
+for _ in 1 2 3; do LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W; done; bash "$PUSH" --kick; idle_wait
+[ "$(nnot)" = 1 ] && [ "$(grep -c ' push alert reason=no_main_handle result=ok$' "$H/slack-push.log")" = 1 ] && [ "$(jq -c .reasons "$H/.slack-push-alert.json")" = '["no_main_handle"]' ] \
+  && ok "알림: 워커를 여러 번 돌리고 --kick 해도 같은 사유 알림은 1회(상태 파일에 기록)" || ko "알림 1회" "notify=$(nnot) $(cat "$H/slack-push.log" 2>/dev/null)"
+[ "$(stat -f %Lp "$H/.slack-push-alert.json")" = 600 ] && ok "알림: 상태 파일 권한 600" || ko "알림 권한" "$(stat -f %Lp "$H/.slack-push-alert.json")"
+n1=$(head -1 "$FO/notify.log")
+case "$n1" in --kind\ warn\ *) k=1 ;; *) k=0 ;; esac
+[ "$k" = 1 ] && printf '%s' "$n1" | grep -q '메인 연결 끊김' && printf '%s' "$n1" | grep -q 'MAIN_TERMINAL' && ! printf '%s' "$n1" | grep -q 'term_\|알림 본문 비밀' \
+  && ok "알림: slack_notify.sh --kind warn, 무엇이 안 됐나·할 일(main.env 의 MAIN_TERMINAL) 포함, 핸들 값·메시지 본문 없음" || ko "알림 본문" "$n1"
+printf 'MAIN_TERMINAL=%s\n' "$HD" > "$H/main.env"; echo dialog > "$FO/show.mode"; LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W
+[ "$(nsend)" = 0 ] && [ ! -e "$H/.slack-push-alert.json" ] && [ "$(plog link_ok)" = 1 ] && [ "$(nnot)" = 1 ] && ok "알림: 핸들이 메인 세션으로 확인되면(화면은 대화상자라 보류) 알림 상태 초기화·로그 link_ok" || ko "알림 초기화" "sends=$(nsend) notify=$(nnot)"
+echo ok > "$FO/show.mode"; LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W
+[ "$(nsend)" = 1 ] && [ "$(plog link_ok)" = 1 ] && ok "알림: 복구 뒤 보류분 전달, 상태가 없으면 link_ok 를 다시 남기지 않음" || ko "알림 복구 전달" "sends=$(nsend) link_ok=$(plog link_ok)"
+echo gone > "$FO/show.mode"; addmsg note 1330.000002 "다시 끊김"; for _ in 1 2; do LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W; done
+[ "$(nnot)" = 2 ] && grep -q 'push alert reason=handle_gone result=ok$' "$H/slack-push.log" && ok "알림: 복구 뒤 다시 끊기면 재알림 1회" || ko "재알림" "notify=$(nnot)"
+echo dead > "$FO/show.mode"; for _ in 1 2; do LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W; done
+[ "$(nnot)" = 3 ] && [ "$(jq -c .reasons "$H/.slack-push-alert.json")" = '["handle_gone","handle_dead"]' ] && ok "알림: 끊긴 동안 사유가 바뀌면 새 사유만 1회 더" || ko "사유 변경" "notify=$(nnot)"
+newhub A2; echo gone > "$FO/show.mode"; echo 1 > "$FO/notify.rc"; addmsg note 1330.000003 "알림 실패"; LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W
+[ "$(nnot)" = 1 ] && grep -q 'push alert reason=handle_gone result=fail_rc1$' "$H/slack-push.log" && [ "$(st .push_pending.reason)" = handle_gone ] && ok "알림 실패(종료 코드 1): 로그만 남기고 보류 유지" || ko "알림 실패" "$(cat "$H/slack-push.log")"
+LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W; echo ok > "$FO/show.mode"; LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W
+[ "$(nnot)" = 1 ] && [ "$(nsend)" = 1 ] && ok "알림 실패 뒤에도 같은 사유로 다시 보내지 않고, 복구되면 정상 전달" || ko "알림 실패 뒤" "notify=$(nnot) sends=$(nsend)"
+newhub A3; echo gone > "$FO/show.mode"; addmsg note 1330.000004 "알림 도구 없음"; LRM_PUSH_NOTIFY="$SB/A3/none.sh" LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W
+echo ok > "$FO/show.mode"; LRM_PUSH_NOTIFY="$SB/A3/none.sh" LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=2 W
+grep -q 'push alert reason=handle_gone result=fail_rc127$' "$H/slack-push.log" && [ "$(nsend)" = 1 ] && ok "알림 도구가 없어도(종료 코드 127) 전달 흐름 불변" || ko "알림 도구 없음" "sends=$(nsend) $(cat "$H/slack-push.log")"
 
 # 결함 4·5: 화면(preview) 판별은 fail-closed. 입력 대기(빈 입력 줄)가 보일 때만 전송, 비었거나 대화상자·쓰던 글이면 보류
 screen_case() { # 이름 preview 기대(sent|사유 코드) [환경 변수]
-  newhub "$1"; echo custom > "$FO/list.mode"; printf '%s' "$2" > "$FO/list.preview"
+  newhub "$1"; echo custom > "$FO/show.mode"; printf '%s' "$2" > "$FO/show.preview"
   addmsg note 1350.000001 "화면 판별"
   env "${4:-X=1}" LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 bash "$PUSH" --run
   if [ "$3" = sent ]; then
@@ -167,6 +241,8 @@ LRM_PUSH_LIFE=12 W
 newhub E2d; echo unknown > "$FO/send.mode"; addmsg note 1400.000030 "도착 불명"
 LRM_PUSH_LIFE=6 W
 [ "$(nsend)" = 1 ] && [ "$(st .push_pending.reason)" = unknown_delivery ] && [ "$(st .push_pending.stop)" = true ] && [ "$(st .pushed_lines)" = 0 ] && [ -z "$(mk)" ] && grep -q 'push hold reason=unknown_delivery .*why=runtime_error' "$H/slack-push.log" && ok "ⓔ deliveryOutcome=unknown·retrySafe=false: 자동 재전송 없이 보류(unknown_delivery), 표식·pushed_lines 불변, 로그 1줄" || ko "ⓔ unknown" "sends=$(nsend) $(st .push_pending) $(cat "$H/slack-push.log")"
+[ "$(stat -f %Lp "$H/slack-push-state.json")" = 600 ] && [ "$(st .push_pending.ambig)" != "$HD" ] && ! grep -qF "$HD" "$H/slack-push-state.json" && st .push_pending.ambig | grep -Eq '^sha256:[0-9a-f]{16}$' \
+  && ok "ⓔ 상태 파일은 600, 도착 불명 대상은 핸들 원문 없이 해시로만 기록" || ko "ⓔ 상태 파일" "mode=$(stat -f %Lp "$H/slack-push-state.json") ambig=$(st .push_pending.ambig | cut -c1-8)"
 LRM_PUSH_LIFE=3 W; c=$(wc -l < "$FO/calls.log" | tr -d ' '); bash "$PUSH" --kick; sleep 0.6
 [ "$(nsend)" = 1 ] && [ "$(wc -l < "$FO/calls.log" | tr -d ' ')" = "$c" ] && [ "$(plog hold)" = 1 ] && ok "ⓔ 보류 뒤 다시 실행·--kick 해도 재전송·재조회·로그 반복 없음" || ko "ⓔ 보류 유지" "sends=$(nsend)"
 echo 1 > "$H/.main-read-lines"; LRM_PUSH_LIFE=3 W
@@ -175,7 +251,7 @@ newhub E2e; echo badreceipt > "$FO/send.mode"; addmsg note 1400.000040 "영수�
 LRM_PUSH_LIFE=3 W
 [ "$(nsend)" = 1 ] && [ "$(st .push_pending.reason)" = unknown_delivery ] && grep -q 'why=bad_receipt' "$H/slack-push.log" && [ -z "$(mk)" ] && ok "ⓔ 영수증 모양을 알 수 없으면(result.send 없음) 도착 불명으로 보류, 재전송 없음" || ko "ⓔ 영수증 불명" "sends=$(nsend) $(st .push_pending)"
 newhub E2f; echo ambig > "$FO/send.mode"; addmsg note 1400.000050 "터미널 바뀜"
-printf '#!/bin/bash\necho two_pane > "$FAKE_ORCA_DIR/list.mode"\n' > "$FO/send.hook"; chmod 755 "$FO/send.hook"  # 첫 전송 뒤 대상 터미널이 term_b 로 바뀜
+printf '#!/bin/bash\necho MAIN_TERMINAL=%s > "$LRM_HUB_DIR/main.env"\n' "$HD2" > "$FO/send.hook"; chmod 755 "$FO/send.hook"  # 첫 전송 뒤 main.env 가 다른 핸들로 바뀜
 LRM_PUSH_LIFE=6 W
 [ "$(nsend)" = 1 ] && [ "$(st .push_pending.reason)" = unknown_delivery ] && grep -q 'why=target_changed' "$H/slack-push.log" && ok "ⓔ 모호한 전송 뒤 대상 터미널이 바뀌면 다른 터미널에 보내지 않고 보류" || ko "ⓔ 대상 변경" "sends=$(nsend) $(st .push_pending.reason)"
 newhub E2g; echo unsubmitted > "$FO/send.mode"; addmsg note 1400.000060 "제출 미확인"
@@ -319,6 +395,39 @@ for _ in $(seq 1 40); do [ -d "$H/.slack-push.lock" ] || break; sleep 0.25; done
 [ "$(grep -c '^chat.postMessage' "$CL")" = 1 ] && [ "$(grep -c '^POST:chat.update' "$CL")" = 1 ] && python3 -I "$HERE/ack_calls.py" "$CL" update | jq -e '.text == "📨 메인에 전달했어요 (1건)" and .channel == "Dfake"' >/dev/null && ok "통합: 확인 답장(집계 중) → 전달 후 같은 답장을 chat.update 로 '📨 메인에 전달했어요 (1건)' 갱신(1회)" || ko "통합 갱신" "$(cat "$CL" | cut -c1-80)"
 LRM_ACK=off LRM_PUSH_REPOLL=off bash "$POLL" --once --json >/dev/null; sleep 0.8
 [ "$(nsend)" = 1 ] && ok "ⓜ 폴러 다음 회차(2분 뒤 가정): 새 항목 없음 → 재전달 0" || ko "ⓜ 다음 회차" "sends=$(nsend)"
+
+# ---- 갱신 도구 set_main_terminal.sh: MAIN_TERMINAL 줄만 추가·교체, 다른 줄 보존, 권한 600, 값 비출력 ------------------
+SM="$SB/setmain"; mkdir -p "$SM/a" "$SM/b" "$SM/c"
+out=$(LRM_MAIN_ENV="$SM/a/main.env" bash "$SETMAIN" "$HD" 2>&1); rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$SM/a/main.env")" = "MAIN_TERMINAL=$HD" ] && [ "$(stat -f %Lp "$SM/a/main.env")" = 600 ] && ! printf '%s' "$out" | grep -q 'term_' \
+  && ok "set_main_terminal: 파일이 없으면 MAIN_TERMINAL 한 줄로 만들고 권한 600, 출력에 핸들 값 없음" || ko "set_main 추가" "rc=$rc out=$out"
+printf 'PROJECT_NAME="fake-proj-v1"\nMAIN_TERMINAL=%s\nHUB_ROOT="$HOME/x"\nFOO=1' "$HD" > "$SM/b/main.env"; chmod 644 "$SM/b/main.env"
+out=$(LRM_MAIN_ENV="$SM/b/main.env" bash "$SETMAIN" "$HD2" 2>&1); rc=$?
+want=$(printf 'PROJECT_NAME="fake-proj-v1"\nHUB_ROOT="$HOME/x"\nFOO=1\nMAIN_TERMINAL=%s' "$HD2")
+[ "$rc" = 0 ] && [ "$(cat "$SM/b/main.env")" = "$want" ] && [ "$(stat -f %Lp "$SM/b/main.env")" = 600 ] && ! printf '%s' "$out" | grep -q 'term_\|fake-proj' \
+  && ok "set_main_terminal: 기존 MAIN_TERMINAL 줄 교체(1줄만 남음), 다른 줄은 순서대로 보존(끝 줄바꿈 없어도), 권한 644→600, 다른 값·핸들 비출력" || ko "set_main 교체" "rc=$rc $(cat "$SM/b/main.env" | tr '\n' '|')"
+[ "$(ls -A "$SM/b")" = main.env ] && ok "set_main_terminal: 임시 파일 남지 않음" || ko "set_main 임시" "$(ls -A "$SM/b")"
+cp "$SM/b/main.env" "$SM/b.before"
+bad=0; for v in "term_XYZ" "term_00;x" "" "x term_00" "term_00 term_11"; do
+  LRM_MAIN_ENV="$SM/b/main.env" bash "$SETMAIN" $v >/dev/null 2>&1; [ $? = 2 ] || bad=1
+done
+LRM_MAIN_ENV="$SM/b/main.env" bash "$SETMAIN" "term_ab" "term_cd" >/dev/null 2>&1; [ $? = 2 ] || bad=1
+[ "$bad" = 0 ] && cmp -s "$SM/b/main.env" "$SM/b.before" && [ "$(ls -A "$SM/b")" = main.env ] && ok "set_main_terminal: 형식 오류·인자 수 오류는 종료 코드 2, 파일 불변" || ko "set_main 형식" "bad=$bad"
+LRM_MAIN_ENV="$SM/c/main.env" bash "$SETMAIN" --help | grep -q '^사용: set_main_terminal.sh <핸들>' && [ ! -e "$SM/c/main.env" ] && ok "set_main_terminal: --help 는 파일을 만들지 않음" || ko "set_main help" ""
+newhub SM1; LRM_MAIN_ENV="$H/main.env" bash "$SETMAIN" "$HD2" >/dev/null; addmsg note 2000.000001 "갱신 뒤"; LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
+[ "$(nsend)" = 1 ] && [ "$(awk -F'\t' '{print $3}' "$FO/sends.log")" = "$HD2" ] && ok "set_main_terminal 로 바꾼 핸들로 push 전달" || ko "set_main 연동" "sends=$(nsend)"
+
+# 링크: main.env 가 심볼릭 링크면 링크는 보존하고 최종 대상을 교체(mv 가 링크를 일반 파일로 바꾸던 결함)
+mkdir -p "$SM/l"; printf 'KEEP=1\nMAIN_TERMINAL=%s\nTAIL=2\n' "$HD" > "$SM/l/real.env"; ln -s real.env "$SM/l/main.env"
+out=$(LRM_MAIN_ENV="$SM/l/main.env" bash "$SETMAIN" "$HD2" 2>&1); rc=$?
+want=$(printf 'KEEP=1\nTAIL=2\nMAIN_TERMINAL=%s' "$HD2")
+[ "$rc" = 0 ] && [ -L "$SM/l/main.env" ] && [ "$(readlink "$SM/l/main.env")" = real.env ] && [ "$(cat "$SM/l/real.env")" = "$want" ] && [ "$(stat -f %Lp "$SM/l/real.env")" = 600 ] && [ "$(ls -A "$SM/l" | tr '\n' ' ')" = "main.env real.env " ] \
+  && ok "set_main_terminal: main.env 가 심볼릭 링크면 링크 보존·대상 내용 갱신·다른 줄 보존·임시 파일 없음" || ko "set_main 링크" "rc=$rc link=$([ -L "$SM/l/main.env" ] && echo y || echo n) $(tr '\n' '|' < "$SM/l/real.env") $(ls -A "$SM/l" | tr '\n' ' ')"
+# CRLF: 교체한 줄만 LF, 다른 줄은 원형(CRLF) 보존
+mkdir -p "$SM/r"; printf 'A=1\r\nMAIN_TERMINAL=%s\r\nB=2\r\n' "$HD" > "$SM/r/main.env"
+LRM_MAIN_ENV="$SM/r/main.env" bash "$SETMAIN" "$HD2" >/dev/null 2>&1; rc=$?
+[ "$rc" = 0 ] && cmp -s "$SM/r/main.env" <(printf 'A=1\r\nB=2\r\nMAIN_TERMINAL=%s\n' "$HD2") \
+  && ok "set_main_terminal: CRLF 파일은 교체한 줄만 LF, 다른 줄은 CRLF 그대로 보존" || ko "set_main CRLF" "rc=$rc $(od -c "$SM/r/main.env" | head -3 | tr '\n' '|')"
 
 printf '\n%d PASS, %d FAIL\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
