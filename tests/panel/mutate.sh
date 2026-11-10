@@ -53,6 +53,11 @@ case_run P28 "terminal list 잘림 무시" 's/return bool\(terminal_list\(get\)\
 case_run P29 "결과 파일 권한 0644" 's/os\.chmod\(tmp, 0o600\)/os.chmod(tmp, 0o644)/'
 case_run P30 "글머리 '· …' 도 작업 중(회전 기호 + … 만 봄)" 's/\[A-Z\]\[a-z\]\+\(\?: \[a-z\]\+\)\?…/.*…/'
 case_run P31 "실행 중 잠금 갱신 제거" 's/            os\.utime\(LOCK, None\)/            pass/'
+# 재리뷰 미검출 R1·R8 과 잠금 주인 확인
+case_run P35 "worker-list 쪽 넘기기 시간 상한 제거" 's/            if time\.monotonic\(\) - start > budget:\n                break\n//'
+case_run P36 "번호 카드 결정 번호 형식 검증 제거(손상 번호도 번호 카드로)" 's/\n             and isinstance\(s\.get\("decision_id"\), str\) and DECISION_ID_RE\.fullmatch\(s\["decision_id"\]\)\}/}/'
+case_run P37 "끝날 때 잠금 주인 대조 제거(남의 잠금도 지움)" 's/        if lock_owner\(\) == mine:\n/        if True:\n/'
+case_run P38 "잠금 갱신에서 주인 대조 제거(남의 잠금도 갱신)" 's/        if lock_owner\(\) != mine:[^\n]*\n            return\n//'
 board_run() { # 번호 설명 perl 치환식(mod board.ts 대상, node 시험)
   local id="$1" desc="$2" expr="$3" out rc first
   if [ -n "${ONLY:-}" ] && [[ " $ONLY " != *" $id "* ]]; then return; fi
