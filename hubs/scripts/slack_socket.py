@@ -4,15 +4,23 @@
 수집·중복 방지·inbox 기록은 slack_poll.sh 가 그대로 맡음. 이 스크립트는 '언제 돌릴지'만 바꿈.
 수신 본문은 데이터로만 다루고 실행·eval 하지 않음. 토큰은 slack-bot.env 에서 읽고 출력하지 않음.
 
+연결 감시: 끊김이 DOWN 임계 이상 이어지면 새 클라이언트로 재연결하고 한 번 수집함. 재연결이
+연속 5회 실패하면 종료 코드 3 으로 끝내 launchd KeepAlive 가 새로 시작하게 함. 연결이 살아 있어도
+REFRESH 주기마다 계획 재연결(반쯤 죽은 연결 방지). ALIVE 주기마다 생존 한 줄을 남김.
+
 사용: slack_socket.py            (launchd ai.lrm.slacksocket 가 상주 실행)
 환경: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs)
-종료 코드: 0 정상 종료, 2 설정 오류(토큰 없음)·연결 실패
+      LRM_SOCKET_CHECK_S 감시 간격(30) · LRM_SOCKET_DOWN_S 끊김 판정(60) ·
+      LRM_SOCKET_REFRESH_S 정기 재연결 주기(21600, 0 이면 끔) · LRM_SOCKET_ALIVE_S 생존 기록 주기(600) ·
+      LRM_SOCKET_DEBOUNCE_S 수집 묶음 대기(2) · LRM_SOCKET_RETIRE_TIMEOUT_S 옛 클라이언트 runner 종료 대기 상한(5)
+종료 코드: 2 설정 오류(토큰 없음)·첫 연결 실패, 3 재연결 연속 실패(launchd 가 재시작). 0 은 없음 — 신호(SIGTERM)로만 끝남
 """
 import os
 import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
 
 os.environ.setdefault("SSL_CERT_FILE", "/etc/ssl/cert.pem")
 
@@ -22,7 +30,42 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 
 DIR = os.environ.get("LRM_HUB_DIR", os.path.expanduser("~/.config/lrm-hubs"))
 POLL = os.path.join(DIR, "slack_poll.sh")
-DEBOUNCE_S = 2.0  # 연속 이벤트(메시지+반응)를 한 번의 수집으로 묶음
+MAX_FAILS = 5  # 재연결 연속 실패 상한. 넘으면 EXIT_RESTART 로 끝냄
+EXIT_RESTART = 3
+
+
+def env_secs(name: str, default: float, allow_zero: bool = False) -> float:
+    """환경 변수 초 단위 값. 잘못된 값·음수는 기본값, 0 은 allow_zero 일 때만 허용"""
+    try:
+        value = float(os.environ.get(name, ""))
+    except ValueError:
+        return default
+    return value if value > 0 or (allow_zero and value == 0) else default
+
+
+# 옛 클라이언트 runner 종료 대기 상한. SDK IntervalRunner.shutdown() 의 join 은 상한이 없어, 수신 스레드가 새 세션에
+# 들어가는 순간과 겹치면 영구 대기하고 감시 루프가 멈춤(프로세스는 살아 있어 launchd 도 재시작 안 함)
+RETIRE_TIMEOUT_S = env_secs("LRM_SOCKET_RETIRE_TIMEOUT_S", 5.0)
+
+
+@dataclass(frozen=True)
+class Timing:
+    """감시 주기 한 곳 모음. 값 근거는 hubs/docs/install-orca-main.md Socket Mode 절"""
+    check_s: float  # 감시 간격. SDK 가 5초마다 ping 하므로 30초면 일시 끊김 대부분은 스스로 복구된 뒤 확인
+    down_s: float  # 이 시간 이상 끊겨 있으면 직접 재연결. SDK 자체 복구가 먼저 일할 여유
+    refresh_s: float  # 정기 재연결 주기. 0 이면 끔
+    alive_s: float  # 생존 기록 주기
+    debounce_s: float  # 연속 이벤트(메시지+반응)를 한 번의 수집으로 묶음
+
+    @classmethod
+    def from_env(cls) -> "Timing":
+        return cls(
+            check_s=env_secs("LRM_SOCKET_CHECK_S", 30.0),
+            down_s=env_secs("LRM_SOCKET_DOWN_S", 60.0),
+            refresh_s=env_secs("LRM_SOCKET_REFRESH_S", 6 * 3600.0, allow_zero=True),
+            alive_s=env_secs("LRM_SOCKET_ALIVE_S", 600.0),
+            debounce_s=env_secs("LRM_SOCKET_DEBOUNCE_S", 2.0),
+        )
 
 
 def load_env(path: str) -> dict:
@@ -43,7 +86,8 @@ def log(msg: str) -> None:
 
 
 class Trigger:
-    def __init__(self) -> None:
+    def __init__(self, debounce_s: float) -> None:
+        self._debounce_s = debounce_s
         self._lock = threading.Lock()
         self._timer: threading.Timer | None = None
 
@@ -51,7 +95,7 @@ class Trigger:
         with self._lock:
             if self._timer is not None:
                 self._timer.cancel()
-            self._timer = threading.Timer(DEBOUNCE_S, self._run, args=(reason,))
+            self._timer = threading.Timer(self._debounce_s, self._run, args=(reason,))
             self._timer.daemon = True
             self._timer.start()
 
@@ -66,6 +110,131 @@ class Trigger:
             log(f"{reason} → 수집 실패 {type(err).__name__}")
 
 
+class Pulse:
+    """수신·재연결 기록. 마지막 이벤트가 없어도 정상(사용자가 안 쓰는 동안)이라 끊김 판정에는 쓰지 않음"""
+
+    def __init__(self) -> None:
+        self.last_event: float | None = None
+        self.reconnects = 0
+
+    def touch(self) -> None:
+        self.last_event = time.monotonic()
+
+    def idle_text(self, now: float) -> str:
+        if self.last_event is None:
+            return "없음"
+        return f"{int((now - self.last_event) // 60)}분 전"
+
+
+def is_up(client) -> bool:
+    try:
+        return bool(client.is_connected())
+    except Exception:
+        return False
+
+
+def connect_checked(client) -> None:
+    """연결 뒤 실제로 붙었는지 확인. SDK connect() 는 웹소켓 단계 실패를 예외 없이 넘겨 is_connected 로만 알 수 있음.
+    connect() 는 핸드셰이크 응답까지 동기로 읽고 돌아오므로(builtin/connection.py) 따로 기다리지 않음"""
+    client.connect()
+    if not is_up(client):
+        raise ConnectionError("연결 안 됨")
+
+
+def quiet(step: str, fn) -> None:
+    try:
+        fn()
+    except Exception as err:  # 정리 실패는 다음 단계를 막지 않음. 예외 본문은 남기지 않음
+        log(f"정리 {step} 실패 {type(err).__name__}")
+
+
+def end_runner(client) -> None:
+    """SDK close() 가 남기는 current_session_runner 스레드 정리. 속성이 없는 SDK 버전은 건너뜀"""
+    state = getattr(client, "current_session_state", None)
+    if state is not None:
+        state.terminated = True  # runner 는 이 플래그로만 수신 루프를 벗어남. 없으면 shutdown 의 join 이 영원히 막힘
+    runner = getattr(client, "current_session_runner", None)
+    if runner is not None:
+        runner.shutdown()
+
+
+def bounded(step: str, fn, limit_s: float) -> None:
+    """fn 을 데몬 스레드에서 돌리고 limit_s 까지만 기다림. 넘기면 스레드 1개 누수를 감수하고 진행(감시 루프 정지가 더 나쁨)"""
+    worker = threading.Thread(target=lambda: quiet(step, fn), daemon=True)
+    worker.start()
+    worker.join(limit_s)
+    if worker.is_alive():
+        log(f"정리 {step} 시간 초과 {limit_s:g}초")
+
+
+def retire(client) -> None:
+    """클라이언트 정리: close → disconnect → runner 종료. close() 는 되돌릴 수 없어 재사용하지 않음.
+    disconnect 재호출은 close() 가 monitor 를 join 한 뒤라 monitor 가 늦게 만든 연결까지 닫음"""
+    quiet("close", lambda: client.close())
+    quiet("disconnect", lambda: client.disconnect())
+    bounded("runner", lambda: end_runner(client), RETIRE_TIMEOUT_S)
+
+
+def swap(old, make):
+    """새 클라이언트를 먼저 연결한 뒤 옛 것을 정리. 연결 안 된 새 클라이언트는 실패로 다룸"""
+    fresh = make()
+    try:
+        connect_checked(fresh)
+    except Exception:
+        retire(fresh)
+        raise
+    retire(old)
+    return fresh
+
+
+def watch(client, make, trigger: Trigger, pulse: Pulse, timing: Timing) -> int:
+    start = time.monotonic()
+    last_alive = last_refresh = start
+    down_since: float | None = None
+    fails = 0
+    while True:
+        time.sleep(timing.check_s)
+        now = time.monotonic()
+        up = is_up(client)
+        if up:
+            if down_since is not None:  # SDK 자체 재연결로 복구됨
+                down_since, fails = None, 0
+                pulse.reconnects += 1
+                log("재연결됨")
+                trigger.fire("재연결")
+        elif down_since is None:
+            down_since = now
+        elif now - down_since >= timing.down_s:
+            try:
+                client = swap(client, make)
+            except Exception as err:  # 토큰·전체 예외 문자열은 남기지 않음
+                fails += 1
+                log(f"재연결 실패 {type(err).__name__} {fails}/{MAX_FAILS}")
+                if fails >= MAX_FAILS:
+                    log("재연결 연속 실패 — 종료 후 launchd 재시작")
+                    retire(client)
+                    return EXIT_RESTART
+            else:
+                down_since, fails, last_refresh = None, 0, now
+                pulse.reconnects += 1
+                log("재연결됨")
+                trigger.fire("재연결")
+            up = is_up(client)
+        if up and down_since is None and timing.refresh_s and now - last_refresh >= timing.refresh_s:
+            log("정기 재연결")
+            last_refresh = now  # 실패해도 다음 주기까지 기다림. 옛 연결은 아직 살아 있음
+            try:
+                client = swap(client, make)
+            except Exception as err:
+                log(f"정기 재연결 실패 {type(err).__name__}")
+            else:
+                pulse.reconnects += 1
+                trigger.fire("정기 재연결")
+        if now - last_alive >= timing.alive_s:
+            last_alive = now
+            log(f"생존 연결={'예' if is_up(client) else '아니오'} 마지막이벤트={pulse.idle_text(now)} 재연결={pulse.reconnects}회")
+
+
 def main() -> int:
     env = load_env(os.path.join(DIR, "slack-bot.env"))
     app_token, bot_token = env.get("SLACK_APP_TOKEN", ""), env.get("SLACK_BOT_TOKEN", "")
@@ -74,10 +243,12 @@ def main() -> int:
         log("SLACK_APP_TOKEN(xapp-) 또는 SLACK_BOT_TOKEN 없음 — slack-bot.env 확인")
         return 2
 
-    trigger = Trigger()
-    client = SocketModeClient(app_token=app_token)
+    timing = Timing.from_env()
+    trigger = Trigger(timing.debounce_s)
+    pulse = Pulse()
 
     def on_request(c: SocketModeClient, req: SocketModeRequest) -> None:
+        pulse.touch()
         c.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
         if req.type != "events_api":
             return
@@ -91,16 +262,21 @@ def main() -> int:
         elif kind == "reaction_added":
             trigger.fire("반응")
 
-    client.socket_mode_request_listeners.append(on_request)
+    def make() -> SocketModeClient:
+        fresh = SocketModeClient(app_token=app_token)
+        fresh.socket_mode_request_listeners.append(on_request)
+        return fresh
+
+    client = make()
     try:
-        client.connect()
-    except Exception as err:  # 토큰 오류·네트워크 실패는 재시작해도 같음. traceback 대신 한 줄만 남김
+        connect_checked(client)
+    except Exception as err:  # 토큰 오류·네트워크 실패. traceback 대신 한 줄만 남김. KeepAlive 가 30초마다 다시 띄움
         log(f"연결 실패 {type(err).__name__} — SLACK_APP_TOKEN·네트워크 확인")
+        retire(client)
         return 2
     log("연결됨")
     trigger.fire("시작")  # 끊긴 동안 쌓인 것 한 번 수집
-    while True:
-        time.sleep(3600)
+    return watch(client, make, trigger, pulse, timing)
 
 
 if __name__ == "__main__":
