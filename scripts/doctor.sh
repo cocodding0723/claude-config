@@ -93,12 +93,15 @@ except Exception: print("unknown")' 2>/dev/null || echo unknown)
 fi
 
 # ---- 선택 도구 --------------------------------------------------------------
-tool gh 'gh --version' opt "PR 생성(create-pr)" "brew install gh && gh auth login"
+# gh --version 은 빈 HOME 에 상태 파일을 만들므로 존재만 확인
+tool gh true opt "PR 생성(create-pr)" "brew install gh && gh auth login"
 tool shellcheck 'shellcheck --version | sed -n 2p' opt "tests/install/run.sh 정적 검사" "brew install shellcheck"
 if [ -d "/Applications/Unity Hub.app" ] || have unity; then ok "Unity (Hub 또는 unity CLI)"
 else warn "Unity" "Unity Hub·unity CLI 없음(Unity 작업 허브·unity_slot.sh 만 영향)" "Unity 작업을 할 때만 Unity Hub 설치"; fi
-if have python3 && python3 -I -c 'import slack_sdk' 2>/dev/null; then ok "python3 slack_sdk (Socket Mode 수신기용)"
-else warn "python3 slack_sdk" "모듈 없음(Socket Mode 수신기를 켤 때만 필요, 폴러는 무관)" "켤 때 python3 -m pip install --user slack_sdk"; fi
+# 소켓 plist 는 설치 때 정해진 python3(CLAUDE_CONFIG_PYTHON3 또는 PATH 의 python3)을 -I 로 실행하므로 같은 방식으로 확인
+SOCK_PY="${CLAUDE_CONFIG_PYTHON3:-$(command -v python3 || true)}"
+if [ -n "$SOCK_PY" ] && "$SOCK_PY" -I -c 'import slack_sdk' 2>/dev/null; then ok "python3 slack_sdk (Socket Mode 수신기용, -I 로 확인)"
+else warn "python3 slack_sdk" "모듈 없음 또는 -I(사용자 site 제외)로 안 보임(Socket Mode 수신기를 켤 때만 필요, 폴러는 무관)" "켤 때 가상환경에 설치하고 그 python3 를 지정: install-orca-main.md 2절"; fi
 
 # ---- 값·시크릿 파일: 존재·권한만 ---------------------------------------------
 perm_of() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null; }

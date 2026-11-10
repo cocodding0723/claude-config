@@ -371,6 +371,26 @@ b=$(HOME="$SB9" "$INSTALL" --doctor 2>&1 | head -1)
 HOME="$SB9" bash "$REPO/scripts/doctor.sh" --bogus >/dev/null 2>&1; rc=$?
 [ "$rc" = 2 ] && ok "doctor: 알 수 없는 인자는 종료 코드 2" || ko "doctor 인자" "rc=$rc"
 rm -rf "${SB9:?}"
+# 읽기 전용 증명: 빈 HOME 에서 돌려도 HOME 아래에 아무것도 생기지 않음(gh 등 외부 도구의 상태 파일 포함)
+SB9B=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox9b.XXXXXX")
+HOME="$SB9B" bash "$REPO/scripts/doctor.sh" >/dev/null 2>&1
+made=$(find "$SB9B" -mindepth 1 | wc -l | tr -d ' ')
+[ "$made" = 0 ] && ok "doctor: 빈 HOME 에서 실행해도 HOME 아래 항목 0개(읽기 전용)" || ko "doctor 읽기 전용" "생성 ${made}개: $(find "$SB9B" -mindepth 1 | sed "s#$SB9B/##" | head -3 | tr '\n' ' ')"
+# slack_sdk 확인은 plist 가 쓰는 python3(CLAUDE_CONFIG_PYTHON3)를 -I 로 실행
+printf '#!/bin/sh\n[ "$1 $2 $3" = "-I -c import slack_sdk" ] && exit 0\nexit 1\n' > "$SB9B/py-ok"; chmod +x "$SB9B/py-ok"
+printf '#!/bin/sh\nexit 1\n' > "$SB9B/py-no"; chmod +x "$SB9B/py-no"
+o1=$(CLAUDE_CONFIG_PYTHON3="$SB9B/py-ok" HOME="$SB9B" bash "$REPO/scripts/doctor.sh" 2>&1 | grep 'python3 slack_sdk')
+o2=$(CLAUDE_CONFIG_PYTHON3="$SB9B/py-no" HOME="$SB9B" bash "$REPO/scripts/doctor.sh" 2>&1 | grep 'python3 slack_sdk')
+echo "$o1" | grep -q '^OK    python3 slack_sdk' && echo "$o2" | grep -q '^WARN  python3 slack_sdk .*install-orca-main.md 2절' && ok "doctor: slack_sdk 를 지정한 python3 -I 로 확인, 실패 조치는 문서 2절" || ko "doctor slack_sdk" "o1=$o1 o2=$o2"
+rm -rf "${SB9B:?}"
+# --doctor 는 다른 인자와 함께 쓰면 오류(뒤 인자를 조용히 버리지 않음)
+SB9C=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox9c.XXXXXX")
+rcs=""; leak=0
+for args in "--doctor --dry-run" "--dry-run --doctor" "--doctor --check"; do
+  o=$(HOME="$SB9C" "$INSTALL" $args 2>&1); rcs="$rcs $?"; echo "$o" | grep -q '^요약' && leak=1
+done
+[ "$rcs" = " 2 2 2" ] && [ "$leak" = 0 ] && [ -z "$(find "$SB9C" -mindepth 1)" ] && ok "install.sh --doctor 와 다른 인자 조합은 종료 코드 2·점검 미실행·무변경" || ko "--doctor 인자 조합" "rc=$rcs leak=$leak"
+rm -rf "${SB9C:?}"
 
 # ---- 6f. 값 파일 공백만 있는 값 ----------------------------------------------
 SB6=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox6.XXXXXX")

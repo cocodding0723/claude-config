@@ -39,6 +39,13 @@ E
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+# --doctor 는 점검만 실행하고 끝나므로 다른 인자와 섞으면 뒤 인자가 조용히 버려짐. 오류로 막음
+for arg in "$@"; do
+  if [ "$arg" = --doctor ] && [ $# -gt 1 ]; then
+    printf 'ERROR: --doctor 는 다른 인자와 함께 쓸 수 없음. ./install.sh --doctor 만 실행\n' >&2; exit 2
+  fi
+done
+
 DRY=0 ACTION=install RESTORE_DIR="" RELOAD=0 ALLOW_LIVE_DIFF="${CLAUDE_CONFIG_ALLOW_LIVE_DIFF:-0}"
 while [ $# -gt 0 ]; do
   case "$1" in

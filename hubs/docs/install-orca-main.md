@@ -42,7 +42,7 @@
    ```
    편집기로 열어 `KEY=값` 을 따옴표 없이 채운다. 빈 키가 있으면 설치기는 아무것도 바꾸지 않고 멈춘다.
 3. **의존성 점검.** `./install.sh --doctor`. `MISS` 줄이 있으면 그 줄의 조치를 하고 다시 돌린다. `WARN` 은 선택 항목이라 설치를 막지 않는다. 아무것도 바꾸지 않는다.
-4. **미리 보기.** `./install.sh --dry-run`. 만들 링크·복사본이 나온다. 이미 있는 파일이 저장소와 다르면 `LIVE-NEWER` 로 멈춘다(아래 「4. 알려진 한계」).
+4. **미리 보기.** `./install.sh --dry-run`. 만들 링크·복사본이 나온다. 이미 쓰던 맥에서는 라이브 파일이 저장소와 다르면(`LIVE-NEWER`·`LIVE-ONLY`) 목록 없이 멈춘다. 목록만 보려면 `./install.sh --dry-run --allow-live-diff`(아래 「5. 알려진 한계」).
 5. **설치.** `./install.sh`. 덮어쓰는 파일은 `~/.claude-config-backup/<시각>/` 으로 옮긴 뒤 처리한다. 끝에 「설치 뒤 할 일」이 나온다.
 6. **시크릿 입력.** 설치기가 `[필요]` 로 알린 파일을 직접 만든다. 값은 Slack 앱 설정 화면에서 복사해 넣는다.
    ```sh
@@ -75,7 +75,15 @@
 설치기는 수신기 파일만 `~/.config/lrm-hubs` 에 둔다. `~/Library/LaunchAgents` 에 두지 않으므로 로그인해도 켜지지 않고, `--reload-launchd` 를 붙여도 적재하지 않는다. 켤 때 아래를 사용자가 직접 한다.
 
 1. Slack 앱 설정에서 Socket Mode 를 켜고 앱 수준 토큰(`connections:write`)을 발급해 `slack-bot.env` 에 `SLACK_APP_TOKEN=` 줄로 넣는다.
-2. 수신기가 쓰는 모듈을 설치한다: `python3 -m pip install --user slack_sdk`. plist 의 python3 는 설치할 때 셸의 `python3` 절대 경로다. `./install.sh --doctor` 의 `python3 slack_sdk` 줄이 `OK` 인지 본다.
+2. 수신기가 쓰는 모듈을 가상환경에 설치하고 plist 가 그 python3 를 쓰게 한다. plist 는 `python3 -I` 로 실행하는데 `-I` 는 사용자 폴더(`pip install --user` 위치)를 읽지 않아 `--user` 로 깐 모듈은 보이지 않는다. 시스템 python3 에 직접 까는 것은 Homebrew 등이 막는다. 가상환경은 `-I` 로도 읽히고 시스템을 건드리지 않아 가장 단순하다.
+   ```sh
+   python3 -m venv "$HOME/.local/share/lrm-hubs/venv"
+   "$HOME/.local/share/lrm-hubs/venv/bin/pip" install slack_sdk
+   export CLAUDE_CONFIG_PYTHON3="$HOME/.local/share/lrm-hubs/venv/bin/python3"
+   ./install.sh --doctor
+   ./install.sh --allow-live-diff
+   ```
+   `--doctor` 의 `python3 slack_sdk` 줄이 `OK` 여야 한다(doctor 도 `CLAUDE_CONFIG_PYTHON3` 의 python3 를 `-I` 로 확인). 마지막 줄은 보관본 plist 의 python3 경로를 가상환경으로 바꾼다(기존 파일은 백업). 설치 전에 이미 같은 값을 지정했다면 생략한다.
 3. 적재한다.
    ```sh
    cp ~/.config/lrm-hubs/ai.lrm.slacksocket.plist ~/Library/LaunchAgents/
@@ -89,11 +97,18 @@
 
 `./install.sh --restore ~/.claude-config-backup/<시각>`. 그 설치가 만든 링크·복사본을 지우고 백업한 원래 파일을 제자리로 돌린다. 두 번 돌려도 같은 결과다. 시크릿 파일과 직접 적재한 launchd 서비스는 설치기가 만든 것이 아니라 되돌리지 않는다. 폴러를 내리려면 `launchctl bootout gui/$(id -u)/ai.lrm.slackpoll`.
 
-## 4. 알려진 한계
+## 4. 배포용 압축본
+
+`scripts/make_dist_zip.sh [ref]` 가 git 에 추적된 파일만 담은 zip 을 `~/Documents/90_정리기록/배포/orca-main-install-<YYYYMMDD>.zip` 로 만든다. 만들기 전에 토큰·이메일·사용자 홈 절대 경로·이 맥 사용자명·Slack ID 형태·금지 파일 이름(`.env`·`.env.*`·키·`.bak`·`__pycache__` 등)·허용 확장자 밖 바이너리를 검사해 하나라도 걸리면 zip 을 만들지 않는다. 바이너리도 토큰 형태는 검사한다. 걸린 위치는 파일:줄만 보여 주고 값은 출력하지 않는다. 실명 검사가 필요하면 `DIST_DENY_PATTERN=<정규식>` 을 붙인다. 내부 호스트(Tailscale 대역 IP)·회사 Jira 도메인·개인 `github.io` 주소는 시크릿이 아니라 경고로만 보고하고(종류·파일 수만, 값은 출력하지 않음) zip 은 만든다. `--strict-internal` 을 주면 경고도 중단한다. **zip 에 내부 호스트·회사 도메인 주소가 들어 있을 수 있으니 다른 사람과 공유하기 전에 확인한다.** ref 기본값은 `HEAD` 이며, 병합 뒤에는 `scripts/make_dist_zip.sh main` 으로 다시 만든다. 같은 날 같은 이름이 이미 있으면 덮어쓰지 않고 멈춘다.
+
+받는 쪽은 압축을 풀고 「1. 설치 순서」 1번부터 따른다. zip 에는 git 기록이 없으므로 이후 갱신은 새 zip 을 받거나 git 으로 다시 받는다.
+
+## 5. 알려진 한계
 
 - 다른 맥 실설치는 아직 해 보지 않았다. 검증은 임시 HOME 샌드박스 시험(`tests/install/run.sh`)까지다.
 - 옆 패널 mod 는 파일만 깐다. Claude Code 가 mod 를 읽어 들이게 등록하는 절차는 이 맥에서 확인하지 못했다. 패널이 안 보이면 Claude Code 의 mod 만들기 기능(plugin-authoring)으로 `~/.config/lrm-hubs/mods/lrm-board` 를 등록한다.
 - 옆 패널은 `~/orca/LoveRevolutionMaker` 에서 띄운 세션에서만 자동으로 열린다. 메인 체크아웃이 다른 곳이면 `/lrm-board` 로 연다.
+- 이미 쓰던 맥에서는 `--dry-run` 도 라이브 파일과 차이가 있으면(`LIVE-NEWER`·`LIVE-ONLY`) 설치 목록 없이 멈춘다. 미리 보려면 `./install.sh --dry-run --allow-live-diff`.
 - 이미 쓰던 맥에서 다시 설치하면, 라이브 orca-main 폴더에 옛 양식 이름 `config.example.env` 가 남아 있어 `LIVE-ONLY` 로 한 번 멈춘다. 그 파일은 `main.env.example` 로 이름만 바뀐 것이라 `./install.sh --allow-live-diff` 로 진행하면 된다(원래 폴더는 백업된다).
 - Socket Mode 를 켠 뒤 `~/Library/LaunchAgents` 에 복사한 plist 는 설치기가 관리하지 않는다. 저장소 템플릿이 바뀌면 2절 3번을 다시 한다.
 - python3 를 바꾸면(예: 다른 버전 설치) 소켓 plist 의 python3 경로가 달라져 `--check` 는 `DRIFT`, 다음 설치는 `LIVE-NEWER` 로 멈춘다. 새 경로가 맞으면 `./install.sh --allow-live-diff`, 옛 경로를 지키려면 `CLAUDE_CONFIG_PYTHON3=<옛 경로> ./install.sh`.

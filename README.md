@@ -14,9 +14,10 @@ claude-config/
 ├─ skills/<이름>/       직접 작성한 스킬 35개 (synced·외부 링크 제외). `doc-kit` 은 문서 규칙 통합본
 ├─ git/hooks/           전역 git 훅 9개
 ├─ hubs/                scripts/ roles/ launchd/ mods/(옆 패널 lrm-board) docs/ slack-bot-manifest.yml slack-bot.env.example
-├─ scripts/             저장소 도구: doctor.sh(의존성 점검)
+├─ scripts/             저장소 도구: doctor.sh(의존성 점검), make_dist_zip.sh(배포 zip, 시크릿 검사 후 생성)
 ├─ values.env.example   로컬 값 양식(실명·채널 ID). 실제 값은 저장소 밖
 ├─ tests/install/       샌드박스 검증 (run.sh)
+├─ tests/dist/          배포 zip 검증 (run.sh, 임시 폴더에만 생성)
 ├─ tests/doc-kit/       doc-kit 검증 (run.sh·sample.sh·rename.sh, fixtures/, check_unique.sh)
 ├─ tests/mutate.sh      변이 검증(결함을 심어 위 검증이 잡는지 확인)
 ├─ migrate/             옛 문서 스킬 이름 → doc-kit 치환 도구(rename_skills.sh, 대상·규칙 tsv)
