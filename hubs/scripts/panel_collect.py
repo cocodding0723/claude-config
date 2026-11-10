@@ -739,11 +739,11 @@ def summary(data, gh, prev_state):
 
 
 def acquire():
-    """mkdir 잠금. 오래된 잠금은 회수 후 한 번 더 시도"""
+    """mkdir 잠금. 오래된 잠금은 회수 후 한 번 더 시도. 얻으면 잠금 주인 값(lock_owner), 못 얻으면 None"""
     for _ in range(2):
         try:
             os.mkdir(LOCK)
-            return True
+            return lock_owner() or ("?",)
         except FileExistsError:
             try:
                 if time.time() - os.path.getmtime(LOCK) > LOCK_STALE:
@@ -752,15 +752,26 @@ def acquire():
                     continue
             except OSError:
                 pass
-            return False
-    return False
+            return None
+    return None
 
 
-def keep_lock(stop):
+def lock_owner():
+    """잠금 폴더의 (장치, inode). 회수된 뒤 다른 실행이 다시 만든 잠금은 값이 달라 자기 잠금과 구분됨(폴더 안에 파일을 두지 않음)"""
+    try:
+        st = os.stat(LOCK)
+    except OSError:
+        return None
+    return st.st_dev, st.st_ino
+
+
+def keep_lock(stop, mine):
     """실행 중 잠금 시각을 LOCK_BEAT 초마다 갱신. 느린 회차(gh 여러 저장소·du)가 LOCK_STALE 을 넘겨도 다른 실행이 회수하지 않게 함.
     LOCK_BEAT_MAX 를 넘기면 갱신을 멈춰, 멈춘 실행의 잠금은 그 뒤 LOCK_STALE 이 지나면 회수됨"""
     start = time.monotonic()
     while not stop.wait(LOCK_BEAT) and time.monotonic() - start < LOCK_BEAT_MAX:
+        if lock_owner() != mine:  # 회수돼 남의 잠금이 됨 → 갱신하지 않음
+            return
         try:
             os.utime(LOCK, None)
         except OSError:
@@ -794,11 +805,12 @@ def main(argv):
     except OSError:
         print(f"작업 폴더를 만들 수 없음: {DIR}", file=sys.stderr)
         return 2
-    if not acquire():
+    mine = acquire()
+    if mine is None:
         log("skip reason=locked")
         return 0
     stop = threading.Event()
-    threading.Thread(target=keep_lock, args=(stop,), daemon=True).start()
+    threading.Thread(target=keep_lock, args=(stop, mine), daemon=True).start()
     try:
         prev, prev_state = load_prev()
         data, gh = collect(conf, repos, interval, prev, int(time.time()), True)
@@ -810,10 +822,14 @@ def main(argv):
         log("ok " + summary(data, gh, prev_state))
     finally:
         stop.set()
-        try:
-            os.rmdir(LOCK)
-        except OSError:
-            pass
+        # 회수된 뒤 다른 실행이 만든 잠금이면 지우지 않음(지우면 셋째 실행이 그 실행과 겹침). 대조와 rmdir 사이 경쟁은 남음
+        if lock_owner() == mine:
+            try:
+                os.rmdir(LOCK)
+            except OSError:
+                pass
+        else:
+            log("lock lost")
     return 0
 
 

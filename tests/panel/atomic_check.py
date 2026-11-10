@@ -3,7 +3,7 @@
 2) 교체는 같은 폴더 임시 파일 → os.replace 한 번. 기존 파일을 제자리에서 고치지 않음(하드 링크 증인이 그대로)
 3) 결과 파일 권한 0600
 4) main --once 수준에서 쓰기 실패 → 기존 파일 바이트 동일·잠금 해제·로그 write fail
-5) 실행 중 잠금 시각 갱신(keep_lock)
+5) 실행 중 잠금 시각 갱신(keep_lock), 남의 잠금은 갱신 안 함
 실패하면 첫 실패를 한 줄로 출력하고 종료 1."""
 import glob
 import json
@@ -115,13 +115,21 @@ os.mkdir(pc.LOCK)
 os.utime(pc.LOCK, (1, 1))
 pc.LOCK_BEAT = 0.05
 stop = threading.Event()
-t = threading.Thread(target=pc.keep_lock, args=(stop,), daemon=True)
+t = threading.Thread(target=pc.keep_lock, args=(stop, pc.lock_owner()), daemon=True)
 t.start()
 time.sleep(0.3)
 stop.set()
 t.join(2)
 fresh = time.time() - os.path.getmtime(pc.LOCK) < 5
-os.rmdir(pc.LOCK)
 if not fresh or t.is_alive():
     fail(f"실행 중 잠금 시각이 갱신되지 않음(갱신={fresh}, 멈춤={not t.is_alive()})")
+# 남의 잠금(주인 값이 다름)은 갱신하지 않고 갱신 스레드를 끝냄
+os.utime(pc.LOCK, (1, 1))
+t = threading.Thread(target=pc.keep_lock, args=(threading.Event(), ("other",)), daemon=True)
+t.start()
+t.join(2)
+other_fresh = os.path.getmtime(pc.LOCK) > 1
+os.rmdir(pc.LOCK)
+if other_fresh or t.is_alive():
+    fail(f"남의 잠금을 갱신함(갱신={other_fresh}, 멈춤={not t.is_alive()})")
 print("ok")

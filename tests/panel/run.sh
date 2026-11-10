@@ -185,6 +185,13 @@ sleep 0.5
 colenv "FAKE_ORCA_SLEEP=2" --once
 wait "$P1"
 [ "$(($(grep -c 'skip reason=locked' "$LOG") - n0))" = 1 ] && ok "동시 2회 실행 → 하나만 수집, 하나는 건너뜀" || ko "동시 실행" "skip=$(($(grep -c 'skip reason=locked' "$LOG") - n0))"
+# 실행 중 잠금이 회수돼 다른 실행의 새 잠금이 되면(폴더를 옮기고 새로 만들어 흉내) 끝날 때 그 잠금을 지우지 않음
+( colenv "FAKE_ORCA_SLEEP=2" --once ) & P1=$!
+sleep 0.5
+mv "$H/.panel-collect.lock" "$SB/lock-a" && mkdir "$H/.panel-collect.lock"
+wait "$P1"
+[ -d "$H/.panel-collect.lock" ] && tail -1 "$LOG" | grep -q 'lock lost' && ok "잠금이 회수·재생성되면 남의 잠금은 지우지 않음(로그 lock lost)" || ko "남의 잠금" "$(tail -1 "$LOG")"
+mv "$H/.panel-collect.lock" "$SB/lock-b"
 
 # ---- 10. 메인 파일·비밀·화면 본문 --------------------------------------------------------------------
 [ "$(shasum "$H/panel.json" | cut -d' ' -f1)" = "$MAIN_SUM" ] && ok "메인 panel.json 바이트 단위 불변" || ko "panel.json" "바뀜"
