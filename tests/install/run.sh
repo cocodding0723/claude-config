@@ -112,6 +112,11 @@ out=$("$INSTALL" --check 2>&1); rc=$?
 [ "$rc" = 1 ] && echo "$out" | grep -q 'doc-kit' && ok "--check: doc-kit 링크가 없으면 지적" || ko "--check doc-kit" "rc=$rc"
 ln -s "$REPO/skills/doc-kit" "$DK"
 check "doc-kit 링크 되돌린 뒤 점검 통과" "$INSTALL" --check
+# orca-main: 스킬 폴더 링크, 설정 없으면 patrol.sh 가 orca 호출 전에 종료 코드 2 와 양식 파일 이름 안내
+OM="$SB/.claude/skills/orca-main"
+[ "$(readlink "$OM")" = "$REPO/skills/orca-main" ] && [ -f "$OM/references/main.env.example" ] && ok "orca-main 스킬 링크·설정 양식 설치" || ko "orca-main 링크" "원본을 가리키지 않음"
+out=$(ORCA_MAIN_CONFIG="$SB/없는설정.env" bash "$OM/scripts/patrol.sh" 2>&1); rc=$?
+[ "$rc" = 2 ] && echo "$out" | grep -q 'main.env.example' && ok "orca-main patrol.sh: 설정 없으면 종료 코드 2·양식 안내" || ko "patrol.sh 설정 없음" "rc=$rc"
 linkbad=0; while IFS=$'\t' read -r src dst mode; do
   [ "$mode" = link ] || continue
   [ -L "$SB/$dst" ] && [ -e "$SB/$dst" ] && [ "$(readlink "$SB/$dst")" = "$REPO/$src" ] || { linkbad=1; ko "링크" "$dst"; }
@@ -269,6 +274,17 @@ env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF HOME="$SB5" "$INSTALL" --dry-run >/dev/null
 env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF HOME="$SB5" "$INSTALL" --allow-live-diff >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && [ -L "$SB5/.config/lrm-hubs/slack_poll.sh" ] && ok "--allow-live-diff 로 진행하면 백업 후 링크" || ko "allow-live-diff" "rc=$rc"
 rm -rf "${SB5:?}"
+
+# ---- 6g. orca-main 옛 양식 이름: 문서 차이는 규칙이 흡수, 라이브에만 남은 옛 파일은 지적 ----
+SB7=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox7.XXXXXX")
+mkdir -p "$SB7/.config/claude-config" "$SB7/.claude/skills"
+cp "$SB/.config/claude-config/values.env" "$SB7/.config/claude-config/values.env"
+cp -R "$REPO/skills/orca-main" "$SB7/.claude/skills/orca-main"
+mv "$SB7/.claude/skills/orca-main/references/main.env.example" "$SB7/.claude/skills/orca-main/references/config.example.env"
+sed -i '' 's#main\.env\.example#config.example.env#g' "$SB7/.claude/skills/orca-main/SKILL.md" "$SB7/.claude/skills/orca-main/scripts/patrol.sh"
+out=$(env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF HOME="$SB7" "$INSTALL" --diff-live 2>&1); rc=$?
+[ "$rc" = 1 ] && echo "$out" | grep -q 'LIVE-ONLY  .claude/skills/orca-main/references/config.example.env' && ! echo "$out" | grep -qE 'orca-main/(SKILL.md|scripts/patrol.sh)' && ok "orca-main 옛 이름: 문서 2개는 규칙 흡수, 옛 양식 파일만 LIVE-ONLY" || ko "orca-main 라이브 차이" "rc=$rc $(echo "$out" | grep orca-main | head -3 | tr '\n' ' ')"
+rm -rf "${SB7:?}"
 
 # ---- 6f. 값 파일 공백만 있는 값 ----------------------------------------------
 SB6=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox6.XXXXXX")
