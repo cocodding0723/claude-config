@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.lrm.wsgc</string>
+  <!-- 시험 모드(--dry-run)로 등록. 실삭제 전환은 hubs/docs/ws-gc.md 의 「실삭제 전환」 -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__HOME__/.config/lrm-hubs/ws_gc.sh</string>
+    <string>--dry-run</string>
+    <string>--quiet</string>
+  </array>
+  <!-- 하루 3회. 잠자던 Mac 은 깨어난 뒤 한 번 실행됨 -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>7</integer></dict>
+    <dict><key>Hour</key><integer>15</integer><key>Minute</key><integer>7</integer></dict>
+    <dict><key>Hour</key><integer>22</integer><key>Minute</key><integer>7</integer></dict>
+  </array>
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+  <key>Nice</key><integer>10</integer>
+  <key>StandardOutPath</key><string>__HOME__/orca/archive/ws_gc.launchd.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/orca/archive/ws_gc.launchd.log</string>
+</dict>
+</plist>

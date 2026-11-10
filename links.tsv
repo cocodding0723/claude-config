@@ -70,6 +70,7 @@ hubs/scripts/slack_push.sh	.config/lrm-hubs/slack_push.sh	link
 hubs/scripts/slack_push.py	.config/lrm-hubs/slack_push.py	link
 hubs/scripts/panel_collect.sh	.config/lrm-hubs/panel_collect.sh	link
 hubs/scripts/panel_collect.py	.config/lrm-hubs/panel_collect.py	link
+hubs/scripts/ws_gc.sh	.config/lrm-hubs/ws_gc.sh	link
 hubs/panel.env.example	.config/lrm-hubs/panel.env.example	link
 hubs/scripts/set_main_terminal.sh	.config/lrm-hubs/set_main_terminal.sh	link
 hubs/scripts/unity_slot.sh	.config/lrm-hubs/unity_slot.sh	link
@@ -88,8 +89,10 @@ hubs/docs/slack-format.md	.config/lrm-hubs/docs/slack-format.md	link
 hubs/docs/slack-push.md	.config/lrm-hubs/docs/slack-push.md	link
 hubs/docs/install-orca-main.md	.config/lrm-hubs/docs/install-orca-main.md	link
 hubs/docs/panel.md	.config/lrm-hubs/docs/panel.md	link
+hubs/docs/ws-gc.md	.config/lrm-hubs/docs/ws-gc.md	link
 hubs/launchd/ai.lrm.slackpoll.plist	Library/LaunchAgents/ai.lrm.slackpoll.plist	copy
 hubs/launchd/ai.lrm.panelcollect.plist	Library/LaunchAgents/ai.lrm.panelcollect.plist	copy
+hubs/launchd/ai.lrm.wsgc.plist	Library/LaunchAgents/ai.lrm.wsgc.plist	copy
 hubs/scripts/slack_socket.py	.config/lrm-hubs/slack_socket.py	copy
 hubs/launchd/ai.lrm.slacksocket.plist	.config/lrm-hubs/ai.lrm.slacksocket.plist	copy
 hubs/roles/role-vfx.txt.tmpl	.config/lrm-hubs/roles/role-vfx.txt	render
