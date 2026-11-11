@@ -118,3 +118,4 @@ hubs/mods/lrm-board/hooks/hooks.json	.claude/skills/lrm-board/hooks/hooks.json	c
 hubs/mods/lrm-board/hooks/register.tsx	.claude/skills/lrm-board/hooks/register.tsx	copy
 hubs/mods/lrm-board/hooks/board.ts	.claude/skills/lrm-board/hooks/board.ts	copy
 hubs/mods/lrm-board/types/index.d.ts	.claude/skills/lrm-board/types/index.d.ts	copy
+hubs/scripts/ask_user_press.sh	.config/lrm-hubs/ask_user_press.sh	link
