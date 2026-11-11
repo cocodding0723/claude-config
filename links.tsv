@@ -9,6 +9,7 @@ claude/hooks/notify.sh	.claude/hooks/notify.sh	link
 claude/hooks/post-edit.sh	.claude/hooks/post-edit.sh	link
 claude/hooks/prompt-context.sh	.claude/hooks/prompt-context.sh	link
 claude/hooks/scoped-test.sh	.claude/hooks/scoped-test.sh	link
+claude/hooks/slack-format-guard.sh	.claude/hooks/slack-format-guard.sh	link
 claude/hooks/session-end.sh	.claude/hooks/session-end.sh	link
 claude/hooks/session-start.sh	.claude/hooks/session-start.sh	link
 claude/hooks/lib	.claude/hooks/lib	link

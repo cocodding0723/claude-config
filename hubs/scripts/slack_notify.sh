@@ -1,7 +1,8 @@
 #!/bin/bash
 # 봇으로 사용자 DM 에 글·파일 게시. 토큰은 slack-bot.env(SLACK_BOT_TOKEN, SLACK_USER_ID)에서만 읽음, 출력 금지.
 # 보낸 메시지 ts·channel 은 slack-sent.jsonl 에 기록(slack_poll.sh 가 스레드 답글·반응 수집에 사용).
-# --kind 를 주면 메시지 양식 A(hubs/docs/slack-format.md)를 검사함. --kind 없는 기존 호출은 검사·출력 모두 불변.
+# --kind 를 주면 메시지 양식 A(hubs/docs/slack-format.md)를 검사하고, 종류별 색 띠(attachment)에 본문을 담아 보냄.
+# --kind 없는 기존 호출은 검사·출력·페이로드 모두 불변. 파일 첨부 호출은 Slack API 한계로 색 띠 없음.
 set -eu
 usage() {
   cat <<'EOF'
@@ -11,7 +12,8 @@ usage() {
   --tag        관련 허브 태그(기록용)
   --title      기록용 제목(기본: 메시지 첫 줄)
   --thread     해당 ts 메시지의 스레드 답글로 게시
-  --kind       decide|todo|done|progress|warn|doc. 첫 줄에 종류 이모지가 없으면 붙이고 양식 A 를 검사
+  --kind       decide|todo|done|progress|warn|doc. 첫 줄에 종류 이모지가 없으면 붙이고 양식 A 를 검사.
+               종류별 색 띠(decide·todo 주황, warn 빨강, progress 파랑, done·doc 초록)에 본문을 담고 첫 줄을 굵게 함(이미 굵으면 그대로)
   --choices    2~4(--kind decide 전용). 메시지 끝에 '👉 답:' 이모지 안내 줄을 붙임(본문에 👉 줄이 있으면 생략)
   --emoji-set  custom(기본, :비서-a: 등)|std(표준 :a: :regional_indicator_c: 등). 안내 줄 이모지 종류
   --options    (--kind decide 전용) 번호 이모지로 고르는 카드. '번호=문구' 를 쉼표로 이음. 번호는 1부터 연속 2~4개, 문구 1~80자.
@@ -129,6 +131,7 @@ fi
 #   attach <안내줄>: 본문에 '👉 답:' 줄이 없으면 마지막 '참고:' 줄 앞(없으면 맨 끝)에 안내 줄을 끼워 출력
 #   opts <추천> <되돌리기> <결정번호> <순번> <할일번호>: 표준입력(--options 값)과 함께 검증해 기록용 JSON 출력. 각 인자는 '=값'(줌)|''(안 줌). 틀리면 종료 코드 2
 #   card <JSON>: 번호 카드·할 일 줄을 붙여 출력. 본문 '👉 답:' 줄과 --options 가 겹치면 종료 코드 2
+#   payload <종류> <채널> <스레드>: 표준입력 본문으로 chat.postMessage JSON 출력(종류가 색 표에 있으면 색 띠)
 #   dup <sent 파일> <결정번호>: 최근 7일 안에 같은 결정 번호로 보낸 기록이 있으면 stderr 경고(종료 코드 항상 0)
 # 검사 제외 구간: 코드 블록·인라인 코드·URL, 마지막 '참고:' 줄 이후(티켓·커밋 번호 허용, 첫 줄 제외). 결정 개수는 예외로 '참고:' 줄 자체만 빼고 그 뒤도 셈
 read -r -d '' FORM_PY <<'PYEOF' || true
@@ -161,6 +164,13 @@ RX = {
     "todo_id": re.compile(r"T-[0-9A-Za-z]{1,16}", re.A),
     "seq": re.compile(r"([0-9]{1,3})/([0-9]{1,3})", re.A),
     "opt_line": re.compile(r"^[ \t]*(?::(?:one|two|three|four):|[1-4]️?⃣)", re.M),
+}
+# --kind 별 색 띠. 색 값은 여기에만 둠(bash 3.2 는 연관 배열이 없어 파이썬 dict 사용)
+KIND_COLOR = {
+    "decide": "#F2994A", "todo": "#F2994A",
+    "warn": "#EB5757",
+    "progress": "#2F80ED",
+    "done": "#27AE60", "doc": "#27AE60",
 }
 # 번호 카드 이모지. 이름은 slack_poll.sh 의 PICK_EMOJI 와 같아야 함
 OPT_EMOJI = {1: ":one:", 2: ":two:", 3: ":three:", 4: ":four:"}
@@ -227,7 +237,8 @@ def check_form(msg, kind, guided):
             out.append(("hard", "multi", "결정이 %d개임(전송 안 함) — 1건씩 따로 보내세요. 예: --kind decide 로 '결정 1 주제'와 '결정 2 주제'를 각각 한 번씩 호출" % count))
         elif extra > 0:
             out.append(("warn", "mid-decide", "줄 중간에 다른 번호의 '결정 N' 이 있음 — 결정이 2건 이상이면 1건씩 따로 보내세요(참조라면 무시)"))
-    n = len(RX["bold"].findall(scan))
+    # 첫 줄(제목)은 도구가 굵게 하므로 세지 않음
+    n = len(RX["bold"].findall(scan.split("\n", 1)[1] if "\n" in scan else ""))
     if n > 1:
         out.append(("warn", "bold", "굵게가 %d곳 — 메시지당 1곳으로 줄이세요" % n))
     return out
@@ -240,6 +251,24 @@ def attach_guide(msg, guide):
     if pos is None:
         return msg.rstrip("\n") + "\n\n" + guide
     return msg[:pos].rstrip("\n") + "\n\n" + guide + "\n\n" + msg[pos:].lstrip("\n")
+
+def bold_title(msg):
+    """첫 줄을 *굵게*. 첫 줄에 '*' 가 이미 있으면 중복·깨짐을 막으려 그대로 둠"""
+    first, sep, rest = msg.partition("\n")
+    if "*" in first or not first.strip():
+        return msg
+    return "*" + first.strip() + "*" + sep + rest
+
+def build_payload(msg, kind, channel, thread):
+    """chat.postMessage 본문 JSON. kind 가 색 표에 있으면 attachment 색 띠에 본문을 담고, 알림 미리보기용 text 에는 제목만 둠"""
+    body = {"channel": channel, "text": msg}
+    if kind in KIND_COLOR:
+        title = msg.split("\n", 1)[0].replace("*", "").strip()
+        body["text"] = title
+        body["attachments"] = [{"color": KIND_COLOR[kind], "text": bold_title(msg), "fallback": title, "mrkdwn_in": ["text"]}]
+    if thread:
+        body["thread_ts"] = thread
+    return json.dumps(body)
 
 def given(arg):
     """bash 가 '=값'(줌) 또는 ''(안 줌)으로 넘긴 인자. 안 줬으면 None"""
@@ -339,6 +368,8 @@ if sys.argv[1] == "dup":
 elif sys.argv[1] == "check":
     for lvl, code, text in check_form(data, sys.argv[2], sys.argv[3] == "1"):
         sys.stdout.buffer.write(("%s\t%s\t%s\n" % (lvl, code, text)).encode("utf-8"))
+elif sys.argv[1] == "payload":
+    sys.stdout.buffer.write(build_payload(data, *sys.argv[2:5]).encode("utf-8"))
 elif sys.argv[1] in ("opts", "card"):
     try:
         if sys.argv[1] == "opts":
@@ -482,11 +513,8 @@ if sys.argv[5]: b["thread_ts"]=sys.argv[5]
 print(json.dumps(b))' "$ID" "$N" "$CH" "$MSG" "$THREAD")" \
     $API/files.completeUploadExternal | record file
 else
+  PAYLOAD="$(printf '%s' "$MSG" | python3 -c "$FORM_PY" payload "$KIND" "$CH" "$THREAD")" \
+    || die "페이로드 생성 실패(전송 안 함) — python3 동작 확인 뒤 다시 보내세요"
   curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H 'Content-Type: application/json' \
-    -d "$(python3 -c '
-import json,sys
-b={"channel":sys.argv[1],"text":sys.argv[2]}
-if sys.argv[3]: b["thread_ts"]=sys.argv[3]
-print(json.dumps(b))' "$CH" "$MSG" "$THREAD")" \
-    $API/chat.postMessage | record text
+    -d "$PAYLOAD" $API/chat.postMessage | record text
 fi
