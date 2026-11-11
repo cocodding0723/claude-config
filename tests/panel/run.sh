@@ -275,7 +275,7 @@ else
 fi
 r=$(python3 -I "$HERE/no_delete_check.py" "$SCRIPTS/panel_collect.py" 2>&1)
 [ "$r" = ok ] && ok "구문 트리: os.remove·os.kill·unlink 등은 임시 파일·잠금·로그 회전·시간 초과 자식 정리 자리에만" || ko "삭제 호출" "$r"
-bad_calls=$( { sed 's/ tok=.*//' "$FAKE/orca.calls" | grep -vE '^(terminal list|orchestration (worker-list|task-list)|worktree list)( |$)'
+bad_calls=$( { sed 's/ tok=.*//' "$FAKE/orca.calls" | grep -vE '^(terminal (list|read --terminal [^ ]+ --screen)|orchestration (worker-list|task-list)|worktree list)( |$)'
   grep -vE '^merge-base --is-ancestor HEAD ' "$FAKE/git.calls" 2>/dev/null
   grep -vE '^pr list ' "$FAKE/gh.calls" 2>/dev/null
   grep -vE '^-sk ' "$FAKE/du.calls" 2>/dev/null
