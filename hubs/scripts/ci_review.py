@@ -16,6 +16,8 @@ ITEM = re.compile(r"\*\*무엇:\*\*\s*(.+?)(?=\n\s*\*\*무엇:\*\*|\Z)", re.S)
 MUST = re.compile(r"\*\*반드시 수정해야 하는 점:\*\*\s*(.+?)(?=\n\s*\*\*팀 규칙|\n\[실행 기록|\Z)", re.S)
 COMMIT = re.compile(r"`([0-9a-f]{7,40})`")
 TICKET = re.compile(r"LRM-(\d+)")
+ERROR = re.compile(r"^##\s.*—\s*ERROR\s*$", re.M)  # 리뷰어 자체가 실패한 코멘트(지적 아님, 재실행 대상)
+EMPTY = ("없음", "평가 결과 없음")
 REVIEW_DONE = ("Claude Code Review",)  # 이 워크플로 검사가 전부 끝나야 수집
 
 
@@ -31,13 +33,17 @@ def parse(comment):
     if not m or m.group(1) == "summary":
         return []
     role, commit = m.group(1), (COMMIT.search(body) or [None, ""])[1]
+    if ERROR.search(body):
+        e = {"role": role, "kind": "오류", "text": "리뷰어 오류(평가 결과 없음)", "commit": commit}
+        e["id"] = hashlib.sha1(f"{comment.get('id')}|오류|{commit}".encode()).hexdigest()[:16]
+        return [e]
     out = []
     sec = SECTION.search(body)
     if sec:
         for it in ITEM.finditer(sec.group(1)):
             out.append({"role": role, "kind": "권장", "text": " ".join(it.group(1).split())[:600], "commit": commit})
     must = MUST.search(body)
-    if must and not must.group(1).strip().startswith("없음"):
+    if must and not must.group(1).strip().startswith(EMPTY):
         out.append({"role": role, "kind": "필수", "text": " ".join(must.group(1).split())[:600], "commit": commit})
     for f in out:
         f["id"] = hashlib.sha1(f"{comment.get('id')}|{f['kind']}|{f['text']}".encode()).hexdigest()[:16]
@@ -112,6 +118,11 @@ def send_main(orca, handle, text):
         return p.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+def error_text(pr, errs):
+    roles = ", ".join(sorted({e["role"] for e in errs}))
+    return f"[CI→메인] AI 리뷰 오류 {len(errs)}명 PR#{pr['number']} · 역할 {roles} · 허브 배정 없음, 리뷰 재실행 대상"
 
 
 def relay_text(pr, hub, n, path):

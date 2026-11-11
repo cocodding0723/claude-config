@@ -5,7 +5,7 @@
      → PR-N-커밋-adv.md + 메인 터미널 전달 + Slack(지적 있으면 warn, 없으면 done). PR 에는 쓰지 않음(허브가 답글과 함께 처리).
 모델: ADV_MODEL(기본 Fable 5.2), 실패·한도 초과 시 ADV_FALLBACK(기본 Opus 5.5). 읽기 도구만 허용.
 비용 상한: ADV_DAILY_MAX(하루 실행), ADV_MAX_CHUNKS(덩어리 수 상한, 넘으면 건너뜀). 하루 상한 초과는 그날 Slack 1회.
-트리거: 묶음 PR 게시 시 1회(ci_watch) + 수동 요청(이 스크립트 직접 실행).
+트리거: PR 이 ready 가 될 때 1회(ci_watch, LRM_ADV_SCOPE=bundle 이면 묶음 PR 만) + 수동 요청(이 스크립트 직접 실행).
 사용: adv_review.py --pr N --head SHA [--dry-run]   (--dry-run: 전송·상한 기록 없이 결과 파일 경로와 지적만 출력)
 설정: ~/.config/lrm-hubs/adv-review.env (KEY=값 줄)
 """
