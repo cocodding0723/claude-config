@@ -25,6 +25,7 @@ usage() {
   --reversible (--options 선택) 되돌리기 난이도 쉬움|보통|어려움
   --seq        (--options 선택) 순번/전체(예 3/9)
   --todo-id    (--kind todo 전용) 할 일 번호 T-영문·숫자 1~16자. 본문에 답 줄이 없으면 완료 안내 줄을 붙임
+  --alive      주제(첫 줄) 아래에 봇 생존 줄('봇: 연결됨 · 마지막 수신 N분 전', bot_alive.py)을 넣음. 정기 점검·진행 메시지용
   --no-check   양식 검사 생략(slack-sent.jsonl 에 unchecked:true 기록)
 환경 변수: LRM_FORMAT=warn|strict|off (기본 warn). warn 은 위반해도 전송하고 stderr 경고, strict 는 위반 시 미전송·종료 코드 2
   --kind decide 는 결정이 2개 이상이거나 python3 검사가 실패하면 모드와 무관하게 미전송·종료 코드 2(결정 1건 = 메시지 1개). --no-check·off 로 우회하면 로그에 한 줄 남음
@@ -39,7 +40,7 @@ usage() {
 EOF
 }
 die() { echo "$1" >&2; exit 2; }
-TAG="" TITLE="" THREAD="" KIND="" NOCHECK=0 CHOICES="" CHOICES_SET=0 EMOJISET=custom
+TAG="" TITLE="" THREAD="" KIND="" NOCHECK=0 ALIVE=0CHOICES="" CHOICES_SET=0 EMOJISET=custom
 # 번호 카드 인자. 값 검증은 FORM_PY opts 가 함. *_SET 은 빈 값으로 준 경우도 '준 것'으로 보기 위함
 OPTIONS="" OPT_SET=0 RECOMMEND="" REC_SET=0 REVERSIBLE="" REV_SET=0 DECISION_ID="" DID_SET=0 SEQ="" SEQ_SET=0 TODO_ID="" TID_SET=0
 while [ $# -gt 0 ]; do
@@ -58,6 +59,7 @@ while [ $# -gt 0 ]; do
     --seq) [ $# -ge 2 ] || die "--seq 값 필요 — 예 3/9"; SEQ="$2" SEQ_SET=1; shift 2 ;;
     --todo-id) [ $# -ge 2 ] || die "--todo-id 값 필요 — 예 T-0001"; TODO_ID="$2" TID_SET=1; shift 2 ;;
     --no-check) NOCHECK=1; shift ;;
+    --alive) ALIVE=1; shift ;;
     --) shift; break ;;
     -*) echo "알 수 없는 옵션: $1 — --help 참고" >&2; exit 2 ;;
     *) break ;;
@@ -95,6 +97,16 @@ FMTLOG="$DIR/slack-format.log"
 : "${SLACK_BOT_TOKEN:?}" "${SLACK_USER_ID:?}"
 API="${SLACK_API_BASE:-https://slack.com/api}"  # SLACK_API_BASE: 시험용 주소 재정의
 MSG="$1"
+# 생존 줄은 주제 아래에 둠(첫 줄 40자 검사·알림 미리보기는 주제 그대로). 조회 실패는 전송에 영향 없음
+if [ "$ALIVE" = 1 ]; then
+  ALIVE_LINE="$(python3 "${LRM_BOT_ALIVE:-$(dirname "$(readlink "$0" || echo "$0")")/bot_alive.py}" 2>/dev/null || true)"
+  if [ -n "$ALIVE_LINE" ]; then
+    case "$MSG" in
+      *$'\n'*) MSG="${MSG%%$'\n'*}"$'\n'"$ALIVE_LINE"$'\n'"${MSG#*$'\n'}" ;;
+      *) MSG="$MSG"$'\n'"$ALIVE_LINE" ;;
+    esac
+  fi
+fi
 
 # --kind 종류 이모지. 첫 줄에 6종 중 하나(유니코드·치환 이름 모두)가 있으면 붙이지 않음. 붙인 이모지는 아래 치환표를 그대로 탐
 kind_glyph() {
