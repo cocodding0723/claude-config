@@ -59,6 +59,17 @@ assert r.hub_for("sprint/묶음-C-x","",t).startswith("구조"), "묶음"
 assert r.hub_for("feat/LRM-4000","",t).startswith("미배정"), "경계"
 ' "$S" "$D/ci-review-hubs.tsv" && ok "허브 표: 묶음→구조, LRM-4000 은 미배정" || ko "허브 표"
 
+# ---- 리뷰어 오류는 지적과 분리 ----
+echo '[{"number":703,"title":"[LRM-264] x","headRefName":"b"}]' > "$D/prs.json"; rm -f "$D/ci-watch.state.json"; : > "$D/orca.log"
+echo '[{"name":"Review / x","workflow":"Claude Code Review","bucket":"pending","link":""}]' > "$D/checks-703.json"; echo '[]' > "$D/comments-703.json"; run
+python3 -c 'import json;print(json.dumps([{"id":9,"body":"<!-- lrm-ai-review:security -->\n## Claude AI · 보안 — ERROR\n\n**아쉬운 점 · 권장 개선:** 평가 결과 없음.\n\n**반드시 수정해야 하는 점:** 평가 결과 없음.\n"},{"id":10,"body":"<!-- lrm-ai-review:readability -->\n## Claude AI · 가독성 — PASS\n\n**반드시 수정해야 하는 점:** 평가 결과 없음.\n"}]))' > "$D/comments-703.json"
+echo '[{"name":"Review / x","workflow":"Claude Code Review","bucket":"pass","link":""}]' > "$D/checks-703.json"; run
+grep -q "AI 리뷰 오류 1명 PR#703 · 역할 security" "$D/orca.log" && ! grep -q "AI 리뷰 지적" "$D/orca.log" && ok "ERROR·평가 결과 없음은 지적 아님 → 오류로 별도 전달" || ko "오류 분리" "$(cat "$D/orca.log")"
+: > "$D/orca.log"; run; [ ! -s "$D/orca.log" ] && ok "오류 재전달 없음" || ko "오류 중복"
+python3 -c '
+import sys;sys.path.insert(0,sys.argv[1]);import ci_review as r
+assert r.hub_for("feat/LRM-279-x","",r.load_table(sys.argv[2])).startswith("UI 허브")' "$S" "$HERE/../../hubs/ci-review-hubs.tsv" && ok "LRM-279 → UI 허브" || ko "UI 매핑"
+
 # ---- 원인 줄: Shader error 우선, FAILED 0 무시, xml 대체 ----
 echo '[{"number":679,"title":"t"}]' > "$D/prs.json"; rm -f "$D/ci-watch.state.json"; : > "$D/sent.log"
 chk pending 1 pending; run

@@ -35,6 +35,7 @@ FAIL_SENT = "_fail_sent"
 ADV_HEAD = "_adv_head"  # 적대적 리뷰를 띄운 head 커밋. 묶음 PR 당 1회(fixup 마다 재실행 안 함)
 ADV_BRANCH = re.compile(os.environ.get("LRM_ADV_BRANCH", r"(^|/)bundle-"))  # 묶음 PR 브랜치
 ADV_LABEL = os.environ.get("LRM_ADV_LABEL", "bundle")
+ADV_SCOPE = os.environ.get("LRM_ADV_SCOPE", "all")  # all: 모든 ready PR · bundle: 묶음 PR 만
 ADV_INIT = "_adv_init"
 ADV = os.environ.get("LRM_ADV", str(Path(__file__).resolve().parent / "adv_review.py"))  # 메인에 실패를 전달한 커밋(같은 커밋 실패는 1회)  # PR 별 이미 전달한 AI 리뷰 지적 id
 DONE = {"pass", "fail", "cancel"}
@@ -136,6 +137,20 @@ def relay_review(pr, checks, prev, baseline, dry):
     new = [f for f in finds if f["id"] not in seen]
     if not new:
         return
+    errs = [f for f in new if f["kind"] == "오류"]
+    if errs and not baseline:
+        # 리뷰어 실패는 지적이 아니므로 허브에 배정하지 않고 재실행 대상으로만 알림
+        handle = review.main_handle(MAIN_ENV)
+        if dry:
+            print(f"--- review-error\n{review.error_text(pr, errs)}")
+        elif not (handle and review.send_main(ORCA, handle, review.error_text(pr, errs))):
+            return
+        new = [f for f in new if f["kind"] != "오류"]
+        if not new:
+            if not dry:
+                prev[SEEN] = sorted(seen | {e["id"] for e in errs})
+            return
+        seen |= {e["id"] for e in errs}
     if not baseline:
         hub = review.hub_for(pr.get("headRefName", ""), pr.get("title", ""), review.load_table(HUB_TABLE))
         if dry:
@@ -172,10 +187,10 @@ def is_bundle(pr):
 
 
 def start_adv(pr, prev, baseline, dry):
-    """묶음 PR(브랜치 */bundle-* 또는 라벨 bundle)이 draft 아닌 상태로 처음 보이면 적대적 리뷰를 백그라운드로 1회.
-    개별 PR 은 리뷰 안 함(Fable 사용량 절약). 다시 돌리려면 adv_review.py --pr N 수동 실행"""
+    """PR 이 draft 아닌 상태(ready)로 처음 보이면 적대적 리뷰를 백그라운드로 1회. fixup 커밋마다 재실행 안 함.
+    ADV_SCOPE=bundle 이면 묶음 PR 만. 비용 상한은 adv_review.py 의 ADV_DAILY_MAX. 다시 돌리려면 adv_review.py --pr N"""
     head = pr.get("headRefOid")
-    if not head or pr.get("isDraft") or not is_bundle(pr) or prev.get(ADV_HEAD):
+    if not head or pr.get("isDraft") or (ADV_SCOPE == "bundle" and not is_bundle(pr)) or prev.get(ADV_HEAD):
         return
     if not baseline:
         if dry:
