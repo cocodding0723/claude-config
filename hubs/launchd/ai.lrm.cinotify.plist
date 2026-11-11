@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.lrm.cinotify</string>
+  <!-- PR CI 결론 변화 알림 + 봇 끊김 1회 경고 -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>/usr/bin/python3 "$HOME/.config/lrm-hubs/ci_watch.py"; /usr/bin/python3 "$HOME/.config/lrm-hubs/bot_alive.py" --warn-once</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>StartInterval</key><integer>300</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+  <key>Nice</key><integer>10</integer>
+  <key>StandardOutPath</key><string>__HOME__/orca/archive/ci_watch.launchd.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/orca/archive/ci_watch.launchd.log</string>
+</dict>
+</plist>
