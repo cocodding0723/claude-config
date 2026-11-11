@@ -227,6 +227,10 @@ def classify(preview, quiet_min=None):
         return "idle"
     if any(k in tail for k in PATROL_KEYS):
         return "approval"
+    # 입력 칸(❯)이 마지막 줄이고 번호 선택지(❯ 1.)가 아니면 입력 대기. 뒤에 'Crunched … done' 같은 상태 글이 붙어도 같음
+    last = tail_lines[-1].strip()
+    if last.startswith("❯") and not re.match(r"❯\s*\d+\.", last):
+        return "idle"
     if quiet_min is not None and quiet_min >= QUIET_IDLE_MIN:
         return "idle"
     return "unknown"
@@ -279,11 +283,19 @@ def collect_hubs(conf, now, get):
             "quietMin": max(quiet, 0) if quiet is not None else None,
             "connected": connected,
         })
-    seen = {}
+    # 같은 허브에 터미널이 여럿이면(재시작 뒤 옛 세션 남음) 연결된 것 → 최근 출력 순으로 하나만 남기고 dup 표시
+    best = {}
     for r in rows:
-        seen[r["hub"]] = seen.get(r["hub"], 0) + 1
-    for r in rows:
-        r["dup"] = seen[r["hub"]] > 1
+        key = (r["connected"], -(r["quietMin"] if r["quietMin"] is not None else 1 << 30))
+        cur = best.get(r["hub"])
+        if cur is None or key > cur[0]:
+            best[r["hub"]] = (key, r, (cur[2] + 1) if cur else 1)
+        else:
+            best[r["hub"]] = (cur[0], cur[1], cur[2] + 1)
+    rows = []
+    for _, r, n in best.values():
+        r["dup"] = n > 1
+        rows.append(r)
     rows.sort(key=lambda r: (r["name"], r["quietMin"] if r["quietMin"] is not None else 1 << 30))
     counts = {k: sum(1 for r in rows if r["state"] == k) for k in ("busy", "approval", "idle", "unknown")}
     return {"rows": rows, "counts": counts, "truncated": terminals_truncated(get)}
