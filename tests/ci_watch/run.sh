@@ -70,6 +70,13 @@ python3 -c '
 import sys;sys.path.insert(0,sys.argv[1]);import ci_review as r
 assert r.hub_for("feat/LRM-279-x","",r.load_table(sys.argv[2])).startswith("UI 허브")' "$S" "$HERE/../../hubs/ci-review-hubs.tsv" && ok "LRM-279 → UI 허브" || ko "UI 매핑"
 
+# ---- 게이트 실패 원인이 리뷰어 오류뿐이면 합침 ----
+: > "$D/sent.log"; : > "$D/orca.log"
+echo '[{"number":703,"title":"x","headRefName":"b","headRefOid":"e1"}]' > "$D/prs.json"
+echo '[{"name":"AI Review Gate (0/5)","workflow":"Preview Stack Events","bucket":"pending","link":""}]' > "$D/checks-703.json"; run
+echo '[{"name":"AI Review Gate (0/5)","workflow":"Preview Stack Events","bucket":"fail","link":""}]' > "$D/checks-703.json"; run
+grep -q "AI Review Gate: 리뷰어 오류(재실행 대상)" "$D/sent.log" && ! grep -q "CI 실패 PR#703" "$D/orca.log" && ok "리뷰어 오류뿐인 게이트 실패: Slack 원인 1줄, 메인 CI 실패 전달 없음" || ko "게이트 합침" "$(cat "$D/sent.log") | $(cat "$D/orca.log")"
+
 # ---- 원인 줄: Shader error 우선, FAILED 0 무시, xml 대체 ----
 echo '[{"number":679,"title":"t"}]' > "$D/prs.json"; rm -f "$D/ci-watch.state.json"; : > "$D/sent.log"
 chk pending 1 pending; run

@@ -30,6 +30,7 @@ HUB_TABLE = DIR / "ci-review-hubs.tsv"  # 정규식<TAB>허브. 브랜치·제�
 REVIEW_OUT = DIR / "ci-review"
 REVIEW_INIT = "_review_init"
 SEEN = "_seen"
+REVIEWER_ERROR = "리뷰어 오류(재실행 대상)"
 HEAD = "_head"  # 마지막으로 본 PR 머리 커밋
 FAIL_SENT = "_fail_sent"
 ADV_HEAD = "_adv_head"  # 적대적 리뷰를 띄운 head 커밋. 묶음 PR 당 1회(fixup 마다 재실행 안 함)
@@ -167,8 +168,20 @@ def relay_review(pr, checks, prev, baseline, dry):
     prev[SEEN] = sorted(seen | {f["id"] for f in new})
 
 
+def reviewer_errors(pr):
+    """이 PR 의 AI 리뷰 코멘트 중 리뷰어 오류(ERROR) 수. 조회 실패는 0"""
+    try:
+        return sum(1 for c in review.comments(gh, REPO, pr["number"]) for f in review.parse(c) if f["kind"] == "오류")
+    except (RuntimeError, ValueError):
+        return 0
+
+
 def relay_fail(pr, fails, prev, slack_ts=""):
-    """CI 실패를 메인 터미널에 전달(허브가 고치도록 메인이 배정). 같은 커밋은 1회. 전송 실패는 Slack warn 이 대신함"""
+    """CI 실패를 메인 터미널에 전달(허브가 고치도록 메인이 배정). 같은 커밋은 1회. 전송 실패는 Slack warn 이 대신함
+    리뷰어 오류로만 실패한 경우는 'AI 리뷰 오류' 알림이 이미 갔으므로 보내지 않음"""
+    fails = [c for c in fails if not c.get("reviewer_error")]
+    if not fails:
+        return
     sha = pr.get("headRefOid") or "unknown"
     if prev.get(FAIL_SENT) == sha:
         return
@@ -246,7 +259,14 @@ def main():
         if not verdict or first:
             continue
         if fails:
+            gate_err = None
             for c in fails:
+                if c["key"].startswith("AI Review Gate"):
+                    gate_err = reviewer_errors(pr) if gate_err is None else gate_err
+                    if gate_err:
+                        # 게이트 실패가 리뷰어 오류 때문이면 고칠 코드가 없음. 오류 알림이 이미 메인에 가므로 원인만 한 줄로
+                        c["cause"], c["reviewer_error"] = REVIEWER_ERROR, True
+                        continue
                 c["cause"] = cause(c["link"])
             kind, msg = message(pr, fails)
         else:
