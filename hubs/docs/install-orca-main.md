@@ -30,7 +30,7 @@
 | pick_host.sh | `skills/orca-hub-create/scripts` | `~/.claude/skills/orca-hub-create/scripts` | 링크 |
 | Slack 폴러 plist | `hubs/launchd/ai.lrm.slackpoll.plist` | `~/Library/LaunchAgents` | 복사(`__HOME__` 치환) |
 | Socket Mode 수신기·plist | `hubs/scripts/slack_socket.py`, `hubs/launchd/ai.lrm.slacksocket.plist` | `~/.config/lrm-hubs` (LaunchAgents 아님) | 복사(`__HOME__`·`__PYTHON3__` 치환) |
-| 옆 패널 mod | `hubs/mods/lrm-board` | `~/.claude/skills/lrm-board` (사용자 전역 mod 위치) | 복사(`__HOME__` 치환) |
+| 옆 패널 mod | `hubs/mods/lrm-board` | `~/.claude/dev-mods/<mod id>/lrm-board` (Orca 세션이 읽는 위치, 11-11 실측) | 복사(`__HOME__` 치환) |
 | 패널 수집기·plist | `hubs/scripts/panel_collect.{sh,py}`, `hubs/launchd/ai.lrm.panelcollect.plist` | `~/.config/lrm-hubs`, `~/Library/LaunchAgents` | 링크, plist 는 복사(`__HOME__` 치환) |
 
 ## 1. 설치 순서
