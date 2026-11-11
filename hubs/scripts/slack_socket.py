@@ -15,7 +15,9 @@ REFRESH 주기마다 계획 재연결(반쯤 죽은 연결 방지). ALIVE 주기
       LRM_SOCKET_DEBOUNCE_S 수집 묶음 대기(2) · LRM_SOCKET_RETIRE_TIMEOUT_S 옛 클라이언트 runner 종료 대기 상한(5)
 종료 코드: 2 설정 오류(토큰 없음)·첫 연결 실패, 3 재연결 연속 실패(launchd 가 재시작). 0 은 없음 — 신호(SIGTERM)로만 끝남
 """
+import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -24,6 +26,7 @@ from dataclasses import dataclass
 
 os.environ.setdefault("SSL_CERT_FILE", "/etc/ssl/cert.pem")
 
+from slack_sdk import WebClient
 from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
@@ -32,6 +35,120 @@ DIR = os.environ.get("LRM_HUB_DIR", os.path.expanduser("~/.config/lrm-hubs"))
 POLL = os.path.join(DIR, "slack_poll.sh")
 MAX_FAILS = 5  # 재연결 연속 실패 상한. 넘으면 EXIT_RESTART 로 끝냄
 EXIT_RESTART = 3
+INBOX, DONE = os.path.join(DIR, "slack-inbox.jsonl"), os.path.join(DIR, "slack-done.txt")
+MAIN_ENV = os.environ.get("LRM_MAIN_ENV", os.path.join(DIR, "main.env"))
+ORCA = os.environ.get("LRM_ORCA", "orca")
+BLOCK_RE = re.compile(r"^lrm_decide:([A-Za-z0-9-]{1,32})$")
+MODAL_ID = "lrm_custom"
+CUSTOM_MAX = 500  # 직접 입력 글자 상한
+
+
+def card_title(message: dict) -> str:
+    """카드 제목(색 띠 section 첫 줄, 없으면 text). 굵게 표시 '*' 제거"""
+    for att in message.get("attachments") or []:
+        for b in att.get("blocks") or []:
+            if b.get("type") == "section":
+                return b["text"]["text"].split("\n", 1)[0].replace("*", "").strip()
+    return (message.get("text") or "").split("\n", 1)[0].strip()
+
+
+def answered(message: dict, line: str) -> list:
+    """버튼 블록을 '선택됨' 한 줄로 바꾼 attachments. 본문 section 은 유지"""
+    out = []
+    for att in message.get("attachments") or []:
+        att = dict(att)
+        if att.get("blocks"):
+            att["blocks"] = [b for b in att["blocks"] if b.get("type") != "actions"] + \
+                [{"type": "context", "elements": [{"type": "mrkdwn", "text": line}]}]
+        out.append(att)
+    return out
+
+
+def main_handle(path: str):
+    """main.env 의 MAIN_TERMINAL 값만 읽음"""
+    try:
+        for ln in open(path, encoding="utf-8"):
+            if ln.startswith("MAIN_TERMINAL="):
+                return ln.split("=", 1)[1].strip() or None
+    except OSError:
+        pass
+    return None
+
+
+def send_main(text: str) -> bool:
+    handle = main_handle(MAIN_ENV)
+    if not handle:
+        log("메인 터미널 없음 — main.env 의 MAIN_TERMINAL 확인")
+        return False
+    try:
+        p = subprocess.run([ORCA, "terminal", "send", "--terminal", handle, "--text", text, "--enter", "--wait-submit", "20", "--json"],
+                           capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        return p.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+class Decide:
+    """결정 카드 버튼·직접 입력 처리. 수신 값은 데이터로만 씀(실행 안 함)"""
+
+    def __init__(self, web, me: str) -> None:
+        self.web, self.me = web, me
+
+    def handle(self, payload: dict) -> None:
+        kind = payload.get("type")
+        if self.me and (payload.get("user") or {}).get("id") != self.me:
+            return
+        if kind == "block_actions":
+            self.on_click(payload)
+        elif kind == "view_submission" and (payload.get("view") or {}).get("callback_id") == MODAL_ID:
+            self.on_submit(payload)
+
+    def on_click(self, p: dict) -> None:
+        act = (p.get("actions") or [{}])[0]
+        m = BLOCK_RE.match(act.get("block_id", ""))
+        if not m:
+            return
+        did, msg = m.group(1), p.get("message") or {}
+        ch, ts = (p.get("channel") or {}).get("id", ""), msg.get("ts", "")
+        if act.get("action_id") == "custom":
+            meta = json.dumps({"did": did, "channel": ch, "ts": ts})
+            self.web.views_open(trigger_id=p["trigger_id"], view={
+                "type": "modal", "callback_id": MODAL_ID, "private_metadata": meta,
+                "title": {"type": "plain_text", "text": "직접 입력"}, "submit": {"type": "plain_text", "text": "보내기"},
+                "blocks": [{"type": "input", "block_id": "answer", "label": {"type": "plain_text", "text": card_title(msg)[:150] or did},
+                            "element": {"type": "plain_text_input", "action_id": "text", "multiline": True, "max_length": CUSTOM_MAX}}]})
+            return
+        pick = (act.get("value") or "").split("|", 1)[-1]
+        label = (act.get("text") or {}).get("text", pick)
+        self.finish(did, ch, ts, msg, label, {"action": "pick", "pick": int(pick) if pick.isdigit() else pick})
+
+    def on_submit(self, p: dict) -> None:
+        view = p["view"]
+        meta = json.loads(view.get("private_metadata") or "{}")
+        text = (((view.get("state") or {}).get("values") or {}).get("answer") or {}).get("text", {}).get("value") or ""
+        text = " ".join(text.split())[:CUSTOM_MAX]
+        if not text:
+            return
+        hist = self.web.conversations_history(channel=meta["channel"], latest=meta["ts"], inclusive=True, limit=1)
+        msg = next((x for x in hist.get("messages", []) if x.get("ts") == meta["ts"]), {"ts": meta["ts"]})
+        self.finish(meta["did"], meta["channel"], meta["ts"], msg, "직접 입력: " + text, {"action": "custom", "text": text})
+
+    def finish(self, did: str, ch: str, ts: str, msg: dict, label: str, extra: dict) -> None:
+        """카드 닫기 → inbox·done 기록 → 메인 전달. 앞 단계가 실패해도 뒤 단계는 진행"""
+        at = time.strftime("%m-%d %H:%M")
+        title = card_title(msg)
+        try:
+            self.web.chat_update(channel=ch, ts=ts, text=title or did, attachments=answered(msg, f"✅ {label} 선택됨 ({at})"))
+        except Exception as err:
+            log(f"카드 갱신 실패 {type(err).__name__} — 버튼은 남음")
+        rec = {"type": "button", "parent_ts": ts, "channel": ch, "title": title, "decision_id": did, "kind": "decide",
+               "option_text": label[:80], "received_at": int(time.time()), **extra}
+        with open(INBOX, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        with open(DONE, "a", encoding="utf-8") as f:
+            f.write(ts + "\n")
+        ok = send_main(f"[Slack→메인] 결정: {title or did} = {label} ({ts})")
+        log(f"결정 {did} 버튼 답 기록 · 메인 전달 {'성공' if ok else '실패'}")
 
 
 def env_secs(name: str, default: float, allow_zero: bool = False) -> float:
@@ -246,10 +363,17 @@ def main() -> int:
     timing = Timing.from_env()
     trigger = Trigger(timing.debounce_s)
     pulse = Pulse()
+    decide = Decide(WebClient(token=bot_token), me)
 
     def on_request(c: SocketModeClient, req: SocketModeRequest) -> None:
         pulse.touch()
         c.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
+        if req.type == "interactive":
+            try:
+                decide.handle(req.payload or {})
+            except Exception as err:  # 버튼 처리 실패로 수신기가 죽지 않게 한 줄만 남김
+                log(f"버튼 처리 실패 {type(err).__name__}")
+            return
         if req.type != "events_api":
             return
         event = (req.payload or {}).get("event", {})

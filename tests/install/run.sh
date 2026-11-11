@@ -344,7 +344,7 @@ rm -rf "${SB8B:?}"
 # 수신기 연결 실패: traceback 없이 한 줄 로그·종료 코드 2. slack_sdk 는 가짜 모듈로 대체(네트워크 없음)
 SB8C=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox8c.XXXXXX")
 mkdir -p "$SB8C/stub/slack_sdk/socket_mode" "$SB8C/hub"
-: > "$SB8C/stub/slack_sdk/__init__.py"
+printf 'class WebClient:\n    def __init__(self, token=None): pass\n' > "$SB8C/stub/slack_sdk/__init__.py"
 printf 'class SocketModeClient:\n    def __init__(self, app_token): self.socket_mode_request_listeners = []\n    def connect(self): raise ConnectionError("FAKE_DETAIL")\n' > "$SB8C/stub/slack_sdk/socket_mode/__init__.py"
 
 printf 'class SocketModeRequest: pass\n' > "$SB8C/stub/slack_sdk/socket_mode/request.py"

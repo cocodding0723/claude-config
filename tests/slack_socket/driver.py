@@ -155,6 +155,27 @@ class SocketModeClient:
         note(f"ack {self.n} {response.envelope_id}")
 
 
+class WebClient:
+    """웹 API 가짜. 호출을 'web 메서드 JSON' 한 줄로 남김. 시나리오 history 가 conversations_history 응답"""
+
+    def __init__(self, token=None, **kwargs):
+        pass
+
+    def _call(self, name, kw):
+        note("web %s %s" % (name, json.dumps(kw, ensure_ascii=False, sort_keys=True)))
+        return {"ok": True}
+
+    def chat_update(self, **kw):
+        return self._call("chat_update", kw)
+
+    def views_open(self, **kw):
+        return self._call("views_open", kw)
+
+    def conversations_history(self, **kw):
+        self._call("conversations_history", kw)
+        return {"ok": True, "messages": SCEN.get("history", [])}
+
+
 def install_fakes() -> None:
     sdk = types.ModuleType("slack_sdk")
     mode = types.ModuleType("slack_sdk.socket_mode")
@@ -164,6 +185,7 @@ def install_fakes() -> None:
     request.SocketModeRequest = SocketModeRequest
     response.SocketModeResponse = SocketModeResponse
     sdk.socket_mode = mode
+    sdk.WebClient = WebClient
     mode.request, mode.response = request, response
     sys.modules.update({
         "slack_sdk": sdk, "slack_sdk.socket_mode": mode,
