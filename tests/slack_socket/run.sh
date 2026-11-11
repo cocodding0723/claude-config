@@ -205,6 +205,14 @@ grep -q '결정: 시험 결정 = 2. B 안 (1794383274.541929)' "$SB/s20/orca.cal
 ! grep -q '= 1. A' "$SB/s20/orca.calls" && ok "다른 사용자 클릭은 무시" || ko "남의 클릭" ""
 stop s20
 
+# 메인 전달 실패(orca 실패) → 카드 스레드에 warn 경고
+printf '#!/bin/sh\nexit 1\n' > "$SB/bad_orca.sh"; chmod +x "$SB/bad_orca.sh"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$FAKE_NOTIFY_LOG"\n' > "$SB/fake_notify.sh"; chmod +x "$SB/fake_notify.sh"
+mkdir -p "$SB/s21/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/s21/hub/main.env"
+start s21 "{\"events\":[$(act 0.4 i1 $ME pick_2 'D-T1|2' '2. B 안')]}" LRM_ORCA="$SB/bad_orca.sh" LRM_NOTIFY="$SB/fake_notify.sh" FAKE_NOTIFY_LOG="$SB/s21/notify.calls"
+waitfor s21 out '메인 전달 실패' 4 && waitfor s21 notify.calls 'thread 1794383274.541929 메인 전달 실패' 4 && grep -q -- '--kind warn' "$SB/s21/notify.calls" && ok "메인 전달 실패 → 카드 스레드에 warn" || ko "전달 실패 경고" "$(cat "$SB/s21/notify.calls" 2>/dev/null)"
+stop s21
+
 # ---- 9. 토큰·ID 는 어떤 출력에도 없음 ----------------------------------------------------------
 leaks=$(cat "$SB"/*/out | grep -Ec "$APPTOK|$BOTTOK|$ME|$LEAK|Uother9|Bbot1" || true)
 [ "$leaks" = 0 ] && ok "모든 시나리오 로그·표준출력에 토큰·사용자 ID·예외 본문 0건" || ko "유출" "${leaks}줄"

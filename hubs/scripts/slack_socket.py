@@ -18,6 +18,7 @@ REFRESH 주기마다 계획 재연결(반쯤 죽은 연결 방지). ALIVE 주기
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -37,7 +38,10 @@ MAX_FAILS = 5  # 재연결 연속 실패 상한. 넘으면 EXIT_RESTART 로 끝�
 EXIT_RESTART = 3
 INBOX, DONE = os.path.join(DIR, "slack-inbox.jsonl"), os.path.join(DIR, "slack-done.txt")
 MAIN_ENV = os.environ.get("LRM_MAIN_ENV", os.path.join(DIR, "main.env"))
-ORCA = os.environ.get("LRM_ORCA", "orca")
+# launchd 기본 PATH(/usr/bin:/bin)에는 orca 가 없어 전달이 실패했음 → PATH 밖 설치 위치도 찾음
+ORCA = os.environ.get("LRM_ORCA") or shutil.which("orca") or next(
+    (p for p in ("/usr/local/bin/orca", "/Applications/Orca.app/Contents/Resources/bin/orca") if os.path.exists(p)), "orca")
+NOTIFY = os.environ.get("LRM_NOTIFY", os.path.join(DIR, "slack_notify.sh"))
 BLOCK_RE = re.compile(r"^lrm_decide:([A-Za-z0-9-]{1,32})$")
 MODAL_ID = "lrm_custom"
 CUSTOM_MAX = 500  # 직접 입력 글자 상한
@@ -86,6 +90,14 @@ def send_main(text: str) -> bool:
         return p.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+def warn_slack(thread: str, text: str) -> None:
+    """메인 전달 실패를 카드 스레드에 경고. 실패해도 로그 한 줄만"""
+    try:
+        subprocess.run([NOTIFY, "--kind", "warn", "--thread", thread, text], capture_output=True, timeout=60, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired) as err:
+        log(f"Slack 경고 실패 {type(err).__name__}")
 
 
 class Decide:
@@ -148,6 +160,8 @@ class Decide:
         with open(DONE, "a", encoding="utf-8") as f:
             f.write(ts + "\n")
         ok = send_main(f"[Slack→메인] 결정: {title or did} = {label} ({ts})")
+        if not ok:
+            warn_slack(ts, f"메인 전달 실패: {title or did} = {label}\n\n• 무엇: 버튼 답은 기록했지만 메인 터미널로 못 보냄\n• 결과: 메인에 직접 알려 주세요")
         log(f"결정 {did} 버튼 답 기록 · 메인 전달 {'성공' if ok else '실패'}")
 
 
