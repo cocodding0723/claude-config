@@ -45,6 +45,7 @@ rm -f "$D/ci-watch.state.json"; pr aaaa true; w
 pr bbbb true; w; [ ! -s "$D/adv.log" ] && ok "draft 묶음은 실행 안 함" || ko "draft"
 pr bbbb false; w; grep -q -- "--pr 702 --head bbbb" "$D/adv.log" && ok "묶음 PR 게시(ready) → 1회 실행" || ko "게시" "$(cat "$D/adv.log" 2>/dev/null)"
 pr cccc false; w; [ "$(grep -c -- '--pr 702' "$D/adv.log")" = 1 ] && ok "fixup 커밋(새 head)에도 재실행 없음" || ko "fixup 재실행"
-rm -f "$D/ci-watch.state.json" "$D/adv.log"; pr x1 false feat/LRM-1; w; pr x2 false feat/LRM-1; w; [ ! -s "$D/adv.log" ] && ok "개별 PR 은 리뷰 안 함" || ko "개별 PR"
-pr x3 false feat/LRM-1 '[{"name":"bundle"}]'; w; grep -q x3 "$D/adv.log" && ok "라벨 bundle 이면 묶음으로 봄" || ko "라벨"
+rm -f "$D/ci-watch.state.json" "$D/adv.log"; pr x1 true feat/LRM-1; w; pr x2 false feat/LRM-1; w; grep -q x2 "$D/adv.log" && ok "개별 PR 도 ready 시 1회(기본 all)" || ko "개별 PR"
+export LRM_ADV_SCOPE=bundle; rm -f "$D/ci-watch.state.json" "$D/adv.log"; pr y1 true feat/LRM-2; w; pr y2 false feat/LRM-2; w; [ ! -s "$D/adv.log" ] && ok "SCOPE=bundle: 개별 PR 제외" || ko "bundle 범위"
+pr y3 false feat/LRM-2 '[{"name":"bundle"}]'; w; grep -q y3 "$D/adv.log" && ok "SCOPE=bundle: 라벨 bundle 은 대상" || ko "라벨"; unset LRM_ADV_SCOPE
 echo "통과 $PASS / 실패 $FAIL"; [ "$FAIL" = 0 ]
