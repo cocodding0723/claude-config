@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PR CI 결론을 Slack 봇 DM 으로 1회 알림. launchd(ai.lrm.cinotify) 5분 주기.
+"""PR CI 결론을 Slack 봇 DM 으로 1회 알림 + AI 리뷰 새 지적을 메인 터미널에 전달. launchd(ai.lrm.cinotify) 5분 주기.
 실패는 warn + 검사별 원인 한 줄, 감시 검사가 전부 통과하면 done 한 줄. 진행 중은 보내지 않음.
 
 감시 PR: ci-watch.txt(한 줄에 PR 번호, # 주석) — 없거나 비면 열린 PR 중 내 것.
@@ -9,10 +9,14 @@
 """
 import json
 import os
+import tempfile
+import xml.etree.ElementTree as ET
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+import ci_review as review
 
 DIR = Path(os.environ.get("LRM_HUB_DIR", Path.home() / ".config/lrm-hubs"))
 REPO = os.environ.get("LRM_CI_REPO", "Basakansoft/LoveRevolutionMaker")
@@ -20,10 +24,23 @@ WATCH_FILE = DIR / "ci-watch.txt"
 STATE = DIR / "ci-watch.state.json"
 GH = os.environ.get("LRM_GH", "gh")
 NOTIFY = os.environ.get("LRM_NOTIFY", str(DIR / "slack_notify.sh"))
+ORCA = os.environ.get("LRM_ORCA", "orca")
+MAIN_ENV = os.environ.get("LRM_MAIN_ENV", str(DIR / "main.env"))
+HUB_TABLE = DIR / "ci-review-hubs.tsv"  # 정규식<TAB>허브. 브랜치·제목에 위에서부터 맞춤
+REVIEW_OUT = DIR / "ci-review"
+REVIEW_INIT = "_review_init"
+SEEN = "_seen"
+HEAD = "_head"  # 마지막으로 본 PR 머리 커밋
+FAIL_SENT = "_fail_sent"
+ADV_HEAD = "_adv_head"  # 적대적 리뷰를 띄운 head 커밋. 묶음 PR 당 1회(fixup 마다 재실행 안 함)
+ADV_BRANCH = re.compile(os.environ.get("LRM_ADV_BRANCH", r"(^|/)bundle-"))  # 묶음 PR 브랜치
+ADV_LABEL = os.environ.get("LRM_ADV_LABEL", "bundle")
+ADV_INIT = "_adv_init"
+ADV = os.environ.get("LRM_ADV", str(Path(__file__).resolve().parent / "adv_review.py"))  # 메인에 실패를 전달한 커밋(같은 커밋 실패는 1회)  # PR 별 이미 전달한 AI 리뷰 지적 id
 DONE = {"pass", "fail", "cancel"}
 VERDICT = "_verdict"  # PR 단위로 마지막에 보낸 결론(pass|fail)
 # 실패 로그에서 원인 한 줄로 쓸 줄. 앞쪽 패턴일수록 우선
-CAUSE = [re.compile(p) for p in (r"not ok \d+.*", r"[^\s].*없음.*", r"##\[error\].*", r"(?i)\berror\b[: ].*", r"(?i)failed.*")]
+CAUSE = [re.compile(p) for p in (r"Shader error.*", r"not ok \d+.*", r"[^\s].*없음.*", r"##\[error\].*", r"(?i)\berror\b[: ].*", r"(?i)failed(?! 0\b).*")]  # 'FAILED 0' 요약 줄은 원인 아님
 TS_PREFIX = re.compile(r"^.*?\d{4}-\d\d-\d\dT[\d:.]+Z ?")  # gh --log-failed 줄머리(잡·단계·시각) 제거
 TICKET = re.compile(r"\[?LRM-\d+\]?\s*")
 
@@ -48,10 +65,10 @@ def pr_list():
         nums = [ln.split("#")[0].strip() for ln in WATCH_FILE.read_text().splitlines()]
         nums = [n for n in nums if n.isdigit()]
         if nums:
-            return [{"number": int(n), "title": ""} for n in nums]
+            return [json.loads(gh("pr", "view", n, "-R", REPO, "--json", "number,title,headRefName,headRefOid,isDraft,labels")) for n in nums]
     except OSError:
         pass
-    return json.loads(gh("pr", "list", "-R", REPO, "--author", "@me", "--state", "open", "--json", "number,title"))
+    return json.loads(gh("pr", "list", "-R", REPO, "--author", "@me", "--state", "open", "--json", "number,title,headRefName,headRefOid,isDraft,labels"))
 
 
 def cause(link):
@@ -69,6 +86,26 @@ def cause(link):
             hit = rx.search(ln)
             if hit:
                 return hit.group(0).strip()[:120]
+    return xml_cause(m.group(1))
+
+
+def xml_cause(run_id):
+    """로그에 원인 줄이 없을 때 테스트 결과 아티팩트(xml)의 첫 실패 메시지. 로그 요약이 'FAILED 0' 으로 틀릴 때 대비"""
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            gh("run", "download", run_id, "-R", REPO, "-p", "*[Tt]est*", "-D", tmp)
+        except (RuntimeError, subprocess.TimeoutExpired):
+            return ""
+        for x in sorted(Path(tmp).rglob("*.xml")):
+            try:
+                root = ET.parse(x).getroot()
+            except ET.ParseError:
+                continue
+            for case in root.iter("test-case"):
+                if case.get("result") == "Failed":
+                    msg = case.find("./failure/message")
+                    text = " ".join((msg.text or "").split()) if msg is not None else ""
+                    return f"{case.get('name', '')}: {text}"[:120]
     return ""
 
 
@@ -86,6 +123,69 @@ def passed_message(pr):
     return "done", f"CI 통과\n\n참고: {ref}"
 
 
+def relay_review(pr, checks, prev, baseline, dry):
+    """AI 리뷰가 끝났으면 새 지적을 메인 터미널에 전달. 첫 실행은 기존 지적을 본 것으로만 기록"""
+    if not review.review_finished(checks):
+        return
+    try:
+        finds = [f for c in review.comments(gh, REPO, pr["number"]) for f in review.parse(c)]
+    except (RuntimeError, ValueError) as err:
+        print(f"PR {pr['number']} 리뷰 조회 실패: {err}", file=sys.stderr)
+        return
+    seen = set(prev.get(SEEN, []))
+    new = [f for f in finds if f["id"] not in seen]
+    if not new:
+        return
+    if not baseline:
+        hub = review.hub_for(pr.get("headRefName", ""), pr.get("title", ""), review.load_table(HUB_TABLE))
+        if dry:
+            print(f"--- review\n{review.relay_text(pr, hub, len(new), '(dry-run)')}")
+            for f in new:
+                print(f"  [{f['kind']}·{f['role']}] {f['text'][:100]}")
+            return
+        path = review.write_summary(REVIEW_OUT, pr, hub, new)
+        handle = review.main_handle(MAIN_ENV)
+        if not (handle and review.send_main(ORCA, handle, review.relay_text(pr, hub, len(new), path))):
+            # 메인 전달 실패: Slack 경고로 알리고 다음 주기에 다시 전달
+            subprocess.run([NOTIFY, "--kind", "warn", "--tag", "ci-review", f"AI 리뷰 지적 메인 전달 실패\n\n• 무엇: PR #{pr['number']} 지적 {len(new)}건\n• 왜: 메인 터미널 전송 실패\n• 결과: 다음 주기에 다시 보냄\n\n👉 답: 메인 세션에서 set_main_terminal.sh 로 핸들 확인\n\n참고: {path}"])
+            return
+    prev[SEEN] = sorted(seen | {f["id"] for f in new})
+
+
+def relay_fail(pr, fails, prev, slack_ts=""):
+    """CI 실패를 메인 터미널에 전달(허브가 고치도록 메인이 배정). 같은 커밋은 1회. 전송 실패는 Slack warn 이 대신함"""
+    sha = pr.get("headRefOid") or "unknown"
+    if prev.get(FAIL_SENT) == sha:
+        return
+    hub = review.hub_for(pr.get("headRefName", ""), pr.get("title", ""), review.load_table(HUB_TABLE))
+    path = review.write_fail(REVIEW_OUT, pr, hub, sha, fails, slack_ts)
+    first = fails[0]
+    why = first.get("cause") or "원인 줄 못 찾음"
+    handle = review.main_handle(MAIN_ENV)
+    text = f"[CI→메인] CI 실패 PR#{pr['number']} · 담당 허브 {hub} · 원인 {first['key']}: {why} · 파일 {path}"
+    if handle and review.send_main(ORCA, handle, text):
+        prev[FAIL_SENT] = sha
+
+
+def is_bundle(pr):
+    return bool(ADV_BRANCH.search(pr.get("headRefName", ""))) or any(l.get("name") == ADV_LABEL for l in pr.get("labels") or [])
+
+
+def start_adv(pr, prev, baseline, dry):
+    """묶음 PR(브랜치 */bundle-* 또는 라벨 bundle)이 draft 아닌 상태로 처음 보이면 적대적 리뷰를 백그라운드로 1회.
+    개별 PR 은 리뷰 안 함(Fable 사용량 절약). 다시 돌리려면 adv_review.py --pr N 수동 실행"""
+    head = pr.get("headRefOid")
+    if not head or pr.get("isDraft") or not is_bundle(pr) or prev.get(ADV_HEAD):
+        return
+    if not baseline:
+        if dry:
+            print(f"--- adv\nPR #{pr['number']} 적대적 리뷰 시작 예정 ({head[:12]})")
+            return
+        subprocess.Popen([sys.executable, ADV, "--pr", str(pr["number"]), "--head", head], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=open(DIR / "adv-review.log", "a"), start_new_session=True)
+    prev[ADV_HEAD] = head
+
+
 def main():
     dry = "--dry-run" in sys.argv[1:]
     try:
@@ -93,6 +193,9 @@ def main():
     except (OSError, ValueError):
         state = {}
     first = not state
+    # 리뷰 전달 기능을 처음 켠 실행은 이미 달린 지적을 본 것으로만 기록(옛 지적이 한꺼번에 가지 않게)
+    review_base = not state.get(REVIEW_INIT)
+    adv_base = not state.get(ADV_INIT)  # 처음 켠 실행은 지금 head 들을 본 것으로만 기록(일괄 실행 방지)
     sent = 0
     for pr in pr_list():
         n = str(pr["number"])
@@ -103,6 +206,12 @@ def main():
             continue
         before = dict(state.get(n, {}))  # 전송 실패 시 되돌릴 값. prev 는 아래에서 바뀜
         prev = dict(before)
+        sha = pr.get("headRefOid")
+        if sha and prev.get(HEAD) not in (None, sha):
+            # 새 커밋: 검사별 결론·PR 결론을 비워 같은 검사의 재실패도 다시 알림. 리뷰 지적·실패 전달 기록은 유지
+            prev = {k: v for k, v in prev.items() if k in (SEEN, FAIL_SENT, ADV_HEAD)}  # 적대적 리뷰는 PR 당 1회라 유지
+        if sha:
+            prev[HEAD] = sha
         mine = list(filter(watched, checks))
         fails = []
         for c in mine:
@@ -116,6 +225,8 @@ def main():
         verdict = "fail" if fails else "pass" if passed and prev.get(VERDICT) != "pass" else None
         if verdict:
             prev[VERDICT] = verdict
+        relay_review(pr, checks, prev, review_base, dry)
+        start_adv(pr, prev, adv_base, dry)
         state[n] = prev
         if not verdict or first:
             continue
@@ -128,16 +239,23 @@ def main():
         if dry:
             print(f"--- {kind}\n{msg}")
             continue
-        rc = subprocess.run([NOTIFY, "--kind", kind, "--alive", "--tag", "ci-watch", msg]).returncode
+        out = subprocess.run([NOTIFY, "--kind", kind, "--alive", "--tag", "ci-watch", msg], capture_output=True, text=True)
+        if fails:
+            # warn 의 ts 를 실패 파일에 남겨 허브가 같은 스레드에 원인·고칠 방법을 답하게 함
+            ts = out.stdout.split()[1] if out.returncode == 0 and out.stdout.startswith("ok ") and len(out.stdout.split()) > 1 else ""
+            relay_fail(pr, fails, prev, ts)
+        rc = out.returncode
         if rc == 0:
             sent += 1
         else:  # 실패하면 다음 주기에 다시 보내도록 이번 결론을 기록하지 않음
             state[n] = before
+    state[REVIEW_INIT] = True
+    state[ADV_INIT] = True
     if not dry:
         tmp = STATE.with_suffix(".tmp")
         tmp.write_text(json.dumps(state, ensure_ascii=False))
         tmp.replace(STATE)
-    print(f"감시 {len(state)}건 · 전송 {sent}건" + (" · 첫 실행이라 기준만 기록" if first else ""))
+    print(f"감시 {sum(1 for k in state if not k.startswith('_'))}건 · 전송 {sent}건" + (" · 첫 실행이라 기준만 기록" if first else ""))
     return 0
 
 
