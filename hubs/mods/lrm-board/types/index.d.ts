@@ -41,6 +41,18 @@ export type Board = {
   hubs?: HubRow[]
   /** 오늘 진행 기록, 최신이 앞 */
   history?: HistoryEntry[]
+  /** 진행 게이지(메인이 씀). 맨 위 고정 표시 */
+  progress?: ProgressItem[]
+}
+
+/** state: on 진행 · blocked 막힘(빨강) · done 끝 */
+export type ProgressItem = {
+  title: string
+  done: number
+  total: number
+  eta?: string
+  state?: 'on' | 'blocked' | 'done'
+  steps?: string
 }
 
 /** 원료 하나. at 은 마지막 성공 시각(epoch 초), tried 는 마지막 시도 시각 */

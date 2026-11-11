@@ -155,3 +155,14 @@ export const idleLines = (v: AutoIdle | null | undefined): IdleLine[] => {
   }
   return out
 }
+
+// 진행 게이지 한 줄: 막대·퍼센트·남은 시각. 값이 깨져도(0·음수·NaN) 0~100% 로 자름
+export const progressBar = (p: { done: number; total: number; eta?: string; state?: string }, width = 12) => {
+  const total = Number.isFinite(p.total) && p.total > 0 ? p.total : 0
+  const done = Number.isFinite(p.done) ? Math.min(Math.max(p.done, 0), total) : 0
+  const pct = total === 0 ? 0 : Math.round((done / total) * 100)
+  const fill = Math.round((pct / 100) * width)
+  const bar = '█'.repeat(fill) + '░'.repeat(width - fill)
+  const tail = p.state === 'done' ? '완료' : p.state === 'blocked' ? `막힘${p.eta ? ` · ${p.eta}` : ''}` : (p.eta ?? '')
+  return { bar, pct, text: `${bar} ${pct}% ${done}/${total}${tail ? `  ${tail}` : ''}` }
+}

@@ -14,6 +14,7 @@ import {
   parseAuto,
   parseMain,
   pendingLine,
+  progressBar,
   sourceNote,
 } from './board'
 
@@ -51,6 +52,7 @@ const C = {
   link: '#64B5F6',
   meta: '#9E9E9E',
   error: '#EF5350',
+  gauge: '#66BB6A',
   stale: '#FFCA28',
 } as const
 
@@ -210,6 +212,19 @@ export const register: Register = on => {
         {main.old && mtimeMs > 0 && <Text color={C.stale}>{`메인 칸이 ${fmtAge(ageMin(mtimeMs, nowMs))} 갱신됨 — 승인·할 일은 낡았을 수 있음`}</Text>}
         {board?.headline !== undefined && <Text wrap="wrap">{board.headline}</Text>}
         {error !== undefined && <Text color={C.error}>{error}</Text>}
+
+        {(board?.progress?.length ?? 0) > 0 && section('📊 진행', C.gauge)}
+        {(board?.progress ?? []).map(p => {
+          const g = progressBar(p)
+          const color = p.state === 'blocked' ? C.error : p.state === 'done' ? C.meta : C.gauge
+          return (
+            <Box flexDirection="column">
+              <Text bold color={C.title} wrap="wrap">{p.title}</Text>
+              <Text color={color}>{g.text}</Text>
+              {p.steps !== undefined && <Text color={C.detail} wrap="wrap">{`└ ${p.steps}`}</Text>}
+            </Box>
+          )
+        })}
 
         {section(`🙋 내가 승인할 것 (${approvals.length})`, C.approve)}
         {approvals.length === 0 && <Text dimColor>없음</Text>}
