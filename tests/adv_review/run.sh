@@ -48,4 +48,5 @@ pr cccc false; w; [ "$(grep -c -- '--pr 702' "$D/adv.log")" = 1 ] && ok "fixup �
 rm -f "$D/ci-watch.state.json" "$D/adv.log"; pr x1 true feat/LRM-1; w; pr x2 false feat/LRM-1; w; grep -q x2 "$D/adv.log" && ok "개별 PR 도 ready 시 1회(기본 all)" || ko "개별 PR"
 export LRM_ADV_SCOPE=bundle; rm -f "$D/ci-watch.state.json" "$D/adv.log"; pr y1 true feat/LRM-2; w; pr y2 false feat/LRM-2; w; [ ! -s "$D/adv.log" ] && ok "SCOPE=bundle: 개별 PR 제외" || ko "bundle 범위"
 pr y3 false feat/LRM-2 '[{"name":"bundle"}]'; w; grep -q y3 "$D/adv.log" && ok "SCOPE=bundle: 라벨 bundle 은 대상" || ko "라벨"; unset LRM_ADV_SCOPE
+echo "ADV_SCOPE=bundle" > "$D/adv-review.env"; rm -f "$D/ci-watch.state.json" "$D/adv.log"; pr z1 true feat/LRM-3; w; pr z2 false feat/LRM-3; w; [ ! -s "$D/adv.log" ] && ok "설정 파일 ADV_SCOPE=bundle 적용" || ko "설정 파일 범위"; rm -f "$D/adv-review.env"
 echo "통과 $PASS / 실패 $FAIL"; [ "$FAIL" = 0 ]

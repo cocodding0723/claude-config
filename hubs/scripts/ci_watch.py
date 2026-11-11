@@ -36,7 +36,17 @@ FAIL_SENT = "_fail_sent"
 ADV_HEAD = "_adv_head"  # 적대적 리뷰를 띄운 head 커밋. 묶음 PR 당 1회(fixup 마다 재실행 안 함)
 ADV_BRANCH = re.compile(os.environ.get("LRM_ADV_BRANCH", r"(^|/)bundle-"))  # 묶음 PR 브랜치
 ADV_LABEL = os.environ.get("LRM_ADV_LABEL", "bundle")
-ADV_SCOPE = os.environ.get("LRM_ADV_SCOPE", "all")  # all: 모든 ready PR · bundle: 묶음 PR 만
+def adv_scope():
+    """all: 모든 ready PR · bundle: 묶음 PR 만. 환경 변수 > adv-review.env 의 ADV_SCOPE > all"""
+    if os.environ.get("LRM_ADV_SCOPE"):
+        return os.environ["LRM_ADV_SCOPE"]
+    try:
+        for ln in (DIR / "adv-review.env").read_text(encoding="utf-8").splitlines():
+            if ln.strip().startswith("ADV_SCOPE="):
+                return ln.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return "all"
 ADV_INIT = "_adv_init"
 ADV = os.environ.get("LRM_ADV", str(Path(__file__).resolve().parent / "adv_review.py"))  # 메인에 실패를 전달한 커밋(같은 커밋 실패는 1회)  # PR 별 이미 전달한 AI 리뷰 지적 id
 DONE = {"pass", "fail", "cancel"}
@@ -203,7 +213,7 @@ def start_adv(pr, prev, baseline, dry):
     """PR 이 draft 아닌 상태(ready)로 처음 보이면 적대적 리뷰를 백그라운드로 1회. fixup 커밋마다 재실행 안 함.
     ADV_SCOPE=bundle 이면 묶음 PR 만. 비용 상한은 adv_review.py 의 ADV_DAILY_MAX. 다시 돌리려면 adv_review.py --pr N"""
     head = pr.get("headRefOid")
-    if not head or pr.get("isDraft") or (ADV_SCOPE == "bundle" and not is_bundle(pr)) or prev.get(ADV_HEAD):
+    if not head or pr.get("isDraft") or (adv_scope() == "bundle" and not is_bundle(pr)) or prev.get(ADV_HEAD):
         return
     if not baseline:
         if dry:
