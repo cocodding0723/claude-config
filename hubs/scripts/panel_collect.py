@@ -274,7 +274,8 @@ def collect_hubs(conf, now, get):
             continue
         last = t.get("lastOutputAt")
         quiet = int((now * 1000 - last) // 60000) if isinstance(last, (int, float)) and last > 0 else None
-        connected = bool(t.get("connected")) and not t.get("orphaned")
+        # orphaned = 탭은 닫혔지만 세션은 살아 있음(11-11 실측: 재시작한 허브가 orphaned·connected 로 계속 출력). 연결 여부만 봄
+        connected = bool(t.get("connected"))
         rows.append({
             "hub": base,
             "name": hub_name(base),
