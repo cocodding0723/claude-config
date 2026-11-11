@@ -618,5 +618,15 @@ n=$(grep -c '#F2994A\|#EB5757\|#2F80ED\|#27AE60' "$NOTIFY")
 leak=$(grep -rlF -- "$FAKE_TOKEN" "$SB" 2>/dev/null | grep -v '/slack-bot\.env$' || true)
 [ -z "$leak" ] && ok "Z 토큰이 stdout·stderr·로그·sent 기록·가짜 curl 호출 기록에 없음(설정 파일 제외 전체 검색)" || ko "Z 토큰 노출" "$leak"
 
+# ---- Y. --alive 생존 줄 -----------------------------------------------------------------------
+printf 'print("봇: 연결됨 · 마지막 수신 2분 전")\n' > "$SB/alive.sh"
+LRM_BOT_ALIVE="$SB/alive.sh"; export LRM_BOT_ALIVE
+run_n --kind progress --alive "점검$ANS"
+[ "$RC" = 0 ] && [ "$(text | sed -n 2p)" = "봇: 연결됨 · 마지막 수신 2분 전" ] && [ "$(errn)" = 0 ] && ok "Y --alive → 주제 바로 아래 생존 줄, 경고 없음" || ko "Y --alive" "rc=$RC $(text | head -2)"
+printf 'raise SystemExit(1)\n' > "$SB/alive.sh"
+run_n --kind progress --alive "점검$ANS"
+[ "$RC" = 0 ] && [ "$(text | sed -n 2p)" = "" ] && ok "Y 생존 조회 실패 → 줄 없이 전송" || ko "Y 조회 실패" "rc=$RC"
+unset LRM_BOT_ALIVE
+
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
