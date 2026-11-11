@@ -36,7 +36,7 @@ run_n() { # 인자를 slack_notify.sh 에 그대로 전달. 결과: RC, $SB/out,
   RC=$?
 }
 # 본문 조회. 색 띠 본문(attachments[0].text)이 있으면 그것을, 첫 줄 자동 굵게(*…*)는 풀어서 반환. 없으면 text·initial_comment
-text() { jq -r '(.attachments[0].text // .text // .initial_comment // empty) | sub("^\\*(?<a>[^*\n]+)\\*(?<b>\n|$)"; "\(.a)\(.b)")' "$LOG/post.json" 2>/dev/null; }
+text() { jq -r '(.attachments[0].text // .attachments[0].blocks[0].text.text // .text // .initial_comment // empty) | sub("^\\*(?<a>[^*\n]+)\\*(?<b>\n|$)"; "\(.a)\(.b)")' "$LOG/post.json" 2>/dev/null; }
 payload() { jq -r "$1" "$LOG/post.json" 2>/dev/null; }
 posted() { [ -s "$LOG/post.json" ]; }
 nocall() { [ ! -s "$LOG/calls.log" ]; }
@@ -448,6 +448,10 @@ run_n --kind decide --options '1=가 안,2=나 안' --recommend 1 --decision-id 
 [ "$(text)" = $':비서-선택해주세요: 주제\n\n• 왜: 배경\n\n:one: 가 안\n:two: 나 안\n:star: 추천: :one:\n👉 답: :one: :two: 중 하나 · :white_check_mark: 추천대로 · :x: 보류\n\n참고: 샘플-1\n결정 D-0002' ] \
   && [ "$(lastrec | jq -c 'has("reversible"), has("seq")' | tr '\n' ,)" = "false,false," ] && ok "H '참고:' 가 있으면 선택지는 그 앞, 결정 번호는 참고 블록 끝. 되돌리기·순번 없으면 줄·필드 없음" || ko "H 참고 앞" "$(text) / $(lastrec)"
 run_n --kind decide --options '1=가,2=나,3=다,4=라' --recommend 4 --decision-id D-0003 "$CBODY"
+[ "$(payload '[.attachments[0].blocks[1].elements[].action_id] | join(",")')" = "pick_1,pick_2,pick_3,pick_4,custom" ] \
+  && [ "$(payload '.attachments[0].blocks[1].elements[3].style')" = primary ] && [ "$(payload '.attachments[0].blocks[1].elements[0].style')" = null ] \
+  && [ "$(payload '.attachments[0].blocks[1].block_id')" = "lrm_decide:D-0003" ] && [ "$(payload '.attachments[0].blocks[1].elements[1].value')" = "D-0003|2" ] \
+  && ok "Z 번호 카드 → 버튼 4개(추천 primary)·직접 입력·결정 번호 값" || ko "Z 버튼" "$(payload '.attachments[0].blocks[1]' | head -c 300)"
 [ "$RC" = 0 ] && text | grep -qx ':four: 라' && text | grep -qxF '👉 답: :one: :two: :three: :four: 중 하나 · :white_check_mark: 추천대로 · :x: 보류' && text | grep -qx ':star: 추천: :four:' && ok "H 선택지 4개·추천 4" || ko "H 4개" "rc=$RC $(text)"
 run_n --kind decide --options '1=9시, 10시 사이,2=b' --recommend 1 --decision-id D-0004 "$CBODY"
 [ "$(lastrec | jq -r '.options["1"]')" = "9시, 10시 사이" ] && ok "H 문구 안 쉼표(뒤에 '숫자=' 없음)는 문구로 유지" || ko "H 쉼표" "$(lastrec)"
@@ -599,7 +603,7 @@ run_n --kind warn --thread 1700000000.000001 $'스레드\n\n• 무엇: 답글'
 run_n --kind decide --choices 3 $'알림 시각\n\n• 왜: 배경'
 [ "$(payload '.attachments[0].text | contains("👉 답: :비서-a: A")')" = true ] && ok "I --choices 안내 줄이 색 띠 본문 안에 있음" || ko "I choices" "$(cat "$LOG/post.json")"
 run_n --kind decide --options "1=가 안,2=나 안" --recommend 1 --decision-id D-0900 $'주제\n\n• 왜: 배경'
-[ "$(payload '.attachments[0].text | contains(":one: 가 안") and contains("결정 D-0900")')" = true ] && [ "$(lastrec | jq -r '.decision_id')" = D-0900 ] && ok "I --options 카드: 선택지·결정 번호가 색 띠 본문에, 기록의 decision_id 유지" || ko "I options" "$(cat "$LOG/post.json")"
+[ "$(payload '.attachments[0].blocks[0].text.text | contains(":one: 가 안") and contains("결정 D-0900")')" = true ] && [ "$(lastrec | jq -r '.decision_id')" = D-0900 ] && ok "I --options 카드: 선택지·결정 번호가 색 띠 본문에, 기록의 decision_id 유지" || ko "I options" "$(cat "$LOG/post.json")"
 run_n --kind done "끝"
 r=$(lastrec)
 [ "$(printf '%s' "$r" | jq -r '.ts')" = 1700000000.000100 ] && [ "$(printf '%s' "$r" | jq -r '.channel')" = Dfake ] && [ "$(printf '%s' "$r" | jq -r '.title')" = ":white_check_mark: 끝" ] \

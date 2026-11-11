@@ -271,13 +271,37 @@ def bold_title(msg):
         return msg
     return "*" + first.strip() + "*" + sep + rest
 
-def build_payload(msg, kind, channel, thread):
-    """chat.postMessage 본문 JSON. kind 가 색 표에 있으면 attachment 색 띠에 본문을 담고, 알림 미리보기용 text 에는 제목만 둠"""
+SECTION_MAX = 3000  # Block Kit section text 상한
+BUTTON_TEXT_MAX = 75  # 버튼 글자 상한
+
+def buttons(spec):
+    """번호 카드 → actions 블록. 추천은 primary, 끝에 '직접 입력'. value 는 '결정번호|번호'(slack_socket.py 가 해석)"""
+    did, rec = spec["decision_id"], spec["recommended"]
+    els = []
+    for n in sorted(int(k) for k in spec["options"]):
+        text = "%d. %s" % (n, spec["options"][str(n)])
+        b = {"type": "button", "action_id": "pick_%d" % n, "value": "%s|%d" % (did, n),
+             "text": {"type": "plain_text", "text": text[:BUTTON_TEXT_MAX], "emoji": True}}
+        if n == rec:
+            b["style"] = "primary"
+        els.append(b)
+    els.append({"type": "button", "action_id": "custom", "value": "%s|custom" % did,
+                "text": {"type": "plain_text", "text": "직접 입력", "emoji": True}})
+    return {"type": "actions", "block_id": "lrm_decide:%s" % did, "elements": els}
+
+def build_payload(msg, kind, channel, thread, card=""):
+    """chat.postMessage 본문 JSON. kind 가 색 표에 있으면 attachment 색 띠에 본문을 담고, 알림 미리보기용 text 에는 제목만 둠.
+    번호 카드(card 에 options)면 색 띠 안을 section + 버튼 블록으로 바꿈. 이모지 답 줄은 버튼이 안 될 때를 위해 남김"""
     body = {"channel": channel, "text": msg}
+    spec = json.loads(card) if card else {}
     if kind in KIND_COLOR:
         title = msg.split("\n", 1)[0].replace("*", "").strip()
         body["text"] = title
-        body["attachments"] = [{"color": KIND_COLOR[kind], "text": bold_title(msg), "fallback": title, "mrkdwn_in": ["text"]}]
+        att = {"color": KIND_COLOR[kind], "text": bold_title(msg), "fallback": title, "mrkdwn_in": ["text"]}
+        if "options" in spec:
+            att = {"color": KIND_COLOR[kind], "fallback": title, "blocks": [
+                {"type": "section", "text": {"type": "mrkdwn", "text": bold_title(msg)[:SECTION_MAX]}}, buttons(spec)]}
+        body["attachments"] = [att]
     if thread:
         body["thread_ts"] = thread
     return json.dumps(body)
@@ -381,7 +405,7 @@ elif sys.argv[1] == "check":
     for lvl, code, text in check_form(data, sys.argv[2], sys.argv[3] == "1"):
         sys.stdout.buffer.write(("%s\t%s\t%s\n" % (lvl, code, text)).encode("utf-8"))
 elif sys.argv[1] == "payload":
-    sys.stdout.buffer.write(build_payload(data, *sys.argv[2:5]).encode("utf-8"))
+    sys.stdout.buffer.write(build_payload(data, *sys.argv[2:6]).encode("utf-8"))
 elif sys.argv[1] in ("opts", "card"):
     try:
         if sys.argv[1] == "opts":
@@ -525,7 +549,7 @@ if sys.argv[5]: b["thread_ts"]=sys.argv[5]
 print(json.dumps(b))' "$ID" "$N" "$CH" "$MSG" "$THREAD")" \
     $API/files.completeUploadExternal | record file
 else
-  PAYLOAD="$(printf '%s' "$MSG" | python3 -c "$FORM_PY" payload "$KIND" "$CH" "$THREAD")" \
+  PAYLOAD="$(printf '%s' "$MSG" | python3 -c "$FORM_PY" payload "$KIND" "$CH" "$THREAD" "$CARD_JSON")" \
     || die "페이로드 생성 실패(전송 안 함) — python3 동작 확인 뒤 다시 보내세요"
   curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H 'Content-Type: application/json' \
     -d "$PAYLOAD" $API/chat.postMessage | record text
