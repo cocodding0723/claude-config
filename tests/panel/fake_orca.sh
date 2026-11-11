@@ -12,6 +12,7 @@ case "$*" in
   "orchestration worker-list --full --limit 100 --cursor "*" --json") a="$*"; c="${a#*--cursor }"; f="workers_${c% --json}" ;;
   "orchestration task-list --run "*" --json") f=tasks ;;
   "worktree list --limit 1000 --json") f=worktrees ;;
+  "terminal read --terminal "*" --screen --limit 40 --json") [ -f "$D/screen.json" ] && cat "$D/screen.json" || echo '{"ok":true,"result":{"terminal":{"tail":[]}}}'; exit 0 ;;
   *) echo '{"ok":false}'; exit 1 ;;
 esac
 case " ${FAKE_ORCA_FAIL:-} " in *" $f "*) echo "fake failure" >&2; exit 1 ;; esac

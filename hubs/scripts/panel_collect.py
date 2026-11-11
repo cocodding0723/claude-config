@@ -236,6 +236,18 @@ def classify(preview, quiet_min=None):
     return "unknown"
 
 
+def hub_state(t, quiet, get):
+    """목록 미리보기로 못 정하면(TUI 는 실행 명령만 남기도 함, 11-11 실측) 렌더된 화면을 한 번 더 읽어 판정"""
+    state = classify(t.get("preview"), quiet)
+    if state != "unknown" or not t.get("handle"):
+        return state
+    try:
+        tail = (get("terminal", "read", "--terminal", t["handle"], "--screen", "--limit", "40").get("terminal") or {}).get("tail") or []
+    except SourceError:
+        return state
+    return classify("\n".join(str(x) for x in tail), quiet)
+
+
 def hub_name(base):
     return re.sub(r"(-hub)+$", "", re.sub(r"^(coord-)+", "", base)) or base
 
@@ -280,7 +292,7 @@ def collect_hubs(conf, now, get):
             "hub": base,
             "name": hub_name(base),
             "agent": str(t.get("agentIdentity"))[:20],
-            "state": classify(t.get("preview"), quiet) if connected else "unknown",
+            "state": hub_state(t, quiet, get) if connected else "unknown",
             "quietMin": max(quiet, 0) if quiet is not None else None,
             "connected": connected,
         })
