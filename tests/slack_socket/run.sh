@@ -181,6 +181,30 @@ want='Timing(check_s=30.0, down_s=60.0, refresh_s=21600.0, alive_s=600.0, deboun
 got=$(env -i PATH="$PATH" python3 -I "$HERE/driver.py" --defaults "$SOCK" 2>&1)
 [ "$got" = "$want" ] && ok "Timing.from_env 기본값 30·60·21600·600·2초·정리 상한 5초" || ko "기본값" "$got"
 
+# ---- 10. 결정 카드 버튼(interactive) -----------------------------------------------------------
+# 가짜 orca: 받은 인자를 orca.calls 에 남김. 메인 터미널 핸들은 main.env 에서 읽음
+cat > "$SB/fake_orca.sh" <<'SH'
+#!/bin/sh
+printf '%s\n' "$*" >> "$FAKE_ORCA_LOG"
+SH
+chmod +x "$SB/fake_orca.sh"
+MSG='{"ts":"1794383274.541929","text":"주제","attachments":[{"color":"#F2994A","blocks":[{"type":"section","text":{"type":"mrkdwn","text":"*시험 결정*\n배경"}},{"type":"actions","block_id":"lrm_decide:D-T1","elements":[]}]}]}'
+act() { # 시각 id 사용자 action_id value 글자
+  printf '{"at":%s,"type":"interactive","envelope_id":"%s","payload":{"type":"block_actions","user":{"id":"%s"},"trigger_id":"trg1","channel":{"id":"Dch1"},"message":%s,"actions":[{"block_id":"lrm_decide:D-T1","action_id":"%s","value":"%s","text":{"type":"plain_text","text":"%s"}}]}}' "$1" "$2" "$3" "$MSG" "$4" "$5" "$6"
+}
+SUB='{"at":0.9,"type":"interactive","envelope_id":"i3","payload":{"type":"view_submission","user":{"id":"'$ME'"},"view":{"callback_id":"lrm_custom","private_metadata":"{\"did\":\"D-T1\",\"channel\":\"Dch1\",\"ts\":\"1794383274.541929\"}","state":{"values":{"answer":{"text":{"value":"둘 다  섞어서"}}}}}}}'
+EVB="$(act 0.4 i1 $ME pick_2 'D-T1|2' '2. B 안'),$(act 0.6 i2 $ME custom 'D-T1|custom' '직접 입력'),$SUB,$(act 1.2 i4 Uother9 pick_1 'D-T1|1' '1. A')"
+mkdir -p "$SB/s20/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/s20/hub/main.env"
+start s20 "{\"events\":[$EVB],\"history\":[$MSG]}" LRM_ORCA="$SB/fake_orca.sh" FAKE_ORCA_LOG="$SB/s20/orca.calls"
+waitfor s20 out '결정 D-T1 버튼 답 기록 · 메인 전달 성공' 4 && sleep 0.8
+[ "$(count s20 calls ' ack 1 i[1-4]')" = 4 ] && ok "버튼·모달 요청 모두 ack" || ko "버튼 ack" "$(count s20 calls ' ack 1 i')"
+grep -q 'web chat_update .*✅ 2. B 안 선택됨' "$SB/s20/calls" && ! grep -q 'web chat_update .*"type": "actions"' "$SB/s20/calls" && ok "선택 → 카드를 '✅ 선택됨'으로 갱신·버튼 제거" || ko "카드 갱신" "$(grep 'web chat_update' "$SB/s20/calls" | head -1 | cut -c1-200)"
+grep -q 'web views_open .*"callback_id": "lrm_custom"' "$SB/s20/calls" && ok "'직접 입력' → 모달 열기" || ko "모달" ""
+grep -q '결정: 시험 결정 = 2. B 안 (1794383274.541929)' "$SB/s20/orca.calls" && grep -q '결정: 시험 결정 = 직접 입력: 둘 다 섞어서 (1794383274.541929)' "$SB/s20/orca.calls" && grep -q -- '--terminal term-main' "$SB/s20/orca.calls" && ok "선택·직접 입력 모두 메인 터미널로 전달" || ko "메인 전달" "$(cat "$SB/s20/orca.calls" 2>/dev/null | cut -c1-200)"
+[ "$(grep -c '"type": "button"' "$SB/s20/hub/slack-inbox.jsonl")" = 2 ] && grep -q '"pick": 2' "$SB/s20/hub/slack-inbox.jsonl" && [ "$(grep -c 1794383274.541929 "$SB/s20/hub/slack-done.txt")" = 2 ] && ok "inbox 기록 2건·done 처리" || ko "기록" "$(wc -l < "$SB/s20/hub/slack-inbox.jsonl" 2>/dev/null)"
+! grep -q '= 1. A' "$SB/s20/orca.calls" && ok "다른 사용자 클릭은 무시" || ko "남의 클릭" ""
+stop s20
+
 # ---- 9. 토큰·ID 는 어떤 출력에도 없음 ----------------------------------------------------------
 leaks=$(cat "$SB"/*/out | grep -Ec "$APPTOK|$BOTTOK|$ME|$LEAK|Uother9|Bbot1" || true)
 [ "$leaks" = 0 ] && ok "모든 시나리오 로그·표준출력에 토큰·사용자 ID·예외 본문 0건" || ko "유출" "${leaks}줄"
