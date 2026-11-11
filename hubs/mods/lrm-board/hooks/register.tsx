@@ -144,12 +144,12 @@ export const register: Register = on => {
     const history: HistoryEntry[] = board?.history ?? []
     // 허브별 가지로 묶고, 허브 순서는 가장 최근 기록 순
     const historyGroups: Array<[string, HistoryEntry[]]> = []
-    for (const h of history) {
-      const group = historyGroups.find(([name]) => name === h.hub)
+    for (const entry of history) {
+      const group = historyGroups.find(([name]) => name === entry.hub)
       if (group === undefined) {
-        historyGroups.push([h.hub, [h]])
+        historyGroups.push([entry.hub, [entry]])
       } else {
-        group[1].push(h)
+        group[1].push(entry)
       }
     }
 
@@ -241,11 +241,11 @@ export const register: Register = on => {
         {autoHubs !== undefined ? (
           <Box flexDirection="column">
             {section(`🔄 허브 (${autoHubs.rows.length})`, C.hub, `${sourceNote(src?.hubs, nowMs)}${autoHubs.truncated === true ? ' · 터미널 목록 잘림' : ''}`)}
-            {autoHubs.rows.map(h => (
+            {autoHubs.rows.map(hub => (
               <Text wrap="wrap">
-                <Text color={STATE_COLOR[h.state] ?? C.meta}>{'● '}</Text>
-                <Text bold>{h.name}</Text>
-                <Text dimColor>{` ${hubLine(h)}`}</Text>
+                <Text color={STATE_COLOR[hub.state] ?? C.meta}>{'● '}</Text>
+                <Text bold>{hub.name}</Text>
+                <Text dimColor>{` ${hubLine(hub)}`}</Text>
               </Text>
             ))}
           </Box>
@@ -293,10 +293,10 @@ export const register: Register = on => {
         {historyGroups.map(([hub, entries]) => (
           <Box flexDirection="column" marginBottom={1}>
             <Text bold color={C.title}>{hub}</Text>
-            {entries.map((h, i) =>
+            {entries.map((entry, i) =>
               hang(
                 i === entries.length - 1 ? '└' : '├',
-                `${h.at !== "" ? `${h.at}  ` : ""}${h.text}${h.ref !== undefined ? `  (${h.ref})` : ''}`,
+                `${entry.at !== "" ? `${entry.at}  ` : ""}${entry.text}${entry.ref !== undefined ? `  (${entry.ref})` : ''}`,
                 C.detail,
               ),
             )}
