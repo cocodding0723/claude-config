@@ -4,8 +4,9 @@
 옛 목록은 건드리지 않음. 이 스크립트가 만든 목록만 상태 파일(bot-list.json)에 기록하고, 기록이 있으면 재생성 안 함.
 
 환경:
-  SLACK_BOT_TOKEN   봇 토큰(필수, 출력·로그 금지)
-  SLACK_USER_ID     권한을 받을 사용자 Slack ID(--user 로 대체 가능)
+  SLACK_BOT_TOKEN   봇 토큰(출력·로그 금지). 없으면 봇 환경 파일에서 이 키 한 줄만 직접 읽음
+  SLACK_USER_ID     권한을 받을 사용자 Slack ID(--user 로 대체 가능). 없으면 같은 파일에서 읽음
+  LRM_HUB_DIR       봇 환경 파일이 있는 폴더(기본 ~/.config/lrm-hubs)
   SLACK_API_BASE    API 주소(기본 https://slack.com/api)
   LRM_BOTLIST_STATE 상태 파일(기본 ~/.config/lrm-hubs/bot-list.json)
   LRM_BOTLIST_LOCAL_ONLY=1  로컬 주소가 아니면 거부(시험용)
@@ -29,6 +30,8 @@ import tls_ctx  # noqa: E402
 DEFAULT_API = "https://slack.com/api"
 DEFAULT_NAME = "강비서 할 일"
 DEFAULT_STATE = "~/.config/lrm-hubs/bot-list.json"
+BOT_ENV_NAME = "slack-bot.env"
+ENV_KEYS = ("SLACK_BOT_TOKEN", "SLACK_USER_ID")  # 이 두 키만 읽음. 파일의 다른 값은 메모리에도 올리지 않음
 API_TIMEOUT_S = 15
 ACCESS_LEVEL = "owner"
 USER_ID_RE = re.compile(r"^[UW][A-Z0-9]{6,}$")
@@ -126,7 +129,24 @@ def column_ids(resp):
     return out
 
 
+def read_bot_env(env):
+    """봇 환경 파일에서 ENV_KEYS 만 추출. 파일이 없거나 못 읽으면 빈 dict"""
+    path = os.path.join(os.path.expanduser(env.get("LRM_HUB_DIR") or "~/.config/lrm-hubs"), BOT_ENV_NAME)
+    found = {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                key, sep, value = line.strip().removeprefix("export ").partition("=")
+                if sep and key.strip() in ENV_KEYS:
+                    found[key.strip()] = value.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return found
+
+
 def run(a, env):
+    if not (env.get("SLACK_BOT_TOKEN") and (a.user or env.get("SLACK_USER_ID"))):
+        env = {**read_bot_env(env), **{k: v for k, v in env.items() if v}}  # 환경 변수가 파일보다 우선
     state_path = os.path.expanduser(a.state or env.get("LRM_BOTLIST_STATE") or DEFAULT_STATE)
     user = a.user or env.get("SLACK_USER_ID", "")
     token = env.get("SLACK_BOT_TOKEN", "")
@@ -146,7 +166,7 @@ def run(a, env):
         emit(a, {"action": action, "dry_run": True, **plan}, f"(--dry-run) {action}: '{a.name}' → 사용자 {user} {ACCESS_LEVEL}. Slack 호출·상태 쓰기 없음")
         return 0
     if not token:
-        raise Fail("SLACK_BOT_TOKEN 없음. slack-bot.env 를 읽은 환경(wrapper)에서 실행", 2)
+        raise Fail("SLACK_BOT_TOKEN 없음. 환경 변수로 주거나 봇 환경 파일(slack-bot.env)에 추가", 2)
 
     slack = Slack(a.api or env.get("SLACK_API_BASE") or DEFAULT_API, token)
     slack.check_local(env.get("LRM_BOTLIST_LOCAL_ONLY") == "1")

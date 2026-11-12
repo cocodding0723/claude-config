@@ -10,7 +10,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 SCRIPTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "hubs", "scripts")
 SCRIPT = os.path.join(SCRIPTS, "slack_list_create.py")
-WRAPPER = os.path.join(SCRIPTS, "with_bot_env.sh")
 TOKEN = "-".join(["fake", "secret", "value", "123"])  # 실제 토큰 모양을 피함(비밀 패턴 검사)
 
 
@@ -40,7 +39,7 @@ class Fake(BaseHTTPRequestHandler):
         pass
 
 
-class ListCreate(unittest.TestCase):
+class Base(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.srv = HTTPServer(("127.0.0.1", 0), Fake)
@@ -59,7 +58,8 @@ class ListCreate(unittest.TestCase):
 
     def run_cli(self, *args, **env):
         e = {"PATH": os.environ["PATH"], "SLACK_API_BASE": f"http://127.0.0.1:{self.srv.server_port}/api", "SLACK_BOT_TOKEN": TOKEN,
-             "SLACK_USER_ID": "UFAKEUSER1", "LRM_BOTLIST_LOCAL_ONLY": "1", "LRM_BOTLIST_STATE": self.state}
+             "SLACK_USER_ID": "UFAKEUSER1", "LRM_BOTLIST_LOCAL_ONLY": "1", "LRM_BOTLIST_STATE": self.state,
+             "LRM_HUB_DIR": os.path.join(self.dir, "empty-hub")}  # 실제 봇 환경 파일을 읽지 않게 격리
         e.update(env)
         return subprocess.run([sys.executable, "-I", SCRIPT, *args], env=e, capture_output=True, text=True)
 
@@ -70,6 +70,8 @@ class ListCreate(unittest.TestCase):
     def methods(self):
         return [c[0] for c in Fake.calls]
 
+
+class ListCreate(Base):
     def test_create_and_share(self):
         r = self.run_cli("--json")
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -142,20 +144,43 @@ class ListCreate(unittest.TestCase):
         self.assertIn("--dry-run", r.stdout)
 
 
-class Wrapper(unittest.TestCase):
-    def test_wrapper_loads_env_silently(self):
-        with tempfile.TemporaryDirectory() as d:
-            envf = os.path.join(d, "x.env")
-            with open(envf, "w") as f:
-                f.write("SLACK_BOT_TOKEN=" + TOKEN + "\n")
-            r = subprocess.run(["bash", WRAPPER, "sh", "-c", 'test "$SLACK_BOT_TOKEN" = ' + TOKEN],
-                               env={"PATH": os.environ["PATH"], "LRM_BOT_ENV": envf}, capture_output=True, text=True)
-            self.assertEqual((r.returncode, r.stdout, r.stderr), (0, "", ""))
+class BotEnvFile(Base):
+    """환경 변수 대신 봇 환경 파일에서 토큰·사용자 ID 를 읽는 경로"""
 
-    def test_wrapper_missing_env_fails_with_hint(self):
-        r = subprocess.run(["bash", WRAPPER, "true"], env={"PATH": os.environ["PATH"], "LRM_BOT_ENV": "/없는/env"}, capture_output=True, text=True)
+    def run_file(self, content, **env):
+        hub = os.path.join(self.dir, "hub")
+        os.makedirs(hub, exist_ok=True)
+        with open(os.path.join(hub, "slack-bot.env"), "w") as f:
+            f.write(content)
+        e = {"PATH": os.environ["PATH"], "SLACK_API_BASE": f"http://127.0.0.1:{self.srv.server_port}/api",
+             "LRM_BOTLIST_LOCAL_ONLY": "1", "LRM_BOTLIST_STATE": self.state, "LRM_HUB_DIR": hub}
+        e.update(env)
+        return subprocess.run([sys.executable, "-I", SCRIPT], env=e, capture_output=True, text=True)
+
+    def test_token_and_user_from_file(self):
+        r = self.run_file(f"# 주석\nOTHER=zzz\nSLACK_BOT_TOKEN={TOKEN}\nexport SLACK_USER_ID=\"UFILEUSER1\"\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(Fake.calls[-1][1]["user_ids"], ["UFILEUSER1"])
+        self.assertTrue(all(c[2] == "Bearer " + TOKEN for c in Fake.calls))
+        self.assertNotIn(TOKEN, r.stdout + r.stderr)
+
+    def test_env_var_wins_over_file(self):
+        self.run_file(f"SLACK_BOT_TOKEN=wrong\nSLACK_USER_ID=UFILEUSER1\n", SLACK_BOT_TOKEN=TOKEN, SLACK_USER_ID="UENVUSER01")
+        self.assertEqual(Fake.calls[-1][1]["user_ids"], ["UENVUSER01"])
+        self.assertTrue(all(c[2] == "Bearer " + TOKEN for c in Fake.calls))
+
+    def test_file_without_token_errors_cleanly(self):
+        r = self.run_file("SLACK_USER_ID=UFILEUSER1\n")
         self.assertEqual(r.returncode, 2)
         self.assertIn("slack-bot.env", r.stderr)
+        self.assertEqual(Fake.calls, [])
+
+    def test_no_file_no_env_errors_cleanly(self):
+        r = self.run_cli(SLACK_BOT_TOKEN="", SLACK_USER_ID="", LRM_HUB_DIR=os.path.join(self.dir, "none"))
+        self.assertEqual(r.returncode, 2)
+
+    def test_wrapper_removed(self):
+        self.assertFalse(os.path.exists(os.path.join(SCRIPTS, "with_bot_env.sh")))
 
 
 if __name__ == "__main__":
