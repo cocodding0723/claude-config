@@ -52,7 +52,6 @@ HTML_EXTS = (".html", ".htm")
 DEFAULT_BUDGET_S = 40.0  # 회차 시간 예산. 넘기면 새 전송을 시작하지 않고 다음 회차로 넘김
 MAX_PER_RUN = 10
 LINE_MAX = 60
-LINK_BASE = "https://slack.com/archives"
 ERR_MAX = 100
 
 
@@ -241,10 +240,6 @@ def channel_of(conf: Conf, ts: str) -> str:
     return read_json_file(conf.sync_state).get("channel", "")
 
 
-def permalink(channel: str, ts: str) -> str:
-    return f"{LINK_BASE}/{channel}/p{ts.replace('.', '')}" if channel and ts else ""
-
-
 def request_of(conf: Conf, task: str) -> str:
     """주제 시작 메시지에 쓸 장부 요청 한 줄. 장부에 없으면 빈 문자열"""
     try:
@@ -279,13 +274,12 @@ def body_text(rep: dict) -> str:
     return "\n".join(out)
 
 
-def progress_line(rep: dict, link: str) -> str:
+def progress_line(rep: dict) -> str:
+    """진행 스레드 한 줄. 원본 링크는 알림 스크립트(--quote)가 chat.getPermalink 정식 주소로 붙임(손수 만든 주소 금지, 실패 시 '원본: 링크 없음')"""
     emoji, label, _ = hub_report.KINDS[rep["kind"]]
     first = rep["text"].splitlines()[0]
     first = first if len(first) <= LINE_MAX else first[: LINE_MAX - 1] + "…"
     out = [f"{emoji} {rep['hub']} {label}", f"- {first}"]
-    if link:
-        out.append(f"- <{link}|{'결정 카드' if rep['kind'] == 'decide' else '주제 스레드'}>")
     return "\n".join(out)
 
 
@@ -432,8 +426,7 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
         parent = read_json_file(conf.sync_state).get("ts", "")
         if parent:
             target = rs["body_ts"] if decide else topic["ts"]
-            channel = channel_of(conf, target) or topic.get("channel", "")
-            rs["line_ts"] = run_notify(conf, ["--thread", parent] + attached_args(rep) + [progress_line(rep, permalink(channel, target))], deadline)
+            rs["line_ts"] = run_notify(conf, ["--thread", parent, "--quote", target] + attached_args(rep) + [progress_line(rep)], deadline)
         else:
             rs["line_ts"] = ""  # 진행 스레드 부모가 아직 없음. 본문은 이미 올라가 있어 줄만 생략
         save_state(conf.state, st)
