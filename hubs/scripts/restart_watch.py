@@ -77,30 +77,40 @@ def key_of(ident: dict) -> str:
     return f"{ident['runtimeId']}:{ident['pid']}:{ident['startedAt']}"
 
 
-def load_state() -> dict:
+def load_state_at(path: str) -> dict:
+    """상태 파일 읽기. 없음·손상은 빈 dict(stall_watch.py 도 공용)"""
     try:
-        with open(STATE, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             d = json.load(f)
         return d if isinstance(d, dict) else {}
     except (OSError, ValueError):
         return {}
 
 
-def save_state(d: dict) -> None:
-    os.makedirs(DIR, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=".tmp-", suffix=".json", dir=DIR)
+def save_state_at(path: str, d: dict) -> None:
+    """같은 폴더 임시 파일 → fsync → os.replace 원자 교체"""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-", suffix=".json", dir=os.path.dirname(path))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=1)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, STATE)
+        os.replace(tmp, path)
     except BaseException:
         try:
             os.unlink(tmp)
         except OSError:
             pass
         raise
+
+
+def load_state() -> dict:
+    return load_state_at(STATE)
+
+
+def save_state(d: dict) -> None:
+    save_state_at(STATE, d)
 
 
 def hub_rows() -> list[tuple[str, str]]:
@@ -148,8 +158,8 @@ def card_text(ident: dict, hubs: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def send_card(did: str, text: str) -> bool:
-    cmd = [NOTIFY, "--kind", "decide", "--options", "1=이어받기,2=보류", "--recommend", "1", "--decision-id", did, "--reversible", "쉬움", text]
+def send_card(did: str, text: str, options: str = "1=이어받기,2=보류") -> bool:
+    cmd = [NOTIFY, "--kind", "decide", "--options", options, "--recommend", "1", "--decision-id", did, "--reversible", "쉬움", text]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=NOTIFY_TIMEOUT_S, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired):

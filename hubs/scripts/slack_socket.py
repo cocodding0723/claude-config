@@ -266,7 +266,7 @@ def load_env(path: str) -> dict:
 # 주기 감시기(새 launchd 를 늘리지 않고 이 상주 프로세스의 감시 루프에 얹음). 각 스크립트의 `check` 를 부름
 WATCH_S = env_secs("LRM_SOCKET_WATCH_S", 120.0, allow_zero=True)
 WATCH_TIMEOUT_S = 120
-WATCHERS = ("restart_watch.py",)
+WATCHERS = ("restart_watch.py", "stall_watch.py")
 _watch_lock = threading.Lock()
 
 

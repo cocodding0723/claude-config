@@ -74,6 +74,8 @@ hubs/scripts/hub_status.py	.config/lrm-hubs/hub_status.py	link
 hubs/scripts/card_actions.py	.config/lrm-hubs/card_actions.py	link
 hubs/scripts/restart_watch.py	.config/lrm-hubs/restart_watch.py	link
 hubs/docs/restart-watch.md	.config/lrm-hubs/docs/restart-watch.md	link
+hubs/scripts/stall_watch.py	.config/lrm-hubs/stall_watch.py	link
+hubs/docs/stall-watch.md	.config/lrm-hubs/docs/stall-watch.md	link
 hubs/hubs.tsv	.config/lrm-hubs/hubs.tsv	link
 hubs/scripts/slack_cmd.sh	.config/lrm-hubs/slack_cmd.sh	link
 hubs/scripts/slack_notify.sh	.config/lrm-hubs/slack_notify.sh	link

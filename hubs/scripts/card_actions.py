@@ -12,10 +12,15 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import main_terminal as mt  # noqa: E402
+
 DIR = os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
 STORE = os.path.join(DIR, "card-actions.json")
 TTL_S = 7 * 24 * 3600  # 답 없는 카드의 등록 보존 기간
 RUN_PICK = 1  # 실행을 뜻하는 선택지 번호
+ORCA = os.environ.get("LRM_ORCA") or "orca"
+ORCA_TIMEOUT_S = 30
 EXEC_TIMEOUT_S = 600  # 허브 여러 개를 순서대로 띄우는 시간까지 감안한 상한
 
 EPILOG = """종료 코드: 0 성공(등록 없음 포함), 1 후속 동작 실패, 2 인자 오류
@@ -86,7 +91,54 @@ def run_resume(args: dict) -> tuple[int, str]:
     return p.returncode, f"허브 {len(slugs)}개 이어받기 요청({', '.join(slugs)})" if p.returncode == 0 else f"resume_all 종료 코드 {p.returncode}"
 
 
-KINDS = {"resume": run_resume}
+def orca_json(args: list):
+    rc, d = mt.run_orca(ORCA, args, ORCA_TIMEOUT_S)
+    res = (d or {}).get("result") if rc == 0 and isinstance(d, dict) else None
+    return res if isinstance(res, dict) else None
+
+
+def send_line(handle: str, text: str) -> bool:
+    rc, _ = mt.run_orca(ORCA, ["terminal", "send", "--terminal", handle, "--text", text, "--enter", "--json"], ORCA_TIMEOUT_S)
+    return rc == 0
+
+
+def hub_terminals(slug: str) -> list:
+    """허브 폴더(coord-<slug>-hub)에 연결된 claude 터미널 핸들. 조회 실패는 None"""
+    res = orca_json(["terminal", "list", "--json", "--limit", "1000"])
+    if res is None or not isinstance(res.get("terminals"), list):
+        return None
+    return [t.get("handle") for t in res["terminals"] if isinstance(t, dict) and str(t.get("worktreePath", "")).endswith(f"/coord-{slug}-hub")
+            and t.get("agentIdentity") == "claude" and t.get("connected") is True and t.get("handle")]
+
+
+def run_notify(args: dict) -> tuple[int, str]:
+    """멈춘 워커 알림: 허브 코디네이터 터미널에 한 줄만 전송. 워커·창은 건드리지 않음.
+    코디네이터가 2개 이상이면 어느 쪽인지 알 수 없어 허브에는 보내지 않고 메인에 중복 사실만 알림"""
+    sent, notes = 0, []
+    for hub in args.get("hubs", []):
+        slug, lines = hub.get("slug", ""), hub.get("lines", [])
+        handles = hub_terminals(slug) if slug else []
+        if not handles:
+            notes.append(f"{slug or '허브 미확인'}: 코디네이터 터미널 없음")
+        elif len(handles) > 1:
+            notes.append(f"{slug}: 코디네이터 {len(handles)}개라 보내지 않음")
+        elif send_line(handles[0], "[멈춘 워커 감시] 응답 없는 워커: " + " / ".join(lines)[:600] + " — 상태 확인 후 필요하면 재배정"):
+            sent += 1
+        else:
+            notes.append(f"{slug}: 전송 실패")
+    dups = args.get("dups", [])
+    main_handle = mt.read_handle(os.environ.get("LRM_MAIN_ENV") or os.path.join(DIR, "main.env")) if dups else None
+    if dups:
+        text = "[멈춘 워커 감시] 중복 코디네이터: " + "; ".join(f"{d['slug']} ({' / '.join(d['titles'])})" for d in dups) + " — 닫지 않았음, 정리 여부 판단 필요"
+        if main_handle and send_line(main_handle, text[:600]):
+            notes.append("중복 코디네이터를 메인에 알림")
+        else:
+            notes.append("중복 코디네이터 메인 알림 실패")
+    bad = [n for n in notes if "없음" in n or "실패" in n or "않음" in n]
+    return (1 if bad and not sent else 0), f"허브 {sent}곳 알림" + (f" · {'; '.join(notes)}" if notes else "")
+
+
+KINDS = {"resume": run_resume, "notify": run_notify}
 
 
 def execute(entry: dict, pick) -> tuple[int, str]:
