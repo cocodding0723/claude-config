@@ -102,7 +102,10 @@ def send_main(text: str) -> bool:
     handle = main_handle(MAIN_ENV)
     if handle:
         _, why = mt.check_link(orca_run, SPEC, handle)
-        if why not in mt.REDISCOVER:  # 정상이거나 일시 오류(조회 실패·쓰기 불가). 설정된 대상으로 보냄
+        if why and why not in mt.REDISCOVER:  # 조회 실패·쓰기 불가: 메인인지 확인 못 함. 보내지 않고 실패(재탐색도 안 함)
+            log(f"메인 확인 실패({why}) — 전달 보류")
+            return False
+        if not why:  # 메인임을 확인함. 설정된 대상으로 보냄
             res = send_to(handle, text)
             if res == "sent":
                 return True
