@@ -322,6 +322,17 @@ def answer_text(it):
     return f"결정 {did} = 추천대로(선택 {n})" if act == "approve" else None
 
 
+def reply_text(it):
+    """결정 카드 스레드 글의 해석 문장. 선택·추천은 '결정 D-0001 = 선택 2(문구) (스레드 글)', 해석 못 한 글은 '결정 D-0001 답(자유 글)'. 카드 글이 아니면 None"""
+    did = it.get("decision_id")
+    if it.get("type") != "thread_reply" or it.get("kind") != "decide" or not isinstance(did, str) or not DECISION_ID_RE.fullmatch(did):
+        return None
+    if it.get("action") == "free":
+        return f"결정 {did} 답(자유 글)"
+    said = answer_text(it)
+    return f"{said} (스레드 글)" if said else None
+
+
 def react_line(ln, it):
     """반응 1건 = 한 줄: 이모지 이름·해석(번호 카드·할 일은 해석 문장, 그 밖은 action)·종류·대상 메시지 제목(tag)"""
     tag = one_line(it.get("tag") or "", 30)
@@ -342,7 +353,8 @@ def render(items, batch_path, react):
         cut = len(body) > min(MSG_CHARS, room)
         body = body[:min(MSG_CHARS, room)]
         used += len(body)
-        out.append(f"- #{ln} [{label(it)}] ts={ts_text(it)}{kind_text(it)}")
+        said = reply_text(it)
+        out.append(f"- #{ln} [{label(it)}] ts={ts_text(it)}{kind_text(it)}" + (f" → {said}" if said else ""))
         out += quote(body) if body else []
         if cut:
             out.append("> " + CUT_NOTE)
