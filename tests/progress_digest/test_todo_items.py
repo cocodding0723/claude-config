@@ -83,5 +83,16 @@ class UrgencyTest(unittest.TestCase):
         self.assertEqual([r.urgency for r in rows], [3, 2])
 
 
+class PlanTest(unittest.TestCase):
+    def test_row_title_change_updates_existing_row(self):
+        import progress_digest as pd
+        it = pd.Item("hub:a:b:1", "block", "a: 권한 결정")
+        it.row = t.build_rows([(it.key, it.bucket, it.title, 0)], 100, {})[0]
+        state = {"items": {it.key: {"record": "R1", "title": it.title, "bucket": it.bucket, "link": "", "sig": [it.title, it.bucket, "", it.row.kind, it.row.urgency, it.row.hub, it.row.answer]}}}
+        self.assertEqual([o[0] for o in pd.plan_list([it], state, 100)], ["update"])  # 옛 제목 규칙으로 쓴 행은 새 제목으로 고침
+        state["items"][it.key]["sig"][0] = it.row.title
+        self.assertEqual(pd.plan_list([it], state, 100), [])
+
+
 if __name__ == "__main__":
     unittest.main()

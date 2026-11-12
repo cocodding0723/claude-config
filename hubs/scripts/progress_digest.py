@@ -94,7 +94,7 @@ class Item:
     def sig(self):
         """목록 행에 보이는 값 묶음. 바뀌면 행을 고침"""
         r = self.row
-        return [self.title, self.bucket, self.link] + ([r.kind, r.urgency, r.hub, r.answer] if r else [])
+        return [self.line() if r else self.title, self.bucket, self.link] + ([r.kind, r.urgency, r.hub, r.answer] if r else [])
 
 
 @dataclass
