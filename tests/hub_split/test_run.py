@@ -224,6 +224,15 @@ class Split(RunBase):
             rc, _, err = self.go()
             self.assertEqual(rc, want, (kw, err))
 
+    def test_custom_input_after_approval_refused(self):
+        self.propose()  # 버튼 승인
+        self.go(apply=False)
+        self.approve("D-S1", pick=None, action="custom", text="보류")  # 뒤이어 '직접 입력' 버튼으로 보류
+        rc, _, err = self.go()
+        self.assertEqual(rc, 4, err)
+        self.assertIn("직접 입력", err)
+        self.assertEqual(rd(hs.hubs_tsv()), self.hubs_before)
+
     def test_routes_failure_restores_routes(self):
         self.ready()
         orig = hs.Runner.routes

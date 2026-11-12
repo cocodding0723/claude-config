@@ -491,7 +491,7 @@ def card_answer(did: str, since: float):
                 except ValueError:
                     continue
                 if (isinstance(d, dict) and d.get("decision_id") == did and d.get("type") in ANSWER_TYPES
-                        and d.get("action") in ("pick", "approve", "hold", "free")
+                        and d.get("action") in ("pick", "approve", "hold", "free", "custom")
                         and float(d.get("received_at") or 0) >= since):
                     last = d
     except OSError:
@@ -508,8 +508,8 @@ def check_approved(did: str, prop: dict) -> None:
         why = f"답이 갈림({d.get('choices')}) — 사용자에게 다시 확인"
     elif d["action"] == "hold":
         why = "보류 답"
-    elif d["action"] == "free":
-        why = "자유 글 답 — 메인이 사용자 뜻을 확인해 카드 버튼·✅ 로 다시 받음"
+    elif d["action"] in ("free", "custom"):  # custom = 카드 '직접 입력' 버튼. 내용은 사람이 읽어야 함
+        why = "자유 글·직접 입력 답 — 메인이 사용자 뜻을 확인해 카드 버튼·✅ 로 다시 받음"
     elif d.get("pick") != APPROVE_PICK:
         why = f"선택 {d.get('pick')}(승인 아님)"
     else:
