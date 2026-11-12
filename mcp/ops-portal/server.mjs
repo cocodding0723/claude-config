@@ -24,6 +24,39 @@ export async function api(path, method = "GET", body) {
   return json;
 }
 
+// 러너 현황판 API(인증 없음, 읽기만). POST /api/bump(대기 순서 올리기)는 부작용이 있어 도구로 넣지 않음
+const RUNNER_API = process.env.OPS_RUNNER_API || "https://bs-mac-mini.taile54389.ts.net:8710/api/runner-status";
+
+export async function runnerRaw() {
+  const r = await fetch(RUNNER_API, { headers: { Accept: "application/json" } });
+  if (!r.ok) throw new Error(`러너 현황 → ${r.status}`);
+  return r.json();
+}
+
+const jobLine = (j) => ({ repo: j.repo, workflow: j.workflow, job: j.job, runner: j.runner, group: j.group, url: j.url });
+
+/** 러너·그룹·실행/대기 요약. 원본이 크므로 필요한 칸만 */
+export function summarizeRunners(d) {
+  const runners = (d.runners || []).map((r) => ({ name: r.name, status: r.status, busy: !!r.busy, group: r.group }));
+  return {
+    now: d.now,
+    stale: !!d.meta?.stale,
+    groups: d.groups || {},
+    runners,
+    offline: runners.filter((r) => r.status !== "online").map((r) => r.name),
+    running: (d.running || []).map(jobLine),
+    queued: (d.queued || []).map(jobLine),
+    updatedAt: { runners: d.meta?.runnersUpdatedAt, jobs: d.meta?.jobsUpdatedAt },
+    errors: d.meta?.errors || {},
+  };
+}
+
+/** CI 에서 쓰는 Claude 계정 상태(ok·blocked 등)·리셋 시각·밀린 기록 수 */
+export function summarizeClaude(d) {
+  const c = d.claude || {};
+  return { account: c.account || {}, blocked: (c.account?.state || "") !== "ok", backlog: c.backlog, error: c.error || null, now: d.now };
+}
+
 const enc = encodeURIComponent;
 const actionsOf = (manifest) => (manifest.features || []).flatMap((f) => f.actions || []);
 
@@ -77,6 +110,10 @@ export const TOOLS = [
   { name: "ops_audit", description: "감사 기록 조회 (읽기 전용)",
     inputSchema: { type: "object", properties: { query: { type: "string", description: "선택. 포털 감사 화면과 같은 쿼리 문자열(? 없이). 예: limit=50" } } },
     run: ({ query = "limit=50" }) => api(`/audit?${query}`) },
+  { name: "runner_status", description: "사내 CI 러너 현황 (읽기 전용): 러너별 온라인·바쁨, 그룹(heavy/light)별 전체·바쁨·대기 수, 실행 중·대기 작업 목록",
+    inputSchema: { type: "object", properties: {} }, run: async () => summarizeRunners(await runnerRaw()) },
+  { name: "ci_claude_usage", description: "CI AI 리뷰가 쓰는 Claude 계정 상태 (읽기 전용): state(ok·blocked 등)·리셋 시각·한도 종류·밀린 기록 수",
+    inputSchema: { type: "object", properties: {} }, run: async () => summarizeClaude(await runnerRaw()) },
   { name: "ops_run",
     description: "데브 액션 실행. 부작용 있음: key-request·fill 은 데브 시트에 바로 씀, locale-dev·data-dev·scenario-dev 는 데브 서버에 바로 올림, data-sync 는 저장소에 바로 반영 후 데브 업로드까지 이어짐. 라이브 역할·위험 액션은 거부됨(포털에서 직접). dryRun=true 면 미리보기 짝(key-request→key-preview)으로 대신 실행해 시트를 안 씀. 시트에 쓰는 액션은 먼저 dryRun 으로 확인할 것. 반환된 jobId 는 ops_job 으로 확인",
     inputSchema: { type: "object", properties: { project: P, action: { type: "string" }, text: { type: "string", description: "input=text 액션의 입력 문장" }, dryRun: { type: "boolean" } }, required: ["action"] },
