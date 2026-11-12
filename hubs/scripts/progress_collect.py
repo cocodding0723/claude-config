@@ -278,18 +278,21 @@ def default_repos():
                     k, sep, v = line.strip().partition("=")
                     if sep and k == "PANEL_GH_REPOS":
                         raw = v.strip().strip('"').strip("'")
-        except OSError:
-            pass
+        except (OSError, UnicodeDecodeError) as e:  # 깨진 설정이 수집 전체를 멈추지 않게 파일만 무시
+            if not isinstance(e, FileNotFoundError):
+                print(f"경고: panel.env 읽기 실패({type(e).__name__}) — 무시하고 현재 저장소로 조회", file=sys.stderr)
+            raw = ""
     return [r for r in re.split(r"[\s,]+", raw) if r]
 
 
-def conf_from_env():
+def conf_from_env(read_panel=True):
+    """read_panel=False 면 panel.env 를 읽지 않음(PR 조회를 안 하거나 저장소를 명시한 실행)"""
     env = os.environ.get
     return {
         "ledger": env("LRM_LEDGER") or os.path.join(HUB_DIR, "feedback-ledger.tsv"),
         "status_dir": os.path.expanduser(env("LRM_HUB_STATUS_DIR") or os.path.join(HUB_DIR, "hub-status")),  # 작업 폴더 밑이 기본(시험이 격리됨)
         "gh": gh_bin(),
-        "repos": [r.strip() for r in (env("LRM_DIGEST_REPOS") or "").split(",") if r.strip()] or default_repos(),
+        "repos": [r.strip() for r in (env("LRM_DIGEST_REPOS") or "").split(",") if r.strip()] or (default_repos() if read_panel else []),
     }
 
 
@@ -386,7 +389,7 @@ def refresh(pending=None, workers=None, write=True, use_pr=True, conf=None, work
         prev = load_snapshot(path) or {}
     except SourceError:
         prev = {}
-    snap = build(conf or conf_from_env(), prev, int(time.time()), pending, workers, use_pr, workspaces)
+    snap = build(conf or conf_from_env(read_panel=use_pr), prev, int(time.time()), pending, workers, use_pr, workspaces)
     if write:
         write_snapshot(path, snap)
     return snap
@@ -402,7 +405,7 @@ def main(argv=None):
     p.add_argument("--no-pr", action="store_true", help="PR 조회 생략")
     p.add_argument("--repo", action="append", default=[], help="PR 조회 저장소 owner/name (여러 번 가능)")
     a = p.parse_args(argv)
-    conf = conf_from_env()
+    conf = conf_from_env(read_panel=not a.no_pr and not a.repo)
     conf["repos"] = a.repo or conf["repos"]
     try:
         snap = refresh(write=not a.dry_run, use_pr=not a.no_pr, conf=conf)

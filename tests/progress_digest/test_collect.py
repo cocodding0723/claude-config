@@ -117,6 +117,23 @@ class CollectTest(Base):
         self.assertEqual(self.run_once("--once", PANEL_GH_REPOS="Org/PanelEnv").returncode, 0)  # 환경 변수 PANEL_GH_REPOS 도 파일보다 우선
         self.assertEqual(self.repos_called(log), ["Org/PanelEnv"])
 
+    def test_broken_panel_env_does_not_stop_collection(self):
+        # 디코딩 불가 panel.env: --once 는 경고 후 파일 무시, --no-pr·--repo 는 파일을 읽지도 않음
+        log = self.gh_args()
+        with open(os.path.join(self.t.name, "panel.env"), "wb") as f:
+            f.write(b"PANEL_GH_REPOS=Org/One\n#\xff\n")
+        r = self.run_once("--once")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("panel.env 읽기 실패", r.stderr)
+        self.assertEqual(self.repos_called(log), [None])
+        r = self.run_once("--dry-run", "--no-pr")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("panel.env", r.stderr)
+        os.remove(log)
+        r = self.run_once("--dry-run", "--repo", "Org/Explicit")
+        self.assertEqual((r.returncode, self.repos_called(log)), (0, ["Org/Explicit"]))
+        self.assertNotIn("panel.env", r.stderr)
+
     def test_pr_repos_default_to_current_repo_without_any_setting(self):
         log = self.gh_args()
         self.assertEqual(self.run_once("--once").returncode, 0)
