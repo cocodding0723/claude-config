@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """명령 접수기: slack-inbox.jsonl 의 새 사용자 명령에 번호를 매기고 장부에 '접수' 행을 남기며 머리말로 라우팅 대상을 기록.
 
-번호·장부·라우팅만 함. 명령 해석·실행·허브 전달은 하지 않음(전달은 routes 기록을 읽는 쪽이 맡음).
+번호·장부·라우팅 뒤, 담당 허브가 main 이 아니면 그 허브 코디네이터 터미널에 '[접수 #번호] 원문' 한 줄을 하달함(deliver). 명령 해석·실행은 하지 않음.
+하달 실패(허브 행·터미널 없음·후보 여러 개·조회 실패·전송 실패)는 조용히 버리지 않음: 장부를 '보류'+'전달 실패' 로 바꾸고 메인 터미널로 알림.
+하달은 최대 한 번: 전송 직전 'sending' 을 저장하므로 전송 중 죽은 회차의 명령은 중복 전송 없이 '도착 불명'으로 메인에 알림.
 멱등: 메시지 ts 로 접수 여부를 판정하므로 같은 줄을 다시 읽어도 번호·장부 행이 늘지 않음.
 동시 실행(폴러·소켓): 상태 파일 옆 .lock 에 flock 을 잡고 한 번에 하나만 처리함.
 대상: type 이 note·command 인 최상위 사용자 메시지. 반응·스레드 답글·봇 즉답 명령(대기·PR)은 제외.
 첫 설치(상태 파일 없음)에서만 접수 기한(기본 24시간)보다 묵은 줄을 접수 없이 '본 것'으로 표시함. 운영 중 쌓인 미처리 명령은 나이와 무관하게 접수함.
 
 환경: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs) · LRM_LEDGER 장부 · LRM_INTAKE_ROUTES 머리말 표 · LRM_INTAKE_BUDGET_S 시간 예산
+      LRM_HUBS_TABLE 허브 표(기본 작업 폴더 hubs.tsv) · LRM_MAIN_ENV 메인 핸들 파일 · LRM_ORCA orca 실행 파일 · LRM_INTAKE_DELIVER_S 하달 시간 예산
 시간 예산: 접수 단계 전체(잠금 대기 포함)에 LRM_INTAKE_BUDGET_S(기본 10초) 상한. 넘기면 하던 일을 멈추고 종료 코드 3 — 폴러 뒤 메인 전달을 막지 않고 다음 회차가 이어받음.
 종료 코드: 0 성공(접수 0건 포함), 1 파일 읽기·쓰기 실패, 2 설정 오류(머리말 표 형식 등), 3 시간 예산 초과·잠금 대기 초과(다음 회차 재시도)
 """
@@ -17,6 +20,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import signal
 import sys
 import tempfile
@@ -25,6 +29,7 @@ from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # 복사·링크 설치에서도 같은 폴더의 ledger 를 찾음
 import ledger  # noqa: E402
+import main_terminal as mt  # noqa: E402
 
 HUB_DIR = os.environ.get("LRM_HUB_DIR", os.path.expanduser("~/.config/lrm-hubs"))
 EXIT_IO, EXIT_CONF, EXIT_BUSY = 1, 2, 3
@@ -47,6 +52,13 @@ class Conf:
     max_age_s: int = 86400  # 첫 설치 이관에만 적용
     req_max: int = 80
     budget_s: float = 10.0  # 접수 한 번의 전체 시간 상한(잠금 대기 포함)
+    deliver_s: float = 40.0  # 하달 단계 시간 상한. orca 호출 대기가 길어 접수 예산과 따로 둠
+    sent: str = ""  # 하달 상태 파일 {번호: {st, hub, at, why}}
+    hubs_table: str = ""
+    main_env: str = ""
+    orca: str = ""
+    main_spec: object = None
+    deliver_max_age_s: int = 3600  # 이보다 묵은 접수는 하달하지 않음(재개 직후 옛 명령이 허브로 쏟아지는 것 방지). 장부·메인 알림으로 남김
 
     def __post_init__(self) -> None:
         join = lambda n: os.path.join(HUB_DIR, n)  # noqa: E731
@@ -56,7 +68,14 @@ class Conf:
         self.state = self.state or join("intake-state.json")
         self.routes_log = self.routes_log or join("intake-routes.jsonl")
         self.ledger = self.ledger or os.environ.get("LRM_LEDGER") or join("feedback-ledger.tsv")  # 라이브 장부 기본 경로를 쓰지 않음
+        with contextlib.suppress(ValueError):
+            self.deliver_s = float(os.environ.get("LRM_INTAKE_DELIVER_S", self.deliver_s))
         self.table = self.table or os.environ.get("LRM_INTAKE_ROUTES") or join("intake-routes.tsv")
+        self.sent = self.sent or join("intake-sent.json")
+        self.hubs_table = self.hubs_table or os.environ.get("LRM_HUBS_TABLE") or join("hubs.tsv")
+        self.main_env = self.main_env or os.environ.get("LRM_MAIN_ENV") or join("main.env")
+        self.orca = self.orca or os.environ.get("LRM_ORCA") or shutil.which("orca") or "orca"
+        self.main_spec = self.main_spec or mt.Spec.from_env()
 
 
 @dataclass
@@ -282,6 +301,159 @@ def intake(conf: Conf, now: float, dry: bool = False) -> dict:
     return {"new": new, "skipped": skipped, "seen": seen_n}
 
 
+# 하달 상태 값. sending 은 전송 직전 저장(전송 중 죽으면 도착 불명으로 취급해 재전송하지 않음)
+ST_SENDING, ST_SENT, ST_FAILED, ST_NOTIFIED, ST_LEGACY = "sending", "sent", "failed", "notified", "legacy"
+SEND_TIMEOUT, LIST_TIMEOUT_S, SUBMIT_WAIT_S = 30, 15, 20
+LINE_MAX = 1500
+
+
+def hub_slug(path: str, hub: str):
+    """허브 표(hubs.tsv: slug·이름·역할 파일·…)에서 역할 파일 이름이 role-<hub>.txt 인 행의 slug. 없으면 None"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            for ln in f:
+                cells = ln.rstrip("\n").split("\t")
+                if ln.startswith("#") or len(cells) < 3:
+                    continue
+                if os.path.basename(cells[2].strip()) == f"role-{hub}.txt":
+                    return cells[0].strip()
+    except OSError:
+        pass
+    return None
+
+
+def find_hub_terminal(run, slug: str):
+    """(핸들|None, 실패 사유|None). 작업 폴더가 .../coord-<slug>-hub 인 연결된 쓰기 가능 claude 터미널이 정확히 1개일 때만"""
+    rows = mt.list_rows(run)
+    if rows is None:
+        return None, "터미널 목록 조회 실패"
+    hit = [t["handle"] for t in rows
+           if str(t.get("worktreePath") or "").rstrip("/").endswith(f"/coord-{slug}-hub") and t.get("agentIdentity") == "claude"
+           and t.get("connected") is True and not t.get("orphaned") and t.get("writable") is True]
+    if not hit:
+        return None, f"{slug} 허브 터미널 없음"
+    return (hit[0], None) if len(hit) == 1 else (None, f"{slug} 허브 터미널 후보 {len(hit)}개")
+
+
+def send_line(run, handle: str, text: str) -> str:
+    """'sent' | 'rejected'(핸들 무효 오류=입력 전 거절) | 'unknown'(시간 초과·일반 오류, 입력됐을 수 있음)"""
+    rc, d = run(["terminal", "send", "--terminal", handle, "--text", text, "--enter", "--wait-submit", str(SUBMIT_WAIT_S), "--json"], SEND_TIMEOUT)
+    if rc == 0:
+        return "sent"
+    return "rejected" if mt.error_code(d) in mt.HANDLE_GONE_CODES else "unknown"
+
+
+def tell_main(conf: Conf, run, text: str) -> bool:
+    """메인 터미널로 알림. 핸들이 없거나 무효(입력 전 거절)일 때만 재탐색 1회. 도착 불명이면 재전송하지 않음"""
+    handle = mt.read_handle(conf.main_env)
+    if handle:
+        res = send_line(run, handle, text)
+        if res == "sent":
+            return True
+        if res != "rejected":
+            return False
+    found = mt.rediscover(run, conf.main_spec, conf.main_env)
+    new = found.handle if found.status in ("updated", "current_ok") else ""
+    if found.status == "current_ok":
+        new = mt.read_handle(conf.main_env) or ""
+    return bool(new) and new != handle and send_line(run, new, text) == "sent"
+
+
+def load_sent(path: str) -> dict:
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_sent(path: str, st: dict) -> None:
+    save_state(path, st)  # 같은 원자적 쓰기(임시 파일 → replace)
+
+
+def line_for(rid: str, text: str) -> str:
+    one = ledger.clean(text)
+    return f"[접수 #{rid}] " + (one if len(one) <= LINE_MAX else one[: LINE_MAX - 1] + "…")
+
+
+def mark_failed(conf: Conf, rid: str, hub: str, why: str, now: float) -> None:
+    """장부를 '보류'+'전달 실패' 로. 장부 행이 없으면 건너뜀(알림은 계속)"""
+    with contextlib.suppress(ledger.LedgerError):
+        ledger.set_state(conf.ledger, rid, "보류", None, f"전달 실패: {hub} 허브 — {why}", now, False)
+
+
+def deliver(conf: Conf, now: float, run=None, dry: bool = False) -> dict:
+    """routes 기록 중 아직 하달 안 한 접수를 담당 허브 터미널에 전달. 결과 {"sent":[번호], "failed":[번호], "notified":[번호]}.
+    기본 대상(main)은 하달 대상 아님. 상태 파일이 없는 첫 실행은 한 시간보다 묵은 기록을 옛 접수(legacy)로 표시만 하고 보내지 않음.
+    실패한 접수는 장부 보류 + 메인 알림, 메인 알림이 안 가면 failed 로 남겨 다음 회차에 알림만 다시 시도(허브 재전송은 안 함)"""
+    run = run or (lambda a, t: mt.run_orca(conf.orca, a, t))
+    routes = load_routes(conf.table)
+    out = {"sent": [], "failed": [], "notified": []}
+    entries = []
+    try:
+        with open(conf.routes_log, encoding="utf-8") as f:
+            entries = [json.loads(ln) for ln in f if ln.strip()]
+    except OSError:
+        pass
+    except ValueError:
+        entries = []
+    with locked(conf.state, conf.budget_s):
+        first = not os.path.exists(conf.sent)
+        st = load_sent(conf.sent)
+        for e in entries:
+            rid, hub = e.get("id"), e.get("hub")
+            if not rid:
+                continue
+            if rid not in st and hub == routes.default:
+                st[rid] = {"st": ST_LEGACY, "hub": hub}
+                continue
+            if rid in st and st[rid].get("st") not in (ST_FAILED, ST_SENDING):
+                continue
+            if rid not in st and first and now - float(e.get("at") or now) > conf.deliver_max_age_s:
+                st[rid] = {"st": ST_LEGACY, "hub": hub}  # 기능 도입 전에 접수된 옛 기록
+                continue
+            ent = st.get(rid)
+            if ent is None:
+                age = now - float(e.get("at") or now)
+                why = ""
+                if age > conf.deliver_max_age_s:
+                    why = "접수 후 한 시간이 지나 하달하지 않음"
+                else:
+                    slug = hub_slug(conf.hubs_table, hub)
+                    handle, why = (None, f"허브 표에 {hub} 행 없음") if slug is None else find_hub_terminal(run, slug)
+                    if handle:
+                        st[rid] = {"st": ST_SENDING, "hub": hub, "at": int(now)}
+                        if not dry:
+                            save_sent(conf.sent, st)  # 전송 직전 저장: 이 뒤에 죽으면 재전송 없이 도착 불명 처리
+                        res = send_line(run, handle, line_for(rid, e.get("text") or ""))
+                        if res == "sent":
+                            st[rid] = {"st": ST_SENT, "hub": hub, "at": int(now)}
+                            out["sent"].append(rid)
+                            if not dry:
+                                with contextlib.suppress(ledger.LedgerError):
+                                    ledger.set_state(conf.ledger, rid, "진행", None, f"{hub} 허브에 하달", now, False)
+                            continue
+                        why = "허브 터미널이 입력을 거절함" if res == "rejected" else "전송 응답 없음·도착 여부 불명(재전송 안 함, 허브에서 직접 확인)"
+                st[rid] = {"st": ST_FAILED, "hub": hub, "at": int(now), "why": why}
+            elif ent.get("st") == ST_SENDING:  # 전송 중 죽은 회차
+                st[rid] = {"st": ST_FAILED, "hub": hub, "at": int(now), "why": "전송 중 중단·도착 여부 불명(재전송 안 함, 허브에서 직접 확인)"}
+            ent = st[rid]
+            if ent["st"] != ST_FAILED:
+                continue
+            if not dry and not ent.get("ledgered"):
+                mark_failed(conf, rid, hub, ent["why"], now)
+                ent["ledgered"] = True
+            out["failed"].append(rid)
+            text = f"[접수 #{rid} 하달 실패 → 메인이 처리] {hub} 허브: {ent['why']}\n{line_for(rid, e.get('text') or '')}"
+            if not dry and tell_main(conf, run, text):
+                ent["st"] = ST_NOTIFIED
+                out["notified"].append(rid)
+        if not dry:
+            save_sent(conf.sent, st)
+    return out
+
+
 class Parser(argparse.ArgumentParser):
     def error(self, message):
         sys.stderr.write(f"오류: {message} — --help 참고\n")
@@ -310,7 +482,10 @@ def main(argv=None) -> int:
     signal.signal(signal.SIGALRM, over_budget)
     signal.setitimer(signal.ITIMER_REAL, conf.budget_s + 1)
     try:
-        res = intake(conf, time.time(), args.dry_run)
+        now = time.time()
+        res = intake(conf, now, args.dry_run)
+        signal.setitimer(signal.ITIMER_REAL, conf.deliver_s)  # 접수 예산과 따로 하달 예산
+        res["deliver"] = deliver(conf, now, dry=args.dry_run)
     except Busy as err:
         sys.stderr.write(f"오류: {err} — 다음 회차에 재시도\n")
         return EXIT_BUSY
@@ -324,6 +499,8 @@ def main(argv=None) -> int:
     else:
         for n in res["new"]:
             print(f"{'[dry-run] ' if args.dry_run else ''}접수 {n['id']} → {n['hub']} (inbox {n['line']}줄)")
+        dv = res["deliver"]
+        print(f"하달 {len(dv['sent'])}건 · 실패 {len(dv['failed'])}건(메인 알림 {len(dv['notified'])}건)")
         print(f"새 접수 {len(res['new'])}건 · 이미 접수 {res['seen']}건 · 제외 {res['skipped']}건")
     return 0
 
