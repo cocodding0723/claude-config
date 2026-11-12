@@ -12,6 +12,9 @@ kind=decide 는 스레드 답글이 아니라 slack_notify.sh --kind decide --op
 
 첨부: 보고의 files(--file)는 본문 뒤에 Slack 파일로 올림. 올리는 곳은 일반 보고 = 주제 스레드, 지정 스레드 보고 = 그 스레드,
 결정 카드 = 카드 스레드(카드를 먼저 올림. 파일 업로드 메시지에는 버튼을 달 수 없음). 파일마다 알림 스크립트를 1회 호출(업로드 방식은 거기에 있음).
+접수 때 복사본(staged)이 있으면 그걸 올리고, 보고가 끝나면(전송·중단) 복사본을 지움. 못 지운 것은 STAGE_KEEP_S 뒤 회차 시작에 정리함.
+복사본이 없는 옛 기록은 원본을 읽는데, launchd 에서는 macOS 개인정보 보호(TCC)가 ~/Documents 등 읽기를 막아 curl 이 종료 코드 26 으로 실패함.
+올리기 전에 직접 열어 보고 막히면 재시도 없이 'UNREADABLE' 한 줄만 스레드에 남김(다시 hub_report.py add 로 보고하면 접수 때 복사됨).
 없는 파일·폴더·크기 초과는 입력 문제라 재시도 없이 스레드에 '첨부 실패: 이유' 한 줄만 남기고 보고는 계속함. 네트워크 등 일시 실패는 보고 재시도 규칙(BACKOFF)을 따르고 올린 파일은 다시 올리지 않음.
 HTML 은 html_preview.sh 로 390폭 미리보기 PNG 를 만들어 이어서 올림. 미리보기를 못 만들면 생략하고 계속함.
 본문에 로컬 경로만 있고 첨부가 없으면 로그에 경고(접수 경고와 같은 판정 hub_report.unattached_paths).
@@ -27,6 +30,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -54,6 +58,8 @@ MAX_PER_RUN = 10
 LINE_MAX = 60
 LINK_BASE = "https://slack.com/archives"
 ERR_MAX = 100
+STAGE_KEEP_S = 24 * 3600  # 남은 복사본 보관 기간
+UNREADABLE = "백그라운드에서 읽을 수 없는 폴더 — 다시 보고"
 
 
 @dataclass
@@ -309,6 +315,40 @@ def content_hash(path: str) -> str:
         return ""
 
 
+def source_of(rep: dict, path: str) -> str:
+    """올릴 파일 경로: 접수 때 만든 복사본이 아직 있으면 복사본, 아니면 원본"""
+    cp = (rep.get("staged") or {}).get(path)
+    return cp if cp and os.path.isfile(cp) else path
+
+
+def read_problem(path: str) -> str:
+    """이 프로세스가 파일을 열 수 없으면(권한·TCC) UNREADABLE. 그 밖의 오류는 알림 스크립트·file_problem 판정에 맡김"""
+    try:
+        with open(os.path.expanduser(path), "rb") as f:
+            f.read(1)
+    except PermissionError:
+        return UNREADABLE
+    except OSError:
+        pass
+    return ""
+
+
+def drop_staged(conf: Conf, rep: dict) -> None:
+    """보고의 첨부 복사본 폴더 삭제. 접수 때 만든 폴더(<복사 폴더>/<id>)만 지움"""
+    if re.fullmatch(r"[0-9a-f]{12}", rep["id"]):
+        shutil.rmtree(os.path.join(hub_report.stage_dir(conf.outbox), rep["id"]), ignore_errors=True)
+
+
+def gc_staged(conf: Conf) -> None:
+    """STAGE_KEEP_S 보다 오래된 복사본 폴더 삭제(중단·예외로 못 지운 것)"""
+    root = hub_report.stage_dir(conf.outbox)
+    with contextlib.suppress(OSError):
+        for name in os.listdir(root):
+            d = os.path.join(root, name)
+            if os.path.isdir(d) and time.time() - os.path.getmtime(d) > STAGE_KEEP_S:
+                shutil.rmtree(d, ignore_errors=True)
+
+
 def make_preview(conf: Conf, path: str, digest: str, deadline: float) -> str:
     """HTML → 390폭 미리보기 PNG 경로. 경로는 상태 폴더 아래 내용 해시로 고정(응답 유실 복구가 보낸 기록의 경로로 찾음).
     스크립트·Chrome 이 없거나 실패하면 빈 문자열(첨부는 계속)"""
@@ -361,15 +401,16 @@ def send_files(conf: Conf, rep: dict, rs: dict, st: dict, target: str, deadline:
     for path in rep["files"]:
         name = os.path.basename(path) or path
         jobs = [(path, name)]
-        digest = content_hash(path) if path.lower().endswith(HTML_EXTS) else ""
+        origin = source_of(rep, path)
+        digest = content_hash(origin) if path.lower().endswith(HTML_EXTS) else ""
         if digest:
             jobs.append((path + PREVIEW_SUFFIX + digest, ""))
         for key, label in jobs:
             if key in done:
                 continue
-            src = path
+            src = origin
             if PREVIEW_SUFFIX in key:  # 미리보기는 업로드 직전에 만듦. 못 만들면 생략으로 기록
-                src = make_preview(conf, path, digest, deadline)
+                src = make_preview(conf, origin, digest, deadline)
                 label = os.path.basename(src)
                 if not src:
                     log(conf, f"{rep['id']} 미리보기 생략: {name}")
@@ -381,7 +422,7 @@ def send_files(conf: Conf, rep: dict, rs: dict, st: dict, target: str, deadline:
                 save_state(conf.state, st)
                 continue
             save_state(conf.state, st)  # 첫 시도 시각(att_start)을 업로드 전에 저장
-            why = hub_report.file_problem(src)
+            why = hub_report.file_problem(src) or read_problem(src)
             try:
                 if why:
                     raise NotifyError(why, permanent=True)
@@ -617,6 +658,8 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
         for r in reports:  # 중단됐지만 경고가 안 나간 보고
             if r["id"] in st["bad"] and r["id"] not in st["warned"] and not st["reports"].get(r["id"], {}).get("sent"):
                 warn_pending(conf, r, st, deadline)
+    if not dry:
+        gc_staged(conf)
     todo = [r for r in reports if not st["reports"].get(r["id"], {}).get("sent") and r["id"] not in st["bad"]]
     out["pending"] = len(todo)
     if not todo:
@@ -642,6 +685,7 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
         if bad_input or fails.get("fails", 0) >= conf.fail_limit:  # 접수 전 쌓인 영구 오류·상한 초과 기록은 호출 없이 중단
             why = bad_input or fails.get("error", "재시도 상한 초과")
             stop_report(conf, rep, st, why, bool(bad_input), deadline)
+            drop_staged(conf, rep)
             out["stopped"] = out.get("stopped", 0) + 1
             line = f"중단 {rep['id']} {rep['hub']} {rep['kind']}: {why}"
             out["lines"].append(line)
@@ -649,6 +693,7 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
             continue
         try:
             res = deliver(conf, rep, st, deadline)
+            drop_staged(conf, rep)
         except NotifyError as err:
             if not err.counts:
                 blocked.add(key)
@@ -658,6 +703,7 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
             blocked.add(key)
             if err.permanent or fails["fails"] >= conf.fail_limit:
                 stop_report(conf, rep, st, str(err), err.permanent, deadline)
+                drop_staged(conf, rep)
                 out["stopped"] = out.get("stopped", 0) + 1
                 line = f"중단 {rep['id']} {rep['hub']} {rep['kind']} {fails['fails']}회째({'영구' if err.permanent else '상한'}): {err}"
             else:

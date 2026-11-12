@@ -5,7 +5,10 @@ Slack 을 부르지 않음. 토큰을 가진 report_sender.py 가 outbox 를 읽
 outbox: 한 줄 = 보고 1건(JSON). 쓰기는 flock 아래 추가 전용이라 허브 여러 개가 동시에 기록해도 줄이 섞이지 않음.
 같은 내용(허브·작업·종류·본문·증거·결정 필드)은 id 가 같아 두 번째부터 무시함. 비밀 값(hub_status 와 같은 패턴)이 있으면 거부.
 
-환경: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs) · LRM_REPORT_OUTBOX outbox 경로(기본 <작업 폴더>/hub-reports.jsonl)
+첨부 복사: 전송기는 launchd 백그라운드에서 돌아 macOS 개인정보 보호(TCC)가 ~/Documents·~/Desktop·~/Downloads 읽기를 막음(curl 종료 코드 26).
+이 CLI 는 사용자 터미널·허브 세션에서 돌아 읽을 수 있으므로, add 가 접수 때 첨부를 <outbox 폴더>/outbox-files/<보고 id>/<번호>/<원본 이름> 으로 복사하고
+기록의 staged(원본 경로 → 복사본 경로)에 남김. 전송기는 복사본을 올리고 끝나면 지움.
+환경: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs) · LRM_REPORT_OUTBOX outbox 경로(기본 <작업 폴더>/hub-reports.jsonl) · LRM_REPORT_FILES 첨부 복사 폴더(기본 <outbox 폴더>/outbox-files)
 종료 코드: 0 기록(중복 무시 포함), 1 파일 읽기·쓰기 실패, 2 인자·입력 오류(비밀 값 포함)
 """
 import argparse
@@ -15,6 +18,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import time
 
@@ -39,6 +43,7 @@ DECISION_ID_ERR = "--decision-id 형식 오류: D-영문·숫자 1~16자 — 예
 TS_RE = re.compile(r"^\d{1,12}\.\d{1,9}$")
 MAX_LINES, MAX_CHARS, MAX_TITLE = 3, 400, 40  # 본문 3줄 이내. decide 첫 줄은 양식 A 제목 상한
 MAX_FILES = 5
+STAGE_NAME = "outbox-files"
 MAX_FILE_BYTES = 50 * 1024 * 1024  # 첨부 1건 크기 상한. 넘으면 전송기가 첨부 실패로 처리
 # 문서·이미지·영상 확장자. 본문 경로 판정(local_paths)을 접수·전송·알림 스크립트가 한 곳에서 씀
 DOC_EXTS = ("html", "htm", "md", "pdf", "txt", "csv", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "png", "jpg", "jpeg", "gif", "webp", "svg", "mp4", "mov", "webm", "mkv")
@@ -161,6 +166,32 @@ def file_problem(path: str) -> str:
     return ""
 
 
+def stage_dir(outbox: str) -> str:
+    """첨부 복사본 폴더. 기본은 outbox 와 같은 폴더 아래라 시험·다른 outbox 가 실제 작업 폴더를 건드리지 않음"""
+    return os.environ.get("LRM_REPORT_FILES") or os.path.join(os.path.dirname(os.path.abspath(outbox)), STAGE_NAME)
+
+
+def stage_files(outbox: str, rep_id: str, files) -> dict:
+    """첨부를 복사본으로 보관 → {원본 경로: 복사본 경로}. 올릴 수 없는 파일(file_problem)·복사 실패는 빼고 경고만 함(전송기가 원본으로 시도·안내).
+    같은 이름이 둘이어도 안 겹치게 번호 폴더를 하나 더 둠. 이름은 그대로"""
+    out = {}
+    root = os.path.join(stage_dir(outbox), rep_id)
+    for i, f in enumerate(files):
+        if file_problem(f):
+            continue
+        dst = os.path.join(root, str(i), os.path.basename(f))
+        try:
+            os.makedirs(os.path.dirname(dst), mode=0o700, exist_ok=True)
+            shutil.copyfile(os.path.expanduser(f), dst)
+            os.chmod(dst, 0o600)
+        except OSError as err:
+            sys.stderr.write(f"경고: --file 복사 실패({err.strerror}) — 전송기가 원본을 직접 읽어야 해 보호 폴더(Documents 등)면 첨부가 안 갈 수 있음\n")
+            shutil.rmtree(os.path.dirname(dst), ignore_errors=True)
+            continue
+        out[f] = dst
+    return out
+
+
 def resolve_file(path: str) -> str:
     """접수 시점 경로 정규화. 존재하는 경로만 ~·상대를 절대 경로로(전송기는 다른 작업 폴더에서 돎). 없는 경로는 그대로 둠"""
     p = os.path.abspath(os.path.expanduser(path))
@@ -242,6 +273,9 @@ def valid_record(d) -> bool:
     if not hub_status.SLUG_RE.match(d["hub"]) or d["kind"] not in KINDS or not (d["task"] == NO_TASK or TASK_RE.match(d["task"])):
         return False
     if d["kind"] == "decide" and not all(isinstance(d.get(k), str) and d[k] for k in ("options", "recommend", "decision_id")):
+        return False
+    st = d.get("staged")  # 접수 때 만든 첨부 복사본. 키는 첨부 목록 안의 경로
+    if st is not None and not (isinstance(st, dict) and all(k in files and isinstance(v, str) and v for k, v in st.items())):
         return False
     if d.get("no_doc") is not None and not isinstance(d["no_doc"], bool):
         return False
@@ -327,8 +361,9 @@ def locked(path: str):
         raise ReportError(f"outbox 잠금 실패({err.strerror}) — 작업 폴더 권한 확인", EXIT_IO)
 
 
-def add(path: str, rep: dict, now: float, dry: bool) -> tuple:
-    """(보고 dict, 새로 기록했나). 같은 id 가 이미 있으면 기록하지 않음"""
+def add(path: str, rep: dict, now: float, dry: bool, stage: bool = False) -> tuple:
+    """(보고 dict, 새로 기록했나). 같은 id 가 이미 있으면 기록하지 않음.
+    stage 면 새 기록일 때만 첨부를 복사해 staged 로 남김. id 는 복사 전 내용으로 정해 같은 보고의 중복 판정이 복사본 경로에 흔들리지 않음"""
     rep = {"id": report_id(rep), "at": int(now), **rep}
     with locked(path):
         if not dry:
@@ -336,6 +371,8 @@ def add(path: str, rep: dict, now: float, dry: bool) -> tuple:
         if any(r["id"] == rep["id"] for r in read_outbox(path)):
             return rep, False
         if not dry:
+            if stage and rep["files"] and (staged := stage_files(path, rep["id"], rep["files"])):
+                rep["staged"] = staged
             try:
                 fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
                 with os.fdopen(fd, "a", encoding="utf-8") as f:
@@ -417,7 +454,7 @@ def main(argv=None) -> int:
                     sys.stderr.write(f"경고: --file {f} 첨부 불가({why}) — 기록은 하고 전송기가 '첨부 실패' 한 줄을 남김\n")
             if found := unattached_paths(rep["text"], rep["files"]):
                 sys.stderr.write(f"경고: 본문에 로컬 경로({', '.join(found[:3])})만 있고 --file 첨부 없음 — 사용자는 경로를 열 수 없음. --file 로 첨부\n")
-            rep, fresh = add(path, rep, time.time(), args.dry_run)
+            rep, fresh = add(path, rep, time.time(), args.dry_run, stage=True)
             if args.json:
                 print(json.dumps({"id": rep["id"], "added": fresh and not args.dry_run, "duplicate": not fresh}, ensure_ascii=False))
             elif not fresh:
