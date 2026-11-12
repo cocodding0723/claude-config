@@ -31,7 +31,11 @@ KINDS = {
     "block": ("⚠️", "차단", "warn"),
     "decide": ("🙋", "결정", "decide"),
     "info": ("🔄", "정보", "progress"),
+    "warn": ("⚠️", "경고", "warn"),
 }
+THREAD_KINDS = ("warn", "done")  # 기존 스레드에 답글로 올릴 수 있는 종류. decide 버튼 카드는 스레드 답글이 안 됨
+TS_RE = re.compile(r"^\d{1,12}\.\d{1,9}$")
+CHANNEL_RE = re.compile(r"^[CDG][A-Z0-9]{6,14}$")
 MAX_LINES, MAX_CHARS, MAX_TITLE = 3, 400, 40  # 본문 3줄 이내. decide 첫 줄은 양식 A 제목 상한
 MAX_FILES = 5
 EXIT_IO, EXIT_USAGE = 1, 2
@@ -53,10 +57,26 @@ def has_secret(*texts: str) -> bool:
     return any(hub_status.SECRET_RE.search(t) for t in texts)
 
 
-def make_report(hub, task, kind, text, files, options=None, recommend=None, decision_id=None, reversible=None) -> dict:
+def allowed_channels(sync_state: str = "") -> set:
+    """--channel 허용 목록. 봇이 이미 쓰는 채널(진행 스레드 상태의 채널)과 LRM_REPORT_CHANNELS(쉼표 목록) 한 곳뿐.
+    알림 스크립트는 봇 DM 에만 게시하므로 목록 밖 채널은 기록도 게시도 안 함"""
+    path = sync_state or os.environ.get("LRM_LEDGER_STATE") or os.path.join(HUB_DIR, "ledger-sync.state.json")
+    out = {c.strip() for c in os.environ.get("LRM_REPORT_CHANNELS", "").split(",") if c.strip()}
+    try:
+        with open(path, encoding="utf-8") as f:
+            ch = json.load(f).get("channel")
+        if isinstance(ch, str) and ch:
+            out.add(ch)
+    except (OSError, ValueError, AttributeError):
+        pass
+    return out
+
+
+def make_report(hub, task, kind, text, files, options=None, recommend=None, decision_id=None, reversible=None,
+                thread=None, channel=None) -> dict:
     """입력 검증 → 보고 dict(id·at 제외). 잘못되면 ReportError.
     비밀 검사는 모든 입력 필드(hub·task·kind 포함)에 가장 먼저 함. 형식 오류 메시지가 입력을 되비추기 전에 걸러야 비밀이 출력·로그로 새지 않음"""
-    if has_secret(*[str(v) for v in (hub, task, kind, text, options, recommend, decision_id, reversible, *(files or [])) if v]):
+    if has_secret(*[str(v) for v in (hub, task, kind, text, options, recommend, decision_id, reversible, thread, channel, *(files or [])) if v]):
         raise ReportError("비밀 값(토큰·키·비밀번호)으로 보이는 내용 포함 — 기록 안 함. 값을 빼고 다시 기록")
     if not hub_status.SLUG_RE.match(hub or "") or len(hub) > 24:
         raise ReportError(f"--hub '{hub}' 형식 오류 — 소문자·숫자·하이픈 24자 이내(예: ui-layer)")
@@ -84,6 +104,18 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
             rep["reversible"] = reversible
     elif any(extra):
         raise ReportError("--options·--recommend·--decision-id·--reversible 는 --kind decide 에서만 사용")
+    if channel and not thread:
+        raise ReportError("--channel 은 --thread 와 함께만 사용")
+    if thread:
+        if kind not in THREAD_KINDS:
+            raise ReportError(f"--thread 는 --kind {'|'.join(THREAD_KINDS)} 에서만 사용")
+        if not TS_RE.match(thread):
+            raise ReportError("--thread 형식 오류 — Slack 메시지 ts(숫자.숫자, 예 1730790000.123456)")
+        rep["thread"] = thread
+        if channel:
+            if not CHANNEL_RE.match(channel) or channel not in allowed_channels():
+                raise ReportError("--channel 이 허용 목록에 없음 — 봇이 쓰는 채널·DM 만 가능(LRM_REPORT_CHANNELS 에 등록하거나 생략)")
+            rep["channel"] = channel
     return rep
 
 
@@ -107,6 +139,10 @@ def valid_record(d) -> bool:
     if d["kind"] == "decide" and not all(isinstance(d.get(k), str) and d[k] for k in ("options", "recommend", "decision_id")):
         return False
     if d.get("reversible") is not None and not isinstance(d["reversible"], str):
+        return False
+    if d.get("thread") is not None and not (isinstance(d["thread"], str) and TS_RE.match(d["thread"]) and d["kind"] in THREAD_KINDS):
+        return False
+    if d.get("channel") is not None and not (isinstance(d["channel"], str) and CHANNEL_RE.match(d["channel"]) and d.get("thread")):
         return False
     return not has_secret(*[v for v in d.values() if isinstance(v, str)], *files)
 
@@ -204,6 +240,21 @@ def add(path: str, rep: dict, now: float, dry: bool) -> tuple:
     return rep, True
 
 
+def send_now() -> None:
+    """기록 직후 전송기 1회. 잠금을 못 잡으면(busy) 다음 폴러 회차가 올림. 전송 실패·예외는 기록을 되돌리지 않고 안내만 출력(종료 코드 0)"""
+    import report_sender  # 지연 import: report_sender 가 이 모듈을 import 함
+
+    try:
+        res = report_sender.run(report_sender.Conf())
+    except Exception as err:  # noqa: BLE001 — 기록은 이미 끝났으므로 전송 오류가 호출자를 실패시키지 않음
+        print(f"즉시 전송 건너뜀({type(err).__name__}) — 다음 폴러 회차에 올라감")
+        return
+    note = {"busy": "다른 전송기가 실행 중 — 다음 폴러 회차에 올라감", "halted": "전송 중단 — report_sender.py 오류 안내 확인"}.get(res["status"])
+    print("즉시 전송: " + (note or f"전송 {res['sent']} · 실패 {res['failed']}" + (" — 실패분은 다음 회차에 재시도" if res["failed"] else "")))
+    for ln in res["lines"]:
+        print(ln)
+
+
 class Parser(argparse.ArgumentParser):
     def error(self, message):
         sys.stderr.write(f"오류: {message} — --help 참고\n")
@@ -219,7 +270,8 @@ def build_parser() -> argparse.ArgumentParser:
                "  hub_report.py add --hub ui-layer --task 없음 --kind info --text '리뷰 대기 중'\n"
                "  hub_report.py add --hub ui-layer --task C0012 --kind decide --text $'알림 시각 정하기\\n지금은 시각이 제각각' \\\n"
                "      --options '1=오전 9시,2=오전 10시' --recommend 1 --decision-id D-0101\n"
-               "환경: LRM_HUB_DIR, LRM_REPORT_OUTBOX\n"
+               "  hub_report.py add --hub ci-hub --task 없음 --kind warn --thread 1730790000.123456 --text 'CI 실패 원인: 시험 X' --now\n"
+               "환경: LRM_HUB_DIR, LRM_REPORT_OUTBOX, LRM_REPORT_CHANNELS(--channel 허용 목록, 쉼표)\n"
                "종료 코드: 0 기록(중복 무시 포함), 1 파일 읽기·쓰기 실패, 2 인자·입력 오류(비밀 값 포함)")
     sub = p.add_subparsers(dest="cmd", required=True, parser_class=Parser)
     a = sub.add_parser("add", help="보고 1건 기록", description="보고 1건을 outbox 에 추가. 같은 내용은 무시(종료 코드 0).")
@@ -232,6 +284,9 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--recommend", help="(decide) 추천 번호")
     a.add_argument("--decision-id", help="(decide) 결정 번호 D-영문·숫자")
     a.add_argument("--reversible", help="(decide) 쉬움|보통|어려움")
+    a.add_argument("--thread", help="기존 Slack 스레드 ts(숫자.숫자)에 답글로 올림. warn·done 만. 진행 스레드 한 줄은 생략")
+    a.add_argument("--channel", help="(--thread) 채널 ID. 허용 목록(봇 DM·LRM_REPORT_CHANNELS)만, 생략하면 봇 DM")
+    a.add_argument("--now", action="store_true", help="기록 직후 전송기를 1회 실행. 다른 전송기가 돌고 있으면 다음 폴러 회차가 올림")
     a.add_argument("--dry-run", action="store_true", help="쓰지 않고 기록될 보고만 출력")
     a.add_argument("--json", action="store_true", help="결과를 JSON 한 줄로 출력")
     ls = sub.add_parser("list", help="outbox 목록", description="outbox 의 보고를 기록 순서로 출력.")
@@ -245,7 +300,7 @@ def main(argv=None) -> int:
     try:
         if args.cmd == "add":
             rep = make_report(args.hub, args.task, args.kind, args.text, args.files,
-                              args.options, args.recommend, args.decision_id, args.reversible)
+                              args.options, args.recommend, args.decision_id, args.reversible, args.thread, args.channel)
             rep, fresh = add(path, rep, time.time(), args.dry_run)
             if args.json:
                 print(json.dumps({"id": rep["id"], "added": fresh and not args.dry_run, "duplicate": not fresh}, ensure_ascii=False))
@@ -253,6 +308,8 @@ def main(argv=None) -> int:
                 print(f"중복 무시: {rep['id']} — 같은 내용이 이미 기록됨")
             else:
                 print(("[dry-run] " if args.dry_run else "") + f"기록: {rep['id']} {rep['hub']} {rep['task']} {rep['kind']}")
+            if args.now and not args.dry_run:
+                send_now()
         else:
             rows = read_outbox(path)
             if args.json:
