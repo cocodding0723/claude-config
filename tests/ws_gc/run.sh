@@ -14,6 +14,7 @@ SB=$(mktemp -d "${TMPDIR:-/tmp}/cc-wsgc.XXXXXX")
 trap '[ -n "${KEEP:-}" ] || rm -rf "${SB:?}"' EXIT
 # 사용자 git 설정·훅이 시험에 끼지 않게 격리
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+export WS_GC_INBOX="$SB/inbox"   # 허브 색인이 실제 ~/.config 로 새지 않게 격리
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 FAKE="$SB/fake" ROOT="$SB/ws" ARC="$SB/archive" O="$SB/origin" BIN="$SB/bin" W="$ROOT/repoA"
 mkdir -p "$FAKE/pr" "$ROOT" "$ARC" "$O" "$BIN" "$W"
@@ -220,6 +221,48 @@ FAKE_RM_CHECK_DIRTY=1 gc --apply --only lic_noise
 chk "LICENSE 줄바꿈 + 기존 부산물: force 로 삭제" '[ "$RC" = 0 ] && [ ! -e "$W/lic_noise" ] && [ "$(rm_calls)" = 2 ] && grep -q -- "--force" "$FAKE/orca.calls"'
 FAKE_RM_CHECK_DIRTY=1 gc --apply --only sub_noise
 chk "서브모듈 + 기존 부산물: 이전처럼 force 삭제" '[ "$RC" = 0 ] && [ ! -e "$W/sub_noise" ] && grep -q -- "--force" "$FAKE/orca.calls"'
+
+# ---- 7. 결과물만 남은 작업 공간: 보관·색인·삭제 / 코드 변경은 보존 ---------------------------------
+regen() { # reg.tsv → worktrees.json. 허브 하위 연결은 HUB_KIDS="이름 …" 로 coord-q-hub 에 붙임
+  jq -R -s '{ok:true,result:{worktrees:(split("\n")|map(select(length>0)|split("\t")|{id:("repo::"+.[0]),path:.[0],branch:.[1],lastActivityAt:(.[2]|tonumber),isMainWorktree:(.[3]=="true"),childWorktreeIds:[]}))}}' "$SB/reg.tsv" \
+    | jq --arg h "$W/coord-q-hub" --arg kids "${HUB_KIDS:-}" --arg w "$W" '.result.worktrees |= map(if .path == $h then .childWorktreeIds = ($kids | split(" ") | map(select(length > 0) | "repo::" + $w + "/" + .)) else . end)' > "$FAKE/worktrees.json"
+}
+mk coord-q-hub feat/qhub; pr feat/qhub '[{"number":60,"state":"MERGED"}]'
+for n in out_only out_arcfail code_untracked tracked_png assets_png; do mk "$n" "feat/$n"; pr "feat/$n" '[{"number":61,"state":"MERGED"}]'; done
+for n in out_only out_arcfail; do
+  mkdir -p "$W/$n/shots" "$W/$n/reports"
+  echo md > "$W/$n/reports/summary.md"; echo png > "$W/$n/shots/a.png"; echo '{}' > "$W/$n/result.json"; echo log > "$W/$n/run.log"
+done
+mkdir -p "$W/code_untracked/src"; echo 'class A{}' > "$W/code_untracked/src/Foo.cs"; echo md > "$W/code_untracked/report.md"
+echo edit >> "$W/tracked_png/README.md"; echo png > "$W/tracked_png/a.png"
+mkdir -p "$W/assets_png/Assets/Art"; echo png > "$W/assets_png/Assets/Art/new.png"
+HUB_KIDS="out_only out_arcfail"; regen
+mkdir -p "$ARC/repoA"; : > "$ARC/repoA/out_arcfail"          # 보관 폴더 자리에 파일이 있어 복제 불가
+jsonrun() { env PATH="$BIN:$PATH" FAKE_DIR="$FAKE" FAKE_ROOT="$ROOT" bash "$GC" --root "$ROOT" --archive-dir "$ARC" --log "$ARC/ws_gc.log" --json --no-slack "$@" 2>/dev/null; }
+
+gc --only out_only; chk "결과물만: dry-run 후보·결과물 수 표시" 'has "CANDIDATE repoA/out_only .*결과물=4" && has "미추적 결과물 4개"'
+chk "결과물만: dry-run 은 삭제·색인 없음" '[ -e "$W/out_only" ] && [ ! -e "$SB/inbox/q.tsv" ]'
+JS=$(jsonrun --only out_only)
+chk "--json: 결과물만 후보 수·items" 'echo "$JS" | jq -e ".candidates_outputs_only == 1 and (.items | length) == 1 and .items[0].verdict == \"candidate\"" >/dev/null' "$JS"
+gc --only code_untracked --apply; chk "코드 미추적(.cs): 보존·KEEP_CODE 기록" '[ -e "$W/code_untracked" ] && has "SKIP dirty repoA/code_untracked" && has "KEEP_CODE repoA/code_untracked 추적 수정 0·코드 미추적 1: 코드 미추적 src/Foo.cs" && [ "$(rm_calls)" = 0 ]'
+JS=$(jsonrun --only code_untracked)
+chk "--json: keep_code 에 이름·파일" 'echo "$JS" | jq -e ".keep_code[0].name == \"repoA/code_untracked\" and .keep_code[0].untracked_code == 1 and (.keep_code[0].files[0] | test(\"Foo.cs\"))" >/dev/null' "$JS"
+gc --only tracked_png --apply; chk "추적 파일 수정 + 결과물: 보존" '[ -e "$W/tracked_png" ] && has "KEEP_CODE repoA/tracked_png 추적 수정 1·코드 미추적 0" && [ "$(rm_calls)" = 0 ]'
+gc --only assets_png --apply; chk "Assets 아래 미추적 png(새 에셋 가능): 보존" '[ -e "$W/assets_png" ] && has "SKIP dirty repoA/assets_png" && [ "$(rm_calls)" = 0 ]'
+FAKE_RM_CHECK_DIRTY=1 gc --only out_only --apply
+chk "결과물만: 삭제 성공(일반 rm 거부 → 보관 확인 뒤 force)" '[ "$RC" = 0 ] && [ ! -e "$W/out_only" ] && grep -q "^worktree rm --worktree path:$W/out_only --force" "$FAKE/orca.calls" && has "RM_RETRY_FORCE"'
+chk "결과물만: 미추적 결과물 보관(내용 일치)" '[ "$(cat "$ARC/repoA/out_only/reports/summary.md")" = md ] && [ "$(cat "$ARC/repoA/out_only/shots/a.png")" = png ] && [ -f "$ARC/repoA/out_only/result.json" ] && [ -f "$ARC/repoA/out_only/run.log" ]'
+chk "결과물만: gitignore 결과물도 함께 보관" '[ "$(find "$ARC/repoA/out_only/TestResults" -type f | wc -l | tr -d " ")" = 2 ] && has "ARCHIVE 미추적 결과물 파일 4"'
+chk "결과물만: 허브 색인 한 줄(시각·이름·보관 경로·파일 수)" '[ "$(wc -l < "$SB/inbox/q.tsv" | tr -d " ")" = 1 ] && awk -F"\t" "NF==4 && \$1 ~ /^20[0-9-]+T/ && \$2 == \"repoA/out_only\" && \$3 == \"$ARC/repoA/out_only\" && \$4 == 7" "$SB/inbox/q.tsv" | grep -q .' "$(cat "$SB/inbox/q.tsv" 2>&1)"
+chk "부모 없는 작업 공간은 _none 색인" 'grep -q "repoA/merged" "$SB/inbox/_none.tsv"'
+chk "결과물만: 요약에 결과물만 개수" 'has "END 삭제 1개(결과물만 1개)"'
+FAKE_RM_CHECK_DIRTY=1 gc --only out_arcfail --apply
+chk "보관 불일치(복제 불가): 삭제 안 함·색인 없음·종료 1" '[ "$RC" = 1 ] && [ -e "$W/out_arcfail" ] && has "ARCHIVE_MISMATCH" && has "SKIP archive_fail repoA/out_arcfail" && [ "$(rm_calls)" = 0 ] && [ "$(wc -l < "$SB/inbox/q.tsv" | tr -d " ")" = 1 ]'
+chk "실패 Slack: 처음엔 전송" '[ -s "$FAKE/notify.calls" ] && grep -q "삭제 못 한 곳 1곳" "$FAKE/notify.calls"'
+FAKE_RM_CHECK_DIRTY=1 gc --only out_arcfail --apply
+chk "같은 실패 반복: Slack 다시 안 보냄" '[ "$RC" = 1 ] && [ ! -s "$FAKE/notify.calls" ]'
+gc --apply --parent "$W/coord-q-hub" --only out_arcfail --dry-run; chk "--parent: 그 허브 하위만 평가" 'has "parent=$W/coord-q-hub" && has "repoA/out_arcfail" && ! has "repoA/code_untracked .*CANDIDATE"'
+JS=$(jsonrun --parent "$W/coord-q-hub"); chk "--parent: 허브 하위 2곳만 items(다른 허브·무소속 제외)" 'echo "$JS" | jq -e "[.items[].name] | sort == [\"repoA/out_arcfail\", \"repoA/out_only\"]" >/dev/null' "$JS"
 
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
