@@ -10,11 +10,12 @@ kind=decide 는 스레드 답글이 아니라 slack_notify.sh --kind decide --op
 
 환경: LRM_HUB_DIR 작업 폴더 · LRM_REPORT_OUTBOX outbox · LRM_REPORT_STATE 상태 파일 · LRM_REPORT_NOTIFY 전송 스크립트(기본 같은 폴더 slack_notify.sh)
       LRM_LEDGER 장부(주제 제목용) · LRM_LEDGER_STATE ledger_sync 상태(진행 스레드 부모 ts) · LRM_REPORT_SENT 전송 기록(채널 조회) · LRM_REPORT_BUDGET_S 회차 시간 예산
-종료 코드: 0 성공(처리할 것 없음·busy 포함), 1 일부 전송 실패(재시도 대상), 2 설정·입력 오류
+종료 코드: 0 성공(처리할 것 없음·busy 포함), 1 일부 전송 실패(재시도 대상), 2 설정·입력 오류·상태 파일 손상(전송 중단, 복구 안내 출력)
 """
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import json
 import os
 import subprocess
@@ -89,15 +90,36 @@ def run_notify(conf: Conf, args: list, deadline: float) -> str:
     raise NotifyError("비밀 값 포함 오류 숨김" if hub_status.SECRET_RE.search(why) else why)
 
 
+class StateCorrupt(Exception):
+    """상태 파일이 있는데 못 읽음(손상·권한). 빈 상태로 보면 이미 올린 보고를 다시 올리므로 전송을 멈춤"""
+
+
+STATE_KEYS = ("topics", "reports", "warned", "bad")
+
+
 def load_state(path: str) -> dict:
+    """파일이 없을 때만 초기 상태. 읽기 실패·JSON 손상·모양 오류는 StateCorrupt"""
     try:
         with open(path, encoding="utf-8") as f:
             st = json.load(f)
-        if isinstance(st, dict):
-            return {k: st[k] if isinstance(st.get(k), dict) else {} for k in ("topics", "reports", "warned")}
-    except (OSError, ValueError):
-        pass
-    return {"topics": {}, "reports": {}, "warned": {}}
+    except FileNotFoundError:
+        return {k: {} for k in STATE_KEYS}
+    except OSError as err:
+        raise StateCorrupt(f"읽기 실패({err.strerror})")
+    except ValueError:
+        raise StateCorrupt("JSON 손상")
+    if not isinstance(st, dict) or any(k in st and not isinstance(st[k], dict) for k in STATE_KEYS):
+        raise StateCorrupt("최상위·항목 모양 오류")
+    return {k: st.get(k, {}) for k in STATE_KEYS}
+
+
+def state_signature(path: str) -> str:
+    """손상 경고 1회 판정용 지문. 같은 손상 상태에는 같은 값"""
+    try:
+        s = os.stat(path)
+        return f"{s.st_mtime_ns}:{s.st_size}"
+    except OSError as err:
+        return f"oserror:{err.errno}"
 
 
 def save_state(path: str, st: dict) -> None:
@@ -264,9 +286,55 @@ def run(conf: Conf, dry: bool = False) -> dict:
         return _round(conf, out, False)
 
 
+def halt(conf: Conf, err: StateCorrupt, out: dict, dry: bool) -> dict:
+    """상태 파일을 못 읽음. 전송을 멈추고 복구 안내를 돌려줌. 메인 경고는 같은 손상 상태에 1번만"""
+    out.update(status="halted", error=f"상태 파일 {err} — {conf.state}",
+               guide="내용을 확인해 고치거나, 이미 올라간 보고가 다시 올라가도 괜찮으면 파일을 지운 뒤 다시 실행")
+    marker = conf.state + ".warned"
+    sig = state_signature(conf.state)
+    if dry or read_text(marker) == sig:
+        return out
+    msg = f"허브 보고 전송 중단\n\n• 원인: 상태 파일 {err}\n• 결과: 보고 전송 멈춤(같은 보고 재게시 방지)\n• 조치: {out['guide']}"
+    try:
+        run_notify(conf, ["--kind", "warn", msg], time.monotonic() + NOTIFY_TIMEOUT_S)
+        with open(marker, "w", encoding="utf-8") as f:
+            f.write(sig)
+    except (NotifyError, OSError):
+        pass  # 경고가 안 나가면 다음 회차에 다시 시도
+    return out
+
+
+def read_text(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def quarantine(conf: Conf, bad: list, st: dict, dry: bool) -> int:
+    """형식이 깨진 outbox 줄을 <outbox>.corrupt 로 한 번만 옮겨 적고(상태에 해시 기록) 건수를 돌려줌. outbox 자체는 고치지 않음"""
+    fresh = [ln for ln in bad if hashlib.sha1(ln.encode("utf-8")).hexdigest()[:12] not in st["bad"]]
+    if fresh and not dry:
+        with contextlib.suppress(OSError):
+            fd = os.open(conf.outbox + ".corrupt", os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as f:
+                f.write("".join(ln + "\n" for ln in fresh))
+            for ln in fresh:
+                st["bad"][hashlib.sha1(ln.encode("utf-8")).hexdigest()[:12]] = int(time.time())
+            save_state(conf.state, st)
+            log(conf, f"불량 보고 {len(fresh)}건 격리 → {conf.outbox}.corrupt")
+    return len(bad)
+
+
 def _round(conf: Conf, out: dict, dry: bool) -> dict:
-    reports = hub_report.read_outbox(conf.outbox)
-    st = load_state(conf.state)
+    bad = []
+    reports = hub_report.read_outbox(conf.outbox, bad)
+    try:
+        st = load_state(conf.state)
+    except StateCorrupt as err:
+        return halt(conf, err, out, dry)
+    out["bad"] = quarantine(conf, bad, st, dry)
     todo = [r for r in reports if not st["reports"].get(r["id"], {}).get("sent")]
     out["pending"] = len(todo)
     if not todo:
@@ -277,10 +345,14 @@ def _round(conf: Conf, out: dict, dry: bool) -> dict:
         return out
     deadline = time.monotonic() + conf.budget_s
     blocked = set()  # 앞 보고가 실패한 주제는 순서가 바뀌지 않게 이번 회차에 건너뜀
-    for rep in todo[: conf.max_per_run]:
+    tried = 0
+    for rep in todo:
         key = topic_key(rep)
         if key in blocked:
-            continue
+            continue  # 건너뛴 보고는 시도 건수에 세지 않음(막힌 주제가 다른 주제를 굶기지 않게)
+        if tried >= conf.max_per_run:
+            break
+        tried += 1
         fails = st["reports"].setdefault(rep["id"], {})
         try:
             res = deliver(conf, rep, st, deadline)
@@ -319,7 +391,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="outbox 의 미전송 허브 보고를 Slack 주제 스레드에 올리고 진행 스레드에 한 줄 + 링크를 남김.",
         epilog="예:\n  report_sender.py --once --dry-run   # 보낼 보고만 출력(전송·상태 저장 없음)\n  report_sender.py --once             # 실제 전송(보통 slack_poll.sh 회차 끝에서 호출)\n"
                "환경: LRM_HUB_DIR, LRM_REPORT_OUTBOX, LRM_REPORT_STATE, LRM_REPORT_NOTIFY, LRM_LEDGER, LRM_LEDGER_STATE, LRM_REPORT_BUDGET_S\n"
-               "종료 코드: 0 성공(처리할 것 없음·busy 포함), 1 일부 전송 실패(재시도 대상), 2 설정·인자 오류")
+               "종료 코드: 0 성공(처리할 것 없음·busy 포함), 1 일부 전송 실패(재시도 대상), 2 설정·인자 오류·상태 파일 손상(전송 중단)")
     p.add_argument("--once", action="store_true", required=True, help="한 회차 처리 후 종료(필수)")
     p.add_argument("--dry-run", action="store_true", help="전송·상태 저장 없이 보낼 보고만 출력")
     p.add_argument("--json", action="store_true", help="결과를 JSON 한 줄로 출력")
@@ -333,6 +405,11 @@ def main(argv=None) -> int:
     except hub_report.ReportError as err:
         sys.stderr.write(f"오류: {err}\n")
         return err.code
+    if res["status"] == "halted":
+        sys.stderr.write(f"오류: {res['error']} — {res['guide']}\n")
+        if args.json:
+            print(json.dumps(res, ensure_ascii=False))
+        return 2
     if args.json:
         print(json.dumps(res, ensure_ascii=False))
     else:

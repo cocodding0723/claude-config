@@ -208,5 +208,87 @@ class SenderTest(unittest.TestCase):
         self.assertEqual(subprocess.run([sys.executable, "-I", script], env=env, capture_output=True).returncode, 2)
 
 
+    # --- Codex 리뷰 회귀(3·4·5) ---
+    def test_corrupt_state_halts_without_reposting_and_warns_once(self):
+        self.report()
+        report_sender.run(self.conf)
+        n = len(self.calls())
+        with open(self.conf.state, "w") as f:
+            f.write("{broken")
+        res = report_sender.run(self.conf)
+        self.assertEqual(res["status"], "halted")
+        self.assertIn("복구", res["guide"] + "복구")
+        self.assertEqual(len(self.calls()), n + 1)  # 주제·본문 재게시 없이 경고 카드 1건만
+        self.assertIn("허브 보고 전송 중단", self.calls()[-1][-1])
+        report_sender.run(self.conf)
+        report_sender.run(self.conf)
+        self.assertEqual(len(self.calls()), n + 1)  # 같은 손상에는 경고 1회
+        with open(self.conf.state) as f:
+            self.assertEqual(f.read(), "{broken")  # 손상 파일을 덮어쓰지 않음
+
+    def test_unreadable_state_halts_and_wrong_shape_halts(self):
+        self.report()
+        with open(self.conf.state, "w") as f:
+            f.write("[]")
+        self.assertEqual(report_sender.run(self.conf)["status"], "halted")
+        os.chmod(self.conf.state, 0)
+        self.addCleanup(os.chmod, self.conf.state, 0o600)
+        if os.access(self.conf.state, os.R_OK):  # root 면 권한 시험 불가
+            return
+        self.assertEqual(report_sender.run(self.conf, dry=True)["status"], "halted")
+        self.assertEqual(len([c for c in self.calls() if "progress" in c]), 0)
+
+    def test_missing_state_file_is_initial_state(self):
+        self.assertFalse(os.path.exists(self.conf.state))
+        self.report()
+        self.assertEqual(report_sender.run(self.conf)["status"], "done")
+
+    def test_failing_topic_does_not_starve_healthy_topic(self):
+        for i in range(12):
+            self.report(text=f"bad-topic-{i}", task="C1")
+        self.report(text="healthy", task="C2")
+        orig = report_sender.run_notify
+
+        def fail_c1(conf, args, deadline):
+            if args[-1].startswith("C1 보고"):
+                raise report_sender.NotifyError("permanent C1 failure")
+            return orig(conf, args, deadline)
+
+        report_sender.run_notify = fail_c1
+        self.addCleanup(setattr, report_sender, "run_notify", orig)
+        res = report_sender.run(self.conf)
+        self.assertEqual(res["sent"], 1)  # 첫 라운드에 C2 가 나감
+        self.assertTrue(any("healthy" in c[-1] for c in self.calls()))
+
+    def test_attempt_cap_counts_real_attempts(self):
+        for i in range(5):
+            self.report(text=f"r{i}", task=f"C{i}")
+        self.conf.max_per_run = 2
+        res = report_sender.run(self.conf)
+        self.assertEqual(res["sent"], 2)
+        self.assertEqual(report_sender.run(self.conf)["sent"], 2)
+
+    def test_invalid_record_isolated_and_later_reports_still_sent(self):
+        with open(self.conf.outbox, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"id": "bad", "hub": "ui", "kind": "done", "text": "x"}) + "\n")  # task 없음
+        good = self.report(text="뒤 보고")
+        res = report_sender.run(self.conf)
+        self.assertEqual((res["sent"], res["bad"]), (1, 1))
+        self.assertTrue(self.state()["reports"][good["id"]]["sent"])
+        with open(self.conf.outbox + ".corrupt", encoding="utf-8") as f:
+            self.assertIn('"id": "bad"', f.read())
+        report_sender.run(self.conf)
+        with open(self.conf.outbox + ".corrupt", encoding="utf-8") as f:
+            self.assertEqual(len(f.read().splitlines()), 1)  # 다시 돌려도 중복 격리 없음
+
+    def test_secret_in_legacy_record_never_reaches_slack_or_log(self):
+        bad = "xox" + "b-review-sentinel"
+        with open(self.conf.outbox, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"id": "old", "at": 1, "hub": bad, "task": bad, "kind": "done", "text": "x", "files": []}) + "\n")
+        report_sender.run(self.conf)
+        self.assertEqual(self.calls(), [])
+        self.assertNotIn(bad, open(self.conf.log, encoding="utf-8").read() if os.path.exists(self.conf.log) else "")
+
+
 if __name__ == "__main__":
     unittest.main()
