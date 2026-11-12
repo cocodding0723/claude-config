@@ -29,6 +29,7 @@ ORCA = mt.find_orca()  # launchd 의 짧은 PATH 에서도 찾음(LRM_ORCA 우�
 MAIN_ENV = os.environ.get("LRM_MAIN_ENV", str(DIR / "main.env"))
 HUBS_TSV = DIR / "hubs.tsv"
 QA_SLUG = os.environ.get("LRM_QA_HUB_SLUG", "test-qa")  # 공통 원인 담당 허브
+WT_LIMIT = int(os.environ.get("LRM_WT_LIMIT", "1000"))  # worktree list 행 상한
 CAUSES = "_causes"  # PR 별 마지막 실패 검사·원인(공통 원인 판정용)
 HUB_TABLE = DIR / "ci-review-hubs.tsv"  # 정규식<TAB>허브. 브랜치·제목에 위에서부터 맞춤
 REVIEW_OUT = DIR / "ci-review"
@@ -196,7 +197,7 @@ def pick_hub(pr, state, with_common=False):
     names = review.load_hub_names(HUBS_TSV)
     common = review.common_cause(state.get(CAUSES, {}), str(pr["number"])) if with_common else ()
     return review.assign_hub(pr.get("headRefName", ""), pr.get("title", ""), review.load_table(HUB_TABLE),
-                             review.list_worktrees(ORCA), names, common, names.get(QA_SLUG, ""), REPO)
+                             review.list_worktrees(ORCA, REPO, WT_LIMIT), names, common, names.get(QA_SLUG, ""), REPO)
 
 
 def relay_fail(pr, fails, prev, state, slack_ts=""):

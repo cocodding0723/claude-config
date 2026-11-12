@@ -101,6 +101,7 @@ sed -i '' 's/1111111111111111/2222222222222222/' "$D/prs.json"; c701 pending; ru
 # ---- CI 실패 담당 허브 자동 지정 ----
 cp "$HERE/../../hubs/hubs.tsv" "$D/hubs.tsv"
 PJ=github:basakansoft/loverevolutionmaker
+echo '{"result":{"repos":[{"id":"r1","path":"/p/OtherRepo","displayName":"OtherRepo"},{"id":"r2","path":"/p/LoveRevolutionMaker","displayName":"LoveRevolutionMaker"}]}}' > "$D/repos.json"
 # wt <브랜치> [projectId] [truncated] [omitted호스트]: 허브 폴더 + 하위 작업 공간 1개
 wt() { printf '{"result":{"truncated":%s,"hostScope":{"hostIds":["local"],"omittedHostIds":[%s]},"worktrees":[{"id":"r::/w/coord-ui-layer-hub","path":"/w/coord-ui-layer-hub","branch":"refs/heads/main","projectId":"%s"},{"id":"r::/w/x","path":"/w/x","branch":"refs/heads/%s","projectId":"%s","parentWorktreeId":"r::/w/coord-ui-layer-hub"}]}}' "${3:-false}" "${4:-}" "$PJ" "$1" "${2:-$PJ}" > "$D/worktrees.json"; }
 prs() { echo "[$1]" > "$D/prs.json"; }
@@ -132,6 +133,15 @@ d=json.load(open(sys.argv[1])); d["result"]["worktrees"].append(dict(d["result"]
 PY
 cycle 718
 grep -q "담당 허브 미배정(메인 판단)" "$D/orca.log" && ok "후보가 2개 → 지정 안 함" || ko "후보 중복" "$(cat "$D/orca.log")"
+
+# 저장소 범위·상한 인자 전달, 매핑 실패 → 표
+fresh; log "not ok 3 - eye"; prs "$(pj 760 feat/LRM-397-w 1212121212121212)"; wt feat/LRM-397-w; cycle 760
+grep -q "^worktree list --repo path:/p/LoveRevolutionMaker --limit 1000 --json" "$D/orca.log" && ok "worktree list 에 --repo path:·--limit 1000 전달" || ko "repo·limit 인자" "$(cat "$D/orca.log")"
+fresh; LRM_WT_LIMIT=300 python3 -c 'import sys;sys.path.insert(0,sys.argv[1]);import ci_review as r;r.list_worktrees(sys.argv[2],"A/LoveRevolutionMaker",300)' "$S" "$HERE/fake_orca.sh"
+grep -q -- "--limit 300 --json" "$D/orca.log" && ok "--limit 설정값 반영" || ko "limit 설정" "$(cat "$D/orca.log")"
+fresh; echo '{"result":{"repos":[{"path":"/p/X","displayName":"Other"}]}}' > "$D/repos.json"; prs "$(pj 761 feat/LRM-397-v 1313131313131313)"; wt feat/LRM-397-v; cycle 761
+grep -q "담당 허브 VFX 허브(vfx) (근거: 허브 표" "$D/orca.log" && ! grep -q "^worktree list" "$D/orca.log" && ok "저장소 매핑 실패 → 작업 공간 조회 안 하고 표로" || ko "매핑 실패" "$(cat "$D/orca.log")"
+echo '{"result":{"repos":[{"id":"r2","path":"/p/LoveRevolutionMaker","displayName":"LoveRevolutionMaker"}]}}' > "$D/repos.json"
 
 # 공통 원인: 서로 다른 PR 의 같은 시험 실패 → QA 허브. 처리 순서를 바꿔도 같은 결과
 for order in "720 721" "721 720"; do

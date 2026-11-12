@@ -4,3 +4,6 @@ printf "%s\n" "$*" >> "${FAKE_DIR:?}/orca.log"
 if [ "$1 $2" = "worktree list" ]; then
   cat "$FAKE_DIR/worktrees.json" 2>/dev/null || exit 1
 fi
+if [ "$1 $2" = "repo list" ]; then
+  cat "$FAKE_DIR/repos.json" 2>/dev/null || exit 1
+fi

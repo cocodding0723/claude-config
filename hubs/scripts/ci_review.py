@@ -101,9 +101,24 @@ def parent_hub(branch, worktrees, names, repo=""):
     return hub_name(os.path.basename((parent or {}).get("path") or str(w.get("parentWorktreeId") or "").split("::")[-1]), names)
 
 
-def list_worktrees(orca, timeout=30):
-    """orca worktree list(읽기 전용) 의 작업 공간 목록. 조회 실패·잘림(truncated)·누락 호스트가 있으면 None(조회 불완전)"""
-    rc, data = mt.run_orca(orca, ["worktree", "list", "--limit", "5000", "--json"], timeout)
+def repo_path(orca, repo, timeout=20):
+    """PR 저장소('owner/name') → orca 에 등록된 로컬 저장소 경로. 이름이 정확히 1개 일치할 때만, 아니면 빈 문자열"""
+    rc, data = mt.run_orca(orca, ["repo", "list", "--json"], timeout)
+    repos = ((data or {}).get("result") or {}).get("repos")
+    if rc != 0 or not isinstance(repos, list):
+        return ""
+    name = repo.split("/")[-1].lower()
+    hit = [r.get("path") for r in repos if str(r.get("displayName", "")).lower() == name and r.get("path")]
+    return hit[0] if len(hit) == 1 else ""
+
+
+def list_worktrees(orca, repo="", limit=1000, timeout=30):
+    """PR 저장소 범위의 작업 공간 목록(orca worktree list, 읽기 전용). 저장소 지정 없이 부르면 전체 목록이 잘리고 원격 호스트가 빠지므로
+    저장소 매핑 실패·조회 실패·잘림(truncated)·누락 호스트는 None(조회 불완전)"""
+    path = repo_path(orca, repo, timeout)
+    if not path:
+        return None
+    rc, data = mt.run_orca(orca, ["worktree", "list", "--repo", f"path:{path}", "--limit", str(limit), "--json"], timeout)
     res = (data or {}).get("result") or {}
     wts = res.get("worktrees")
     if rc != 0 or not isinstance(wts, list) or res.get("truncated") or (res.get("hostScope") or {}).get("omittedHostIds"):
