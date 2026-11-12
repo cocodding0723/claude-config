@@ -90,6 +90,14 @@ reset; echo badjson > "$D/plan-collect"; post --date $WK; rc=$?
 [ $rc = 1 ] && grep -q "collect_bad_json" "$D/sent.log" && ok "수집 출력이 JSON 이 아니면 실패" || ko "깨진 JSON" "rc=$rc"
 reset; post --date $WK; ! grep -q "수집 누락" "$D/sent.log" && ok "오류 없으면 누락 경고 없음" || ko "정상 경고"
 
+# ---- notify 시간 초과·실행 불가(리뷰 지적 6) ----
+reset; echo hang > "$D/send-mode"; LRM_SCRUM_NOTIFY_TIMEOUT=1 post --date $WK; rc=$?
+[ $rc = 1 ] && ! grep -q "Traceback" "$D/err" && [ -s "$D/osa.log" ] && ls "$D"/draft/2026-11-12.md > /dev/null && grep -q "시간 초과" "$D/scrum.log" && ok "notify 시간 초과 → 예외 없이 로그·로컬 알림·초안 보존, 종료 코드 1" || ko "notify 시간 초과" "rc=$rc $(tail -3 "$D/err")"
+reset; LRM_NOTIFY="$D/없는-명령" post --date $WK; rc=$?
+[ $rc = 1 ] && ! grep -q "Traceback" "$D/err" && [ -s "$D/osa.log" ] && ls "$D"/draft/2026-11-12.md > /dev/null && [ ! -e "$D/scrum.state.json" ] && ok "notify 실행 불가(OSError) → 예외 없이 로컬 알림, 보냄 기록 없음" || ko "notify OSError" "rc=$rc $(tail -3 "$D/err")"
+reset; echo hang > "$D/send-mode"; for m in claude-fable-5-1 claude-fable-5-2 claude-opus-5-5; do echo fail > "$D/plan-$m"; done; LRM_SCRUM_NOTIFY_TIMEOUT=1 post --date $WK; rc=$?
+[ $rc = 1 ] && ! grep -q "Traceback" "$D/err" && [ -s "$D/osa.log" ] && ok "warn 발송 중 시간 초과도 예외 없이 로컬 알림" || ko "warn 시간 초과" "rc=$rc"
+
 # ---- Slack 으로 나가는 문자열 정제(리뷰 지적 4) ----
 reset; echo secret > "$D/plan-claude-fable-5-1"; post --date $WK; rc=$?
 [ $rc = 0 ] && [ "$(tr '\n' ' ' < "$D/claude.log")" = "claude-fable-5-1 claude-fable-5-2 " ] && ! grep -rq "FAKE_TEST_SECRET" "$D/sent.log" "$D"/draft && ok "비밀 패턴이 든 초안은 거부 → 다음 모델 채택, 본문·첨부에 노출 없음" || ko "비밀 초안" "rc=$rc $(cat "$D/claude.log")"

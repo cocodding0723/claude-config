@@ -80,6 +80,9 @@ SECRET_RE = re.compile(r"(?i)\b(?:token|secret|passw(?:or)?d|api[_-]?key|authori
 INTERNAL_ID_RE = re.compile(r"\b(?:LRM-\d+|D-[A-Za-z0-9]{1,16}|T-[A-Za-z0-9]{1,16}|ctx_[0-9a-f]+|task_[0-9a-f]+|term_[0-9a-f-]+)\b")
 SLACK_TAG = "scrum"
 NO_ATLASSIAN = "@@atlassian-unavailable@@"  # 초안 작성 claude 가 Jira·Confluence 를 못 읽었을 때 맨 끝에 붙이는 표시
+NOTIFY_TIMEOUT = int(os.environ.get("LRM_SCRUM_NOTIFY_TIMEOUT", "120"))
+NOTIFY_RC_TIMEOUT = -1  # notify 가 시간 초과: 서버 반영 여부 모름
+NOTIFY_RC_OS = -2  # notify 실행 자체 실패: 보내지 않았음
 NOTIFY_EXIT_API = 1  # slack_notify.sh: 1 API 실패, 2 설정·양식 오류
 # ───────────────────────────────────────────────────────────────────────────────────────────
 
@@ -261,7 +264,12 @@ def notify(args, retry=True):
     rc, text = 0, ""
     for i, w in enumerate(waits):
         time.sleep(w)
-        out = subprocess.run([NOTIFY, *args], capture_output=True, text=True, timeout=120)
+        try:
+            out = subprocess.run([NOTIFY, *args], capture_output=True, text=True, timeout=NOTIFY_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            return NOTIFY_RC_TIMEOUT, "notify %d초 시간 초과" % NOTIFY_TIMEOUT
+        except OSError as e:
+            return NOTIFY_RC_OS, "notify 실행 불가(%s)" % e
         rc, text = out.returncode, (out.stdout + out.stderr).strip()
         if rc != NOTIFY_EXIT_API:
             break
