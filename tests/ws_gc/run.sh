@@ -87,7 +87,7 @@ dirs_before=$(cd "$ROOT" && find . -mindepth 2 -maxdepth 2 -type d | sort)
 
 gc() { # 인자를 ws_gc.sh 에 전달. 결과: RC, $SB/out
   : > "$FAKE/orca.calls"; : > "$FAKE/notify.calls"
-  env PATH="$BIN:$PATH" FAKE_DIR="$FAKE" FAKE_ROOT="$ROOT" FAKE_RM_REFUSE="sub_clean" FAKE_GH_FAIL="feat/ghf" WS_GC_NOTIFY="$HERE/fake_send.sh" \
+  env PATH="$BIN:$PATH" FAKE_DIR="$FAKE" FAKE_ROOT="$ROOT" FAKE_RM_REFUSE="sub_clean sub_noise" FAKE_GH_FAIL="feat/ghf" WS_GC_NOTIFY="$HERE/fake_send.sh" \
     bash "$GC" --root "$ROOT" --archive-dir "$ARC" --log "$ARC/ws_gc.log" "$@" > "$SB/out" 2>&1
   RC=$?
 }
@@ -159,7 +159,7 @@ chk "보관 실패 → 폴더 유지·archive_fail·종료 1" '[ -e "$W/arcfail"
 
 # ---- 6. eol=lf 속성과 혼합 줄바꿈 index 충돌 ------------------------------------------------
 LIC=Assets/Sound/s/a.LICENSE.txt
-for n in eol_only eol_other eol_content eol_late eol_arcfail eol_noise_late eol_archive_late lic_checkout lic_untracked; do
+for n in eol_only eol_other eol_content eol_late eol_arcfail eol_noise_late eol_archive_late lic_checkout lic_untracked eol_reason lic_noise; do
   mk "$n" "feat/$n"; pr "feat/$n" '[{"number":50,"state":"MERGED"}]'
   if [ "$n" = lic_checkout ]; then
     printf 'line1\r\nline2\r\n' > "$W/$n/$LIC"
@@ -176,6 +176,11 @@ for n in eol_only eol_other eol_content eol_late eol_arcfail eol_noise_late eol_
   git -C "$W/$n" add -- .gitattributes; oldc "$n" attributes
   git -C "$W/$n" -c core.autocrlf=false checkout -- "$LIC"
 done
+echo m > "$W/lic_noise/Assets/Sound/s/new.cs.meta"
+mk sub_noise feat/sub_noise; pr feat/sub_noise '[{"number":51,"state":"MERGED"}]'
+git -C "$W/sub_noise" -c protocol.file.allow=always submodule add -q "$O/sub.git" Assets/Sub 2>/dev/null
+git -C "$W/sub_noise" add -A; oldc sub_noise sub; git -C "$W/sub_noise" push -q origin feat/sub_noise 2>/dev/null
+echo m > "$W/sub_noise/Assets/new.cs.meta"
 echo edit >> "$W/eol_other/README.md"
 echo content >> "$W/eol_content/$LIC"
 : > "$ARC/repoA/eol_arcfail"
@@ -202,6 +207,13 @@ FAKE_RM_CHECK_DIRTY=1 FAKE_RM_ADD_NOISE=1 gc --apply --only eol_noise_late
 chk "rm 직전 일반 부산물 발생: LICENSE 전용 force 금지" '[ "$RC" = 1 ] && [ -e "$W/eol_noise_late" ] && [ "$(rm_calls)" = 1 ] && ! grep -q -- "--force" "$FAKE/orca.calls"'
 FAKE_RM_CHECK_DIRTY=1 FAKE_RM_BREAK_ARCHIVE="$ARC/repoA/eol_archive_late" gc --apply --only eol_archive_late
 chk "rm 거부 뒤 보관 파일 수 불일치: force 금지" '[ "$RC" = 1 ] && [ -e "$W/eol_archive_late" ] && [ "$(rm_calls)" = 1 ] && ! grep -q -- "--force" "$FAKE/orca.calls" && has "ARCHIVE_MISMATCH"'
+
+FAKE_RM_CHECK_DIRTY=1 FAKE_RM_REASON="error: worktree is locked" gc --apply --only eol_reason
+chk "다른 거부 사유(잠금): force 안 함·rm_fail" '[ "$RC" = 1 ] && [ -e "$W/eol_reason" ] && [ "$(rm_calls)" = 1 ] && ! grep -q -- "--force" "$FAKE/orca.calls" && has "SKIP rm_fail"'
+FAKE_RM_CHECK_DIRTY=1 gc --apply --only lic_noise
+chk "LICENSE 줄바꿈 + 기존 부산물: force 로 삭제" '[ "$RC" = 0 ] && [ ! -e "$W/lic_noise" ] && [ "$(rm_calls)" = 2 ] && grep -q -- "--force" "$FAKE/orca.calls"'
+FAKE_RM_CHECK_DIRTY=1 gc --apply --only sub_noise
+chk "서브모듈 + 기존 부산물: 이전처럼 force 삭제" '[ "$RC" = 0 ] && [ ! -e "$W/sub_noise" ] && grep -q -- "--force" "$FAKE/orca.calls"'
 
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
