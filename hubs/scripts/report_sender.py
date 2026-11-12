@@ -47,7 +47,7 @@ USER_FIX_LINES = ("slack-bot.env 없음 — 사용자 설정 필요",)
 NOTIFY_TIMEOUT_S = 30
 UPLOAD_TIMEOUT_S = 120  # 파일 업로드는 본문 전송보다 오래 걸릴 수 있음
 PREVIEW_TIMEOUT_S = 30
-PREVIEW_SUFFIX = "#preview"  # 미리보기 단계 키(att_done 에 소스 경로 + 이 접미사)
+PREVIEW_SUFFIX = "#preview:"  # 미리보기 단계 키 = 원본 경로 + 이 접미사 + 원본 내용 해시(att_done). 임시 경로에 기대지 않아 회차가 바뀌어도 같은 키
 HTML_EXTS = (".html", ".htm")
 DEFAULT_BUDGET_S = 40.0  # 회차 시간 예산. 넘기면 새 전송을 시작하지 않고 다음 회차로 넘김
 MAX_PER_RUN = 10
@@ -296,15 +296,28 @@ def attached_args(rep: dict) -> list:
 
 def decide_args(rep: dict) -> list:
     a = ["--tag", rep["hub"], "--kind", "decide", "--options", rep["options"], "--recommend", rep["recommend"], "--decision-id", rep["decision_id"]]
+    a += ["--no-doc"] if rep.get("no_doc") and not rep["files"] else []
     return a + (["--reversible", rep["reversible"]] if rep.get("reversible") else [])
 
 
-def make_preview(conf: Conf, path: str, tmp: str, deadline: float) -> str:
-    """HTML → 390폭 미리보기 PNG 경로. 스크립트·Chrome 이 없거나 실패하면 빈 문자열(첨부는 계속)"""
+def content_hash(path: str) -> str:
+    """원본 내용 해시 앞 12자. 못 읽으면 빈 문자열(미리보기 생략)"""
+    try:
+        with open(os.path.expanduser(path), "rb") as f:
+            return hashlib.sha1(f.read(hub_report.MAX_FILE_BYTES + 1)).hexdigest()[:12]
+    except OSError:
+        return ""
+
+
+def make_preview(conf: Conf, path: str, digest: str, deadline: float) -> str:
+    """HTML → 390폭 미리보기 PNG 경로. 경로는 상태 폴더 아래 내용 해시로 고정(응답 유실 복구가 보낸 기록의 경로로 찾음).
+    스크립트·Chrome 이 없거나 실패하면 빈 문자열(첨부는 계속)"""
     left = deadline - time.monotonic()
     if not (os.access(conf.preview, os.X_OK) and left > 0):
         return ""
-    out = os.path.join(tmp, os.path.splitext(os.path.basename(path))[0] + "-preview.png")
+    out = os.path.join(os.path.dirname(os.path.abspath(conf.state)), "report-previews", f"{digest}-{os.path.splitext(os.path.basename(path))[0]}-preview.png")
+    with contextlib.suppress(OSError):
+        os.makedirs(os.path.dirname(out), exist_ok=True)
     try:
         p = subprocess.run([conf.preview, os.path.abspath(os.path.expanduser(path)), out], capture_output=True, text=True, timeout=min(PREVIEW_TIMEOUT_S, left))
     except (subprocess.TimeoutExpired, OSError):
@@ -345,40 +358,43 @@ def send_files(conf: Conf, rep: dict, rs: dict, st: dict, target: str, deadline:
         rs["att_done"] = {}
     done = rs["att_done"]
     since = rs.setdefault("att_start", int(time.time()))
-    with tempfile.TemporaryDirectory(prefix="report-preview-") as tmp:
-        for path in rep["files"]:
-            name = os.path.basename(path) or path
-            jobs = [(path, name)]
-            if path.lower().endswith(HTML_EXTS) and path + PREVIEW_SUFFIX not in done:
-                jobs.append((path + PREVIEW_SUFFIX, ""))
-            for key, label in jobs:
-                if key in done:
-                    continue
-                src = path
-                if key.endswith(PREVIEW_SUFFIX):  # 미리보기는 업로드 직전에 만듦. 못 만들면 생략으로 기록
-                    src = make_preview(conf, path, tmp, deadline)
-                    label = os.path.basename(src)
-                    if not src:
-                        log(conf, f"{rep['id']} 미리보기 생략: {name}")
-                        done[key] = ""
-                        save_state(conf.state, st)
-                        continue
-                if fid := uploaded_id(conf, src, target, since):
-                    done[key] = fid
+    for path in rep["files"]:
+        name = os.path.basename(path) or path
+        jobs = [(path, name)]
+        digest = content_hash(path) if path.lower().endswith(HTML_EXTS) else ""
+        if digest:
+            jobs.append((path + PREVIEW_SUFFIX + digest, ""))
+        for key, label in jobs:
+            if key in done:
+                continue
+            src = path
+            if PREVIEW_SUFFIX in key:  # 미리보기는 업로드 직전에 만듦. 못 만들면 생략으로 기록
+                src = make_preview(conf, path, digest, deadline)
+                label = os.path.basename(src)
+                if not src:
+                    log(conf, f"{rep['id']} 미리보기 생략: {name}")
+                    done[key] = ""
                     save_state(conf.state, st)
                     continue
-                save_state(conf.state, st)  # 첫 시도 시각(att_start)을 업로드 전에 저장
-                why = hub_report.file_problem(src)
-                try:
-                    if why:
-                        raise NotifyError(why, permanent=True)
-                    done[key] = run_notify(conf, ["--tag", rep["hub"], "--thread", target] + attached_args(rep) + [f"첨부: {label}", src], deadline, upload=True) or "uploaded"
-                except NotifyError as err:
-                    if not err.permanent:
-                        raise NotifyError(f"첨부 실패: {label} — {err}", counts=err.counts)
-                    attach_failed(conf, rep, target, label, str(err), deadline)
-                    done[key] = ""
+            if fid := uploaded_id(conf, src, target, since):
+                done[key] = fid
                 save_state(conf.state, st)
+                continue
+            save_state(conf.state, st)  # 첫 시도 시각(att_start)을 업로드 전에 저장
+            why = hub_report.file_problem(src)
+            try:
+                if why:
+                    raise NotifyError(why, permanent=True)
+                done[key] = run_notify(conf, ["--tag", rep["hub"], "--thread", target] + attached_args(rep) + [f"첨부: {label}", src], deadline, upload=True) or "uploaded"
+            except NotifyError as err:
+                if not err.permanent:
+                    raise NotifyError(f"첨부 실패: {label} — {err}", counts=err.counts)
+                attach_failed(conf, rep, target, label, str(err), deadline)
+                done[key] = ""
+            if PREVIEW_SUFFIX in key:
+                with contextlib.suppress(OSError):
+                    os.unlink(src)  # 올렸거나 포기한 미리보기 파일 정리
+            save_state(conf.state, st)
 
 
 def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
@@ -431,6 +447,13 @@ def warn_unattached(conf: Conf, rep: dict) -> None:
         log(conf, f"경고: 보고 {rep['id']} 본문에 로컬 경로({', '.join(found[:3])})만 있고 첨부 없음 — hub_report.py --file 로 첨부")
 
 
+def safe_text(text: str) -> str:
+    """경고 문구의 로컬 경로를 확장자 없는 파일 이름으로 바꿈. 경로가 든 경고는 알림 스크립트의 경로 검사에 걸려 경고가 안 나감(검사 예외 없이 문구로 해결)"""
+    for p in sorted(set(hub_report.local_paths(text)), key=len, reverse=True):
+        text = text.replace(p, os.path.splitext(os.path.basename(p))[0] or "파일")
+    return text
+
+
 def warn_stop(conf: Conf, rep: dict, st: dict, why: str, permanent: "bool | None", deadline: float) -> None:
     """재시도 중단 경고 1건(원인 + 조치). 원래 주제 스레드가 있으면 그 답글, 없으면(결정 카드 등) DM 새 글"""
     label = hub_report.KINDS[rep["kind"]][1]
@@ -439,6 +462,7 @@ def warn_stop(conf: Conf, rep: dict, st: dict, why: str, permanent: "bool | None
         cause = "원인 미확인(이전 기록)" + (f" — {why}" if why else "")
     else:
         cause = f"입력 오류(재시도해도 같은 결과) — {why}" if permanent else f"{conf.fail_limit}회 연속 전송 실패 — {why}"
+    cause = safe_text(cause)
     msg = (f"허브 보고 전송 중단\n\n- 무엇: {rep['hub']} {label} 보고 {rep['id']} 재시도 중단\n"
            f"- 원인: {cause}\n- 조치: 보고를 고쳐 hub_report.py add 로 다시 기록")
     run_notify(conf, ["--tag", rep["hub"], "--kind", "warn"] + (["--thread", thread] if thread else []) + [msg], deadline)

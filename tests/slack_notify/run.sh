@@ -56,10 +56,10 @@ bash -n "$NOTIFY" 2>/dev/null && ok "bash -n 통과" || ko "bash -n" "문법 오
 # ---- A. --kind 6종 이모지 매핑 ---------------------------------------------------------------
 for spec in "decide|:비서-선택해주세요:" "todo|$TODO_G" "done|:white_check_mark:" "progress|:비서-진행중:" "warn|:비서-긴급:" "doc|:비서-공유합니다:"; do
   k=${spec%%|*}; e=${spec#*|}
-  run_n --kind "$k" "주제$ANS"
+  run_n --kind "$k" $([ "$k" = decide ] && echo --no-doc) "주제$ANS"
   [ "$RC" = 0 ] && [ "$(text | head -1)" = "$e 주제" ] && [ "$(errn)" = 0 ] && ok "A --kind $k → 첫 줄 앞에 '$e' 한 번, 경고 없음" || ko "A --kind $k" "rc=$RC $(text | head -1)"
 done
-run_n --kind decide "🙋 주제$ANS"
+run_n --kind decide --no-doc "🙋 주제$ANS"
 [ "$RC" = 0 ] && [ "$(text | head -1)" = ":비서-선택해주세요: 주제" ] && ok "A 첫 줄에 이미 🙋 → 이모지 중복 부착 없음" || ko "A 중복 🙋" "$(text | head -1)"
 run_n --kind done ":white_check_mark: 끝"
 [ "$(text)" = ":white_check_mark: 끝" ] && ok "A 첫 줄에 이미 :white_check_mark: → 부착 없음(치환 이름도 인식)" || ko "A 치환 이름" "$(text)"
@@ -97,11 +97,11 @@ run_n --kind done $'✅ 완료\n\n• 무엇: ABC1234 반영'
 grep -q 'ABC1234' "$SB/err" && ok "B 대문자 hex 도 위반" || ko "B 대문자 hex" "$(cat "$SB/err")"
 run_n --kind done $'✅ 완료\n\n• 무엇: deadbeef 와 1234567 과 abcdef 는 단어·숫자라 통과'
 [ "$(errn)" = 0 ] && ok "B 영단어형 hex(deadbeef)·순수 숫자 7자리·6자 hex 는 통과" || ko "B 영단어·숫자" "$(cat "$SB/err")"
-run_n --kind decide $'주제\n\n• 무엇: 정할 것'
+run_n --kind decide --no-doc $'주제\n\n• 무엇: 정할 것'
 grep -q "경고: 결정·할 일인데 '👉 답:' 줄이 없음" "$SB/err" && ok "B decide 에 👉 줄 없음 → 위반" || ko "B 👉 없음" "$(cat "$SB/err")"
 run_n --kind todo $'주제\n\n• 무엇: 할 일'
 grep -q "👉 답:' 줄이 없음" "$SB/err" && ok "B todo 에 👉 줄 없음 → 위반" || ko "B todo 👉" "$(cat "$SB/err")"
-run_n --kind decide "주제$ANS"
+run_n --kind decide --no-doc "주제$ANS"
 [ "$(errn)" = 0 ] && ok "B 직접 쓴 👉 줄 → 통과" || ko "B 👉 있음" "$(cat "$SB/err")"
 run_n --kind done $'완료\n\n• 무엇: 끝'
 [ "$(errn)" = 0 ] && ok "B done 은 👉 줄 불필요" || ko "B done 👉" "$(cat "$SB/err")"
@@ -124,13 +124,13 @@ run_n --kind done $'완료\n\n참고: x\n\n• 무엇: LRM-1\n\n참고: y'
 grep -q '본문에 티켓 번호 LRM-1' "$SB/err" && ok "B '참고:' 가 둘이면 마지막 줄부터 제외(앞 참고 뒤 본문의 티켓은 검사)" || ko "B 참고 마지막 일치" "$(cat "$SB/err")"
 run_n --kind done $'참고: ✅ 문서\n\n• 무엇: LRM-2'
 grep -q '본문에 티켓 번호 LRM-2' "$SB/err" && ok "B 첫 줄이 '참고:' 여도 제외 구간으로 안 봄(본문 티켓 검사)" || ko "B 첫 줄 참고" "$(cat "$SB/err")"
-run_n --kind decide $'주제\n\n👉 참고 링크'
+run_n --kind decide --no-doc $'주제\n\n👉 참고 링크'
 grep -q "👉 답:' 줄이 없음" "$SB/err" && ok "B '답:' 없는 👉 줄은 답 줄로 안 침" || ko "B 👉 엄격" "$(cat "$SB/err")"
-run_n --kind decide $'주제\n\n  :point_right: 답: 확인'
+run_n --kind decide --no-doc $'주제\n\n  :point_right: 답: 확인'
 [ "$(errn)" = 0 ] && ok "B ':point_right: 답:' 줄(앞 공백 허용)도 답 줄로 침" || ko "B point_right" "$(cat "$SB/err")"
-run_n --kind decide $'주제\n\n👉  답 : 확인'
+run_n --kind decide --no-doc $'주제\n\n👉  답 : 확인'
 [ "$(errn)" = 0 ] && ok "B '👉' 와 '답' 사이·'답' 뒤 공백 허용" || ko "B 👉 공백" "$(cat "$SB/err")"
-run_n --kind decide $'주제\n\n참고: x\n👉 답: 확인'
+run_n --kind decide --no-doc $'주제\n\n참고: x\n👉 답: 확인'
 grep -q "👉 답:' 줄이 없음" "$SB/err" && ok "B '참고:' 줄 뒤의 👉 답 은 본문이 아니라 답 줄로 안 침" || ko "B 참고 뒤 👉" "$(cat "$SB/err")"
 KEYCAP=$'1\xef\xb8\x8f\xe2\x83\xa3'   # 1️⃣ = 숫자 1 + VS16 + U+20E3(Me)
 K39=$(printf '가%.0s' $(seq 1 39))
@@ -141,13 +141,13 @@ grep -q '^경고: 첫 줄이 41자(최대 40)' "$SB/err" && ok "B 키캡 포함 
 
 # ---- C. 단계 모드 ----------------------------------------------------------------------------
 newhome c
-run_n --kind decide "✅ $K41"
+run_n --kind decide --no-doc "✅ $K41"
 [ "$RC" = 0 ] && posted && [ "$(sed -n 1p "$SB/err" | cut -c1-3)" = "경고:" ] && [ "$(tail -n 1 "$SB/err")" = "양식 위반 2건(전송함)" ] && [ "$(grep -c '^경고:' "$SB/err")" = 2 ] && ok "C warn(기본): 위반 2건도 전송·종료 코드 0, stderr 경고 줄 + 마지막 줄 '양식 위반 2건(전송함)'" || ko "C warn" "rc=$RC $(cat "$SB/err")"
-LRM_FORMAT=strict run_n --kind decide "✅ $K41"
+LRM_FORMAT=strict run_n --kind decide --no-doc "✅ $K41"
 [ "$RC" = 2 ] && ! posted && nocall && [ "$(grep -c '^거부:' "$SB/err")" = 2 ] && tail -n 1 "$SB/err" | grep -q '^양식 위반 2건(전송 안 함)' && ok "C strict: 위반 시 미전송·API 호출 0회·종료 코드 2, '거부:' 줄" || ko "C strict" "rc=$RC $(cat "$SB/err")"
 LRM_FORMAT=strict run_n --kind done "✅ 깨끗한 완료"
 [ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "C strict: 위반 없으면 그대로 전송" || ko "C strict 정상" "rc=$RC"
-LRM_FORMAT=off run_n --kind decide "✅ $K41"
+LRM_FORMAT=off run_n --kind decide --no-doc "✅ $K41"
 n0=$(logn)
 [ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "C off: 위반해도 검사 없이 전송, stderr 없음" || ko "C off" "rc=$RC $(cat "$SB/err")"
 LRM_FORMAT=off run_n --kind todo "✅ $K41"
@@ -156,7 +156,7 @@ LRM_FORMAT=bogus run_n --kind done "끝"
 [ "$RC" = 2 ] && nocall && grep -q 'LRM_FORMAT 값 오류: bogus' "$SB/err" && ok "C LRM_FORMAT 잘못된 값 + --kind → 종료 코드 2, 원인·조치" || ko "C 잘못된 모드" "rc=$RC"
 LRM_FORMAT=bogus run_n "그냥 보냄 $K41"
 [ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "C LRM_FORMAT 값이 이상해도 --kind 없는 호출은 영향 없음" || ko "C 모드 무영향" "rc=$RC"
-LRM_FORMAT=strict run_n --no-check --kind decide "✅ $K41"
+LRM_FORMAT=strict run_n --no-check --kind decide --no-doc "✅ $K41"
 n1=$(logn)
 [ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && [ "$(lastrec | jq -r '.unchecked')" = true ] && [ "$(lastrec | jq -r '.form_kind')" = decide ] && ok "C --no-check: strict 에서도 검사 없이 전송, sent 기록 unchecked:true" || ko "C --no-check" "rc=$RC $(lastrec)"
 run_n --no-check --kind todo "✅ $K41"
@@ -171,7 +171,7 @@ FAKE_PY_FAIL=check LRM_FORMAT=strict run_n --kind done "깨끗"
 
 # ---- D. 집계 로그 ----------------------------------------------------------------------------
 newhome d
-run_n --kind decide --tag ui-hub --title 비밀제목마커 $'✅ 비밀본문마커 LRM-9\n\n• 무엇: 비밀본문마커'
+run_n --kind decide --no-doc --tag ui-hub --title 비밀제목마커 $'✅ 비밀본문마커 LRM-9\n\n• 무엇: 비밀본문마커'
 RX="^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}${TABS}decide${TABS}ticket,no-answer${TABS}warn${TABS}ui-hub\$"
 [ "$(logn)" = 1 ] && printf '%s\n' "$(lastlog)" | grep -Eq "$RX" && ok "D 로그 한 줄: 시각 TAB 종류 TAB 위반 코드 TAB 모드 TAB 태그" || ko "D 로그 형식" "$(lastlog)"
 [ "$(stat -f %Lp "$CFG/slack-format.log")" = 600 ] && ok "D 로그 파일 권한 600" || ko "D 권한" "$(stat -f %Lp "$CFG/slack-format.log")"
@@ -237,31 +237,31 @@ G3="👉 답: :비서-a: A · :비서-b: B · :비서-c: C · :비서-추천대�
 G4="👉 답: :비서-a: A · :비서-b: B · :비서-c: C · :비서-d: D · :비서-추천대로: 추천대로 · :비서-보류: 보류"
 for n in 2 3 4; do
   eval "g=\$G$n"
-  run_n --kind decide --choices "$n" "$BODY"
+  run_n --kind decide --no-doc --choices "$n" "$BODY"
   [ "$RC" = 0 ] && [ "$(text)" = "$HEAD"$'\n\n'"$g" ] && [ "$(errn)" = 0 ] && ok "F --choices $n → 끝에 안내 줄 정확히 일치, 👉 검사 통과(경고 없음)" || ko "F --choices $n" "rc=$RC $(text | tail -1) / $(cat "$SB/err")"
 done
-run_n --kind decide --choices 3 $'주제\n\n• 무엇: 정할 것\n\n참고: 샘플-123'
+run_n --kind decide --no-doc --choices 3 $'주제\n\n• 무엇: 정할 것\n\n참고: 샘플-123'
 [ "$(text)" = "$HEAD"$'\n\n'"$G3"$'\n\n참고: 샘플-123' ] && ok "F '참고:' 줄이 있으면 안내 줄을 그 앞에 끼움(참고가 맨 아래 유지)" || ko "F 참고 앞" "$(text)"
-run_n --kind decide --choices 4 $'주제\n\n👉 답: 직접 쓴 줄'
+run_n --kind decide --no-doc --choices 4 $'주제\n\n👉 답: 직접 쓴 줄'
 [ "$(text)" = $':비서-선택해주세요: 주제\n\n👉 답: 직접 쓴 줄' ] && [ "$(text | grep -c 👉)" = 1 ] && ok "F 본문에 👉 줄이 이미 있으면 안내 줄을 붙이지 않음" || ko "F 중복 방지" "$(text)"
-run_n --kind decide --choices 2 $'주제\n\n```\n👉 코드 안\n```'
+run_n --kind decide --no-doc --choices 2 $'주제\n\n```\n👉 코드 안\n```'
 [ "$(text | grep -c '^👉 답:')" = 1 ] && ok "F 코드 블록 안의 👉 는 직접 쓴 줄로 치지 않음(안내 줄 부착)" || ko "F 코드 안 👉" "$(text)"
-run_n --kind decide "주제"; ! text | grep -q '👉' && ok "F --choices 없으면 안내 줄 없음(기존 동작)" || ko "F choices 없음" ""
+run_n --kind decide --no-doc "주제"; ! text | grep -q '👉' && ok "F --choices 없으면 안내 줄 없음(기존 동작)" || ko "F choices 없음" ""
 for bad in 1 5 0 abc ""; do
-  run_n --kind decide --choices "$bad" "$BODY"
+  run_n --kind decide --no-doc --choices "$bad" "$BODY"
   [ "$RC" = 2 ] && nocall && grep -q '^--choices 범위 오류' "$SB/err" && ok "F --choices '$bad' → 종료 코드 2, 원인·조치, 전송 없음" || ko "F --choices '$bad'" "rc=$RC $(cat "$SB/err")"
 done
-run_n --kind decide --choices
+run_n --kind decide --no-doc --choices
 [ "$RC" = 2 ] && nocall && ok "F --choices 값 없음 → 종료 코드 2" || ko "F --choices 값 없음" "rc=$RC"
 run_n --kind done --choices 3 "끝"
 [ "$RC" = 2 ] && nocall && grep -q '^--choices 는 --kind decide 와만 사용' "$SB/err" && ok "F decide 가 아닌 --kind 와 --choices → 종료 코드 2" || ko "F 다른 kind" "rc=$RC $(cat "$SB/err")"
 run_n --choices 3 "끝"
 [ "$RC" = 2 ] && nocall && ok "F --kind 없이 --choices → 종료 코드 2" || ko "F kind 없음" "rc=$RC"
-LRM_FORMAT=strict run_n --kind decide --choices 2 "$BODY"
+LRM_FORMAT=strict run_n --kind decide --no-doc --choices 2 "$BODY"
 [ "$RC" = 0 ] && posted && ok "F strict 에서도 --choices 로 👉 줄이 채워지면 통과" || ko "F strict+choices" "rc=$RC $(cat "$SB/err")"
-run_n --no-check --kind decide --choices 2 "$BODY"
+run_n --no-check --kind decide --no-doc --choices 2 "$BODY"
 [ "$(text)" = "$HEAD"$'\n\n'"$G2" ] && [ "$(lastrec | jq -r '.unchecked')" = true ] && ok "F --no-check 여도 안내 줄은 붙음" || ko "F no-check+choices" "$(text)"
-run_n --kind decide --choices 2 "$BODY" "$SB/f.txt"
+run_n --kind decide --no-doc --choices 2 "$BODY" "$SB/f.txt"
 [ "$(text)" = "$HEAD"$'\n\n'"$G2" ] && ok "F 파일 첨부 설명글에도 안내 줄 부착" || ko "F 첨부+choices" "$(text)"
 
 # 🅲·🅳 치환
@@ -271,8 +271,8 @@ run_n "$C1 $D1 $C1$VS $D1$VS 🅰️"
 [ "$(text)" = "$C1 $D1 $C1$VS $D1$VS :비서-a:" ] && ok "F --kind 없는 🅲·🅳 는 치환하지 않음(🅰️ 기존 치환은 유지)" || ko "F kind 없는 🅲🅳" "$(text)"
 run_n --kind progress "🔄 $C1 $D1 $C1$VS $D1$VS 🅰️"
 [ "$(text)" = ":비서-진행중: :비서-c: :비서-d: :비서-c: :비서-d: :비서-a:" ] && ok "F --kind 지정 시 🅲·🅳 → :비서-c:·:비서-d: 치환(변형 선택자 유무 모두)" || ko "F kind 🅲🅳 치환" "$(text)"
-run_n --kind decide --choices 3 $'주제\n\n• 안 '"$C1"
-[ "$(text | sed -n 3p)" = "• 안 :비서-c:" ] && ok "F --kind decide --choices 본문의 🅲 도 치환" || ko "F choices 🅲" "$(text)"
+run_n --kind decide --no-doc --choices 3 $'주제\n\n• 안 '"$C1"
+[ "$(text | sed -n 3p)" = "• 안 :비서-c:" ] && ok "F --kind decide --no-doc --choices 본문의 🅲 도 치환" || ko "F choices 🅲" "$(text)"
 legacy_cmp() { # 🅲·🅳 규칙 도입 전(402039d) 치환표 8종. --kind 없는 호출은 이 결과와 같아야 함
   printf '%s' "$1" | sed -e 's/🅰️/:비서-a:/g' -e 's/🅱️/:비서-b:/g' -e 's/✅/:비서-추천대로:/g' -e 's/❌/:비서-보류:/g' -e 's/🙋/:비서-선택해주세요:/g' -e 's/📄/:비서-공유합니다:/g' -e 's/🔄/:비서-진행중:/g' -e 's/⚠️/:비서-긴급:/g'
 }
@@ -281,18 +281,18 @@ for inp in "🅲 안 C" "$D1$VS 안 D" "선택: ✅ 추천대로 🅲" $'첫줄\
   run_n "$inp"; [ "$(text)" = "$(legacy_cmp "$inp")" ] || { same=0; ko "F 이전 치환표와 다름" "$inp → $(text)"; }
 done
 [ "$same" = 1 ] && ok "F --kind 없는 호출은 🅲·🅳 포함 5개 입력에서 이전 치환표(줄머리 ✅ 예외 제외)와 같은 결과" || true
-run_n --kind decide --choices 2 $'주제\n\n✅ 완료 표시'
+run_n --kind decide --no-doc --choices 2 $'주제\n\n✅ 완료 표시'
 [ "$(text | sed -n 3p)" = ":white_check_mark: 완료 표시" ] && [ "$(text | tail -n 1)" = "$G2" ] && ok "F 본문 줄머리 ✅ 는 완료 표시, 안내 줄의 :비서-추천대로: 는 그대로" || ko "F 줄머리 ✅ + 안내 줄" "$(text)"
-run_n --kind decide --choices 2 $'참고: ✅ 문서\n\n본문'
+run_n --kind decide --no-doc --choices 2 $'참고: ✅ 문서\n\n본문'
 [ "$(text)" = $'참고: :비서-추천대로: 문서\n\n본문\n\n'"$G2" ] && [ "$(lastrec | jq -r '.title')" = "참고: :비서-추천대로: 문서" ] && ok "F 첫 줄이 '참고:' 면 안내 줄을 끝에 붙임(맨 위 삽입·빈 제목 없음)" || ko "F 첫 줄 참고" "$(text) / $(lastrec | jq -r '.title')"
-run_n --kind decide --choices 2 $'주제\n\n참고: a\n\n• 무엇: x\n\n참고: b'
+run_n --kind decide --no-doc --choices 2 $'주제\n\n참고: a\n\n• 무엇: x\n\n참고: b'
 [ "$(text)" = $':비서-선택해주세요: 주제\n\n참고: a\n\n• 무엇: x\n\n'"$G2"$'\n\n참고: b' ] && ok "F '참고:' 가 둘이면 마지막 참고 앞에 안내 줄" || ko "F 참고 둘" "$(text)"
-run_n --kind decide --choices 2 $'주제\n\n👉 참고 링크'
+run_n --kind decide --no-doc --choices 2 $'주제\n\n👉 참고 링크'
 [ "$(text | tail -n 1)" = "$G2" ] && ok "F '답:' 없는 👉 줄이 있어도 안내 줄을 붙임" || ko "F 👉 엄격 부착" "$(text)"
 newhome pyfail2
-FAKE_PY_FAIL=attach run_n --kind decide --choices 2 "$BODY"
+FAKE_PY_FAIL=attach run_n --kind decide --no-doc --choices 2 "$BODY"
 [ "$RC" = 0 ] && posted && grep -qx '안내 줄 부착 실패 — 안내 줄 없이 전송' "$SB/err" && [ "$(text)" = "$HEAD" ] && ok "F python3 부착 실패 + warn → 안내 줄 없이 전송, 한 줄 알림, 종료 코드 0" || ko "F 부착 실패 warn" "rc=$RC $(cat "$SB/err") / $(text)"
-FAKE_PY_FAIL=attach LRM_FORMAT=strict run_n --kind decide --choices 2 "$BODY"
+FAKE_PY_FAIL=attach LRM_FORMAT=strict run_n --kind decide --no-doc --choices 2 "$BODY"
 [ "$RC" = 2 ] && ! posted && nocall && grep -q '^안내 줄 부착 실패(전송 안 함)' "$SB/err" && ok "F python3 부착 실패 + strict → 미전송·종료 코드 2·API 호출 0회" || ko "F 부착 실패 strict" "rc=$RC $(cat "$SB/err")"
 
 # --emoji-set std
@@ -301,14 +301,14 @@ S3="👉 답: :a: A · :b: B · :regional_indicator_c: C · :white_check_mark: �
 S4="👉 답: :a: A · :b: B · :regional_indicator_c: C · :regional_indicator_d: D · :white_check_mark: 추천대로 · :x: 보류"
 for n in 2 3 4; do
   eval "g=\$S$n"
-  run_n --kind decide --choices "$n" --emoji-set std "$BODY"
+  run_n --kind decide --no-doc --choices "$n" --emoji-set std "$BODY"
   [ "$(text)" = "$HEAD"$'\n\n'"$g" ] && ok "F --emoji-set std --choices $n → 표준 이모지 안내 줄 정확히 일치" || ko "F std $n" "$(text | tail -1)"
 done
-run_n --kind decide --choices 2 --emoji-set custom "$BODY"
+run_n --kind decide --no-doc --choices 2 --emoji-set custom "$BODY"
 [ "$(text)" = "$HEAD"$'\n\n'"$G2" ] && ok "F --emoji-set custom 은 기본과 같음" || ko "F custom" "$(text | tail -1)"
-run_n --kind decide --choices 2 --emoji-set bogus "$BODY"
+run_n --kind decide --no-doc --choices 2 --emoji-set bogus "$BODY"
 [ "$RC" = 2 ] && nocall && grep -q '알 수 없는 --emoji-set: bogus' "$SB/err" && ok "F 모르는 --emoji-set → 종료 코드 2" || ko "F 잘못된 emoji-set" "rc=$RC"
-run_n --kind decide --choices 2 "$BODY"; r_a=$(lastrec | jq -c 'del(.at)')
+run_n --kind decide --no-doc --choices 2 "$BODY"; r_a=$(lastrec | jq -c 'del(.at)')
 [ "$(printf '%s' "$r_a" | jq -r '.form_kind')" = decide ] && ok "F --choices 호출도 sent 기록에 form_kind=decide" || ko "F form_kind" "$r_a"
 
 # ---- G. 결정 1건 = 메시지 1개 ------------------------------------------------------------------
@@ -316,39 +316,39 @@ newhome g
 MULTI_RX='^거부: 결정이 2개임(전송 안 함) — 1건씩 따로 보내세요'
 two_ans=$'주제\n\n• 무엇: 가\n\n👉 답: :비서-a: A\n\n• 무엇: 나\n\n👉 답: :비서-b: B'
 for mode in warn strict; do
-  LRM_FORMAT=$mode run_n --kind decide "$two_ans"
+  LRM_FORMAT=$mode run_n --kind decide --no-doc "$two_ans"
   [ "$RC" = 2 ] && ! posted && nocall && grep -q "$MULTI_RX" "$SB/err" && [ "$(lastlog | cut -f3)" = multi ] && ok "G 👉 답 줄 2개 → $mode 에서도 거부(종료 코드 2, 전송·API 호출 0회, 로그 multi)" || ko "G 답 줄 2개 $mode" "rc=$RC $(cat "$SB/err")"
 done
-run_n --kind decide $'주제\n\n결정 1) 시각\n👉 답: 확인 가\n\n결정 2) 장소'
+run_n --kind decide --no-doc $'주제\n\n결정 1) 시각\n👉 답: 확인 가\n\n결정 2) 장소'
 [ "$RC" = 2 ] && ! posted && grep -q "$MULTI_RX" "$SB/err" && ok "G '결정 1)·결정 2)' 제목 줄 2개 → 거부(답 줄은 1개여도)" || ko "G 결정 N)" "rc=$RC $(cat "$SB/err")"
-run_n --kind decide $'주제\n\n① 결정: 시각\n② 결정: 장소\n\n👉 답: 확인'
+run_n --kind decide --no-doc $'주제\n\n① 결정: 시각\n② 결정: 장소\n\n👉 답: 확인'
 [ "$RC" = 2 ] && ! posted && grep -q "$MULTI_RX" "$SB/err" && ok "G '① ②' 번호 결정 제목 줄 → 거부" || ko "G ①②" "rc=$RC $(cat "$SB/err")"
-run_n --kind decide $'주제\n\n1. 결정 시각\n2. 결정 장소\n\n👉 답: 확인'
+run_n --kind decide --no-doc $'주제\n\n1. 결정 시각\n2. 결정 장소\n\n👉 답: 확인'
 [ "$RC" = 2 ] && ! posted && ok "G '1. 2.' 번호 결정 제목 줄 → 거부" || ko "G 1. 2." "rc=$RC $(cat "$SB/err")"
-run_n --kind decide $'주제\n\n결정 1) 시각\n결정 2) 장소\n결정 3) 문구\n\n👉 답: 확인'
+run_n --kind decide --no-doc $'주제\n\n결정 1) 시각\n결정 2) 장소\n결정 3) 문구\n\n👉 답: 확인'
 [ "$RC" = 2 ] && grep -q '^거부: 결정이 3개임' "$SB/err" && ok "G 결정 3개 → 개수를 3으로 안내" || ko "G 3개" "$(cat "$SB/err")"
 grep -q '예: ' "$SB/err" && ok "G 거부 메시지에 분할 예시 포함" || ko "G 예시" "$(cat "$SB/err")"
-run_n --kind decide $'주제\n\n• 무엇: 시각 정하기\n• 선택지: A 9시 / B 10시 / C 11시\n\n👉 답: :비서-a: A · :비서-b: B · :비서-c: C'
+run_n --kind decide --no-doc $'주제\n\n• 무엇: 시각 정하기\n• 선택지: A 9시 / B 10시 / C 11시\n\n👉 답: :비서-a: A · :비서-b: B · :비서-c: C'
 [ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "G 결정 1건 + 선택지 A/B/C 나열 → 통과(오탐 없음)" || ko "G 선택지 오탐" "rc=$RC $(cat "$SB/err")"
-run_n --kind decide $'주제\n\n• 무엇: 시각 정하기\n1. 현재는 9시\n2. 바꾸면 10시\n3. 영향은 없음\n\n👉 답: 확인'
+run_n --kind decide --no-doc $'주제\n\n• 무엇: 시각 정하기\n1. 현재는 9시\n2. 바꾸면 10시\n3. 영향은 없음\n\n👉 답: 확인'
 [ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "G 결정 낱말 없는 번호 목록(1. 2. 3.) → 통과(오탐 없음)" || ko "G 번호 목록 오탐" "rc=$RC $(cat "$SB/err")"
-run_n --kind decide $'주제\n\n① A안 9시\n② B안 10시\n\n👉 답: 확인'
+run_n --kind decide --no-doc $'주제\n\n① A안 9시\n② B안 10시\n\n👉 답: 확인'
 [ "$RC" = 0 ] && posted && ok "G ①② 선택지 나열 → 통과(오탐 없음)" || ko "G ①② 선택지" "rc=$RC $(cat "$SB/err")"
-run_n --kind decide $'주제\n\n```\n👉 답: 가\n👉 답: 나\n```\n• 무엇: x\n\n👉 답: 확인'
+run_n --kind decide --no-doc $'주제\n\n```\n👉 답: 가\n👉 답: 나\n```\n• 무엇: x\n\n👉 답: 확인'
 [ "$RC" = 0 ] && posted && ok "G 코드 블록 안의 답 줄 2개는 세지 않음" || ko "G 코드 블록" "rc=$RC $(cat "$SB/err")"
-run_n --kind decide $'주제\n\n👉 답: 확인\n\n참고: 결정 1) 결정 2) LRM-1 https://x.example/결정 3'
+run_n --kind decide --no-doc $'주제\n\n👉 답: 확인\n\n참고: 결정 1) 결정 2) LRM-1 https://x.example/결정 3'
 [ "$RC" = 0 ] && posted && ok "G '참고:' 줄 자체의 결정 번호·링크는 세지 않음" || ko "G 참고 줄 자체" "rc=$RC $(cat "$SB/err")"
-run_n --kind decide $'주제\n\n👉 답: 확인\n\n참고: 티켓\n결정 2) 장소\n👉 답: 가'
+run_n --kind decide --no-doc $'주제\n\n👉 답: 확인\n\n참고: 티켓\n결정 2) 장소\n👉 답: 가'
 [ "$RC" = 2 ] && ! posted && grep -q "$MULTI_RX" "$SB/err" && ok "G [의도 변경] '참고:' 줄 뒤의 둘째 결정은 셈 → 거부" || ko "G 참고 뒤 둘째" "rc=$RC $(cat "$SB/err")"
-run_n --kind decide --choices 3 $'주제\n\n• 무엇: 정할 것'
+run_n --kind decide --no-doc --choices 3 $'주제\n\n• 무엇: 정할 것'
 [ "$RC" = 0 ] && posted && ok "G --choices 안내 줄 1개는 통과(부착 줄은 개수에 안 셈)" || ko "G choices" "rc=$RC $(cat "$SB/err")"
 # G2. 오탐 방지(정상 카드는 통과) / 누락 방지(변형 표기는 거부). 입력은 모두 가짜 내용
 pass_case() { # 이름, 본문
-  run_n --kind decide "$2"
+  run_n --kind decide --no-doc "$2"
   [ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "G2 통과: $1" || ko "G2 오탐 $1" "rc=$RC $(cat "$SB/err")"
 }
 rej_case() { # 이름, 본문
-  run_n --kind decide "$2"
+  run_n --kind decide --no-doc "$2"
   [ "$RC" = 2 ] && ! posted && nocall && grep -q "$MULTI_RX" "$SB/err" && ok "G2 거부: $1" || ko "G2 누락 $1" "rc=$RC $(cat "$SB/err")"
 }
 pass_case "선택지 '1. 기존 결정 유지 / 2. 결정 철회'" $'주제\n\n• 선택지: 1. 기존 결정 유지 / 2. 결정 철회\n\n👉 답: 확인'
@@ -370,7 +370,7 @@ rej_case "'· 결정 1·· 결정 2'" $'주제\n\n· 결정 1 시각\n· 결정 
 # [의도 변경] 줄 중간 '결정 N' 은 불확실한 신호라 거부 대신 경고(warn·strict 모두 전송)
 warn_case() { # 이름, 본문 — 전송하되 mid-decide 경고 한 줄
   for mode in warn strict; do
-    LRM_FORMAT=$mode run_n --kind decide "$2"
+    LRM_FORMAT=$mode run_n --kind decide --no-doc "$2"
     [ "$RC" = 0 ] && posted && grep -q '^경고: 줄 중간에 다른 번호의' "$SB/err" && ! grep -q '^거부:' "$SB/err" && ok "G2 경고만($mode): $1" || ko "G2 경고 $mode $1" "rc=$RC $(cat "$SB/err")"
   done
 }
@@ -396,7 +396,7 @@ rej_case "조합형(NFD) 한글 '결정 1)·결정 2)'" "$nfd"
 timed_case() { # 이름, 접두 문자열
   body="$(python3 -I -c 'import sys;sys.stdout.write("주제\n\n"+sys.argv[1]*(40000//len(sys.argv[1]))+"\n\n👉 답: 확인")' "$2")"
   t0=$(python3 -I -c 'import time;print(time.time())')
-  run_n --kind decide "$body"
+  run_n --kind decide --no-doc "$body"
   t1=$(python3 -I -c 'import time;print(time.time())')
   python3 -I -c 'import sys;sys.exit(0 if float(sys.argv[2])-float(sys.argv[1])<1.0 else 1)' "$t0" "$t1" && ok "G2 시간 상한(1초 미만): 4만 자 '$1' 줄" || ko "G2 시간 $1" "$t0 $t1"
 }
@@ -407,25 +407,25 @@ timed_case '[' '['
 # 접두 불릿 삭제 변이(m5) 검출용
 rej_case "'• 결정 1 / • 결정 2' 불릿" $'주제\n\n• 결정 1 시각\n• 결정 2 장소\n\n👉 답: 확인'
 # --choices 시 검사 생략 변이(m9) 검출용
-run_n --kind decide --choices 2 $'주제\n\n• 결정 1 시각\n• 결정 2 장소'
+run_n --kind decide --no-doc --choices 2 $'주제\n\n• 결정 1 시각\n• 결정 2 장소'
 [ "$RC" = 2 ] && ! posted && nocall && grep -q "$MULTI_RX" "$SB/err" && ok "G2 거부: --choices 2 + 결정 2개(안내 줄 부착 전에 검사)" || ko "G2 choices+다중" "rc=$RC $(cat "$SB/err")"
 # 거부 요약이 다른 위반 뒤 마지막 줄에 보임
-run_n --kind decide $'주제 LRM-123\n\n• *가* *나*\n• 결정 1 시각\n• 결정 2 장소\n\n👉 답: 확인'
+run_n --kind decide --no-doc $'주제 LRM-123\n\n• *가* *나*\n• 결정 1 시각\n• 결정 2 장소\n\n👉 답: 확인'
 [ "$RC" = 2 ] && grep -q '^경고:' "$SB/err" && tail -n 1 "$SB/err" | grep -q "$MULTI_RX" && ok "G2 warn 에서 다른 위반과 겹쳐도 거부 문구가 마지막 줄" || ko "G2 거부 마지막 줄" "$(cat "$SB/err")"
 # python3 검사 실패: decide 는 미전송, 다른 kind 는 기존대로
 n3=$(logn)
-FAKE_PY_FAIL=check run_n --kind decide "주제$ANS"
+FAKE_PY_FAIL=check run_n --kind decide --no-doc "주제$ANS"
 [ "$RC" = 2 ] && ! posted && nocall && grep -q '^양식 검사 실패(전송 안 함)' "$SB/err" && [ "$(logn)" = $((n3 + 1))  ] && printf '%s\n' "$(lastlog)" | grep -Eq "${TABS}decide${TABS}check-fail${TABS}warn" && ok "G2 python3 검사 실패 + decide + warn → 미전송·종료 코드 2·로그 check-fail" || ko "G2 decide 검사 실패" "rc=$RC $(cat "$SB/err")"
-FAKE_PY_FAIL=check run_n --no-check --kind decide "주제$ANS"
+FAKE_PY_FAIL=check run_n --no-check --kind decide --no-doc "주제$ANS"
 [ "$RC" = 0 ] && posted && ok "G2 --no-check 우회는 검사 실패와 무관하게 유지" || ko "G2 no-check" "rc=$RC"
-FAKE_PY_FAIL=check LRM_FORMAT=off run_n --kind decide "주제$ANS"
+FAKE_PY_FAIL=check LRM_FORMAT=off run_n --kind decide --no-doc "주제$ANS"
 [ "$RC" = 0 ] && posted && ok "G2 LRM_FORMAT=off 우회 유지" || ko "G2 off" "rc=$RC"
 FAKE_PY_FAIL=check run_n --kind todo "주제$ANS"
 [ "$RC" = 0 ] && posted && grep -qx '양식 검사 실패 — 검사 없이 전송' "$SB/err" && ok "G2 python3 검사 실패 + todo + warn → 기존대로 전송" || ko "G2 todo 검사 실패" "rc=$RC $(cat "$SB/err")"
 n2=$(logn)
-run_n --no-check --kind decide "$two_ans"
+run_n --no-check --kind decide --no-doc "$two_ans"
 [ "$RC" = 0 ] && posted && [ "$(logn)" = $((n2 + 1)) ] && printf '%s\n' "$(lastlog)" | grep -Eq "${TABS}decide${TABS}bypass-no-check${TABS}no-check${TABS}-\$" && ok "G --no-check 우회 → 전송하고 로그 한 줄(bypass-no-check)" || ko "G no-check 우회" "rc=$RC $(lastlog)"
-LRM_FORMAT=off run_n --kind decide --tag t9 "$two_ans"
+LRM_FORMAT=off run_n --kind decide --no-doc --tag t9 "$two_ans"
 [ "$RC" = 0 ] && posted && printf '%s\n' "$(lastlog)" | grep -Eq "${TABS}decide${TABS}bypass-off${TABS}off${TABS}t9\$" && ok "G LRM_FORMAT=off 우회 → 전송하고 로그 한 줄(bypass-off)" || ko "G off 우회" "rc=$RC $(lastlog)"
 [ "$(grep -c '비서-a\|결정 1' "$CFG/slack-format.log" || true)" = 0 ] && ok "G 우회 로그에 본문 없음" || ko "G 우회 로그 본문" "$(cat "$CFG/slack-format.log")"
 for k in todo done progress warn doc; do
@@ -440,48 +440,48 @@ newhome h
 OK3='1=오전 9시,2=오전 10시,3=지금처럼'
 CBODY=$'알림 시각\n\n- 왜: 제각각'
 CARD=$':비서-선택해주세요: 알림 시각\n\n- 왜: 제각각\n\n:one: 오전 9시\n:two: 오전 10시\n:three: 지금처럼\n:star: 추천: :two: · 되돌리기: 쉬움\n👉 답: :one: :two: :three: 중 하나 · :white_check_mark: 추천대로 · :x: 보류\n\n참고: 결정 D-0001 · 3/9'
-run_n --kind decide --options "$OK3" --recommend 2 --reversible 쉬움 --decision-id D-0001 --seq 3/9 "$CBODY"
+run_n --kind decide --no-doc --options "$OK3" --recommend 2 --reversible 쉬움 --decision-id D-0001 --seq 3/9 "$CBODY"
 [ "$RC" = 0 ] && [ "$(text)" = "$CARD" ] && [ "$(errn)" = 0 ] && ok "H 카드: 선택지·추천·되돌리기·답 줄·결정 번호 줄을 도구가 생성(정확히 일치, 경고 없음)" || ko "H 카드 모양" "rc=$RC $(text) / $(cat "$SB/err")"
 r=$(lastrec)
 [ "$(printf '%s' "$r" | jq -c '[.form_kind,.decision_id,.options,.recommended,.reversible,.seq]')" = '["decide","D-0001",{"1":"오전 9시","2":"오전 10시","3":"지금처럼"},2,"쉬움","3/9"]' ] && [ "$(printf '%s' "$r" | jq -r '.title')" = ":비서-선택해주세요: 알림 시각" ] \
   && ok "H sent 기록: decision_id·options(번호→문구)·recommended(숫자)·reversible·seq" || ko "H sent 기록" "$r"
-run_n --kind decide --options '1=가 안,2=나 안' --recommend 1 --decision-id D-0002 $'주제\n\n- 왜: 배경\n\n참고: 샘플-1'
+run_n --kind decide --no-doc --options '1=가 안,2=나 안' --recommend 1 --decision-id D-0002 $'주제\n\n- 왜: 배경\n\n참고: 샘플-1'
 [ "$(text)" = $':비서-선택해주세요: 주제\n\n- 왜: 배경\n\n:one: 가 안\n:two: 나 안\n:star: 추천: :one:\n👉 답: :one: :two: 중 하나 · :white_check_mark: 추천대로 · :x: 보류\n\n참고: 샘플-1\n결정 D-0002' ] \
   && [ "$(lastrec | jq -c 'has("reversible"), has("seq")' | tr '\n' ,)" = "false,false," ] && ok "H '참고:' 가 있으면 선택지는 그 앞, 결정 번호는 참고 블록 끝. 되돌리기·순번 없으면 줄·필드 없음" || ko "H 참고 앞" "$(text) / $(lastrec)"
-run_n --kind decide --options '1=가,2=나,3=다,4=라' --recommend 4 --decision-id D-0003 "$CBODY"
+run_n --kind decide --no-doc --options '1=가,2=나,3=다,4=라' --recommend 4 --decision-id D-0003 "$CBODY"
 [ "$(payload '[.attachments[0].blocks[1].elements[].action_id] | join(",")')" = "pick_1,pick_2,pick_3,pick_4,custom" ] \
   && [ "$(payload '.attachments[0].blocks[1].elements[3].style')" = primary ] && [ "$(payload '.attachments[0].blocks[1].elements[0].style')" = null ] \
   && [ "$(payload '.attachments[0].blocks[1].block_id')" = "lrm_decide:D-0003" ] && [ "$(payload '.attachments[0].blocks[1].elements[1].value')" = "D-0003|2" ] \
   && ok "Z 번호 카드 → 버튼 4개(추천 primary)·직접 입력·결정 번호 값" || ko "Z 버튼" "$(payload '.attachments[0].blocks[1]' | head -c 300)"
 [ "$RC" = 0 ] && text | grep -qx ':four: 라' && text | grep -qxF '👉 답: :one: :two: :three: :four: 중 하나 · :white_check_mark: 추천대로 · :x: 보류' && text | grep -qx ':star: 추천: :four:' && ok "H 선택지 4개·추천 4" || ko "H 4개" "rc=$RC $(text)"
-run_n --kind decide --options '1=9시, 10시 사이,2=b' --recommend 1 --decision-id D-0004 "$CBODY"
+run_n --kind decide --no-doc --options '1=9시, 10시 사이,2=b' --recommend 1 --decision-id D-0004 "$CBODY"
 [ "$(lastrec | jq -r '.options["1"]')" = "9시, 10시 사이" ] && ok "H 문구 안 쉼표(뒤에 '숫자=' 없음)는 문구로 유지" || ko "H 쉼표" "$(lastrec)"
-run_n --kind decide --options ' 1 = 가 , 2=나 ' --recommend 1 --decision-id D-0005 "$CBODY"
+run_n --kind decide --no-doc --options ' 1 = 가 , 2=나 ' --recommend 1 --decision-id D-0005 "$CBODY"
 [ "$(lastrec | jq -c '.options')" = '{"1":"가","2":"나"}' ] && ok "H 번호·문구 앞뒤 공백 정리" || ko "H 공백" "$(lastrec)"
 # 선택지 문구의 '결정'은 결정 개수에 안 셈(도구가 붙인 줄은 검사 뒤 부착) / 본문의 결정 2개는 그대로 거부
 for mode in warn strict; do
-  LRM_FORMAT=$mode run_n --kind decide --options '1=결정 유지,2=결정 철회' --recommend 1 --decision-id "D-0006$mode" "$CBODY"  # 모드마다 다른 번호(같은 번호 재사용은 경고)
+  LRM_FORMAT=$mode run_n --kind decide --no-doc --options '1=결정 유지,2=결정 철회' --recommend 1 --decision-id "D-0006$mode" "$CBODY"  # 모드마다 다른 번호(같은 번호 재사용은 경고)
   [ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "H 문구에 '결정'(1=결정 유지,2=결정 철회) → $mode 에서도 결정 1개로 통과, no-answer 없음" || ko "H 결정 문구 $mode" "rc=$RC $(cat "$SB/err")"
 done
-run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0007 $'주제\n\n결정 1) 시각\n결정 2) 장소'
+run_n --kind decide --no-doc --options "$OK3" --recommend 1 --decision-id D-0007 $'주제\n\n결정 1) 시각\n결정 2) 장소'
 [ "$RC" = 2 ] && ! posted && nocall && grep -q "$MULTI_RX" "$SB/err" && ok "H --options 여도 본문 결정 2개는 거부(결정 1건 = 메시지 1개 유지)" || ko "H 다중 유지" "rc=$RC $(cat "$SB/err")"
 # 본문에 답 줄을 직접 쓰면 답 줄이 둘 → 모드·우회와 무관하게 거부
 for v in "" "--no-check" "off"; do
-  if [ "$v" = off ]; then LRM_FORMAT=off run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0008 "$CBODY$ANS"
-  elif [ -n "$v" ]; then run_n "$v" --kind decide --options "$OK3" --recommend 1 --decision-id D-0008 "$CBODY$ANS"
-  else run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0008 "$CBODY$ANS"; fi
+  if [ "$v" = off ]; then LRM_FORMAT=off run_n --kind decide --no-doc --options "$OK3" --recommend 1 --decision-id D-0008 "$CBODY$ANS"
+  elif [ -n "$v" ]; then run_n "$v" --kind decide --no-doc --options "$OK3" --recommend 1 --decision-id D-0008 "$CBODY$ANS"
+  else run_n --kind decide --no-doc --options "$OK3" --recommend 1 --decision-id D-0008 "$CBODY$ANS"; fi
   [ "$RC" = 2 ] && ! posted && nocall && grep -q "^거부: --options 카드 본문에 '👉 답:' 줄이 있음" "$SB/err" && ok "H 본문 '👉 답:' + --options → 거부(${v:-warn})" || ko "H 답 줄 중복 ${v:-warn}" "rc=$RC $(cat "$SB/err")"
 done
-run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0009 $'주제\n\n:one: 직접 쓴 선택지'
+run_n --kind decide --no-doc --options "$OK3" --recommend 1 --decision-id D-0009 $'주제\n\n:one: 직접 쓴 선택지'
 [ "$RC" = 0 ] && posted && grep -q '^경고: 본문 줄 머리에 선택지 이모지' "$SB/err" && [ "$(text | grep -c '^:one:')" = 2 ] && ok "H 본문에 선택지 줄(:one:) → 경고만, 전송" || ko "H 선택지 중복 경고" "rc=$RC $(cat "$SB/err")"
-run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0010 $'주제\n\n1\xef\xb8\x8f\xe2\x83\xa3 키캡 선택지'
+run_n --kind decide --no-doc --options "$OK3" --recommend 1 --decision-id D-0010 $'주제\n\n1\xef\xb8\x8f\xe2\x83\xa3 키캡 선택지'
 grep -q '^경고: 본문 줄 머리에 선택지 이모지' "$SB/err" && ok "H 본문 키캡(1️⃣) 선택지 줄도 경고" || ko "H 키캡 경고" "$(cat "$SB/err")"
-LRM_FORMAT=strict run_n --kind decide --options "$OK3" --recommend 3 --decision-id D-0011 "$CBODY"
+LRM_FORMAT=strict run_n --kind decide --no-doc --options "$OK3" --recommend 3 --decision-id D-0011 "$CBODY"
 [ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "H strict: 답 줄을 도구가 채우므로 통과" || ko "H strict" "rc=$RC $(cat "$SB/err")"
-run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0012 "$CBODY" "$SB/f.txt"
+run_n --kind decide --no-doc --options "$OK3" --recommend 1 --decision-id D-0012 "$CBODY" "$SB/f.txt"
 [ "$RC" = 0 ] && sed -n 1p "$LOG/posts.log" | jq -r '.attachments[0].blocks[0].text.text' | grep -qxF ':one: 오전 9시' && [ "$(tail -n 2 "$CFG/slack-sent.jsonl" | head -n 1 | jq -r '[.kind,.decision_id] | join(",")')" = "text,D-0012" ] \
   && ok "H 파일 첨부 카드: 선택지 줄은 버튼 카드 메시지에, sent 기록에 decision_id(순서는 J)" || ko "H 첨부" "$(cat "$LOG/posts.log") / $(lastrec)"
-run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0013 "$(printf '주제\n\n- 왜: ✅ 와 ❌')"
+run_n --kind decide --no-doc --options "$OK3" --recommend 1 --decision-id D-0013 "$(printf '주제\n\n- 왜: ✅ 와 ❌')"
 text | grep -qxF -e '- 왜: :비서-추천대로: 와 :비서-보류:' && text | grep -qF ':white_check_mark: 추천대로 · :x: 보류' && ok "H 본문 ✅❌ 는 기존 치환, 답 줄은 표준 :white_check_mark:·:x:(치환 안 됨)" || ko "H 치환 경계" "$(text)"
 # 거부(종료 코드 2, API 호출 0회): 인자 값·조합
 rej() { # 이름 기대 문구 -- 인자...
@@ -489,7 +489,7 @@ rej() { # 이름 기대 문구 -- 인자...
   run_n "$@"
   [ "$RC" = 2 ] && nocall && ! posted && grep -q -- "$want" "$SB/err" && ok "H 거부: $name" || ko "H 거부 $name" "rc=$RC $(cat "$SB/err")"
 }
-D=(--kind decide --recommend 1 --decision-id D-0100)
+D=(--kind decide --no-doc --recommend 1 --decision-id D-0100)
 rej "선택지 1개" '^--options 범위 오류' -- "${D[@]}" --options '1=가' "$CBODY"
 rej "선택지 5개" '^--options 범위 오류' -- "${D[@]}" --options '1=가,2=나,3=다,4=라,5=마' "$CBODY"
 rej "번호 건너뜀(1,3)" '^--options 범위 오류' -- "${D[@]}" --options '1=가,3=다' "$CBODY"
@@ -503,12 +503,12 @@ rej "문구 제어 문자" '^--options 문구에 줄바꿈' -- "${D[@]}" --optio
 rej "문구 방향 제어 문자" '^--options 문구에 줄바꿈' -- "${D[@]}" --options $'1=가\xe2\x80\xae,2=나' "$CBODY"
 rej "형식 아님" '^--options 형식 오류' -- "${D[@]}" --options '가,나' "$CBODY"
 rej "빈 값" '^--options 형식 오류' -- "${D[@]}" --options '' "$CBODY"
-rej "--recommend 없음" '^--recommend 필요' -- --kind decide --decision-id D-0100 --options "$OK3" "$CBODY"
-rej "--recommend 범위 밖(4, 선택지 3개)" '^--recommend 범위 오류' -- --kind decide --recommend 4 --decision-id D-0100 --options "$OK3" "$CBODY"
-rej "--recommend 숫자 아님" '^--recommend 범위 오류' -- --kind decide --recommend x --decision-id D-0100 --options "$OK3" "$CBODY"
-rej "--decision-id 없음" '^--decision-id 필요' -- --kind decide --recommend 1 --options "$OK3" "$CBODY"
+rej "--recommend 없음" '^--recommend 필요' -- --kind decide --no-doc --decision-id D-0100 --options "$OK3" "$CBODY"
+rej "--recommend 범위 밖(4, 선택지 3개)" '^--recommend 범위 오류' -- --kind decide --no-doc --recommend 4 --decision-id D-0100 --options "$OK3" "$CBODY"
+rej "--recommend 숫자 아님" '^--recommend 범위 오류' -- --kind decide --no-doc --recommend x --decision-id D-0100 --options "$OK3" "$CBODY"
+rej "--decision-id 없음" '^--decision-id 필요' -- --kind decide --no-doc --recommend 1 --options "$OK3" "$CBODY"
 for bad in 'D 1' 'X-1' 'D-' 'D-한글' 'D-1;x' 'D-12345678901234567'; do
-  rej "--decision-id '$bad'" '^--decision-id 형식 오류' -- --kind decide --recommend 1 --decision-id "$bad" --options "$OK3" "$CBODY"
+  rej "--decision-id '$bad'" '^--decision-id 형식 오류' -- --kind decide --no-doc --recommend 1 --decision-id "$bad" --options "$OK3" "$CBODY"
 done
 rej "--reversible 값" '^--reversible 값 오류' -- "${D[@]}" --options "$OK3" --reversible 아마 "$CBODY"
 for bad in 0/9 10/9 3 a/b 1/1000 ''; do
@@ -517,19 +517,19 @@ done
 rej "--kind done + --options" '는 --kind decide 와만 사용' -- --kind done --options "$OK3" "끝"
 rej "--kind todo + --decision-id" '는 --kind decide 와만 사용' -- --kind todo --decision-id D-1 "할 일"
 rej "--kind 없이 --options" '는 --kind decide 와만 사용' -- --options "$OK3" "x"
-rej "--recommend 만(--options 없음)" '는 --options 와 함께 사용' -- --kind decide --recommend 1 "$CBODY$ANS"
-rej "--seq 만(--options 없음)" '는 --options 와 함께 사용' -- --kind decide --seq 1/2 "$CBODY$ANS"
+rej "--recommend 만(--options 없음)" '는 --options 와 함께 사용' -- --kind decide --no-doc --recommend 1 "$CBODY$ANS"
+rej "--seq 만(--options 없음)" '는 --options 와 함께 사용' -- --kind decide --no-doc --seq 1/2 "$CBODY$ANS"
 rej "--options + --choices" '^--options 와 --choices 는 함께 쓸 수 없음' -- "${D[@]}" --options "$OK3" --choices 3 "$CBODY"
-rej "--todo-id + --kind decide" '^--todo-id 는 --kind todo 와만 사용' -- --kind decide --todo-id T-1 "$CBODY$ANS"
+rej "--todo-id + --kind decide --no-doc" '^--todo-id 는 --kind todo 와만 사용' -- --kind decide --no-doc --todo-id T-1 "$CBODY$ANS"
 rej "--todo-id 형식" '^--todo-id 형식 오류' -- --kind todo --todo-id 'T-1 2' "할 일"
-rej "--options 값 없음" '^--options 값 필요' -- --kind decide --options
+rej "--options 값 없음" '^--options 값 필요' -- --kind decide --no-doc --options
 # python3 실패 → 카드 없이 보내지 않음(fail-closed)
 for part in opts card; do
-  FAKE_PY_FAIL=$part run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0200 "$CBODY"
+  FAKE_PY_FAIL=$part run_n --kind decide --no-doc --options "$OK3" --recommend 1 --decision-id D-0200 "$CBODY"
   [ "$RC" = 2 ] && ! posted && nocall && ok "H python3 '$part' 실패 → 미전송·종료 코드 2" || ko "H py $part" "rc=$RC $(cat "$SB/err")"
 done
 # 옛 결정 카드·다른 kind 기록은 새 필드 없음
-run_n --kind decide --choices 2 "$CBODY"
+run_n --kind decide --no-doc --choices 2 "$CBODY"
 [ "$(lastrec | jq -c '[has("decision_id"),has("options"),has("recommended"),has("todo_id")]')" = '[false,false,false,false]' ] && ok "H --choices 카드 기록에는 새 필드 없음(옛 카드로 취급)" || ko "H 옛 카드 기록" "$(lastrec)"
 # 할 일 번호
 TODO_G2="👉 답: 끝나면 :white_check_mark: (또는 :hammer_and_wrench:) · 보류는 :x:"
@@ -543,7 +543,7 @@ grep -q "👉 답:' 줄이 없음" "$SB/err" && ! text | grep -q '👉' && ! las
 # 스레드 답글의 반응은 수집되지 않으므로 번호 카드·할 일 번호 카드는 --thread 와 함께 보내지 않음. 옛 --choices 카드·글 호출은 불변
 rej "--options + --thread" '^--thread 는 --options·--todo-id 카드와 함께 쓸 수 없음' -- "${D[@]}" --options "$OK3" --thread 1730000000.000001 "$CBODY"
 rej "--todo-id + --thread" '^--thread 는 --options·--todo-id 카드와 함께 쓸 수 없음' -- --kind todo --todo-id T-0300 --thread 1730000000.000001 "할 일"
-run_n --kind decide --choices 2 --thread 1730000000.000001 "$CBODY"
+run_n --kind decide --no-doc --choices 2 --thread 1730000000.000001 "$CBODY"
 [ "$RC" = 0 ] && posted && [ "$(jq -r '.thread_ts' "$LOG/post.json")" = 1730000000.000001 ] && ok "H --choices + --thread 는 기존대로 전송(옛 카드 불변)" || ko "H choices+thread" "rc=$RC $(cat "$SB/err")"
 # todo 카드: 줄 중간 ✅·❌ 도 표준 이름. 강비서 이름으로 바뀌면 사용자가 그 이모지를 눌러도 완료·보류로 안 읽힘
 run_n --kind todo --todo-id T-0301 $'설정 파일 넣기\n\n👉 답: 끝나면 ✅ · 보류는 ❌'
@@ -567,24 +567,24 @@ rej "문구 키캡 숫자" '^--options 문구에 이모지 이름' -- "${D[@]}" 
 run_n "${D[@]}" --options '1=시각 10:30:00,2=비율 3:2 안' "$CBODY"
 [ "$RC" = 0 ] && posted && [ "$(lastrec | jq -r '.options["1"]')" = "시각 10:30:00" ] && ok "H 문구 안 콜론 숫자(10:30:00·3:2)는 이모지 이름이 아니라 통과" || ko "H 콜론 문구" "rc=$RC $(cat "$SB/err")"
 # 같은 결정 번호 재사용은 7일 안이면 경고(전송은 함). 기록이 없거나 7일이 지났으면 조용함
-run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0400 "$CBODY"
+run_n --kind decide --no-doc --options "$OK3" --recommend 1 --decision-id D-0400 "$CBODY"
 [ "$RC" = 0 ] && [ "$(errn)" = 0 ] && ok "H 새 결정 번호는 경고 없음" || ko "H 새 번호" "rc=$RC $(cat "$SB/err")"
-run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0400 "$CBODY"
+run_n --kind decide --no-doc --options "$OK3" --recommend 1 --decision-id D-0400 "$CBODY"
 [ "$RC" = 0 ] && posted && grep -q '^경고: --decision-id D-0400 로 최근 7일 안에 보낸 카드가 있음(전송함)' "$SB/err" && [ "$(errn)" = 1 ] && ok "H 같은 결정 번호를 7일 안에 다시 쓰면 경고 1줄(전송함)" || ko "H 번호 재사용" "rc=$RC $(cat "$SB/err")"
-run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0401 "$CBODY"
+run_n --kind decide --no-doc --options "$OK3" --recommend 1 --decision-id D-0401 "$CBODY"
 [ "$(errn)" = 0 ] && ok "H 다른 결정 번호는 경고 없음" || ko "H 다른 번호" "$(cat "$SB/err")"
 printf '{"at":1,"channel":"C","ts":"1.1","thread_ts":"","kind":"text","title":"옛","tag":"","decision_id":"D-0402"}\n' >> "$CFG/slack-sent.jsonl"
-run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0402 "$CBODY"
+run_n --kind decide --no-doc --options "$OK3" --recommend 1 --decision-id D-0402 "$CBODY"
 [ "$RC" = 0 ] && [ "$(errn)" = 0 ] && ok "H 7일 지난 기록의 번호는 경고 없음" || ko "H 옛 번호" "rc=$RC $(cat "$SB/err")"
 # '참고:' 줄 뒤에 다른 줄이 더 있으면 결정 번호 줄은 그 뒤(메시지 맨 끝)
-run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0403 $'주제\n\n- 왜: 배경\n\n참고: 샘플-1\n\n추가 설명 줄'
+run_n --kind decide --no-doc --options "$OK3" --recommend 1 --decision-id D-0403 $'주제\n\n- 왜: 배경\n\n참고: 샘플-1\n\n추가 설명 줄'
 [ "$RC" = 0 ] && [ "$(text | tail -n 2)" = $'참고: 샘플-1\n결정 D-0403' ] && ok "H 참고 줄은 맨 아래로 모이고 결정 번호 줄은 그 끝(추가 줄은 항목으로 올라감)" || ko "H 참고 뒤 줄" "$(text)"
 
 # ---- I. 색 띠(attachment)·제목 굵게 ------------------------------------------------------------
 newhome i
 for spec in "decide|#F2994A" "todo|#F2994A" "warn|#EB5757" "progress|#2F80ED" "done|#27AE60" "doc|#27AE60"; do
   k=${spec%%|*}; c=${spec#*|}
-  run_n --kind "$k" $'주제\n\n• 무엇: 본문'"$ANS"
+  run_n --kind "$k" $([ "$k" = decide ] && echo --no-doc) $'주제\n\n• 무엇: 본문'"$ANS"
   [ "$RC" = 0 ] && [ "$(payload '.attachments | length')" = 1 ] && [ "$(payload '.attachments[0].color')" = "$c" ] \
     && [ "$(payload '.attachments[0].mrkdwn_in | index("text")')" = 0 ] && ok "I --kind $k → 색 띠 $c, mrkdwn 본문" || ko "I 색 $k" "rc=$RC $(cat "$SB/err") $(cat "$SB/out")"
 done
@@ -602,9 +602,9 @@ run_n --kind done $'주제\n\n• 무엇: *하나* 와 *둘*'
 grep -q '^경고: 굵게가 2곳' "$SB/err" && ok "I 본문 굵게 2곳은 여전히 경고" || ko "I 본문 굵게 2곳" "$(cat "$SB/err")"
 run_n --kind warn --thread 1700000000.000001 $'스레드\n\n• 무엇: 답글'
 [ "$(payload '.thread_ts')" = 1700000000.000001 ] && [ "$(payload '.attachments | length')" = 1 ] && ok "I 스레드 답글도 thread_ts 유지 + 색 띠" || ko "I 스레드" "$(cat "$LOG/post.json")"
-run_n --kind decide --choices 3 $'알림 시각\n\n• 왜: 배경'
+run_n --kind decide --no-doc --choices 3 $'알림 시각\n\n• 왜: 배경'
 [ "$(payload '.attachments[0].text | contains("👉 답: :비서-a: A")')" = true ] && ok "I --choices 안내 줄이 색 띠 본문 안에 있음" || ko "I choices" "$(cat "$LOG/post.json")"
-run_n --kind decide --options "1=가 안,2=나 안" --recommend 1 --decision-id D-0900 $'주제\n\n• 왜: 배경'
+run_n --kind decide --no-doc --options "1=가 안,2=나 안" --recommend 1 --decision-id D-0900 $'주제\n\n• 왜: 배경'
 [ "$(payload '.attachments[0].blocks[0].text.text | contains(":one: 가 안") and contains("결정 D-0900")')" = true ] && [ "$(lastrec | jq -r '.decision_id')" = D-0900 ] && ok "I --options 카드: 선택지·결정 번호가 색 띠 본문에, 기록의 decision_id 유지" || ko "I options" "$(cat "$LOG/post.json")"
 run_n --kind done "끝"
 r=$(lastrec)
@@ -637,7 +637,7 @@ unset LRM_BOT_ALIVE
 # ---- J. 첨부 + 번호 카드: 버튼 카드를 먼저, 파일은 카드 스레드에 / 버튼 없는 결정 카드 경고 -------------------
 newhome j; : > "$LOG/posts.log"
 printf 'x' > "$SB/clip.mp4"
-run_n --kind decide --options '1=A 안,2=B 안' --recommend 2 --decision-id D-0J01 "주제" "$SB/clip.mp4"
+run_n --kind decide --no-doc --options '1=A 안,2=B 안' --recommend 2 --decision-id D-0J01 "주제" "$SB/clip.mp4"
 c1=$(sed -n 1p "$LOG/posts.log"); c2=$(sed -n 2p "$LOG/posts.log")
 [ "$RC" = 0 ] && [ "$(printf '%s' "$c1" | jq -r '.attachments[0].blocks[1].elements | map(.value) | join(",")')" = 'D-0J01|1,D-0J01|2,D-0J01|custom' ] \
   && ok "J 첨부+--options: 첫 호출이 버튼 달린 카드(chat.postMessage)" || ko "J 카드 먼저" "rc=$RC $c1"
@@ -645,11 +645,11 @@ c1=$(sed -n 1p "$LOG/posts.log"); c2=$(sed -n 2p "$LOG/posts.log")
   && ok "J 파일은 카드 ts 의 스레드로 업로드" || ko "J 파일 스레드" "$c2"
 [ "$(wc -l < "$CFG/slack-sent.jsonl" | tr -d ' ')" = 2 ] && [ "$(sed -n 1p "$CFG/slack-sent.jsonl" | jq -r '[.ts,.decision_id,.kind]|join(",")')" = '1700000000.000100,D-0J01,text' ] \
   && [ "$(sed -n 2p "$CFG/slack-sent.jsonl" | jq 'has("decision_id")')" = false ] && ok "J 보낸 기록: 카드(ts·decision_id) 1줄 + 파일 1줄(카드 필드 없음)" || ko "J 보낸 기록" "$(cat "$CFG/slack-sent.jsonl")"
-run_n --kind decide --options '1=A 안,2=B 안' --recommend 2 --decision-id D-0J02 "주제" "$SB/none.mp4"
+run_n --kind decide --no-doc --options '1=A 안,2=B 안' --recommend 2 --decision-id D-0J02 "주제" "$SB/none.mp4"
 [ "$RC" = 2 ] && nocall && ok "J 첨부 파일이 없으면 카드도 보내지 않음(종료 코드 2)" || ko "J 파일 없음" "rc=$RC"
-LRM_BTN_WARN=on run_n --kind decide --choices 2 "주제"
+LRM_BTN_WARN=on run_n --kind decide --no-doc --choices 2 "주제"
 [ "$RC" = 0 ] && grep -q '선택지 버튼 없음' "$SB/err" && ok "J --options 없는 결정 카드 → 버튼 없음 경고(전송은 함)" || ko "J 버튼 없음 경고" "rc=$RC $(cat "$SB/err")"
-LRM_BTN_WARN=on run_n --kind decide --options '1=A 안,2=B 안' --recommend 2 --decision-id D-0J03 "주제"
+LRM_BTN_WARN=on run_n --kind decide --no-doc --options '1=A 안,2=B 안' --recommend 2 --decision-id D-0J03 "주제"
 ! grep -q '선택지 버튼 없음' "$SB/err" && ok "J --options 카드는 경고 없음" || ko "J 정상 카드 경고" "$(cat "$SB/err")"
 
 # ---- K. 줄바꿈 양식: '- ' 여러 줄 허용 · ' / '·' · ' 3개 이상 이은 줄은 경고만 ---------------------------
@@ -666,7 +666,7 @@ run_n --kind done $'완료\n\n- 무엇: A / B\n- 왜: C · D'
 [ "$(errn)" = 0 ] && ok "K 2개까지는 경고 없음" || ko "K 2개" "$(cat "$SB/err")"
 run_n --kind done $'완료 · 가 · 나 · 다 · 라\n\n- 무엇: 끝'
 ! grep -q "로 이은 줄" "$SB/err" && ok "K 첫 줄(제목)은 검사 제외" || ko "K 제목" "$(cat "$SB/err")"
-run_n --kind decide "주제$ANS"
+run_n --kind decide --no-doc "주제$ANS"
 ! grep -q "로 이은 줄" "$SB/err" && ok "K 고정 형식 '👉 답:' 줄은 검사 제외" || ko "K 답 줄" "$(cat "$SB/err")"
 
 # ---- L. 본문 로컬 경로 거부·비밀 첨부 거부·--link-to·직접 호출 카드 양식 ---------------------------------------
@@ -686,9 +686,9 @@ run_n --kind done "완료" "$SB/server.pem"
 [ "$RC" = 2 ] && nocall && grep -q '민감 파일' "$SB/err" && ok "L 비밀 파일 첨부 → 거부(종료 코드 2)" || ko "L 비밀 첨부" "rc=$RC $(cat "$SB/err")"
 
 : > "$LOG/fail.link"; : > "$LOG/posts.log"
-run_n --kind decide --options '1=A,2=B' --recommend 1 --decision-id D-0L01 --link-to 1700000000.000100 $'주제\n\n배경 한 줄'
+run_n --kind decide --no-doc --options '1=A,2=B' --recommend 1 --decision-id D-0L01 --link-to 1700000000.000100 $'주제\n\n배경 한 줄'
 c=$(sed -n 1p "$LOG/posts.log" | jq -r '.attachments[0].blocks[0].text.text')
-[ "$RC" = 0 ] && printf '%s' "$c" | tail -n 1 | grep -qF '<https://example.slack.com/archives/Dfake/p1700000000000100|결정 카드 열기>' && grep -q 'chat.getPermalink' "$LOG/calls.log" && ok "L --link-to: 조회한 메시지 링크가 본문 끝에" || ko "L link-to" "rc=$RC $c"
+[ "$RC" = 0 ] && printf '%s' "$c" | grep -qF '<https://example.slack.com/archives/Dfake/p1700000000000100|결정 카드 열기>' && [ "$(printf '%s' "$c" | grep -n '결정 카드 열기' | cut -d: -f1)" -lt "$(printf '%s' "$c" | grep -n '^참고:' | cut -d: -f1)" ] && grep -q 'chat.getPermalink' "$LOG/calls.log" && ok "L --link-to: 조회한 메시지 링크가 본문 끝에" || ko "L link-to" "rc=$RC $c"
 printf 'x' > "$LOG/fail.link"
 run_n --kind done --link-to 1700000000.000100 $'완료\n\n- 무엇: 끝'
 [ "$RC" = 0 ] && ! text | grep -q 'slack.com' && grep -q '링크 조회 실패' "$SB/err" && ok "L 링크 조회 실패 → 링크 없이 전송(경고)" || ko "L link 실패" "rc=$RC $(text) $(cat "$SB/err")"
@@ -696,10 +696,39 @@ run_n --kind done --link-to 1700000000.000100 $'완료\n\n- 무엇: 끝'
 run_n --kind done --link-to bogus "완료"
 [ "$RC" = 2 ] && nocall && ok "L --link-to 형식 오류 → 종료 코드 2" || ko "L link 형식" "rc=$RC"
 
-run_n --kind decide --options '1=A,2=B' --recommend 1 --decision-id D-0L02 $'주제\n\n• 왜: 배경\n참고: main 9c972aa'
+run_n --kind decide --no-doc --options '1=A,2=B' --recommend 1 --decision-id D-0L02 $'주제\n\n• 왜: 배경\n참고: main 9c972aa'
 c=$(sed -n 1p "$LOG/posts.log" | jq -r '.attachments[0].blocks[0].text.text')
 printf '%s' "$c" | grep -qxF -e '- 왜: 배경' && ! printf '%s' "$c" | grep -q '^- 참고' && printf '%s' "$c" | grep -qx '참고: main 9c972aa' && [ "$(printf '%s' "$c" | tail -n 2 | head -n 1)" = '' -o "$(printf '%s' "$c" | tail -n 1)" = '결정 D-0L02' ] \
   && ok "L 직접 호출 결정 카드도 전송기와 같은 줄 양식('- ' 항목, 참고 줄은 머리표 없이 맨 아래)" || ko "L 카드 양식" "$c"
+
+# ---- M. 직접 호출 결정의 문서 계약·--link-to 위치 -------------------------------------------------------
+newhome m; : > "$LOG/posts.log"
+run_n --kind decide --options '1=A,2=B' --recommend 1 --decision-id D-0M01 $'주제\n\n배경'
+[ "$RC" = 2 ] && nocall && grep -q -- '--no-doc 를 명시' "$SB/err" && ok "M 직접 호출 decide: 첨부·--no-doc 없으면 종료 코드 2 + 조치 안내, 호출 0회" || ko "M 문서 필수" "rc=$RC $(cat "$SB/err")"
+run_n --kind decide "주제$ANS"
+[ "$RC" = 2 ] && nocall && ok "M --options 없는 decide 도 같은 계약" || ko "M choices 없는 decide" "rc=$RC"
+run_n --kind decide --no-doc --options '1=A,2=B' --recommend 1 --decision-id D-0M02 $'주제\n\n배경'
+[ "$RC" = 0 ] && posted && ok "M --no-doc 명시하면 통과" || ko "M no-doc" "rc=$RC $(cat "$SB/err")"
+run_n --kind decide --attached "$SB/doc.html" --options '1=A,2=B' --recommend 1 --decision-id D-0M03 $'주제\n\n배경'
+[ "$RC" = 0 ] && ok "M --attached 로 따로 첨부를 알리면 통과" || ko "M attached" "rc=$RC $(cat "$SB/err")"
+run_n --kind decide --options '1=A,2=B' --recommend 1 --decision-id D-0M04 $'주제\n\n배경' "$SB/doc.html"
+[ "$RC" = 0 ] && ok "M 파일 인자가 있으면 통과" || ko "M 파일 인자" "rc=$RC $(cat "$SB/err")"
+run_n --kind done --no-doc "완료"
+[ "$RC" = 2 ] && nocall && ok "M --no-doc 는 decide 와만" || ko "M no-doc 오용" "rc=$RC"
+printf 'x' > "$SB/key.p8"; printf 'x' > "$SB/a.crt"; printf 'x' > "$SB/b.cer"; printf 'x' > "$SB/c.der"; printf 'x' > "$SB/d.gpg"; printf 'x' > "$SB/e.asc"
+for f in key.p8 a.crt b.cer c.der d.gpg e.asc; do
+  run_n --kind done "완료" "$SB/$f"
+  [ "$RC" = 2 ] && nocall && grep -q '민감 파일' "$SB/err" && ok "M 비밀 확장자 첨부 거부: $f" || ko "M 비밀 확장자 $f" "rc=$RC"
+done
+run_n --kind done $'완료\n\n참고:/tmp/a.pdf'
+[ "$RC" = 2 ] && nocall && ok "M '참고:/tmp/a.pdf'(콜론 바로 뒤 경로) 거부" || ko "M 콜론 경로" "rc=$RC"
+run_n --kind done $'완료\n\n참고: docs/결과 보고서.pdf'
+[ "$RC" = 2 ] && nocall && ok "M '참고: docs/결과 보고서.pdf'(공백 든 상대 경로) 거부" || ko "M 공백 상대 경로" "rc=$RC"
+: > "$LOG/fail.link"; : > "$LOG/posts.log"
+run_n --kind decide --no-doc --options '1=A,2=B' --recommend 1 --decision-id D-0M05 --link-to 1700000000.000100 $'주제\n\n- 배경\n참고: main 9c972aa'
+c=$(sed -n 1p "$LOG/posts.log" | jq -r '.attachments[0].blocks[0].text.text')
+l=$(printf '%s' "$c" | grep -n '결정 카드 열기' | cut -d: -f1); r=$(printf '%s' "$c" | grep -n '^참고:' | cut -d: -f1)
+[ -n "$l" ] && [ "$l" -lt "$r" ] && [ "$(printf '%s' "$c" | tail -n 1)" = '결정 D-0M05' -o "$(printf '%s' "$c" | tail -n 1)" = '참고: main 9c972aa' ] && ok "M --link-to 링크는 참고 줄 앞" || ko "M 링크 위치" "$c"
 
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

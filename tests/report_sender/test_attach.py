@@ -77,13 +77,15 @@ class AttachTest(unittest.TestCase):
         self.assertIn("progress", calls[0])  # 주제 시작 → 본문 → 파일 → 진행 줄 순서
         self.assertNotIn("참고:", calls[1][-1])  # 경로 텍스트 대신 첨부
         ups = self.uploads()
-        self.assertEqual([os.path.basename(u[-1]) for u in ups], ["a.png", "b.html", "b-preview.png"])
+        names = [os.path.basename(u[-1]) for u in ups]
+        self.assertEqual((names[:2], names[2].endswith("-b-preview.png")), (["a.png", "b.html"], True))
         for u in ups:
             self.assertEqual(u[u.index("--thread") + 1], TOPIC_TS)  # 본문과 같은 주제 스레드
         self.assertEqual(calls.index(ups[0]), 2)
         self.assertIn("slack.com/archives", calls[-1][-1])  # 마지막은 진행 줄
         done = self.state()["reports"][rep["id"]]["att_done"]
-        self.assertEqual(set(done), {self.png, self.html, self.html + "#preview"})
+        self.assertEqual(set(done) - {self.png, self.html}, {self.html + "#preview:" + report_sender.content_hash(self.html)})  # 미리보기 키 = 원본 경로 + 내용 해시
+        self.assertEqual(len(done), 3)
         self.assertTrue(all(v.startswith("F") for v in done.values()))  # 업로드 완료 file_id 저장
 
     def test_decide_card_first_then_files_in_card_thread(self):
@@ -138,7 +140,7 @@ class AttachTest(unittest.TestCase):
         self.assertEqual((res["sent"], res["failed"]), (1, 0))
         bodies = [c for c in self.calls() if "--kind" in c and c[c.index("--kind") + 1] == "done"]
         self.assertEqual(len(bodies), 1)  # 본문 재전송 없음
-        self.assertEqual(set(self.state()["reports"][rep["id"]]["att_done"]), {self.png, self.html, self.html + "#preview"})
+        self.assertEqual(len(self.state()["reports"][rep["id"]]["att_done"]), 3)
         self.assertEqual(self.lines(), [])  # 일시 실패는 스레드 줄 없이 재시도
 
     def test_script_permanent_rc_posts_one_line_and_continues(self):
@@ -157,7 +159,7 @@ class AttachTest(unittest.TestCase):
         self.assertEqual((res["sent"], res["failed"]), (1, 0))
         self.assertEqual([os.path.basename(u[-1]) for u in self.uploads()], ["b.html"])
         self.assertIn("미리보기 생략", self.log_text())
-        self.assertIn(self.html + "#preview", self.state()["reports"][rep["id"]]["att_done"])
+        self.assertIn(self.html + "#preview:" + report_sender.content_hash(self.html), self.state()["reports"][rep["id"]]["att_done"])
 
     def test_missing_preview_script_is_skipped(self):
         self.conf.preview = self.p("no-such.sh")
@@ -176,7 +178,7 @@ class AttachTest(unittest.TestCase):
         self.legacy(text="결과는 /Users/me/out/report.html 참고")
         res = report_sender.run(self.conf)
         self.assertEqual((res["sent"], res["stopped"]), (0, 1))
-        self.assertEqual([c for c in self.calls() if "본문에 로컬 경로" not in c[-1]], [])  # 중단 경고 1건만 나감
+        self.assertEqual([c for c in self.calls() if "warn" not in c], [])  # 중단 경고 1건만 나감(전송·업로드 없음)
         self.assertIn("leg1", self.state()["bad"])
 
     def test_sender_stops_legacy_decide_without_doc(self):
@@ -235,6 +237,49 @@ class AttachTest(unittest.TestCase):
         report_sender.run(self.conf)
         self.assertNotIn("경고:", self.log_text())
 
+    def test_preview_retry_does_not_reupload_original_or_preview(self):
+        """미리보기 임시 경로가 회차마다 바뀌어도 키는 원본 경로+내용 해시라 이미 올린 파일을 다시 올리지 않음"""
+        self.report(files=[self.html])
+        calls = {"n": 0}
+        orig = report_sender.run_notify
+
+        def flaky(conf, args, deadline, upload=False):  # 미리보기 업로드 첫 시도만 일시 실패
+            if upload and args[-1].endswith("-preview.png") and not calls["n"]:
+                calls["n"] += 1
+                raise report_sender.NotifyError("네트워크 끊김")
+            return orig(conf, args, deadline, upload)
+
+        report_sender.run_notify = flaky
+        self.addCleanup(setattr, report_sender, "run_notify", orig)
+        self.assertEqual(report_sender.run(self.conf)["failed"], 1)
+        self.assertEqual(report_sender.run(self.conf)["sent"], 1)
+        names = [os.path.basename(u[-1]) for u in self.uploads()]
+        self.assertEqual(names.count("b.html"), 1)
+        self.assertEqual(sum(n.endswith("-preview.png") for n in names), 1)
+
+    def test_changed_html_content_gets_new_preview_key(self):
+        self.assertNotEqual(report_sender.content_hash(self.html), (self.make("b2.html", "<p>y</p>"), report_sender.content_hash(self.p("b2.html")))[1])
+
+    def test_abort_warning_has_no_path_so_notify_check_passes(self):
+        """중단 경고 문구에 원문 경로가 들어가면 알림 스크립트의 경로 검사가 경고도 거부함 → 파일 이름(확장자 없이)만"""
+        self.legacy(text="결과는 /Users/me/out/report.html 참고")
+        self.assertEqual(report_sender.run(self.conf)["stopped"], 1)
+        warns = [c[-1] for c in self.calls() if "warn" in c]
+        self.assertEqual(len(warns), 1)
+        self.assertNotIn("/Users/me", warns[0])
+        self.assertIn("(report)", warns[0])
+        self.assertEqual(hub_report.path_problem(warns[0], []), "")  # 알림 스크립트가 쓰는 판정으로도 통과
+        self.assertIn(report_sender.safe_text("a /x/y/한글(1).pdf b"), "a 한글(1) b")
+
+    def test_decide_no_doc_flag_reaches_card_only_without_files(self):
+        self.report(text="제목\n배경", kind="decide", no_doc=True, options="1=가,2=나", recommend="1", decision_id="D-0501")
+        self.report(text="제목2\n배경", kind="decide", files=[self.png], options="1=가,2=나", recommend="1", decision_id="D-0502")
+        report_sender.run(self.conf)
+        cards = [c for c in self.calls() if "decide" in c]
+        self.assertIn("--no-doc", cards[0])
+        self.assertNotIn("--no-doc", cards[1])
+        self.assertIn("--attached", cards[1])
+
 
 class PathRuleTest(unittest.TestCase):
     def setUp(self):
@@ -286,6 +331,20 @@ class PathRuleTest(unittest.TestCase):
         self.assertEqual(hub_report.local_paths("/Users/me/결과 보고서.pdf 확인"), ["/Users/me/결과 보고서.pdf"])
         self.assertEqual(hub_report.local_paths("(참고: ./out/a.mp4)"), ["./out/a.mp4"])
         self.assertEqual(hub_report.path_problem("결과 보고서.pdf 참고", ["/x/결과 보고서.pdf"]), "")  # 첨부와 같은 이름이면 공백이 있어도 통과
+
+    def test_secret_extensions_added_by_review(self):
+        for n in ("a.p8", "a.crt", "a.cer", "a.der", "a.pfx", "a.jks", "a.gpg", "a.asc", "A.PEM"):
+            self.assertTrue(hub_report.secret_file_problem(n), n)
+        self.assertEqual(hub_report.secret_file_problem("report.html"), "")
+
+    def test_path_right_after_colon_and_spaced_relative_path_are_detected(self):
+        self.assertEqual(hub_report.local_paths("참고:/tmp/a.pdf"), ["/tmp/a.pdf"])
+        self.assertEqual(hub_report.local_paths("참고: docs/결과 보고서.pdf"), ["docs/결과 보고서.pdf"])
+        self.assertEqual(hub_report.local_paths("참고:docs/a.png"), ["docs/a.png"])
+        self.assertIn("/tmp/a.pdf", hub_report.path_problem("참고:/tmp/a.pdf", []))
+        self.assertIn("docs/결과 보고서.pdf", hub_report.path_problem("참고: docs/결과 보고서.pdf", []))
+        self.assertEqual(hub_report.local_paths("링크 https://x.co/a.pdf 와 참고:https://y.co/b.png"), [])  # URL 은 여전히 제외
+        self.assertEqual(self.cli("참고:/tmp/a.pdf").returncode, 2)
 
     def test_decide_requires_doc_or_no_doc(self):
         base = ["--options", "1=가,2=나", "--recommend", "1", "--decision-id", "D-0401"]

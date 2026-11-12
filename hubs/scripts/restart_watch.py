@@ -160,7 +160,7 @@ def card_text(ident: dict, hubs: list[dict]) -> str:
 
 
 def send_card(did: str, text: str, options: str = "1=이어받기,2=보류") -> bool:
-    cmd = [NOTIFY, "--kind", "decide", "--options", options, "--recommend", "1", "--decision-id", did, "--reversible", "쉬움", text]
+    cmd = [NOTIFY, "--kind", "decide", "--no-doc", "--options", options, "--recommend", "1", "--decision-id", did, "--reversible", "쉬움", text]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=NOTIFY_TIMEOUT_S, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired):
