@@ -19,6 +19,8 @@ CFG_LICENSE_RE='^Assets/(.*/)?Sound/.*\.LICENSE\.txt$'
 # 삭제 전 보관할 gitignore 결과물(삭제 뒤 복구 불가라 먼저 복제)
 CFG_ARCHIVE_RE='(^|/)TestResults(/|$)|^docs/out(/|$)|\.html$|\.mp4$'
 CFG_RM_DIRTY_RE='modified or untracked|contain(s|ing) submodules|uncommitted|dirty'  # orca rm 거부 문구 중 미커밋 변경 계열만 force 허용(잠금·사용 중 등은 제외)
+# Orca 실측 거부 문구: "Failed to delete worktree at <경로>. M Assets/…" (마침표 뒤 git status 짧은 형식 'XY 경로'). 대소문자 구분(소문자 문장 오인 방지)
+CFG_RM_DIRTY_STATUS_RE='\.[[:space:]]+[ MADRCTU?!]{1,2}[[:space:]]+[^[:space:]]'
 CFG_NOISE_LOG_MAX=20                                     # 부산물 근거로 로그에 남길 경로 수
 CFG_LOG_MAX_BYTES=2097152                                # 로그가 이 크기를 넘으면 .1 로 돌림
 CFG_MAX_PAGES=50                                         # worker-list 쪽 수 상한
@@ -230,7 +232,7 @@ remove_ws() {
   cp "$TMP/noise.txt" "$TMP/noise0.txt"
   out=$(orca worktree rm --worktree "path:$p" --json 2>&1) && return 0
   # 거부 사유가 미커밋 변경 계열일 때만 force. 잠금·사용 중 같은 다른 사유는 우회하지 않음.
-  if printf '%s' "$out" | grep -Eiq -- "$CFG_RM_DIRTY_RE"; then
+  if printf '%s' "$out" | grep -Eiq -- "$CFG_RM_DIRTY_RE" || printf '%s' "$out" | grep -Eq -- "$CFG_RM_DIRTY_STATUS_RE"; then
     # 혼합 줄바꿈 index 와 eol=lf 속성은 checkout 후에도 dirty. 강제 삭제 전 보관·변경 재확인 필요.
     archive_outputs "$p" "$dest" || return 1
     classify_changes "$p"

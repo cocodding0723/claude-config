@@ -159,7 +159,7 @@ chk "보관 실패 → 폴더 유지·archive_fail·종료 1" '[ -e "$W/arcfail"
 
 # ---- 6. eol=lf 속성과 혼합 줄바꿈 index 충돌 ------------------------------------------------
 LIC=Assets/Sound/s/a.LICENSE.txt
-for n in eol_only eol_other eol_content eol_late eol_arcfail eol_noise_late eol_archive_late lic_checkout lic_untracked eol_reason lic_noise; do
+for n in eol_only eol_other eol_content eol_late eol_arcfail eol_noise_late eol_archive_late lic_checkout lic_untracked eol_reason eol_real eol_lock_path lic_noise; do
   mk "$n" "feat/$n"; pr "feat/$n" '[{"number":50,"state":"MERGED"}]'
   if [ "$n" = lic_checkout ]; then
     printf 'line1\r\nline2\r\n' > "$W/$n/$LIC"
@@ -210,6 +210,12 @@ chk "rm 거부 뒤 보관 파일 수 불일치: force 금지" '[ "$RC" = 1 ] && 
 
 FAKE_RM_CHECK_DIRTY=1 FAKE_RM_REASON="error: worktree is locked" gc --apply --only eol_reason
 chk "다른 거부 사유(잠금): force 안 함·rm_fail" '[ "$RC" = 1 ] && [ -e "$W/eol_reason" ] && [ "$(rm_calls)" = 1 ] && ! grep -q -- "--force" "$FAKE/orca.calls" && has "SKIP rm_fail"'
+# 실측 문구(경로 뒤 git status 짧은 형식 목록)도 미커밋 변경 계열로 인정, 같은 형식이 아닌 사유는 force 금지
+REAL_MSG='{"ok":false,"error":{"message":"Failed to delete worktree at @P@. M Assets/RawAssets/Local/Sound/Sfx/VendingInterface.LICENSE.txt"}}'
+FAKE_RM_REASON="$REAL_MSG" gc --apply --only eol_real
+chk "실측 거부 문구(경로 뒤 'M 경로'): force 재시도로 삭제" '[ "$RC" = 0 ] && [ ! -e "$W/eol_real" ] && [ "$(rm_calls)" = 2 ] && grep -q -- "--force" "$FAKE/orca.calls" && has "RM_RETRY_FORCE"'
+FAKE_RM_REASON='{"ok":false,"error":{"message":"Failed to delete worktree at @P@. a b worktree is locked"}}' gc --apply --only eol_lock_path
+chk "경로 뒤 소문자 문장(잠금): force 금지" '[ "$RC" = 1 ] && [ -e "$W/eol_lock_path" ] && [ "$(rm_calls)" = 1 ] && ! grep -q -- "--force" "$FAKE/orca.calls"'
 FAKE_RM_CHECK_DIRTY=1 gc --apply --only lic_noise
 chk "LICENSE 줄바꿈 + 기존 부산물: force 로 삭제" '[ "$RC" = 0 ] && [ ! -e "$W/lic_noise" ] && [ "$(rm_calls)" = 2 ] && grep -q -- "--force" "$FAKE/orca.calls"'
 FAKE_RM_CHECK_DIRTY=1 gc --apply --only sub_noise

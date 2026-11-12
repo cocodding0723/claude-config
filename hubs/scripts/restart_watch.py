@@ -25,7 +25,7 @@ import main_terminal as mt  # noqa: E402
 DIR = card_actions.DIR
 STATE = os.path.join(DIR, "restart-watch.json")
 LOCK = os.path.join(DIR, ".restart-watch.lock")
-ORCA = os.environ.get("LRM_ORCA") or "orca"
+ORCA = mt.find_orca()  # 수신기(launchd)의 짧은 PATH 에서도 찾음
 NOTIFY = os.environ.get("LRM_NOTIFY") or os.path.join(DIR, "slack_notify.sh")
 TSV = os.environ.get("HUBS_TSV") or next((p for p in (os.path.join(HERE, "..", "hubs.tsv"), os.path.join(DIR, "hubs.tsv")) if os.path.isfile(p)), "")
 ORCA_TIMEOUT_S = 20
