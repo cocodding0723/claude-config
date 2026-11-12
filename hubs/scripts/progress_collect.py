@@ -7,7 +7,7 @@
 PR(gh)은 PR_INTERVAL_S 초에 한 번만 조회하고 그 사이는 직전 값을 씀.
 
 환경: LRM_HUB_DIR 작업 폴더 · LRM_PROGRESS 스냅샷 경로 · LRM_LEDGER 장부 · LRM_HUB_STATUS_DIR 허브 상태 폴더
-      LRM_DIGEST_GH gh 명령(없으면 PATH → /opt/homebrew/bin·/usr/local/bin) · LRM_DIGEST_REPOS PR 조회 저장소(쉼표, 없으면 현재 저장소) · LRM_HUB_STATUS_STALE_HOURS 낡음 기준(기본 24)
+      LRM_DIGEST_GH gh 명령(없으면 PATH → /opt/homebrew/bin·/usr/local/bin) · LRM_DIGEST_REPOS PR 조회 저장소(쉼표, 없으면 PANEL_GH_REPOS 환경 변수 → 작업 폴더 panel.env → 현재 저장소) · LRM_HUB_STATUS_STALE_HOURS 낡음 기준(기본 24)
       LRM_ORCA orca 명령(없으면 PATH → 알려진 설치 위치) · LRM_PROGRESS_PR_INTERVAL PR 조회 간격 초(기본 300) · LRM_PROGRESS_PR_BUDGET PR 조회 전체 시간 상한 초(기본 30)
 종료 코드: 0 성공(원료 일부 실패 포함), 2 설정·입력 오류
 """
@@ -266,13 +266,30 @@ def run_source(fn, prev, now):
     return {"ok": False, "err": err, "at": old.get("at"), "tried": now, "stale": True, "value": old.get("value")}
 
 
+def default_repos():
+    """PR 조회 저장소 기본값: 환경 변수 PANEL_GH_REPOS → 작업 폴더 panel.env 의 PANEL_GH_REPOS(옆 패널과 같은 설정). 파일은 읽기만 하고 실행하지 않음.
+    launchd 는 저장소 밖에서 돌아 '현재 저장소' 폴백이 실패하므로 필요"""
+    raw = os.environ.get("PANEL_GH_REPOS")
+    if raw is None:
+        raw = ""
+        try:
+            with open(os.path.join(HUB_DIR, "panel.env"), encoding="utf-8") as f:
+                for line in f:
+                    k, sep, v = line.strip().partition("=")
+                    if sep and k == "PANEL_GH_REPOS":
+                        raw = v.strip().strip('"').strip("'")
+        except OSError:
+            pass
+    return [r for r in re.split(r"[\s,]+", raw) if r]
+
+
 def conf_from_env():
     env = os.environ.get
     return {
         "ledger": env("LRM_LEDGER") or os.path.join(HUB_DIR, "feedback-ledger.tsv"),
         "status_dir": os.path.expanduser(env("LRM_HUB_STATUS_DIR") or os.path.join(HUB_DIR, "hub-status")),  # 작업 폴더 밑이 기본(시험이 격리됨)
         "gh": gh_bin(),
-        "repos": [r.strip() for r in (env("LRM_DIGEST_REPOS") or "").split(",") if r.strip()],
+        "repos": [r.strip() for r in (env("LRM_DIGEST_REPOS") or "").split(",") if r.strip()] or default_repos(),
     }
 
 
