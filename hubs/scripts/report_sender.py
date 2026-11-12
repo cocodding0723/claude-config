@@ -5,7 +5,9 @@
 진행 스레드(ledger_sync.py 가 만든 부모)에는 한 줄 + 주제 스레드 링크만 올림. 진행 스레드 부모가 아직 없으면 줄은 생략.
 kind=decide 는 스레드 답글이 아니라 slack_notify.sh --kind decide --options 버튼 카드 그대로 올림(카드 ts 로 링크).
 상태 파일(전송 단계·ts·실패 횟수)은 이 프로세스만 씀. 단계마다 바로 저장해 중간에 죽어도 같은 글을 두 번 올리지 않음.
-전송 성공한 것만 전송됨 표시. 실패는 다음 회차에 재시도하고 3회째 실패에 경고 카드를 1건만 보냄.
+전송 성공한 것만 전송됨 표시. 실패는 영구(입력·형식 오류 = 알림 스크립트 종료 코드 2)와 일시(네트워크·429·5xx·시간 초과)로 나눔.
+영구 실패는 재시도 없이 바로, 일시 실패는 지수 대기(BACKOFF)로 FAIL_LIMIT 회까지 재시도한 뒤 같은 방식으로 중단함:
+상태 bad 에 보고 id 를 기록해 재시도 대상에서 빼고, 원래 주제 스레드(없으면 DM)에 원인·조치 경고를 1건만 보냄.
 동시 실행은 상태 파일 옆 .lock 비차단 flock 으로 1개. 다른 회차가 진행 중이면 busy 로 건너뜀.
 
 환경: LRM_HUB_DIR 작업 폴더 · LRM_REPORT_OUTBOX outbox · LRM_REPORT_STATE 상태 파일 · LRM_REPORT_NOTIFY 전송 스크립트(기본 같은 폴더 slack_notify.sh)
@@ -30,7 +32,10 @@ import hub_status  # noqa: E402
 import ledger  # noqa: E402
 
 HUB_DIR = hub_report.HUB_DIR
-FAIL_LIMIT = 3  # 이 횟수째 실패에 경고 1건
+FAIL_LIMIT = 6  # 일시 실패 재시도 상한. 이 횟수째 실패에 중단·경고 1건
+BACKOFF_BASE_S, BACKOFF_MAX_S = 60, 1800  # 일시 실패 뒤 대기 = BASE·2^(실패-1), 상한 MAX. 1시간 안팎에서 상한 도달
+PERMANENT_RC = 2  # 알림 스크립트 종료 코드: 설정·인자·양식 오류 = 재시도해도 같은 결과
+USER_FIX_MARKS = ("slack-bot.env 없음",)  # 종료 코드 2 지만 사용자가 파일을 만들면 풀리는 환경 문제 = 일시로 취급
 NOTIFY_TIMEOUT_S = 30
 DEFAULT_BUDGET_S = 40.0  # 회차 시간 예산. 넘기면 새 전송을 시작하지 않고 다음 회차로 넘김
 MAX_PER_RUN = 10
@@ -51,6 +56,7 @@ class Conf:
     budget_s: float = DEFAULT_BUDGET_S
     max_per_run: int = MAX_PER_RUN
     fail_limit: int = FAIL_LIMIT
+    backoff_s: float = BACKOFF_BASE_S
 
     def __post_init__(self) -> None:
         env = os.environ.get
@@ -69,14 +75,18 @@ class Conf:
 
 
 class NotifyError(Exception):
-    pass
+    """permanent: 재시도해도 같은 결과. counts: 실패 횟수에 셈(회차 예산 초과는 전송을 시도하지 않았으므로 세지 않음)"""
+
+    def __init__(self, msg: str, permanent: bool = False, counts: bool = True) -> None:
+        super().__init__(msg)
+        self.permanent, self.counts = permanent, counts
 
 
 def run_notify(conf: Conf, args: list, deadline: float) -> str:
     """전송 스크립트 1회 호출 → 새 메시지 ts. 실패는 NotifyError(사유 한 줄, 비밀 값 가림)"""
     left = deadline - time.monotonic()
     if left <= 0:
-        raise NotifyError("회차 시간 예산 초과")
+        raise NotifyError("회차 시간 예산 초과", counts=False)
     try:
         p = subprocess.run([conf.notify, *args], capture_output=True, text=True, timeout=min(NOTIFY_TIMEOUT_S, left))
     except subprocess.TimeoutExpired:
@@ -87,7 +97,8 @@ def run_notify(conf: Conf, args: list, deadline: float) -> str:
     if p.returncode == 0 and last.startswith("ok ") and last[3:].strip():
         return last[3:].strip()
     why = " ".join((p.stderr.strip() or p.stdout.strip() or f"종료 코드 {p.returncode}").split())[:ERR_MAX]
-    raise NotifyError("비밀 값 포함 오류 숨김" if hub_status.SECRET_RE.search(why) else why)
+    perm = p.returncode == PERMANENT_RC and not any(m in why for m in USER_FIX_MARKS)
+    raise NotifyError("비밀 값 포함 오류 숨김" if hub_status.SECRET_RE.search(why) else why, permanent=perm)
 
 
 class StateCorrupt(Exception):
@@ -306,11 +317,40 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
     return {"topic_ts": topic.get("ts", ""), "body_ts": rs["body_ts"], "line_ts": rs["line_ts"]}
 
 
-def warn_failure(conf: Conf, rep: dict, why: str, deadline: float) -> None:
+def warn_stop(conf: Conf, rep: dict, st: dict, why: str, permanent: bool, deadline: float) -> None:
+    """재시도 중단 경고 1건(원인 + 조치). 원래 주제 스레드가 있으면 그 답글, 없으면(결정 카드 등) DM 새 글"""
     label = hub_report.KINDS[rep["kind"]][1]
-    msg = (f"허브 보고 전송 실패\n\n• 무엇: {rep['hub']} {label} 보고가 {conf.fail_limit}회 연속 전송 실패\n"
-           f"• 원인: {why}\n• 결과: 다음 회차에도 재시도함")
-    run_notify(conf, ["--tag", rep["hub"], "--kind", "warn", msg], deadline)
+    thread = rep.get("thread") or st["topics"].get(topic_key(rep), {}).get("ts", "")
+    cause = f"입력 오류(재시도해도 같은 결과) — {why}" if permanent else f"{conf.fail_limit}회 연속 전송 실패 — {why}"
+    msg = (f"허브 보고 전송 중단\n\n• 무엇: {rep['hub']} {label} 보고 {rep['id']} 재시도 중단\n"
+           f"• 원인: {cause}\n• 조치: 보고를 고쳐 hub_report.py add 로 다시 기록")
+    run_notify(conf, ["--tag", rep["hub"], "--kind", "warn"] + (["--thread", thread] if thread else []) + [msg], deadline)
+
+
+def stop_report(conf: Conf, rep: dict, st: dict, why: str, permanent: bool, deadline: float) -> None:
+    """보고를 재시도 대상에서 빼고(bad) 경고 1건. 경고 전송이 실패하면 다음 회차에 경고만 다시 시도"""
+    st["bad"][rep["id"]] = int(time.time())
+    st["reports"].setdefault(rep["id"], {})["error"] = why
+    save_state(conf.state, st)
+    warn_pending(conf, rep, st, deadline, permanent)
+
+
+def warn_pending(conf: Conf, rep: dict, st: dict, deadline: float, permanent: bool = False) -> None:
+    if rep["id"] in st["warned"]:
+        return
+    try:
+        warn_stop(conf, rep, st, st["reports"].get(rep["id"], {}).get("error", "원인 미확인"), permanent, deadline)
+        st["warned"][rep["id"]] = int(time.time())
+        save_state(conf.state, st)
+    except NotifyError:
+        pass  # 경고 전송 실패는 다음 회차에 다시 시도
+
+
+def input_error(rep: dict) -> str:
+    """전송 전에 알 수 있는 영구 오류(접수 시점 검사와 같은 규칙). 없으면 빈 문자열"""
+    if rep["kind"] == "decide" and not hub_report.DECISION_ID_RE.fullmatch(rep["decision_id"]):
+        return hub_report.DECISION_ID_ERR
+    return ""
 
 
 def log(conf: Conf, line: str) -> None:
@@ -428,7 +468,11 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
     except StateCorrupt as err:
         return halt(conf, err, out, dry, deadline)
     out["bad"] = quarantine(conf, bad, st, dry)
-    todo = [r for r in reports if not st["reports"].get(r["id"], {}).get("sent")]
+    if not dry:
+        for r in reports:  # 중단됐지만 경고가 안 나간 보고
+            if r["id"] in st["bad"] and r["id"] not in st["warned"] and not st["reports"].get(r["id"], {}).get("sent"):
+                warn_pending(conf, r, st, deadline, True)
+    todo = [r for r in reports if not st["reports"].get(r["id"], {}).get("sent") and r["id"] not in st["bad"]]
     out["pending"] = len(todo)
     if not todo:
         return out
@@ -444,22 +488,37 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
             continue  # 건너뛴 보고는 시도 건수에 세지 않음(막힌 주제가 다른 주제를 굶기지 않게)
         if tried >= conf.max_per_run:
             break
-        tried += 1
         fails = st["reports"].setdefault(rep["id"], {})
+        if fails.get("next_at", 0) > time.time():
+            blocked.add(key)  # 대기 중. 같은 주제의 뒤 보고도 순서 유지를 위해 함께 대기
+            continue
+        tried += 1
+        bad_input = input_error(rep)
+        if bad_input or fails.get("fails", 0) >= conf.fail_limit:  # 접수 전 쌓인 영구 오류·상한 초과 기록은 호출 없이 중단
+            why = bad_input or fails.get("error", "재시도 상한 초과")
+            stop_report(conf, rep, st, why, bool(bad_input), deadline)
+            out["stopped"] = out.get("stopped", 0) + 1
+            line = f"중단 {rep['id']} {rep['hub']} {rep['kind']}: {why}"
+            out["lines"].append(line)
+            log(conf, line)
+            continue
         try:
             res = deliver(conf, rep, st, deadline)
         except NotifyError as err:
+            if not err.counts:
+                blocked.add(key)
+                continue
             fails["fails"], fails["error"] = fails.get("fails", 0) + 1, str(err)
-            if fails["fails"] >= conf.fail_limit and rep["id"] not in st["warned"]:
-                try:
-                    warn_failure(conf, rep, str(err), deadline)
-                    st["warned"][rep["id"]] = int(time.time())
-                except NotifyError:
-                    pass  # 경고 전송 실패는 다음 회차에 다시 시도
-            save_state(conf.state, st)
+            fails["next_at"] = int(time.time() + min(conf.backoff_s * 2 ** (fails["fails"] - 1), BACKOFF_MAX_S))
             blocked.add(key)
-            out["failed"] += 1
-            line = f"실패 {rep['id']} {rep['hub']} {rep['kind']} {fails['fails']}회째: {err}"
+            if err.permanent or fails["fails"] >= conf.fail_limit:
+                stop_report(conf, rep, st, str(err), err.permanent, deadline)
+                out["stopped"] = out.get("stopped", 0) + 1
+                line = f"중단 {rep['id']} {rep['hub']} {rep['kind']} {fails['fails']}회째({'영구' if err.permanent else '상한'}): {err}"
+            else:
+                save_state(conf.state, st)
+                out["failed"] += 1
+                line = f"실패 {rep['id']} {rep['hub']} {rep['kind']} {fails['fails']}회째: {err}"
         else:
             out["sent"] += 1
             line = (f"전송 {rep['id']} {rep['hub']} {rep['kind']} → "
@@ -507,7 +566,7 @@ def main(argv=None) -> int:
     else:
         for ln in res["lines"]:
             print(ln)
-        print(f"전송기: {res['status']} · 전송 {res['sent']} · 실패 {res['failed']} · 대기 {res['pending']}")
+        print(f"전송기: {res['status']} · 전송 {res['sent']} · 실패 {res['failed']} · 중단 {res.get('stopped', 0)} · 대기 {res['pending']}")
     return 1 if res["failed"] else 0
 
 

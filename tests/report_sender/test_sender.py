@@ -15,7 +15,7 @@ import report_sender  # noqa: E402
 
 FAKE = os.path.join(HERE, "fake_notify.py")
 PARENT = "1699999999.000001"  # ledger_sync 가 저장한 진행 스레드 부모 ts
-WARN_TITLE = "허브 보고 전송 실패"
+WARN_TITLE = "허브 보고 전송 중단"
 
 
 class SenderTest(unittest.TestCase):
@@ -25,7 +25,7 @@ class SenderTest(unittest.TestCase):
         self.p = lambda n: os.path.join(self.dir.name, n)
         p = self.p
         self.conf = report_sender.Conf(outbox=p("box.jsonl"), state=p("state.json"), notify=FAKE, ledger=p("ledger.tsv"),
-                                       sync_state=p("sync.json"), sent=p("sent.jsonl"), log=p("log.txt"))
+                                       sync_state=p("sync.json"), sent=p("sent.jsonl"), log=p("log.txt"), backoff_s=0)
         os.environ["FAKE_DIR"] = self.dir.name
         self.addCleanup(os.environ.pop, "FAKE_DIR", None)
         with open(p("sync.json"), "w") as f:
@@ -124,22 +124,90 @@ class SenderTest(unittest.TestCase):
         self.assertEqual(len(bodies), 1)  # 본문은 한 번만
         self.assertTrue(self.state()["reports"][rep2["id"]]["sent"])
 
-    def test_three_failures_send_exactly_one_warning(self):
+    def test_retry_cap_stops_with_one_warning_in_topic_thread(self):
+        self.conf.fail_limit = 3
         rep = self.report()
+        report_sender.run(self.conf)  # 주제·본문·진행 줄 정상 전송 후 새 보고로 실패 시험
+        rep2 = self.report(text="둘째 보고")
         self.set_fake("fail.all", 1)
         report_sender.run(self.conf)
         report_sender.run(self.conf)
         self.assertEqual(self.warns(), [])  # 아직 2회
         self.set_fake("fail.all", "")
         self.set_fake("fail.n", 1)  # 3회째 본 전송만 실패하고 경고 전송은 성공
-        self.assertEqual(report_sender.run(self.conf)["failed"], 1)
-        self.assertEqual(len(self.warns()), 1)
-        self.assertIn("3회 연속", self.warns()[0][-1])
-        self.assertIn(rep["id"], self.state()["warned"])
+        res = report_sender.run(self.conf)
+        self.assertEqual(res["stopped"], 1)
+        warn, = self.warns()
+        self.assertIn("3회 연속", warn[-1])
+        self.assertEqual(warn[warn.index("--thread") + 1], "1700000000.000001")  # 원래 주제 스레드
+        self.assertIn(rep2["id"], self.state()["bad"])
+        self.assertIn(rep2["id"], self.state()["warned"])
         self.set_fake("fail.all", 1)
+        before = len(self.calls())
+        res = report_sender.run(self.conf)
+        self.assertEqual((res["pending"], res["failed"], len(self.calls())), (0, 0, before))  # 재시도 대상 아님
+        self.assertEqual(len(self.warns()), 1)
+        self.assertIn(rep["id"], self.state()["reports"])
+
+    def test_exit_code_2_is_permanent_one_attempt_one_warning(self):
+        rep = self.report()
+        self.set_fake("fail.all", 1)
+        self.set_fake("fail.rc", 2)
+        self.set_fake("fail.msg", "--kind 형식 오류")
+        res = report_sender.run(self.conf)
+        self.assertEqual((res["failed"], res["stopped"], res["status"]), (0, 1, "done"))
+        self.assertIn(rep["id"], self.state()["bad"])
+        sends = lambda: [c for c in self.calls() if c not in self.warns()]  # noqa: E731
+        self.assertEqual(len(sends()), 1)  # 전송 시도 1회(경고 전송도 실패하는 중이라 경고만 다음 회차에 재시도)
+        report_sender.run(self.conf)
+        self.assertEqual(len(sends()), 1)
+        self.assertIn("재시도해도 같은 결과", self.warns()[0][-1])
+        self.set_fake("fail.all", "")
         report_sender.run(self.conf)
         report_sender.run(self.conf)
-        self.assertEqual(len(self.warns()), 1)  # 4·5회째 실패에도 경고는 그대로 1건
+        self.assertEqual(len(sends()), 1)
+        self.assertIn(rep["id"], self.state()["warned"])
+        n = len(self.warns())
+        report_sender.run(self.conf)
+        self.assertEqual(len(self.warns()), n)  # 경고가 나간 뒤에는 더 보내지 않음
+
+    def test_missing_env_exit_2_is_transient(self):
+        self.report()
+        self.set_fake("fail.all", 1)
+        self.set_fake("fail.rc", 2)
+        self.set_fake("fail.msg", "slack-bot.env 없음 — 사용자 설정 필요")
+        res = report_sender.run(self.conf)
+        self.assertEqual((res["failed"], res.get("stopped", 0)), (1, 0))
+        self.assertEqual(self.state()["bad"], {})
+
+    def test_transient_failures_back_off(self):
+        self.conf.backoff_s = 60
+        self.report()
+        self.set_fake("fail.all", 1)
+        self.assertEqual(report_sender.run(self.conf)["failed"], 1)
+        n = len(self.calls())
+        res = report_sender.run(self.conf)  # 대기 시간 안 = 호출 없음
+        self.assertEqual((res["failed"], len(self.calls())), (0, n))
+
+    def test_queued_invalid_decision_ids_are_stopped_without_resend(self):
+        """설치 전 접수돼 큐·상태에 이미 걸린 형식 오류 결정 카드(62회 재시도 중이던 것)가 다음 회차에 영구 실패로 처리됨"""
+        ids = []
+        for did in ("D-data design!", "D-" + "x" * 17):
+            rec = {"hub": "data-design", "task": "없음", "kind": "decide", "text": "제목\n배경", "files": [],
+                   "options": "1=a,2=b", "recommend": "1", "decision_id": did}
+            rec = {"id": hub_report.report_id(rec), "at": 1, **rec}
+            ids.append(rec["id"])
+            with open(self.conf.outbox, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        st = {"topics": {}, "reports": {i: {"fails": 62, "error": "--decision-id 형식 오류"} for i in ids}, "warned": {ids[0]: 1}, "bad": {}}
+        report_sender.save_state(self.conf.state, st)
+        res = report_sender.run(self.conf)
+        self.assertEqual((res["failed"], res["stopped"], res["status"]), (0, 2, "done"))
+        self.assertEqual(sorted(self.state()["bad"]), sorted(ids))
+        self.assertEqual([c for c in self.calls() if "decide" in c], [])  # 카드 재전송 없음
+        self.assertEqual(len(self.warns()), 1)  # 이미 경고한 건은 다시 경고하지 않음
+        self.assertEqual(report_sender.run(self.conf)["pending"], 0)
+        self.assertEqual(len(self.warns()), 1)
 
     def test_decide_uses_button_card_form_without_thread(self):
         self.report(text="알림 시각 정하기\n지금은 시각이 제각각", kind="decide",
