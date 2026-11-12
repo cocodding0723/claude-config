@@ -118,6 +118,8 @@ hubs/launchd/ai.lrm.scrum.plist	Library/LaunchAgents/ai.lrm.scrum.plist	copy
 hubs/launchd/ai.lrm.cinotify.plist	Library/LaunchAgents/ai.lrm.cinotify.plist	copy
 hubs/scripts/slack_socket.py	.config/lrm-hubs/slack_socket.py	copy
 hubs/scripts/main_terminal.py	.config/lrm-hubs/main_terminal.py	link
+hubs/scripts/ledger.py	.config/lrm-hubs/ledger.py	copy
+hubs/scripts/ledger_sync.py	.config/lrm-hubs/ledger_sync.py	copy
 hubs/launchd/ai.lrm.slacksocket.plist	.config/lrm-hubs/ai.lrm.slacksocket.plist	copy
 hubs/roles/role-vfx.txt.tmpl	.config/lrm-hubs/roles/role-vfx.txt	render
 hubs/roles/role-tutorial.txt.tmpl	.config/lrm-hubs/roles/role-tutorial.txt	render

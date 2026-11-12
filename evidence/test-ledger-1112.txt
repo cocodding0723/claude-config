@@ -1,0 +1,46 @@
+$ bash tests/ledger/run.sh
+test_add_appends_row_in_intake_state (test_ledger.LedgerTest.test_add_appends_row_in_intake_state) ... ok
+test_add_duplicate_id_exit_3 (test_ledger.LedgerTest.test_add_duplicate_id_exit_3) ... ok
+test_atomic_write_failure_keeps_original_and_leaves_no_temp (test_ledger.LedgerTest.test_atomic_write_failure_keeps_original_and_leaves_no_temp) ... ok
+test_concurrent_adds_lose_nothing (test_ledger.LedgerTest.test_concurrent_adds_lose_nothing) ... ok
+test_done_with_blank_evidence_rejected (test_ledger.LedgerTest.test_done_with_blank_evidence_rejected) ... ok
+test_done_with_evidence_records_it (test_ledger.LedgerTest.test_done_with_evidence_records_it) ... ok
+test_done_without_evidence_rejected_and_file_untouched (test_ledger.LedgerTest.test_done_without_evidence_rejected_and_file_untouched) ... ok
+test_dry_run_does_not_write (test_ledger.LedgerTest.test_dry_run_does_not_write) ... ok
+test_help_lists_commands_and_exit_codes (test_ledger.LedgerTest.test_help_lists_commands_and_exit_codes) ... ok
+test_list_open_excludes_done_and_json_shape (test_ledger.LedgerTest.test_list_open_excludes_done_and_json_shape) ... ok
+test_quotes_survive_roundtrip (test_ledger.LedgerTest.test_quotes_survive_roundtrip) ... ok
+test_set_state_updates_time_and_note (test_ledger.LedgerTest.test_set_state_updates_time_and_note) ... ok
+test_set_unknown_id_exit_3_and_bad_state_exit_2 (test_ledger.LedgerTest.test_set_unknown_id_exit_3_and_bad_state_exit_2) ... ok
+test_tabs_and_newlines_in_values_flattened (test_ledger.LedgerTest.test_tabs_and_newlines_in_values_flattened) ... ok
+test_write_goes_through_temp_then_replace (test_ledger.LedgerTest.test_write_goes_through_temp_then_replace) ... ok
+test_api_error_keeps_state_so_next_round_retries (test_sync.SyncTest.test_api_error_keeps_state_so_next_round_retries) ... ok
+test_creates_parent_when_missing_and_saves_ts_with_mode_600 (test_sync.SyncTest.test_creates_parent_when_missing_and_saves_ts_with_mode_600) ... ok
+test_day_change_refreshes_parent_without_replies (test_sync.SyncTest.test_day_change_refreshes_parent_without_replies) ... ok
+test_deleted_parent_is_recreated (test_sync.SyncTest.test_deleted_parent_is_recreated) ... ok
+test_dry_run_prints_payload_without_writing_state (test_sync.SyncTest.test_dry_run_prints_payload_without_writing_state) ... ok
+test_long_retry_after_defers_and_skips_until_time_passes (test_sync.SyncTest.test_long_retry_after_defers_and_skips_until_time_passes) ... ok
+test_many_changes_bundled_into_at_most_n_replies (test_sync.SyncTest.test_many_changes_bundled_into_at_most_n_replies) ... ok
+test_missing_ledger_is_empty_not_crash (test_sync.SyncTest.test_missing_ledger_is_empty_not_crash) ... ok
+test_new_item_reply_and_summary_shape (test_sync.SyncTest.test_new_item_reply_and_summary_shape) ... ok
+test_only_changed_items_get_replies_and_parent_updated (test_sync.SyncTest.test_only_changed_items_get_replies_and_parent_updated) ... ok
+test_partial_reply_failure_does_not_repeat_sent_replies (test_sync.SyncTest.test_partial_reply_failure_does_not_repeat_sent_replies) ... ok
+test_retries_exhausted_defers (test_sync.SyncTest.test_retries_exhausted_defers) ... ok
+test_retry_after_honored_on_429_then_succeeds (test_sync.SyncTest.test_retry_after_honored_on_429_then_succeeds) ... ok
+test_same_hash_makes_zero_calls (test_sync.SyncTest.test_same_hash_makes_zero_calls) ... ok
+test_summary_shows_only_todays_done (test_sync.SyncTest.test_summary_shows_only_todays_done) ... ok
+test_ledger_present_runs_sync_with_user_id (test_tick.TickTest.test_ledger_present_runs_sync_with_user_id) ... ok
+test_no_ledger_no_sync (test_tick.TickTest.test_no_ledger_no_sync) ... ok
+test_overlapping_tick_skipped_and_error_does_not_raise (test_tick.TickTest.test_overlapping_tick_skipped_and_error_does_not_raise) ... 11-12 11:09:27 [socket] 장부 동기화 실패 TypeError
+11-12 11:09:27 [socket] 장부 동기화 실패 RuntimeError
+ok
+
+----------------------------------------------------------------------
+Ran 33 tests in 0.038s
+
+OK
+exit=0
+
+$ bash tests/slack_socket/run.sh (수신기 회귀)
+
+결과: PASS 46, FAIL 0
