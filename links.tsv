@@ -85,6 +85,8 @@ hubs/scripts/slack_push.sh	.config/lrm-hubs/slack_push.sh	link
 hubs/scripts/slack_push.py	.config/lrm-hubs/slack_push.py	link
 hubs/scripts/panel_collect.sh	.config/lrm-hubs/panel_collect.sh	link
 hubs/scripts/panel_collect.py	.config/lrm-hubs/panel_collect.py	link
+hubs/scripts/progress_collect.py	.config/lrm-hubs/progress_collect.py	link
+hubs/scripts/progress_digest.py	.config/lrm-hubs/progress_digest.py	link
 hubs/scripts/ws_gc.sh	.config/lrm-hubs/ws_gc.sh	link
 hubs/scripts/scrum_run.sh	.config/lrm-hubs/scrum_run.sh	link
 hubs/scripts/scrum_post.py	.config/lrm-hubs/scrum_post.py	link
@@ -114,10 +116,12 @@ hubs/docs/slack-format.md	.config/lrm-hubs/docs/slack-format.md	link
 hubs/docs/slack-push.md	.config/lrm-hubs/docs/slack-push.md	link
 hubs/docs/install-orca-main.md	.config/lrm-hubs/docs/install-orca-main.md	link
 hubs/docs/panel.md	.config/lrm-hubs/docs/panel.md	link
+hubs/docs/progress-digest.md	.config/lrm-hubs/docs/progress-digest.md	link
 hubs/docs/ws-gc.md	.config/lrm-hubs/docs/ws-gc.md	link
 hubs/docs/scrum-auto.md	.config/lrm-hubs/docs/scrum-auto.md	link
 hubs/launchd/ai.lrm.slackpoll.plist	Library/LaunchAgents/ai.lrm.slackpoll.plist	copy
 hubs/launchd/ai.lrm.panelcollect.plist	Library/LaunchAgents/ai.lrm.panelcollect.plist	copy
+hubs/launchd/ai.lrm.progressdigest.plist	Library/LaunchAgents/ai.lrm.progressdigest.plist	copy
 hubs/launchd/ai.lrm.wsgc.plist	Library/LaunchAgents/ai.lrm.wsgc.plist	copy
 hubs/launchd/ai.lrm.scrum.plist	Library/LaunchAgents/ai.lrm.scrum.plist	copy
 hubs/launchd/ai.lrm.cinotify.plist	Library/LaunchAgents/ai.lrm.cinotify.plist	copy

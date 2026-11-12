@@ -15,6 +15,7 @@ import {
   parseMain,
   pendingLine,
   progressBar,
+  progressGroups,
   sourceNote,
 } from './board'
 
@@ -197,6 +198,7 @@ export const register: Register = on => {
 
     const autoHubs = src?.hubs?.value ?? undefined
     const pending = src?.pending?.value ?? undefined
+    const progress = progressGroups(src?.progress?.value)
     const push = src?.push?.value ?? undefined
     const workers = src?.workers?.value ?? undefined
     const gh = src?.gh
@@ -230,6 +232,13 @@ export const register: Register = on => {
         {approvals.length === 0 && <Text dimColor>없음</Text>}
         {itemRows(approvals, C.approve)}
 
+        {progress !== undefined && section(`📋 진행 (진행 중 ${src?.progress?.value?.counts.doing ?? 0} · 답 대기 ${src?.progress?.value?.counts.wait ?? 0} · 막힘 ${src?.progress?.value?.counts.block ?? 0})`, C.hub, sourceNote(src?.progress, nowMs))}
+        {progress !== undefined && progress.map(g => (
+          <Box flexDirection="column">
+            <Text bold color={C.title}>{g.group}</Text>
+            {tree(g.lines.map(l => [l, C.detail] as [string, string]))}
+          </Box>
+        ))}
         {section(`🛠️ 내가 할 일 (${todos.length})`, C.todo)}
         {todos.length === 0 && <Text dimColor>없음</Text>}
         {itemRows(todos, C.todo)}
@@ -245,7 +254,7 @@ export const register: Register = on => {
               <Text wrap="wrap">
                 <Text color={STATE_COLOR[hub.state] ?? C.meta}>{'● '}</Text>
                 <Text bold>{hub.name}</Text>
-                <Text dimColor>{` ${hubLine(hub)}`}</Text>
+                <Text dimColor>{` ${hubLine(hub, src?.progress?.value?.groups?.[hub.name])}`}</Text>
               </Text>
             ))}
           </Box>

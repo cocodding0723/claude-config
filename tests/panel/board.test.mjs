@@ -148,3 +148,27 @@ test('progressBar: 퍼센트·막대·상태 꼬리, 깨진 값은 0~100% 로 �
   assert.equal(b.progressBar({ done: 9, total: 3 }, 4).pct, 100)
   assert.equal(b.progressBar({ done: NaN, total: 3 }, 4).bar, '░░░░')
 })
+
+test('progressGroups: 허브별로 묶고 묶음 표시, 값이 없으면 undefined(옛 손 칸으로 복귀)', () => {
+  assert.equal(b.progressGroups(undefined), undefined)
+  assert.equal(b.progressGroups(null), undefined)
+  const g = b.progressGroups({
+    counts: { doing: 2, wait: 1, block: 0 },
+    notes: [],
+    items: [
+      { key: 'a', bucket: 'wait', title: 'ui: 병합 대기', group: 'ui', link: '' },
+      { key: 'b', bucket: 'doing', title: 'ui: 버튼', group: 'ui', link: '' },
+      { key: 'c', bucket: 'doing', title: 'F1 로그인', group: '장부', link: '' },
+    ],
+  })
+  assert.deepEqual(g.map(x => x.group), ['ui', '장부'])
+  assert.deepEqual(g[0].lines, ['🔄 ui: 버튼', '⏳ ui: 병합 대기'])
+})
+
+test('hubLine: 하위 작업 공간 수, 10개 넘으면 경고', () => {
+  const h = { hub: 'coord-a-hub', name: 'a', agent: 'claude', state: 'busy', quietMin: 0, connected: true, dup: false }
+  assert.equal(b.hubLine(h, { children: 3, active: 1, warn: false }), '작업 중 · 하위 3개(활동 1)')
+  assert.equal(b.hubLine(h, { children: 12, active: 2, warn: true }), '작업 중 · 하위 12개(활동 2) ⚠️')
+  assert.equal(b.hubLine(h, { children: 0, active: 0, warn: false }), '작업 중')
+  assert.equal(b.hubLine(h), '작업 중')
+})

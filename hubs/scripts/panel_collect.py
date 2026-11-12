@@ -2,7 +2,7 @@
 """옆 패널 자동 칸 수집기. 진입은 panel_collect.sh.
 
 읽기 전용 원료(orca terminal list·worker-list·task-list, Slack 기록 파일, slack-push.log, gh)를 모아
-panel-auto.json 한 파일만 원자 교체로 씀. 메인이 손으로 쓰는 panel.json 은 열지도 쓰지도 않음.
+panel-auto.json 을 원자 교체로 씀. 진행 스냅샷(progress.json, progress_collect.py)도 같은 회차에 갱신함(진행 칸 원료). 메인이 손으로 쓰는 panel.json 은 열지도 쓰지도 않음.
 화면(preview)·메시지 본문·토큰은 파일·로그에 남기지 않음. slack-bot.env·main.env 는 읽지 않음(Slack API 호출 없음).
 """
 import calendar
@@ -700,6 +700,7 @@ def collect(conf, repos, interval, prev, now, mark_gh):
         "workers": run_source(lambda: collect_workers(conf, get), prev.get("workers"), now),
         "idle": collect_idle(conf, get, prev.get("idle"), now, mark_gh),
     }
+    src["progress"] = run_source(lambda: collect_progress(src, repos, mark_gh, get), prev.get("progress"), now)
     gh = "off" if not repos else "run" if gh_due(interval, now) else "skip"
     if gh == "off":
         src["gh"] = {"ok": True, "err": None, "at": now, "tried": now, "stale": False, "value": None, "off": True}
@@ -715,6 +716,19 @@ def collect(conf, repos, interval, prev, now, mark_gh):
             src["gh"] = {"ok": False, "err": "interval", "at": None, "tried": None, "stale": True, "value": None}
     return {"version": VERSION, "updatedAt": now, "updatedAtText": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
             "sources": src}, gh
+
+
+def collect_progress(src, repos, write, get):
+    """진행 스냅샷(progress_collect.py)을 만들어 패널용 값으로 싣음. write 면 progress.json 도 원자 교체(쓰는 쪽은 이 회차 하나).
+    결정 대기·워커 수는 앞서 모은 원료를 재사용. PR 은 PANEL_GH_REPOS 가 있을 때만(실행 위치에 기대지 않음)"""
+    import progress_collect  # 지연 가져오기: 실패해도 다른 원료는 그대로
+    conf = progress_collect.conf_from_env()
+    conf["gh"], conf["repos"] = os.environ.get("PANEL_GH", "gh"), repos
+    workers = (src["workers"].get("value") or {})
+    snap = progress_collect.refresh(pending=src["pending"].get("value"), workers={"live": workers["live"]} if "live" in workers else None,
+                                    write=write, use_pr=bool(repos), conf=conf,
+                                    workspaces=lambda: progress_collect.workspace_counts(get("worktree", "list", "--limit", LIST_LIMIT).get("worktrees"), terminals(get)))
+    return {"counts": snap["counts"], "items": snap["items"], "notes": snap["notes"], "groups": snap["groups"]}
 
 
 def touch(path):
