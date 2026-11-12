@@ -12,6 +12,8 @@ usage() {
       전송 직전 orca terminal show 로 연결됨·쓰기 가능·고아 아님·메인 체크아웃(LRM_PUSH_MAIN) 소속·agentIdentity=claude 인지 확인하고, 아니면 보류.
       제목은 보조 조건: show 에 paneTitle 이 있고 LRM_PUSH_PANE(기본 MAIN)과 다르면 보류, 키가 없으면 통과(LRM_PUSH_PANE="" 이면 대조 생략).
       메인을 재시작하면 새 핸들로 한 번: set_main_terminal.sh <핸들> (restart_hub.sh·resume_all.sh 는 허브만 다시 띄우므로 따로 실행). 절차는 ~/.config/lrm-hubs/docs/slack-push.md
+      자동 재탐색: no_main_handle·handle_gone·handle_dead·wrong_worktree·not_claude·pane_title_mismatch 이면 orca terminal list 에서 제목이 MAIN-HANDOFF 로 시작하는 메인 체크아웃 claude 터미널을 찾고,
+      정확히 1개일 때만 main.env 의 MAIN_TERMINAL 을 교체해 이어 전달(로그 relink). 0개·2개 이상·조회 실패면 보류하고 알림에 후보 수를 적음. 수동은 set_main_terminal.sh --auto
       화면 판별(fail-closed): 붙여 넣기 뒤의 Enter 가 메뉴의 강조된 선택지를 확정하거나 쓰던 글 뒤에 붙어 제출되는 것을 막음.
       LRM_PUSH_IDLE_CHECK=strict(기본)는 화면 끝에 빈 입력 줄(❯ 또는 >)이 보일 때만 전송. relaxed 는 대화상자 표식·쓰던 글·빈 화면만 보류하고 판별 불가는 전송
 보류 사유(로그 "hold reason=… handle=<앞 13자>", 다음 회차에 확인부터 재시도): no_main_handle 핸들 지정 없음·형식 무효, handle_gone 핸들 없음(show 오류),

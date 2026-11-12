@@ -186,6 +186,9 @@ got=$(env -i PATH="$PATH" python3 -I "$HERE/driver.py" --defaults "$SOCK" 2>&1)
 cat > "$SB/fake_orca.sh" <<'SH'
 #!/bin/sh
 printf '%s\n' "$*" >> "$FAKE_ORCA_LOG"
+case "$*" in  # 전송 전 메인 확인(terminal show)에는 정상 메인 터미널로 응답
+  "terminal show"*) printf '{"ok":true,"result":{"terminal":{"handle":"term-main","connected":true,"writable":true,"worktreePath":"/fake/main","agentIdentity":"claude"}}}\n' ;;
+esac
 SH
 chmod +x "$SB/fake_orca.sh"
 MSG='{"ts":"1794383274.541929","text":"주제","attachments":[{"color":"#F2994A","blocks":[{"type":"section","text":{"type":"mrkdwn","text":"*시험 결정*\n배경"}},{"type":"actions","block_id":"lrm_decide:D-T1","elements":[]}]}]}'
@@ -195,7 +198,7 @@ act() { # 시각 id 사용자 action_id value 글자
 SUB='{"at":0.9,"type":"interactive","envelope_id":"i3","payload":{"type":"view_submission","user":{"id":"'$ME'"},"view":{"callback_id":"lrm_custom","private_metadata":"{\"did\":\"D-T1\",\"channel\":\"Dch1\",\"ts\":\"1794383274.541929\"}","state":{"values":{"answer":{"text":{"value":"둘 다  섞어서"}}}}}}}'
 EVB="$(act 0.4 i1 $ME pick_2 'D-T1|2' '2. B 안'),$(act 0.6 i2 $ME custom 'D-T1|custom' '직접 입력'),$SUB,$(act 1.2 i4 Uother9 pick_1 'D-T1|1' '1. A')"
 mkdir -p "$SB/s20/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/s20/hub/main.env"
-start s20 "{\"events\":[$EVB],\"history\":[$MSG]}" LRM_ORCA="$SB/fake_orca.sh" FAKE_ORCA_LOG="$SB/s20/orca.calls"
+start s20 "{\"events\":[$EVB],\"history\":[$MSG]}" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s20/orca.calls"
 waitfor s20 out '결정 D-T1 버튼 답 기록 · 메인 전달 성공' 4 && sleep 0.8
 [ "$(count s20 calls ' ack 1 i[1-4]')" = 4 ] && ok "버튼·모달 요청 모두 ack" || ko "버튼 ack" "$(count s20 calls ' ack 1 i')"
 grep -q 'web chat_update .*✅ 2. B 안 선택됨' "$SB/s20/calls" && ! grep -q 'web chat_update .*"type": "actions"' "$SB/s20/calls" && ok "선택 → 카드를 '✅ 선택됨'으로 갱신·버튼 제거" || ko "카드 갱신" "$(grep 'web chat_update' "$SB/s20/calls" | head -1 | cut -c1-200)"

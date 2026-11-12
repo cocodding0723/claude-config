@@ -1,0 +1,400 @@
+# 2026-11-12 메인 터미널 재탐색 리뷰 수정 시험 증거
+
+$ bash tests/main_terminal/run.sh
+PASS  후보 1개 → MAIN_TERMINAL 을 새 핸들로 교체
+PASS  다른 줄(주석·키·뒤 줄) 순서·내용 보존
+PASS  권한 600·임시 파일 남지 않음
+PASS  같은 회차에 새 핸들로 전달 계속(전달 1회)
+PASS  로그에 '재탐색으로 갱신' 한 줄, 핸들은 앞 8자만
+PASS  성공 시 '메인 연결 끊김' 알림 없음
+PASS  후보 0개 → 보류, main.env 불변
+PASS  알림 문구에 후보 0개, 1회
+PASS  후보 2개 → 보류, main.env 불변
+PASS  알림 문구에 후보 2개·사람이 고르라는 안내(핸들 값 없음)
+PASS  show 조회 실패(runtime_unavailable) → terminal list 호출 0·main.env 불변·알림 없음
+PASS  terminal list 조회 실패 → 보류, main.env 불변, 알림은 후보 미확인
+PASS  잘린 목록(truncated) → 후보 수를 믿지 않고 갱신 안 함
+PASS  main.env 가 링크면 링크 유지·최종 대상 파일만 교체
+PASS  --auto --dry-run: 1개 발견·종료 0·main.env 불변·핸들 앞 8자만 출력
+PASS  --auto: 1개 → 기록·종료 0
+PASS  --auto: 0개 → 종료 3·후보 0개 안내·불변
+PASS  --auto: 2개 → 종료 3·후보 2개 안내·불변
+PASS  --auto 잘못된 옵션 → 종료 2
+PASS  --help 에 --auto 안내
+PASS  --auto: terminal list 실패 → 종료 2
+PASS  slack_socket: 보내기 전 확인에서 옛 핸들 gone → 옛 대상엔 보내지 않고 재탐색 1개 → main.env 갱신·새 핸들로 전송
+PASS  slack_socket: 살아 있지만 메인 체크아웃이 아닌 옛 대상(wrong_worktree)엔 보내지 않고 새 대상에만 전송(두 대상 중복 없음)
+PASS  slack_socket: 전송이 핸들 무효(terminal_gone)로 거절되면 입력 전이므로 재탐색 후 새 대상에 전송(실제 입력 1건)
+PASS  slack_socket: 정상 옛 대상 전송이 fail(도착 불명) → 대상을 바꾸지 않고 실패 반환·재탐색 0·재전송 0
+PASS  slack_socket: 정상 옛 대상 전송이 ambig(도착 불명) → 대상을 바꾸지 않고 실패 반환·재탐색 0·재전송 0
+PASS  slack_socket: 후보 0개 → 실패 반환·main.env 불변
+PASS  slack_socket: 조회 실패(일시 오류) → 재탐색 안 함
+PASS  slack_socket: MAIN_TERMINAL 줄 없음 → 재탐색해 추가 후 전송
+PASS  제목 앞부분 일치: 'MAIN-HANDOFF…' 만 후보, 제목 중간에 표식이 낀 워커는 제외 → 후보 1개
+PASS  --help 에 제목 규약(MAIN-HANDOFF 로 시작) 명시
+PASS  list 에 핸들 없는 행 → 재탐색 실패(종료 2)·main.env 불변
+PASS  set_main_terminal.sh 는 다른 쪽이 잠금을 쥐고 있으면 기다렸다 기록(잠금 공유)
+PASS  재탐색은 잠금 안에서 현재 핸들을 다시 확인: 그 사이 정상으로 고쳐졌으면 되돌리지 않음·다른 줄 편집 보존
+PASS  교체 직전 파일이 바뀌었으면(CAS 불일치) 새 내용으로 다시 만들어 동시 편집 보존
+PASS  옛 대상 죽음 → 같은 묶음을 새 요청 ID 로 새 대상에 재전달(로그 target_dead_redeliver)
+PASS  옛 대상 살아 있음 → 보류 유지·재전달 없음·사람에게 경고 1회(핸들 값 없음)
+PASS  옛 대상 생사를 못 알면(list 조회 실패) 재확인 가능한 보류: stop 아님·next_at 이 곧 다시(영구 정지 아님)·재전달 없음
+PASS  조회가 복구된 다음 회차에 같은 묶음을 자동 재전달(일시 장애로 멈추지 않음)
+PASS  옛 대상이 목록에 있고 connected=false 면 종료 단정 안 함(입력됐을 수 있음) → 재전달 없이 재확인 보류
+PASS  목록에 핸들 없는 행이 섞이면 목록을 믿지 않음 → '없음=죽음' 단정 없이 보류
+PASS  이미 저장된 target_changed 정지 상태(옛 대상 종료) → 이관: --kick 이 워커를 띄워 새 대상에 재전달
+PASS  이관 뒤 옛 대상이 살아 있으면 다시 stop(moved_to 표식)·경고 1회·이후 --kick 은 다시 확인하지 않음
+PASS  이관은 제한적: reason=unsubmitted 같은 다른 stop 은 풀지 않음
+PASS  Mac 리셋 회귀: 옛 대상 둘 다 종료 → 사람 손 없이 새 메인 재탐색·main.env 갱신, 보류분 새 대상에 정확히 1회 전달(두 번째 kick 재전달 없음)
+
+45 passed, 0 failed
+exit=0
+
+$ bash tests/slack_poll/push.sh
+PASS  ⓐ 연속 3건 → 전달 1회(3건 한 본문)
+PASS  전달 기록(slack-push-delivered.jsonl): 배치당 1줄, 스레드(루트 ts)별 건수 — 폴러가 확인 답장 갱신에 사용
+PASS  ⓐ 마지막 새 메시지 뒤 조용 대기(QUIET 2초)를 채운 뒤 전달(2.323초)
+PASS  ⓒ 단일 메시지: 조용 2초 뒤 전달(2.093초)
+PASS  ⓒ 전달 뒤 상태: pushed_lines=1, push_pending 없음, 읽음 표식=1, 로그 ok 1줄
+PASS  ⓒ 첫 시도부터 --retry-request <UUID>(묶음 확정 때 만든 값)와 --wait-submit 10 을 붙여 전송
+PASS  ⓒ 성공 로그에 영수증 단계(input_accepted,turn_started) 기록
+PASS  ⓒ 전달 뒤 상태에 보류 묶음(본문·요청 ID) 남지 않음
+PASS  ⓑ 조용할 틈 없이 이어지면 첫 메시지로부터 MAX(6초)에 전달(6.184초), 이후 조용해지면 나머지 전달(총 2회)
+PASS  ⓑ 전달 합계 10건·중복 0·유실 0
+PASS  ⓓ main.env 의 MAIN_TERMINAL 핸들로 전달: 보내기 전에 terminal show 로 확인(paneTitle 키 없음 → 통과), terminal list 호출 0
+PASS  ⓓ show.mode=gone → 전달 0·보류 사유=handle_gone·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변
+PASS  ⓓ handle_gone → '메인 연결 끊김' 알림 1회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)
+PASS  ⓓ show.mode=notfound → 전달 0·보류 사유=handle_gone·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변
+PASS  ⓓ handle_gone → '메인 연결 끊김' 알림 1회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)
+PASS  ⓓ show.mode=termgone → 전달 0·보류 사유=handle_gone·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변
+PASS  ⓓ handle_gone → '메인 연결 끊김' 알림 1회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)
+PASS  ⓓ show.mode=other_handle → 전달 0·보류 사유=handle_gone·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변
+PASS  ⓓ handle_gone → '메인 연결 끊김' 알림 1회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)
+PASS  ⓓ show.mode=unavail → 전달 0·보류 사유=show_fail·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변
+PASS  ⓓ show_fail → '메인 연결 끊김' 알림 0회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)
+PASS  ⓓ show.mode=invalid → 전달 0·보류 사유=show_fail·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변
+PASS  ⓓ show_fail → '메인 연결 끊김' 알림 0회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)
+PASS  ⓓ 다음 회차(핸들이 다시 살아남)에 보류분 전달 1회, 대상 = main.env 핸들
+PASS  ⓓ show.mode=dead → 전달 0·보류 사유=handle_dead·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변
+PASS  ⓓ handle_dead → '메인 연결 끊김' 알림 1회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)
+PASS  ⓓ show.mode=orphan → 전달 0·보류 사유=handle_dead·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변
+PASS  ⓓ handle_dead → '메인 연결 끊김' 알림 1회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)
+PASS  ⓓ show.mode=ro → 전달 0·보류 사유=not_writable·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변
+PASS  ⓓ not_writable → '메인 연결 끊김' 알림 1회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)
+PASS  ⓓ show.mode=other_wt → 전달 0·보류 사유=wrong_worktree·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변
+PASS  ⓓ wrong_worktree → '메인 연결 끊김' 알림 1회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)
+PASS  ⓓ show.mode=codex → 전달 0·보류 사유=not_claude·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변
+PASS  ⓓ not_claude → '메인 연결 끊김' 알림 1회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)
+PASS  ⓓ show.mode=noagent → 전달 0·보류 사유=not_claude·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변
+PASS  ⓓ not_claude → '메인 연결 끊김' 알림 1회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)
+PASS  ⓓ show.mode=dialog → 전달 0·보류 사유=dialog·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변
+PASS  ⓓ dialog → '메인 연결 끊김' 알림 0회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)
+PASS  ⓓ show.mode=garbage → 전달 0·보류 사유=show_fail·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변
+PASS  ⓓ show_fail → '메인 연결 끊김' 알림 0회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)
+PASS  ⓓ main.env 없음 → 보류(no_main_handle)·재탐색 list 외 orca 호출 0·읽음 표식 불변·알림 1회
+PASS  ⓓ 끝 개행이 붙은 핸들 값은 무효(no_main_handle)·orca 호출 0
+PASS  ⓓ MAIN_TERMINAL 줄 없음 → 보류(no_main_handle)·재탐색 list 외 orca 호출 0·읽음 표식 불변·알림 1회
+PASS  ⓓ 무효 형식(term_ 뒤 16진·하이픈 밖 문자) → 보류(no_main_handle)·재탐색 list 외 orca 호출 0·읽음 표식 불변·알림 1회
+PASS  ⓓ 빈 값 → 보류(no_main_handle)·재탐색 list 외 orca 호출 0·읽음 표식 불변·알림 1회
+PASS  ⓓ 서로 다른 값 두 줄 → 보류(no_main_handle)·재탐색 list 외 orca 호출 0·읽음 표식 불변·알림 1회
+PASS  ⓓ 줄 머리가 MAIN_TERMINAL= 이 아닌 줄만 있음 → 보류(no_main_handle)·재탐색 list 외 orca 호출 0·읽음 표식 불변·알림 1회
+PASS  ⓓ main.env 의 다른 줄은 무시: MAIN_TERMINAL 만 쓰고 다른 값은 상태·로그·호출 어디에도 없음
+PASS  ⓓ LRM_MAIN_ENV 로 설정 파일 경로 지정
+PASS  ⓓ LRM_PUSH_HANDLE 이 main.env 보다 우선
+PASS  ⓓ LRM_PUSH_HANDLE 도 형식 검사(무효면 main.env 로 넘어가지 않고 보류)
+PASS  ⓓ show.mode=pane_other → 전달 0·보류 사유=pane_title_mismatch·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변
+PASS  ⓓ pane_title_mismatch → '메인 연결 끊김' 알림 1회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)
+PASS  ⓓ paneTitle=MAIN 이면 전달
+PASS  ⓓ LRM_PUSH_PANE="" 이면 제목 대조 생략(paneTitle=OTHER 도 전달)
+PASS  ⓓ show.mode=pane_main → 전달 0·보류 사유=pane_title_mismatch·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변
+PASS  ⓓ pane_title_mismatch → '메인 연결 끊김' 알림 1회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)
+PASS  알림: 워커를 여러 번 돌리고 --kick 해도 같은 사유 알림은 1회(상태 파일에 기록)
+PASS  알림: 상태 파일 권한 600
+PASS  알림: slack_notify.sh --kind warn, 무엇이 안 됐나·할 일(main.env 의 MAIN_TERMINAL) 포함, 핸들 값·메시지 본문 없음
+PASS  알림: 핸들이 메인 세션으로 확인되면(화면은 대화상자라 보류) 알림 상태 초기화·로그 link_ok
+PASS  알림: 복구 뒤 보류분 전달, 상태가 없으면 link_ok 를 다시 남기지 않음
+PASS  알림: 복구 뒤 다시 끊기면 재알림 1회
+PASS  알림: 끊긴 동안 사유가 바뀌면 새 사유만 1회 더
+PASS  알림 실패(종료 코드 1): 로그만 남기고 보류 유지
+PASS  알림 실패 뒤에도 같은 사유로 다시 보내지 않고, 복구되면 정상 전달
+PASS  알림 도구가 없어도(종료 코드 127) 전달 흐름 불변
+PASS  ⓓ 화면 판별 S1 → 보류(empty_preview)·로그 사유·읽음 표식 불변
+PASS  ⓓ 화면 판별 S1r → 보류(empty_preview)·로그 사유·읽음 표식 불변
+PASS  ⓓ 화면 판별 S2 → 보류(dialog)·로그 사유·읽음 표식 불변
+PASS  ⓓ 화면 판별 S2r → 보류(dialog)·로그 사유·읽음 표식 불변
+PASS  ⓓ 화면 판별 S3 → 보류(no_idle_marker)·로그 사유·읽음 표식 불변
+PASS  ⓓ 화면 판별 S3r → 전송
+PASS  ⓓ 화면 판별 S3x → 보류(no_idle_marker)·로그 사유·읽음 표식 불변
+PASS  ⓓ 화면 판별 S4 → 보류(draft)·로그 사유·읽음 표식 불변
+PASS  ⓓ 화면 판별 S4r → 보류(draft)·로그 사유·읽음 표식 불변
+PASS  ⓓ 화면 판별 S5 → 보류(draft)·로그 사유·읽음 표식 불변
+PASS  ⓓ 화면 판별 S6 → 전송
+PASS  ⓓ 화면 판별 S7 → 전송
+PASS  ⓓ 화면 판별 S8 → 전송
+PASS  ⓔ 실패 2회 뒤 성공: send 3회·실제 전달 1건·실패 로그 2줄(시도마다 1줄)·성공 뒤에만 pushed_lines 증가
+PASS  ⓔ 로그는 사유 코드·횟수만(메시지 본문 없음)
+PASS  ⓔ 재시도 3회 모두 같은 요청 ID·같은 본문
+PASS  ⓔ 모호한 실패(실제 모양): 같은 본문·같은 UUID 로 재전송 → Orca 가 영수증만 돌려줌, 실제 전달 1건
+PASS  ⓔ 시간 초과(프로세스 종료, 응답 없음): 같은 UUID 로 재전송 → 실제 전달 1건
+PASS  ⓔ 본문 고정: 시도 사이에 읽음 표식이 바뀌어도 재시도 본문·요청 ID 불변
+PASS  ⓔ deliveryOutcome=unknown·retrySafe=false: 자동 재전송 없이 보류(unknown_delivery), 표식·pushed_lines 불변, 로그 1줄
+PASS  ⓔ 상태 파일은 600, 도착 불명 대상은 핸들 원문 없이 해시로만 기록
+PASS  ⓔ 보류 뒤 다시 실행·--kick 해도 재전송·재조회·로그 반복 없음
+PASS  ⓔ 사람이 확인하고 읽음 표식을 보류분 줄까지 올리면 보류분 폐기(재전송 없음)
+PASS  ⓔ 영수증 모양을 알 수 없으면(result.send 없음) 도착 불명으로 보류, 재전송 없음
+PASS  ⓔ 모호한 전송 뒤 대상 터미널이 바뀌고 옛 대상 생사를 못 알면(list 미지원 응답) 다른 터미널에 보내지 않고 재확인 보류(영구 정지 아님)
+PASS  ⓔ LRM_PUSH_CONFIRM=0: 입력은 받았으나 턴 시작(제출) 미확인이면 화면 재확인 없이(show 1회) 읽음 표식·전달 기록 올리지 않고 보류(unsubmitted, confirm=off)
+PASS  ⓔ unsubmitted 는 다음 실행·--kick 에도 재전송하지 않음(입력 칸 글 중복 방지)
+PASS  ⓔ LRM_PUSH_CONFIRM=off 도 화면 재확인 끔
+PASS  ⓟ 접수 직후 입력 칸에 글(붙여넣기 자리표시) → 2회 뒤 빈 입력 칸 연속 2회 → 전달 완료(confirm=screen screen=idle reads=4): 읽음 표식·전달 기록 갱신, 재전송 0, 로그에 화면·본문 없음
+PASS  ⓟ 접수 직후부터 빈 입력 칸 연속 2회 → 전달 완료(confirm=screen screen=idle reads=2): 읽음 표식·전달 기록 갱신, 재전송 0, 로그에 화면·본문 없음
+PASS  ⓟ 입력 칸이 안 보이고 작업 중 표식(esc to interrupt)만 보임(표식은 제출 증거가 아님) → 보류(unsubmitted, confirm=unknown screen=no_box): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음
+PASS  ⓟ 입력 칸이 밀려 우리 글 끝부분+테두리+표식 상태줄만 보임 → 보류(unsubmitted, confirm=unknown screen=no_box): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음
+PASS  ⓟ 긴 줄 때문에 칸 판별 불가인 글 + 표식 상태줄 → 보류(unsubmitted, confirm=unknown screen=no_box): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음
+PASS  ⓟ 도구 출력 안의 esc to interrupt 문구, 입력 칸 없음 → 보류(unsubmitted, confirm=unknown screen=no_box): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음
+PASS  ⓟ 작업 중 표식 + 빈 입력 칸(바쁜 메인이 줄 세움) → 전달 완료(confirm=screen screen=idle reads=2): 읽음 표식·전달 기록 갱신, 재전송 0, 로그에 화면·본문 없음
+PASS  ⓟ 끝까지 입력 칸에 붙여넣기 자리표시 → 보류(unsubmitted, confirm=still_draft screen=pasted): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음
+PASS  ⓟ 화면 확인 실패 보류는 다음 실행·--kick 에도 재전송·재확인 없음(전송 호출 1회 그대로)
+PASS  ⓟ CONFIRM=1·TICK=2 에서도 1회로 끝나지 않고 최소 2회 읽음 → 전달 완료(confirm=screen screen=idle reads=2): 읽음 표식·전달 기록 갱신, 재전송 0, 로그에 화면·본문 없음
+PASS  ⓟ 연속 두 제출 판정 사이는 1초 이상(TICK 0.05 요청도 하한 1초로 올림, 간격 1.104초)
+PASS  ⓟ 끝까지 입력 칸에 우리 글 첫 줄·인용 줄 → 보류(unsubmitted, confirm=still_draft screen=typed): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음
+PASS  ⓟ 작업 중 표식이 보여도 입력 칸에 글이 남음 → 보류(unsubmitted, confirm=still_draft screen=pasted): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음
+PASS  ⓟ 빈 입력 칸이 1회씩만 보임(연속 2회 아님) → 보류(unsubmitted, confirm=still_draft screen=pasted): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음
+PASS  ⓟ 화면 비어 있음 → 보류(unsubmitted, confirm=unknown screen=empty): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음
+PASS  ⓟ preview 없음 → 보류(unsubmitted, confirm=unknown screen=no_preview): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음
+PASS  ⓟ 대화상자 → 보류(unsubmitted, confirm=unknown screen=dialog): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음
+PASS  ⓟ show 일시 오류 → 보류(unsubmitted, confirm=unknown screen=show_fail): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음
+PASS  ⓟ 확인 중 응답 handle 이 다름 → 보류(unknown_delivery, confirm=changed screen=handle_gone): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음
+PASS  ⓟ 확인 중 핸들 무효 오류 → 보류(unknown_delivery, confirm=changed screen=handle_gone): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음
+PASS  ⓟ 확인 중 agentIdentity 가 claude 아님 → 보류(unknown_delivery, confirm=changed screen=not_claude): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음
+PASS  ⓟ 확인 중 같은 터미널이 일시 쓰기 불가(빈 입력 칸이어도 근거로 쓰지 않음) → 보류(unsubmitted, confirm=unknown screen=not_writable): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음
+PASS  ⓟ 확인 중 worktreePath 가 메인 아님 → 보류(unknown_delivery, confirm=changed screen=wrong_worktree): 재전송 0·읽음 표식·전달 기록 불변, 로그에 화면·본문 없음
+PASS  ⓟ 확인 중 main.env 핸들이 바뀌면 화면을 보지 않고 보류(unknown_delivery), 새 핸들에 보내거나 조회하지 않음
+PASS  ⓟ 영수증 stages 에 input_accepted 가 없으면 화면 확인 없이 기존대로 보류(show 1회, confirm=skip)
+PASS  ⓟ 영수증에 turn_started 가 있으면 화면 확인 없이 전달 완료(show 1회, confirm=receipt)
+PASS  ⓔ 계속 실패: TRIES 만큼 시도 뒤 보류 큐 유지(push_pending 보존)·pushed_lines 불변
+PASS  ⓔ 백오프 소진 뒤 다음 재시도는 HOLD(600초) 간격(599.5554828643799초 뒤)
+PASS  ⓔ accepted=false(종료 코드 1)면 실패 처리: pushed_lines·읽음 표식 불변, 입력이 없었으므로 시도마다 새 요청 ID
+PASS  ⓘ Orca 가 agent_prompt_blocked 로 거절하면 대화상자 보류(실패 횟수에 안 넣음), 전달 0
+PASS  ⓓ show.mode=dialog → 전달 0·보류 사유=dialog·로그 1줄(핸들은 앞 13자만)·워커 안에서 재확인·읽음 표식 불변
+PASS  ⓓ dialog → '메인 연결 끊김' 알림 0회(핸들 문제만 알림, 화면 상태·조회 실패는 알리지 않음)
+PASS  ⓕ 메인이 2줄까지 읽은 상태: 3~4줄만 전달하고 표식 2→4
+PASS  ⓕ 메인이 앞서 있으면(표식 9 > inbox 5줄) 전달 0·표식 유지
+PASS  ⓕ 전송 중 메인이 표식을 9로 올리면 전달 뒤에도 9 유지(max)
+PASS  ⓗ 반응도 전달: 메모 2건 + 반응 1줄(이모지·해석·대상 제목), 형식 검사 통과
+PASS  ⓗ 전달한 반응 줄은 읽음 표식이 넘어감(1→3), '읽지 않은 반응' 안내 없음
+PASS  ⓗ 전달 기록의 스레드 건수에 반응은 세지 않음(확인 답장 '전달했어요 (n건)' 부풀림 방지)
+PASS  ⓗ 옛 상태(react_since 없음): 새 메모·새 반응만 전달, 전에 쌓인 반응 1건은 안내만
+PASS  ⓗ 옛 반응 줄 앞에서 읽음 표식이 멈춤(1), 기준선 react_since=3 으로 고정
+PASS  ⓕ 메인이 옛 반응 줄을 읽어 표식을 넘기면 이미 전달한 뒤 줄까지 자동으로 올림(재전달 0)
+PASS  ⓗ 옛 보류 묶음: 고정 본문·요청 ID 그대로 전송, 그 범위 반응은 옛 반응이라 표식이 막힘
+PASS  ⓗ 시안 반응·답글: 반응 한 줄(fail·pick_a, kind=review, tag), 답글 머리줄 kind=review, 제목 속 위조 접두·줄바꿈 무력화
+PASS  ⓗ 배치 파일에도 반응 줄 기록
+PASS  ⓗ 반응만 있던 묶음도 전달 뒤 표식 3
+PASS  ⓗ 반응 줄의 이모지 이름·tag: 제어 문자·ESC 제거, 40자·30자로 자름
+PASS  ⓗ 반응 전달이 도착 불명이면 보류, 읽음 표식 불변(☑️ 로 안 바뀜)
+PASS  ⓖ 형식: 첫 줄·인용 안내·인용 블록·마지막 전체: 줄, 제어 문자 0, 줄 시작 위조 접두 0, 본문 400자/배치 3000자 상한
+PASS  ⓖ 메시지 머리줄: #줄번호 [스레드 제목 또는 새 메모] ts=
+PASS  ⓖ 원문 속 위조 접두는 전각 괄호로 무력화, ! / 숫자 줄은 '> ' 인용 안쪽이라 줄 시작에 오지 않음
+PASS  ⓖ ANSI 이스케이프·제어 문자 제거(글자는 보존)
+PASS  ⓖ 첨부 경로는 files 값 그대로, 내려받기 못 한 첨부는 사유 코드만
+PASS  ⓖ 잘린 메시지마다 '… (이하 배치 파일 참조)' 표시
+PASS  ⓖ 배치 파일에는 자르지 않은 전체 원문(최장 줄 3002자)과 10건 모두 기록
+PASS  ⓙ 전달문은 항상 [Slack→메인] 줄로 시작하는 여러 줄 — 1/2/y/Y/yes/Enter 같은 단일 키 선택과 일치하지 않음
+PASS  ⓚ LRM_PUSH=off: --run·--kick 모두 아무것도 안 함(전달·상태·로그·orca 호출 0)
+PASS  ⓚ LRM_PUSH=0|false|no 도 꺼짐
+PASS  ⓚ 표식 파일 .slack-push.off 이 있으면 환경 변수 없이도 꺼짐(launchd·소켓 수신기 경로용)
+PASS  ⓚ 꺼진 동안 로그는 'off' 한 줄만(--run·--kick 반복해도 늘지 않음), 상태·읽음 표식 불변(수집은 폴러가 그대로 함)
+PASS  ⓚ 표식 파일을 치우면 다시 켜져 대기분 전달
+PASS  ⓛ 폴러에서 상속된 SLACK_* 환경 변수는 orca 자식에 전달되지 않음(모든 호출에서 0개)
+PASS  ⓛ 출력·상태·로그·배치 파일·호출 기록 어디에도 토큰 값 없음
+PASS  ⓜ 상태 파일 손상 → 읽음 표식 기준으로 복구, 이미 전달한 줄 재전달 0·새 줄 전달
+PASS  ⓜ 상태 파일 삭제 → 같은 결과(중복 0·유실 0)
+PASS  ⓜ 대기 중 워커가 죽으면 전달 0·잠금 잔재만 남음
+PASS  ⓜ 죽은 워커의 잠금은 회수되고 다음 실행이 1회 전달(유실 0)
+PASS  ⓜ 워커 동시 실행 2개 → 별도 잠금으로 전달 1회
+PASS  ⓜ --kick 은 바로 반환(0.187초)하고 출력 없음 — 워커는 분리돼 폴러·소켓 수신기의 출력 파이프를 잡지 않음
+PASS  ⓜ --kick 이 띄운 분리 워커가 조용 대기 뒤 전달
+PASS  ⓜ 전달할 것이 없으면 --kick 이 워커를 띄우지 않음(2분 주기 폴러가 매 회차 불러도 무해)
+PASS  ⓜ 옛 반응 줄이 읽음 표식을 막은 상태에서 상태 파일을 잃어도 이미 전달한 줄 재전달 0(기준선 = max(표식, 전달 기록의 마지막 전달 줄))
+PASS  ⓜ 그 뒤 새 줄은 정상 전달(#4 만)
+PASS  ⓝ 배치 폴더 700·파일 600
+PASS  ⓝ 30일 지난 배치 파일만 정리(최근 파일 유지)
+PASS  통합: 폴러 회차는 묶음 대기와 무관하게 바로 끝남(0.531초, 수집 2건: 메모+반응)
+PASS  ⓗ 봇·타인 메시지는 inbox 에 들어가지 않음(전달 대상 아님)
+PASS  통합: 분리 워커가 사용자 메모 1건 + 반응 1줄 전달(봇·타인 발언 제외)
+PASS  통합 순서: 기록 → 👀 달기 → (묶기) → 전달 → 표식 갱신(2) → 👀 제거 → ✅ 추가
+PASS  통합: 반응이 달린 봇 메시지는 수집 때 👀, 전달 뒤 ☑️(사용자 ✅ 와 다른 표식)
+PASS  통합: 확인 답장(집계 중) → 전달 후 같은 답장을 chat.update 로 '📨 메인에 전달했어요 (1건)' 갱신(1회)
+PASS  ⓜ 폴러 다음 회차(2분 뒤 가정): 새 항목 없음 → 재전달 0
+PASS  set_main_terminal: 파일이 없으면 MAIN_TERMINAL 한 줄로 만들고 권한 600, 출력에 핸들 값 없음
+PASS  set_main_terminal: 기존 MAIN_TERMINAL 줄 교체(1줄만 남음), 다른 줄은 순서대로 보존(끝 줄바꿈 없어도), 권한 644→600, 다른 값·핸들 비출력
+PASS  set_main_terminal: 임시 파일 남지 않음
+PASS  set_main_terminal: 형식 오류·인자 수 오류는 종료 코드 2, 파일 불변
+PASS  set_main_terminal: --help 는 파일을 만들지 않음
+PASS  set_main_terminal 로 바꾼 핸들로 push 전달
+PASS  set_main_terminal: main.env 가 심볼릭 링크면 링크 보존·대상 내용 갱신·다른 줄 보존·임시 파일 없음
+PASS  set_main_terminal: CRLF 파일은 교체한 줄만 LF, 다른 줄은 CRLF 그대로 보존
+
+184 PASS, 0 FAIL
+exit=0
+
+$ bash tests/slack_socket/run.sh
+PASS  시작: '연결됨' 뒤 '시작 → 수집' 로그(기존 문구)
+PASS  끊김 임계 뒤 재연결 호출·'재연결 → 수집'
+PASS  임계 이전(끊김 0.2초+임계 0.6초 미만)에는 재연결하지 않음
+PASS  '재연결됨' 로그 한 번
+PASS  새 클라이언트를 만들고 옛 클라이언트만 닫음(close 재사용 안 함)
+PASS  교체 성공: 옛 클라이언트만 close → disconnect → runner 종료 순서로 정리(새 클라이언트는 그대로)
+PASS  생존 줄: 끊긴 동안 '아니오', 재연결 뒤 '예·재연결=1회'
+PASS  정상 경로: runner 정리가 상한 안에 끝나 '시간 초과' 로그 없음
+PASS  임계 안에 복구되면 재연결 호출 없이 '재연결됨'·'재연결 → 수집'만
+PASS  재연결 5연속 실패 → 종료 코드 3
+PASS  실패 5회까지만 시도·로그에 종류 이름과 횟수만
+PASS  실패 로그에 예외 본문 없음(종류 이름만)
+PASS  실패 4회→성공을 두 번 반복: 연속 횟수가 초기화돼 종료하지 않음
+PASS  연결 안 됨(예외 없음) 5연속 → 종료 코드 3·'재연결됨' 로그 0건
+PASS  silent 연결도 실패 횟수·종류 이름(ConnectionError)으로 기록
+PASS  실패한 새 클라이언트와 종료 직전 클라이언트까지 모두 runner 정리(생성 6개)
+PASS  SDK 자체 복구 때 연속 실패 횟수 초기화(4회 실패→복구→1회 실패는 종료 아님)
+PASS  정기 재연결: 로그 '정기 재연결'·수집
+PASS  정기 재연결: 새 클라이언트 연결 뒤 옛 클라이언트 닫음
+PASS  정기 재연결 주기 유지: 주기(0.6초)마다 한 번씩, 점검(0.1초)마다 재연결하지 않음 (연결 4회)
+PASS  정기 재연결은 '재연결됨'(끊김 복구) 로그를 섞지 않음
+PASS  LRM_SOCKET_REFRESH_S=0: 정기 재연결 끔
+PASS  정기 재연결 실패: 옛 연결 유지·종료하지 않음
+PASS  생존 줄은 주기(0.5초)마다 한 줄씩, 매 점검마다 찍지 않음 (2.6초 동안 4줄)
+PASS  생존 줄 형식 '생존 연결=예|아니오 마지막이벤트=N분 전 재연결=n회' 고정(다른 값 없음)
+PASS  마지막 이벤트: 수신 전 '없음', 수신 뒤 '0분 전'(봇 이벤트도 수신으로 침)
+PASS  본인 DM → 'DM → 수집', 본인 반응 → '반응 → 수집' (기존 문구)
+PASS  봇 자신·타인·채널 글·비 이벤트는 수집을 일으키지 않음(수집 3회=시작+DM+반응)
+PASS  모든 요청에 응답(ack) 전송
+PASS  새 클라이언트에 리스너가 붙어 이벤트 처리·ack(DM → 수집)
+PASS  runner 정리 예외는 삼키고 종류 이름만 로그
+PASS  runner 종료가 영구 대기해도 상한 안에 정리가 돌아와 재연결·생존 기록이 이어짐
+PASS  시간 초과 로그 한 줄('정리 runner 시간 초과 0.5초')
+PASS  xapp- 토큰 없음 → 종료 코드 2·안내 한 줄
+PASS  첫 연결 실패 → 종료 코드 2·종류 이름만
+PASS  첫 연결이 예외 없이 안 붙음 → 종료 코드 2·'연결됨'·수집 없음
+PASS  첫 연결 실패 때도 클라이언트 정리
+PASS  Timing.from_env 기본값 30·60·21600·600·2초·정리 상한 5초
+PASS  버튼·모달 요청 모두 ack
+PASS  선택 → 카드를 '✅ 선택됨'으로 갱신·버튼 제거
+PASS  '직접 입력' → 모달 열기
+PASS  선택·직접 입력 모두 메인 터미널로 전달
+PASS  inbox 기록 2건·done 처리
+PASS  다른 사용자 클릭은 무시
+grep: /var/folders/mb/130tt8qx31112yx1j11l965h0000gn/T//cc-slacksock.OCDxLD/s21/notify.calls: No such file or directory
+grep: /var/folders/mb/130tt8qx31112yx1j11l965h0000gn/T//cc-slacksock.OCDxLD/s21/notify.calls: No such file or directory
+grep: /var/folders/mb/130tt8qx31112yx1j11l965h0000gn/T//cc-slacksock.OCDxLD/s21/notify.calls: No such file or directory
+grep: /var/folders/mb/130tt8qx31112yx1j11l965h0000gn/T//cc-slacksock.OCDxLD/s21/notify.calls: No such file or directory
+grep: /var/folders/mb/130tt8qx31112yx1j11l965h0000gn/T//cc-slacksock.OCDxLD/s21/notify.calls: No such file or directory
+PASS  메인 전달 실패 → 카드 스레드에 warn
+PASS  모든 시나리오 로그·표준출력에 토큰·사용자 ID·예외 본문 0건
+
+결과: PASS 46, FAIL 0
+exit=0
+
+$ bash tests/install/run.sh
+PASS  bash -n 전체 (84개)
+SKIP  shellcheck — 미설치(brew install shellcheck)
+PASS  links.tsv 원본 전부 존재 (119줄)
+PASS  links.tsv dst 중복 없음
+PASS  install.sh patsub_replacement 방어
+PASS  links.tsv 역방향: 추적 파일 전부 목록에 포함
+PASS  준비: 현재 설정 훅 26개(기본 7+Orca 15+추가 3+중복 1)
+PASS  dry-run 무변경
+PASS  dry-run 항목 수 = links.tsv (119)
+PASS  dry-run 백업 폴더 미생성
+PASS  설치 종료 코드 0
+PASS  점검 모드 통과
+PASS  slack_socket.py 는 복사 설치(링크 아님)
+PASS  복사 설치된 slack_socket.py 가 공용 모듈(main_terminal.py)까지 import 됨
+PASS  doc-kit 스킬·역할 파일 링크 설치
+PASS  doc-kit: 링크 경로로 doc_config.py 실행
+PASS  --check: doc-kit 링크가 없으면 지적
+PASS  doc-kit 링크 되돌린 뒤 점검 통과
+PASS  orca-main 스킬 링크·설정 양식 설치
+PASS  orca-main patrol.sh: 설정 없으면 종료 코드 2·양식 안내
+PASS  링크 전부 정상(원본 가리킴)
+PASS  synced 폴더·외부 링크 보존
+PASS  state 폴더 제자리(기존 로그 유지)
+PASS  저장소에 state 폴더 없음
+PASS  비밀 파일 미접촉
+PASS  render 항목: 실제 파일·자리표시 전부 치환
+PASS  render: 값 파일 값이 들어감
+PASS  pick_host.sh 원격 주소 렌더·실행 권한
+PASS  plist __HOME__ 치환
+PASS  수집기 plist __HOME__ 치환·형식 정상
+PASS  수집기: 링크 경로로 --help 실행
+PASS  lrm-board mod 파일 5개 복사·JSON 정상
+PASS  lrm-board: panel.json·panel-auto.json·메인 체크아웃 경로 __HOME__ 치환
+PASS  lrm-board: 전역 mod 위치에 실제 폴더, 옛 mods 위치 미생성
+PASS  소켓 plist __HOME__·__PYTHON3__ 치환·형식 정상, 수신기 복사
+PASS  git 설정 4개 키
+PASS  git 사용자 값 보존
+PASS  백업 폴더 1개
+PASS  기존 스킬 폴더 백업됨
+PASS  render 대상의 기존 로컬 파일 백업됨
+PASS  병합 훅: 이벤트별 [내 훅]+[Orca 훅] 순서 유지·중복 제거
+PASS  병합 상태줄 보존
+PASS  병합 나머지 설정 동일
+PASS  재설치 시 settings.json 바이트 동일
+PASS  재설치 무변경(멱등)
+PASS  재설치 후에도 백업 폴더 1개
+PASS  재설치 요약 0건 변경
+PASS  설치 뒤 할 일: 시크릿 권한·main.env 양식·소켓 미적재 안내, 내용 미출력
+PASS  링크 경로로 읽은 STATE_DIR = 홈 쪽
+PASS  common.sh 실행 뒤에도 저장소에 state 없음
+PASS  git 훅 링크 상태에서 커밋 가능
+PASS  pre-rebase 가 공유 브랜치 rebase 차단(우회 변수로는 통과)
+PASS  복원 종료 코드 0
+PASS  복원: 스킬 폴더 실제 폴더로 복귀
+PASS  복원: settings.json 바이트 동일
+PASS  복원: hooks/lib 복귀
+PASS  복원: render 대상 원래 로컬 파일로 복귀
+PASS  복원: 저장소를 가리키는 링크 0개
+PASS  복원: state·synced·외부 링크 그대로
+PASS  복원: .gitconfig 원상
+PASS  복원: 설치가 새로 만든 빈 폴더 제거
+PASS  복원: 원래 있던 폴더는 유지
+PASS  복원 2회 연속: 무변경·CLAUDE.md 보존
+PASS  복원 뒤에도 백업 원본 보존
+PASS  부분 복원 뒤 전체 복원 재실행: 원상
+PASS  백업 원본 없으면 복원 중단·무변경
+PASS  백업 불가 시 링크 없이 중단(기존 폴더 안 링크 없음)
+PASS  깨진 settings.json 이면 중단
+PASS  mv 실패 시 '백업 이동 실패'로 링크 없이 중단
+PASS  값 파일 없으면 아무것도 바꾸지 않고 중단
+PASS  값 파일에 빈 키가 있으면 중단
+PASS  --diff-live: 라이브가 앞선 파일만 지적(같은 파일은 통과)
+PASS  라이브가 앞서면 설치가 변경 없이 중단
+PASS  dry-run 도 라이브 우선이면 중단
+PASS  --allow-live-diff 로 진행하면 백업 후 링크
+PASS  orca-main 옛 이름: 문서 2개는 규칙 흡수, 옛 양식 파일만 LIVE-ONLY
+PASS  소켓 보관본: 라이브와 같으면 SKIP(파일 그대로)
+PASS  --reload-launchd 도 slackpoll 만 적재, slacksocket 은 호출·안내 없음
+PASS  소켓 plist 를 LaunchAgents 에 두지 않음(로그인 때 자동 실행 안 됨)
+PASS  설치 뒤 할 일: slack-bot.env 없으면 키 이름만 안내
+PASS  소켓 보관본이 라이브와 다르면 LIVE-NEWER 로 중단·무변경
+PASS  첫 설치 --reload-launchd: 소켓 보관본은 새로 깔리되 slackpoll 만 적재
+PASS  수신기 연결 실패: 종료 코드 2·한 줄 로그(예외 타입만)·traceback 없음
+PASS  install.sh 에 slacksocket 전용 처리 없음
+PASS  doctor: 모든 줄이 OK·MISS·WARN·요약 형식
+PASS  doctor: 값 파일 없음은 MISS, 시크릿 권한 644 는 WARN
+PASS  doctor: 시크릿 내용·HOME 절대 경로 미출력
+PASS  doctor: jq·claude 없으면 원인·조치와 종료 코드 1
+PASS  doctor: CLAUDE_CONFIG_VALUES 반영, install.sh --doctor 가 같은 점검 실행
+PASS  doctor: 알 수 없는 인자는 종료 코드 2
+PASS  doctor: 빈 HOME 에서 실행해도 HOME 아래 항목 0개(읽기 전용)
+PASS  doctor: slack_sdk 를 지정한 python3 -I 로 확인, 실패 조치는 문서 2절
+PASS  install.sh --doctor 와 다른 인자 조합은 종료 코드 2·점검 미실행·무변경
+PASS  값이 공백뿐이면 중단
+PASS  비밀 패턴 일치 0건
+PASS  제외 대상 파일 0개
+PASS  하드코딩 홈 경로 0건(tests·live-diff.tsv 제외)
+PASS  실명·Slack ID·채널 패턴 0건(전 파일)
+PASS  템플릿 자리표시 ⊆ values.env.example 키
+
+결과: PASS 98, FAIL 0
+exit=0

@@ -103,6 +103,22 @@ got=$(echo "$dry" | grep -cE '^\[dry-run\] (LINK|BACKUP\+LINK|MERGE|COPY|RENDER|
 "$INSTALL" >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && ok "설치 종료 코드 0" || ko "설치" "rc=$rc"
 check "점검 모드 통과" "$INSTALL" --check
+# 복사 설치된 slack_socket.py 는 같은 폴더의 main_terminal.py 를 import 함. 공용 모듈이 설치되지 않으면 ModuleNotFoundError 로 즉시 종료
+SOCK_INST="$SB/.config/lrm-hubs/slack_socket.py"
+[ -f "$SOCK_INST" ] && [ ! -L "$SOCK_INST" ] && ok "slack_socket.py 는 복사 설치(링크 아님)" || ko "slack_socket 복사 설치" "링크이거나 없음"
+out=$(python3 -I - "$SOCK_INST" 2>&1 <<'PY'
+import sys, types, runpy
+for n in ("slack_sdk", "slack_sdk.socket_mode", "slack_sdk.socket_mode.request", "slack_sdk.socket_mode.response"):
+    sys.modules[n] = types.ModuleType(n)
+sys.modules["slack_sdk"].WebClient = object
+sys.modules["slack_sdk.socket_mode"].SocketModeClient = object
+sys.modules["slack_sdk.socket_mode.request"].SocketModeRequest = object
+sys.modules["slack_sdk.socket_mode.response"].SocketModeResponse = object
+ns = runpy.run_path(sys.argv[1], run_name="not_main")  # 가짜 slack_sdk 로 import 만 수행(실제 연결 없음)
+print("import-ok" if callable(ns.get("send_main")) else "no-send_main")
+PY
+)
+[ "$out" = import-ok ] && ok "복사 설치된 slack_socket.py 가 공용 모듈(main_terminal.py)까지 import 됨" || ko "복사 설치본 import" "$(echo "$out" | tail -2)"
 # doc-kit: 스킬·역할 파일 링크가 설치되고, 링크 너머로 스크립트가 실행되며, --check 가 끊긴 링크를 잡음
 DK="$SB/.claude/skills/doc-kit"; DKROLE="$SB/.config/lrm-hubs/roles/role-doc-kit.txt"
 [ "$(readlink "$DK")" = "$REPO/skills/doc-kit" ] && [ "$(readlink "$DKROLE")" = "$REPO/hubs/roles/role-doc-kit.txt" ] && ok "doc-kit 스킬·역할 파일 링크 설치" || ko "doc-kit 링크" "원본을 가리키지 않음"
