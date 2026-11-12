@@ -55,7 +55,7 @@ replies() { # 카드 ts 글...: conversations.replies 응답 파일. 글마다 t
   done
   printf '{"ok":true,"messages":[%s]}' "$msgs" > "$FIX/conversations.replies.$ts.json"
 }
-R1TEXTS=(A B "🅱️" ":비서-a:" ":b:" 1 2 ":one:" "2번" "추천" "전부 추천" "추천대로 ㄱㄱ" "a." "3" "E" "1. 좌에서 우로 카드가 나오면서 연출" "이거 링크 줄수있나?" "b 로 하되 느리게")
+R1TEXTS=(A B "🅱️" ":비서-a:" ":b:" 1 2 ":one:" "2번" "추천" "전부 추천" "추천대로 ㄱㄱ" "전부 추천대로 할게" "a." "3" "E" "1. 좌에서 우로 카드가 나오면서 연출" "이거 링크 줄수있나?" "b 로 하되 느리게")
 replies "$(T 007100)" "${R1TEXTS[@]}"
 R2TEXTS=(A "추천")
 replies "$(T 007200)" "${R2TEXTS[@]}"
@@ -85,6 +85,7 @@ want "R1 :one: → pick 1" 007100 ":one:" '["pick",1]'
 want "R1 '추천' → approve, pick=추천 번호 2" 007100 "추천" '["approve",2]'
 want "R1 '전부 추천' → approve" 007100 "전부 추천" '["approve",2]'
 want "R1 '추천대로 ㄱㄱ' → approve" 007100 "추천대로 ㄱㄱ" '["approve",2]'
+want "R1 '전부 추천대로 할게' → approve(꼬리말 '할게')" 007100 "전부 추천대로 할게" '["approve",2]'
 want "R1 'a.' → pick 1" 007100 "a." '["pick",1]'
 want "R1 선택지 밖 '3' → 자유 글" 007100 3 '["free",null]'
 want "R1 'E' → 자유 글" 007100 E '["free",null]'
@@ -153,7 +154,7 @@ has "자유 글 → 결정 D-0R01 답(자유 글) + 원문 인용" "→ 결정 D
 grep -qF "> 1. 좌에서 우로 카드가 나오면서 연출" "$SB/q.txt" && ok "T 자유 글 원문은 그대로 인용" || ko "T 자유 글 원문" "$(cat "$SB/q.txt" | head -5)"
 grep -E '^- #[0-9]+ \[깨진 카드\]' "$SB/q.txt" | grep -qF "답(자유 글)" && ok "T 깨진 카드의 글도 '답(자유 글)'" || ko "T 깨진 카드" "$(grep 깨진 "$SB/q.txt")"
 grep -E '^- #[0-9]+ \[결정 옛 카드\]' "$SB/q.txt" | grep -qF "→" && ko "T 옛 카드는 해석 문구 없음" "$(grep '옛 카드' "$SB/q.txt")" || ok "T 옛 카드(옵션 없음)의 글은 기존 전달문 그대로(해석 문구 없음)"
-n=$(grep -c "^- #" "$SB/q.txt"); [ "$n" = 22 ] && ok "T 글 22건 모두 전달(누락 없음)" || ko "T 건수" "$n: $(grep '^- #' "$SB/q.txt" | cut -c1-60 | tr '\n' '|')"
+n=$(grep -c "^- #" "$SB/q.txt"); [ "$n" = 23 ] && ok "T 글 23건 모두 전달(누락 없음)" || ko "T 건수" "$n: $(grep '^- #' "$SB/q.txt" | cut -c1-60 | tr '\n' '|')"
 
 # ---- B. 버튼·직접 입력 전달문 ------------------------------------------------------------------
 cat > "$SB/said.py" <<'EOF'

@@ -428,7 +428,7 @@ REPLY_LETTER = {"a": 1, "b": 2, "c": 3, "d": 4, "🅰": 1, "🅱": 2, "🅲": 3,
 REPLY_PICK_RE = re.compile(
     r"^(?::비서-([a-d]):|:regional_indicator_([a-d]):|:([abcd]):|:(one|two|three|four):|([a-dA-D1-4🅰🅱🅲🅳])️?⃣?)"
     r"\s*(?:번|안|으로|로)?\s*(?:ㄱㄱ?|가자|할게|해줘)?\s*[.!)]?$")
-REPLY_RECOMMEND_RE = re.compile(r"^(?:전부\s*|다\s*|모두\s*)?추천(?:\s*대로)?\s*(?:ㄱㄱ?|가자|으로|로|해줘)?\s*[.!]?$")
+REPLY_RECOMMEND_RE = re.compile(r"^(?:전부\s*|다\s*|모두\s*)?추천(?:\s*대로)?\s*(?:ㄱㄱ?|가자|으로|로|할게|해줘)?\s*[.!]?$")  # 꼬리말은 REPLY_PICK_RE 와 맞춤
 
 def reply_answer(rec, text):
     """결정 카드 스레드 글 → 레코드에 더할 필드. 카드가 아니면 {}. 선택·추천은 action=pick·approve, 그 밖은 action=free(원문 그대로 전달).
