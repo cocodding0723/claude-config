@@ -334,7 +334,7 @@ doc-kit/scripts/               ← check.py 등 이관
 create-pr, qa-checklist        ← "doc-kit 공통 규칙 따름" 한 줄</code></pre></div></div>
 <p class="why" data-check="why"><b>왜:</b> 같은 규칙이 8곳에 있어서 한 곳만 고치면 나머지가 낡으므로, 출처를 하나로 줄인다.</p></section>
 <section class="ba" data-check="ba"><h3>허브 시작 스크립트: 옛 허브 유지 + 새 허브 지원</h3>
-<div class="ba-grid"><div class="before"><div class="label">before (지금, restart_hub.sh)</div><pre><code>HUB="/Users/gangchanhyeong/orca/workspaces/\
+<div class="ba-grid"><div class="before"><div class="label">before (지금, restart_hub.sh)</div><pre><code>HUB="~/orca/workspaces/\
 LoveRevolutionMaker/$2"
 ROLE="$HOME/.config/lrm-hubs/roles/role-$3.txt"
 # 허브 경로가 연애혁명 폴더 고정
@@ -405,7 +405,7 @@ ROLE="${ROLE_FILE:-$HOME/.config/lrm-hubs/roles/role-$3.txt}"
 
 <details class="ref" data-check="ref"><summary>참고 (파일·근거)</summary>
 <ul>
-<li>옛 허브: /Users/gangchanhyeong/orca/workspaces/LoveRevolutionMaker/coord-docs-hub (sparse: docs, .claude, CLAUDE.md, AGENTS.md)</li>
+<li>옛 허브: ~/orca/workspaces/LoveRevolutionMaker/coord-docs-hub (sparse: docs, .claude, CLAUDE.md, AGENTS.md)</li>
 <li>허브 인계: HANDOFF.md, 결정 기록: decisions.tsv (읽기만 함)</li>
 <li>역할 파일: ~/.config/lrm-hubs/roles/role-docs.txt</li>
 <li>스킬: ~/.claude/skills/{structure-change-doc,work-report,explain-diff,tech-record,doc-coauthoring,qa-checklist,create-pr}</li>
@@ -427,7 +427,7 @@ git -C coord-docs-hub remote -v  # 원격 주소(허브·하위 워크트리 공
 python3 --version; /usr/bin/python3 --version  # 3.13.15 ; 3.9.6
 wc -c $LRM_MEMORY/{docs-as-html,user-docs-as-html,slack-report-html-format,visual-change-doc-for-jeongo,slack-plain-language,compressed-headline-style,hub-html-subject-format}.md | tail -1  # 10235
 wc -c ~/.claude/CLAUDE.md  # 11817 (102줄)
-# 고유값 재grep: 패턴 = 정오|D0C14|coord-docs-hub|연애혁명|LoveRevolution|LRM-|machamy|JobMaker|강찬형|origin/dev|90_정리기록|Slack DM
+# 고유값 재grep: 패턴 = 문서 담당|D0C14|coord-docs-hub|연애혁명|LoveRevolution|LRM-|machamy|JobMaker|사용자|origin/dev|90_정리기록|Slack DM
 grep -rnE "$PATTERN" ~/.claude/skills/{structure-change-doc,explain-diff,tech-record,create-pr,doc-coauthoring,work-report,qa-checklist} --exclude='*.bak*' --exclude='*.pyc' --exclude='*.html' | cut -d: -f1,2
 grep -nE "$PATTERN" $LRM_MEMORY/{문서 규칙 16개}.md ~/.config/lrm-hubs/roles/role-docs.txt ~/.claude/skills/orca-hub-create/references/common-rules.txt | cut -d: -f1,2
 # check.py:144 는 정규식 LRM-\d+ 라서 패턴 LRM- 으로 잡힌다
