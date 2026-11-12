@@ -69,9 +69,10 @@ class SenderTest(unittest.TestCase):
         self.assertNotIn("참고:", body[-1])  # 경로 텍스트 대신 파일 첨부
         self.assertEqual((upload[upload.index("--thread") + 1], upload[-1]), ("1700000000.000001", self.p("a.html")))
         self.assertEqual(line[line.index("--thread") + 1], PARENT)  # 진행 줄은 진행 스레드 부모의 답글
-        self.assertIn("https://slack.com/archives/D1/p1700000000000001", line[-1])
+        self.assertEqual(line[line.index("--quote") + 1], "1700000000.000001")  # 원본 링크는 알림 스크립트가 chat.getPermalink 로 만듦
+        self.assertNotIn("slack.com/archives", " ".join(line))  # 손수 만든 주소 없음
         lines = line[-1].splitlines()  # 진행 줄: 제목 1줄 + '- ' 항목마다 1줄. ' · ' 로 잇지 않음
-        self.assertTrue(all(ln.startswith("- ") for ln in lines[1:]) and len(lines) == 3)
+        self.assertTrue(all(ln.startswith("- ") for ln in lines[1:]) and len(lines) == 2)
         self.assertNotIn(" · ", line[-1])
         self.assertTrue(all(ln.startswith("- ") for ln in body[-1].split("\n\n")[1].splitlines()))  # 본문 항목도 '- '
         self.assertTrue(self.state()["reports"][rep["id"]]["sent"])
@@ -269,7 +270,7 @@ class SenderTest(unittest.TestCase):
         self.assertNotIn("--thread", card)  # 버튼 카드는 스레드 답글로 못 보냄
         self.assertTrue(card[-1].startswith("알림 시각 정하기"))
         self.assertEqual(self.state()["topics"], {})
-        self.assertIn("결정 카드", line[-1])
+        self.assertEqual(line[line.index("--quote") + 1], "1700000000.000001")  # 결정 카드 메시지가 원본
 
     def test_missing_progress_parent_skips_line_but_marks_sent(self):
         os.unlink(self.p("sync.json"))

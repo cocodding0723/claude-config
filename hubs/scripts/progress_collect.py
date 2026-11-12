@@ -45,7 +45,6 @@ BUCKETS = (
 LABEL = {b: name for b, name, _ in BUCKETS}
 ICON = {b: icon for b, _, icon in BUCKETS}
 # 사용자가 움직여야 풀리는 문구. 장부 진행 칸·허브 줄이 포함하면 '답 대기'. "승인 요청" 같은 앞으로의 일은 넓게 잡으면 오분류라 제외
-LINK_BASE = "https://slack.com/archives"  # report_sender.py 의 permalink 와 같은 형식
 WAIT_WORDS = ("병합 대기", "승인 대기", "답 대기", "결정 대기", "사용자 실행 대기", "사용자 답", "사용자 확인")
 STALE_TAG = "낡음"
 PR_PREFIX = "pr:"
@@ -74,8 +73,54 @@ def needs_user(text):
     return any(w in text for w in WAIT_WORDS)
 
 
-def item(key, bucket, title, group, link=""):
-    return {"key": key, "bucket": bucket, "title": one_line(title), "group": group, "link": link}
+def received_epoch(text, now=None):
+    """장부 접수일('MM-DD') → 그날 0시 epoch. 해석 못 하면 0(정렬에서 맨 뒤). 미래 날짜면 작년으로 봄"""
+    now = time.time() if now is None else now
+    try:
+        t = time.strptime(f"{time.localtime(now).tm_year}-{str(text).strip()}", "%Y-%m-%d")
+    except ValueError:
+        return 0.0
+    at = time.mktime(t)
+    return at if at <= now + 86400 else time.mktime(time.strptime(f"{t.tm_year - 1}-{t.tm_mon}-{t.tm_mday}", "%Y-%m-%d"))
+
+
+def item(key, bucket, title, group, link="", ref=None, since=0.0):
+    """ref: 원본 Slack 메시지 위치({kind: topic|card, channel, ts} 또는 {kind: file, file}). 링크는 토큰이 있는 digest 가 chat.getPermalink 로 만듦(수집기는 주소를 만들지 않음)"""
+    return {"key": key, "bucket": bucket, "title": one_line(title), "group": group, "link": link, "ref": ref, "since": since}
+
+
+class ReportRefs:
+    """보고 전송기 상태(report-sender.state.json)에서 항목별 원본 메시지 위치를 찾음. 읽기 전용, 못 읽으면 빈 값(링크 없음)"""
+
+    def __init__(self, path=""):
+        self.topics, self.files = {}, {}
+        try:
+            with open(path, encoding="utf-8") as f:
+                st = json.load(f)
+        except (OSError, ValueError, TypeError):
+            return
+        if not isinstance(st, dict):
+            return
+        topics, reports = st.get("topics"), st.get("reports")
+        for key, t in (topics.items() if isinstance(topics, dict) else ()):
+            if isinstance(t, dict) and isinstance(t.get("ts"), str) and t["ts"] and isinstance(t.get("channel"), str) and t["channel"]:
+                self.topics[key] = {"kind": "topic", "channel": t["channel"], "ts": t["ts"]}
+        newest = {}  # 작업별로 첨부가 올라간 가장 최근 보고의 파일 ID
+        for r in (reports.values() if isinstance(reports, dict) else ()):
+            if not isinstance(r, dict) or not isinstance(r.get("task"), str) or not isinstance(r.get("att_done"), dict):
+                continue
+            sent = r.get("sent") if isinstance(r.get("sent"), (int, float)) else 0
+            ids = [v for v in r["att_done"].values() if isinstance(v, str) and v not in ("", "uploaded")]
+            if ids and sent >= newest.get(r["task"], -1):
+                newest[r["task"]] = sent
+                self.files[r["task"]] = {"kind": "file", "file": ids[0]}
+
+    def for_task(self, task):
+        """장부 작업 번호 → 첨부 메시지(있으면) 아니면 주제 스레드"""
+        return self.files.get(task) or self.topics.get(task)
+
+    def for_hub(self, slug):
+        return self.topics.get(f"hub:{slug}")
 
 
 def pr_interval():
@@ -98,7 +143,7 @@ def snapshot_path():
 
 # ---------- 원료 ----------
 
-def collect_ledger(path):
+def collect_ledger(path, refs=None):
     """장부 → 항목. 접수·진행은 진행 중, 보류는 막힘. 완료는 빠져 목록에서 완료 처리 대상이 됨"""
     try:
         rows = ledger.read_rows(path)
@@ -112,11 +157,11 @@ def collect_ledger(path):
             bucket = BLOCK
         else:
             continue
-        out.append(item(f"ledger:{r['id']}", bucket, f"{r['id']} {r['request']}", "장부"))
+        out.append(item(f"ledger:{r['id']}", bucket, f"{r['id']} {r['request']}", "장부", ref=refs.for_task(r["id"]) if refs else None, since=received_epoch(r["received"])))
     return out
 
 
-def collect_hubs(status_dir, old_items=()):
+def collect_hubs(status_dir, old_items=(), refs=None):
     """허브 상태 파일 전부 → (항목, 알림, 읽기 실패 허브). 낡은 허브는 제목에 '낡음'.
     손상 파일은 그 허브의 이전 항목(old_items)을 그대로 두어 목록에서 완료 처리되지 않게 함"""
     out, notes, failed = [], [], []
@@ -142,10 +187,12 @@ def collect_hubs(status_dir, old_items=()):
         at = hub_status.parse_iso(data.get("updatedAt", ""))
         stale = at is None or (time.time() - at.timestamp()) > limit_s
         tag = f"[{STALE_TAG}] " if stale else ""
+        ref = refs.for_hub(slug) if refs else None
+        since = at.timestamp() if at else 0.0
         for task in data.get("tasks", []):
-            out.append(item(f"hub:{slug}:t:{short_hash(task)}", WAIT if needs_user(task) else DOING, f"{tag}{slug}: {task}", slug))
+            out.append(item(f"hub:{slug}:t:{short_hash(task)}", WAIT if needs_user(task) else DOING, f"{tag}{slug}: {task}", slug, ref=ref, since=since))
         for blocker in data.get("blockers", []):
-            out.append(item(f"hub:{slug}:b:{short_hash(blocker)}", WAIT if needs_user(blocker) else BLOCK, f"{tag}{slug}: {blocker}", slug))
+            out.append(item(f"hub:{slug}:b:{short_hash(blocker)}", WAIT if needs_user(blocker) else BLOCK, f"{tag}{slug}: {blocker}", slug, ref=ref, since=since))
     return out, notes, failed
 
 
@@ -245,10 +292,18 @@ def query_pending(now):
         raise SourceError(f"결정 대기 읽기 실패({e.code})")
 
 
-def card_link(p):
-    """결정 카드의 Slack 메시지 링크. 채널·ts 가 없으면 빈 문자열(링크 생략). 수집기는 토큰이 없어 chat.getPermalink 대신 같은 형식 주소를 만듦"""
+def ts_epoch(ts):
+    """Slack ts('초.마이크로초') → epoch. 아니면 0"""
+    try:
+        return float(ts)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def card_ref(p):
+    """결정 카드의 원본 메시지 위치. 채널·ts 가 없으면 None(digest 가 '링크 없음'과 경고를 냄)"""
     ch, ts = p.get("channel"), p.get("ts")
-    return f"{LINK_BASE}/{ch}/p{ts.replace('.', '')}" if isinstance(ch, str) and ch and isinstance(ts, str) and ts else ""
+    return {"kind": "card", "channel": ch, "ts": ts} if isinstance(ch, str) and ch and isinstance(ts, str) and ts else None
 
 
 def decision_items(pending):
@@ -256,7 +311,7 @@ def decision_items(pending):
     out = []
     for p in (pending or {}).get("items", []):
         ident = p.get("id") or short_hash(str(p.get("title", "")))
-        out.append(item(f"decision:{ident}", WAIT, f"결정 {p.get('title', '')}", "결정", card_link(p)))
+        out.append(item(f"decision:{ident}", WAIT, f"결정 {p.get('title', '')}", "결정", ref=card_ref(p), since=ts_epoch(p.get("ts"))))
     return out
 
 
@@ -298,6 +353,7 @@ def conf_from_env(read_panel=True):
     return {
         "ledger": env("LRM_LEDGER") or os.path.join(HUB_DIR, "feedback-ledger.tsv"),
         "status_dir": os.path.expanduser(env("LRM_HUB_STATUS_DIR") or os.path.join(HUB_DIR, "hub-status")),  # 작업 폴더 밑이 기본(시험이 격리됨)
+        "report_state": env("LRM_REPORT_STATE") or os.path.join(HUB_DIR, "report-sender.state.json"),
         "gh": gh_bin(),
         "repos": [r.strip() for r in (env("LRM_DIGEST_REPOS") or "").split(",") if r.strip()] or (default_repos() if read_panel else []),
     }
@@ -308,14 +364,15 @@ def build(conf, prev, now, pending=None, workers=None, use_pr=True, workspaces=N
     pending 이 없으면 결정 대기를 직접 조회함(결정 원료를 끄면 미해결 결정이 목록에서 완료 처리되므로 끄지 않음)"""
     old = prev.get("sources", {}) if isinstance(prev, dict) else {}
     hub_notes, hub_failed = [], []
+    refs = ReportRefs(conf.get("report_state", ""))
 
     def hubs():
         old_value = (old.get("hubs") or {}).get("value") or []
-        found, hub_notes[:], hub_failed[:] = collect_hubs(conf["status_dir"], old_value)
+        found, hub_notes[:], hub_failed[:] = collect_hubs(conf["status_dir"], old_value, refs)
         return found
 
     src = {
-        "ledger": run_source(lambda: collect_ledger(conf["ledger"]), old.get("ledger"), now),
+        "ledger": run_source(lambda: collect_ledger(conf["ledger"], refs), old.get("ledger"), now),
         "hubs": run_source(hubs, old.get("hubs"), now),
     }
     if hub_failed and src["hubs"]["ok"]:  # 일부 허브만 실패: 나머지는 새 값, 실패한 허브는 이전 항목 + 표시

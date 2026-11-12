@@ -5,6 +5,7 @@
 #   post.json   마지막 chat.postMessage / files.completeUploadExternal 본문(-d JSON)
 #   posts.log   위 두 호출의 본문 전체(한 줄씩, 순서 보존)
 #   fail.link   내용이 있으면 chat.getPermalink 가 실패 응답
+#   history.text 내용이 있으면 conversations.history 가 그 글을 가진 메시지 1건으로 응답(없으면 not_found)
 #   fail.api    내용이 있으면 chat.postMessage 가 {"ok":false,"error":"<파일 내용>"} 로 응답
 set -u
 LOG="${FAKE_CURL_LOG:?}"
@@ -34,6 +35,8 @@ case "$method" in
   chat.getPermalink)
     if [ -s "$LOG/fail.link" ]; then printf '{"ok":false,"error":"message_not_found"}'; exit 0; fi
     printf '{"ok":true,"permalink":"https://example.slack.com/archives/Dfake/p1700000000000100"}' ;;
+  conversations.history)
+    if [ -s "$LOG/history.text" ]; then jq -Rs '{ok:true,messages:[{text:.}]}' "$LOG/history.text"; else printf '{"ok":false,"error":"channel_not_found"}'; fi ;;
   files.getUploadURLExternal) printf '{"ok":true,"upload_url":"http://127.0.0.1:9/upload","file_id":"Ffake1"}' ;;
   upload) ;;
   files.completeUploadExternal)

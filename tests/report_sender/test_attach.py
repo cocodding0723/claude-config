@@ -82,7 +82,8 @@ class AttachTest(unittest.TestCase):
         for u in ups:
             self.assertEqual(u[u.index("--thread") + 1], TOPIC_TS)  # 본문과 같은 주제 스레드
         self.assertEqual(calls.index(ups[0]), 2)
-        self.assertIn("slack.com/archives", calls[-1][-1])  # 마지막은 진행 줄
+        self.assertIn("--quote", calls[-1])  # 마지막은 진행 줄(원본 링크는 알림 스크립트가 정식 주소로)
+        self.assertNotIn("slack.com/archives", " ".join(calls[-1]))
         done = self.state()["reports"][rep["id"]]["att_done"]
         self.assertEqual(set(done) - {self.png, self.html}, {self.html + "#preview:" + report_sender.content_hash(self.html)})  # 미리보기 키 = 원본 경로 + 내용 해시
         self.assertEqual(len(done), 3)
