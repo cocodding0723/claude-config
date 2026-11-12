@@ -80,6 +80,7 @@ hubs/hubs.tsv	.config/lrm-hubs/hubs.tsv	link
 hubs/scripts/slack_cmd.sh	.config/lrm-hubs/slack_cmd.sh	link
 hubs/scripts/slack_notify.sh	.config/lrm-hubs/slack_notify.sh	link
 hubs/scripts/slack_pending.sh	.config/lrm-hubs/slack_pending.sh	link
+hubs/scripts/slack_list_create.py	.config/lrm-hubs/slack_list_create.py	link
 hubs/scripts/slack_poll.sh	.config/lrm-hubs/slack_poll.sh	link
 hubs/scripts/slack_push.sh	.config/lrm-hubs/slack_push.sh	link
 hubs/scripts/slack_push.py	.config/lrm-hubs/slack_push.py	link
