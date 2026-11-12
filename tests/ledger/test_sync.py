@@ -291,10 +291,40 @@ class SyncTest(unittest.TestCase):
             ls.SlackApi(web).find_parent("D1")
         self.assertEqual(cm.exception.code, "parent_search_incomplete")
 
-        api = Stub()
+        self.assertEqual(web.conversations_history.call_args_list[0].kwargs["limit"], 100)
+        self.assertIn("oldest", web.conversations_history.call_args_list[0].kwargs)  # 범위 한정
+
+    def incomplete(self, api):
         api.find_parent = mock.Mock(side_effect=ls.ApiError("parent_search_incomplete"))
-        res = self.run_sync(api)
-        self.assertEqual((res["status"], res["error"], "post" in api.names()), ("failed", "parent_search_incomplete", False))
+        return api
+
+    def test_persisted_ts_skips_history_search(self):
+        api = Stub()
+        self.run_sync(api)
+        self.write(row("F1", "진행", "첫째", "분석 중") + row("F2", "접수", "둘째") + row("F3", "진행", "셋째") + row("F4", "접수", "넷째"))
+        api.calls.clear()
+        self.clock[0] += 60
+        self.run_sync(api)
+        self.assertNotIn("find", api.names())
+
+    def test_search_incomplete_backs_off_exponentially_then_creates_parent_and_persists_ts(self):
+        api = self.incomplete(Stub())
+        waits = []
+        for _ in range(ls.FIND_GIVEUP - 1):
+            res = self.run_sync(api)
+            self.assertEqual((res["status"], res["error"]), ("failed", "parent_search_incomplete"))
+            waits.append(res["wait"])
+            self.assertEqual(self.run_sync(api)["status"], "deferred")  # 대기 중엔 호출 0
+            self.clock[0] += res["wait"] + 1
+        self.assertEqual(waits, [min(ls.BACKOFF_BASE_S * 2 ** i, ls.BACKOFF_MAX_S) for i in range(ls.FIND_GIVEUP - 1)])
+        self.assertEqual(api.find_parent.call_count, ls.FIND_GIVEUP - 1)
+        res = self.run_sync(api)  # FIND_GIVEUP 번째 검색도 미완료 → 새 부모
+        self.assertEqual((res["status"], self.parents(api)), ("synced", 1))
+        self.assertEqual(api.find_parent.call_count, ls.FIND_GIVEUP)
+        self.run_sync(api)
+        self.assertEqual(api.find_parent.call_count, ls.FIND_GIVEUP)  # ts 영속 뒤엔 검색 없음
+        self.assertEqual(self.st()["ts"], "1700000000.000100")
+        self.assertNotIn("find_fails", self.st())
 
     def test_history_fully_scanned_without_parent_returns_empty(self):
         web = mock.Mock()
