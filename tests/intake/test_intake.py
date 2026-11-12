@@ -663,5 +663,40 @@ class DeliverTest(Base):
         self.assertEqual(intake.deliver(conf, NOW)["sent"], ["C0001"])
 
 
+class PushFilterTest(Base):
+    """slack_push 의 메인 전달: 허브 하달이 확인된(st=sent) 접수 줄만 거름. 실패·도착 불명·미처리는 메인 전달 유지"""
+
+    def setUp(self):
+        super().setUp()
+        sp = intake.sp
+        for name, val in (("INBOX", os.path.join(self.d, "inbox.jsonl")), ("INTAKE_ROUTES", self.conf.routes_log),
+                          ("INTAKE_SENT", os.path.join(self.d, "sent.json"))):
+            old = getattr(sp, name)
+            setattr(sp, name, val)
+            self.addCleanup(setattr, sp, name, old)
+
+    def case(self, st):
+        a, b = msg("ui: a", 1), msg("그냥 메모", 2)
+        self.put(a, b, {"type": "thread_reply", "ts": a["ts"], "parent_ts": a["ts"], "text": "답"})
+        with open(self.conf.routes_log, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"id": "C0001", "ts": a["ts"], "hub": "ui-layer", "text": "a"}) + "\n")
+        with open(intake.sp.INTAKE_SENT, "w", encoding="utf-8") as f:
+            json.dump({"C0001": {"st": st}}, f)
+        return [x is not None for x in intake.sp.read_inbox()]
+
+    def test_sent_line_skipped_others_kept(self):
+        self.assertEqual(self.case("sent"), [False, True, True])  # 같은 ts 의 스레드 답은 유지
+
+    def test_failed_notified_sending_kept(self):
+        for st in ("failed", "notified", "sending", "legacy"):
+            with self.subTest(st=st):
+                os.remove(self.conf.inbox) if os.path.exists(self.conf.inbox) else None
+                self.assertEqual(self.case(st), [True, True, True])
+
+    def test_unreadable_files_keep_everything(self):
+        self.put(msg("ui: a", 1))
+        self.assertEqual([x is not None for x in intake.sp.read_inbox()], [True])
+
+
 if __name__ == "__main__":
     unittest.main()
