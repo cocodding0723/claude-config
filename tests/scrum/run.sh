@@ -12,7 +12,9 @@ export LRM_SCRUM_NAME="시험이름" FAKE_NAME="시험이름" FAKE_DIR="$D" LRM_
 chmod +x "$HERE"/fake_*.sh
 post() { python3 "$S/scrum_post.py" "$@" > "$D/out" 2> "$D/err"; }
 sent() { [ -f "$D/sent.log" ] && grep -c '^===$' "$D/sent.log" || echo 0; }
-reset() { rm -f "$D"/sent.log "$D"/claude.log "$D"/claude.args "$D"/osa.log "$D"/send-* "$D"/plan-* "$D"/scrum.state.json "$D"/scrum.lock; rm -rf "${D:?}/draft"; }
+sent_has() { python3 -c 'import json,sys;sys.exit(0 if sys.argv[2] in json.load(open(sys.argv[1]))["sent"] else 1)' "$D/scrum.state.json" "$1"; }
+pending_has() { python3 -c 'import json,sys;sys.exit(0 if sys.argv[2] in json.load(open(sys.argv[1]))["pending"] else 1)' "$D/scrum.state.json" "$1"; }
+reset() { rm -f "$D"/sent.log "$D"/claude.log "$D"/claude.args "$D"/osa.log "$D"/send-* "$D"/slack-sent.jsonl "$D"/plan-* "$D"/scrum.state.json "$D"/scrum.lock; rm -rf "${D:?}/draft"; }
 WK=2026-11-12   # 목요일
 
 # ---- 날짜 잠금 ----
@@ -94,9 +96,24 @@ reset; post --date $WK; ! grep -q "수집 누락" "$D/sent.log" && ok "오류 �
 reset; echo hang > "$D/send-mode"; LRM_SCRUM_NOTIFY_TIMEOUT=1 post --date $WK; rc=$?
 [ $rc = 1 ] && ! grep -q "Traceback" "$D/err" && [ -s "$D/osa.log" ] && ls "$D"/draft/2026-11-12.md > /dev/null && grep -q "시간 초과" "$D/scrum.log" && ok "notify 시간 초과 → 예외 없이 로그·로컬 알림·초안 보존, 종료 코드 1" || ko "notify 시간 초과" "rc=$rc $(tail -3 "$D/err")"
 reset; LRM_NOTIFY="$D/없는-명령" post --date $WK; rc=$?
-[ $rc = 1 ] && ! grep -q "Traceback" "$D/err" && [ -s "$D/osa.log" ] && ls "$D"/draft/2026-11-12.md > /dev/null && [ ! -e "$D/scrum.state.json" ] && ok "notify 실행 불가(OSError) → 예외 없이 로컬 알림, 보냄 기록 없음" || ko "notify OSError" "rc=$rc $(tail -3 "$D/err")"
+[ $rc = 1 ] && ! grep -q "Traceback" "$D/err" && [ -s "$D/osa.log" ] && ls "$D"/draft/2026-11-12.md > /dev/null && ! python3 -c 'import json,sys;sys.exit(0 if json.load(open(sys.argv[1]))["sent"] else 1)' "$D/scrum.state.json" && ok "notify 실행 불가(OSError) → 예외 없이 로컬 알림, 보냄 기록 없음" || ko "notify OSError" "rc=$rc $(tail -3 "$D/err")"
 reset; echo hang > "$D/send-mode"; for m in claude-fable-5-1 claude-fable-5-2 claude-opus-5-5; do echo fail > "$D/plan-$m"; done; LRM_SCRUM_NOTIFY_TIMEOUT=1 post --date $WK; rc=$?
 [ $rc = 1 ] && ! grep -q "Traceback" "$D/err" && [ -s "$D/osa.log" ] && ok "warn 발송 중 시간 초과도 예외 없이 로컬 알림" || ko "warn 시간 초과" "rc=$rc"
+
+# ---- 발송 결과 불명 시 중복 게시 방지(리뷰 지적 3) ----
+reset; echo record-hang > "$D/send-mode"; LRM_SCRUM_NOTIFY_TIMEOUT=1 post --date $WK; rc=$?
+[ $rc = 0 ] && [ "$(cat "$D/send-calls")" = 1 ] && sent_has 2026-11-12 && ! pending_has 2026-11-12 && grep -q "F_FAKE_1" "$D/scrum.state.json" && ok "올라간 뒤 응답만 못 받음(시간 초과) → 발송 기록 확인으로 보냄 확정, 재게시 없음, file_id 저장" || ko "올라간 뒤 시간 초과" "rc=$rc calls=$(cat "$D/send-calls")"
+reset; echo record-silent1 > "$D/send-mode"; post --date $WK; rc=$?
+[ $rc = 0 ] && [ "$(cat "$D/send-calls")" = 1 ] && sent_has 2026-11-12 && ok "올라간 뒤 종료 코드 1(원인 불명) → 재시도 없이 기록 확인으로 확정" || ko "올라간 뒤 코드 1" "rc=$rc calls=$(cat "$D/send-calls")"
+reset; echo silent1 > "$D/send-mode"; post --date $WK; rc=$?
+[ $rc = 1 ] && [ "$(cat "$D/send-calls")" = 1 ] && ! sent_has 2026-11-12 && pending_has 2026-11-12 && [ -s "$D/osa.log" ] && grep -q "결과 불명" "$D/scrum.log" && ok "결과 불명(기록 없음) → 재시도 안 함, 전송 의도 남김, 로컬 알림" || ko "결과 불명" "rc=$rc calls=$(cat "$D/send-calls")"
+rm -f "$D/send-mode"; post --date $WK; rc=$?
+[ $rc = 1 ] && [ "$(cat "$D/send-calls")" = 1 ] && grep -q "결과 불명" "$D/scrum.log" && ok "결과 불명인 날의 재실행은 자동 재전송 안 함(중복 방지)" || ko "불명 재실행" "rc=$rc calls=$(cat "$D/send-calls")"
+printf '{"at":%s,"kind":"file","path":"%s","file_id":"F_LATE"}\n' "$(date +%s)" "$(python3 -c 'import os,sys;print(os.path.normpath(sys.argv[1]))' "$D/draft/2026-11-12.md")" >> "$D/slack-sent.jsonl"; post --date $WK; rc=$?
+[ $rc = 0 ] && sent_has 2026-11-12 && [ "$(cat "$D/send-calls")" = 1 ] && grep -q F_LATE "$D/scrum.state.json" && ok "뒤늦게 발송 기록이 확인되면 재전송 없이 보냄으로 확정" || ko "뒤늦은 확정" "rc=$rc"
+reset; echo silent1 > "$D/send-mode"; post --date $WK; rm -f "$D/send-mode"; post --date $WK --force; [ "$(cat "$D/send-calls")" = 2 ] && sent_has 2026-11-12 && ok "--force 는 결과 불명 날도 다시 보냄" || ko "--force 재전송" "$(cat "$D/send-calls")"
+reset; echo 1 > "$D/send-fails"; post --date $WK; [ "$(cat "$D/send-calls")" = 2 ] && sent_has 2026-11-12 && ok "Slack 거절(오류 코드)은 미게시가 확실하므로 재시도" || ko "거절 재시도" "$(cat "$D/send-calls")"
+reset; echo 5 > "$D/send-fails"; post --date $WK; ! pending_has 2026-11-12 && ! sent_has 2026-11-12 && ok "끝내 거절되면 전송 의도 기록을 지움(다음 실행이 재시도)" || ko "거절 뒤 의도"
 
 # ---- Slack 으로 나가는 문자열 정제(리뷰 지적 4) ----
 reset; echo secret > "$D/plan-claude-fable-5-1"; post --date $WK; rc=$?
@@ -119,7 +136,7 @@ rm -f "$D/plan-claude-fable-5-1"; post --date $WK; [ "$(sent)" = 2 ] && grep -q 
 reset; echo 2 > "$D/send-fails"; post --date $WK; rc=$?
 [ $rc = 0 ] && [ "$(cat "$D/send-calls")" = 3 ] && ok "Slack API 실패(코드 1)는 2회 재시도 뒤 성공" || ko "재시도" "rc=$rc calls=$(cat "$D/send-calls")"
 reset; echo 5 > "$D/send-fails"; post --date $WK; rc=$?
-[ $rc = 1 ] && [ "$(cat "$D/send-calls")" = 3 ] && [ -s "$D/osa.log" ] && ls "$D"/draft/2026-11-12.md > /dev/null && [ ! -e "$D/scrum.state.json" ] && python3 -c 'import fcntl,os,sys; fd=os.open(sys.argv[1],os.O_RDWR); fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)' "$D/scrum.lock" && ok "끝내 실패 → 초안 파일 남김·로컬 알림·잠금 풀림" || ko "발송 실패" "rc=$rc"
+[ $rc = 1 ] && [ "$(cat "$D/send-calls")" = 3 ] && [ -s "$D/osa.log" ] && ls "$D"/draft/2026-11-12.md > /dev/null && ! sent_has 2026-11-12 && python3 -c 'import fcntl,os,sys; fd=os.open(sys.argv[1],os.O_RDWR); fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)' "$D/scrum.lock" && ok "끝내 실패 → 초안 파일 남김·로컬 알림·잠금 풀림" || ko "발송 실패" "rc=$rc"
 reset; post --date $WK --dry-run; rc=$?
 [ $rc = 0 ] && [ "$(sent)" = 0 ] && [ ! -e "$D/scrum.state.json" ] && grep -q "^# $LRM_SCRUM_NAME\$" "$D/out" && [ -s "$D/draft/2026-11-12.dry.md" ] && ok "--dry-run: 발송·상태 기록 없이 초안만 출력·저장" || ko "dry-run" "rc=$rc"
 reset; post --date $WK; post --date $WK --dry-run; [ "$(sent)" = 1 ] && grep -q "^# $LRM_SCRUM_NAME\$" "$D/out" && ok "--dry-run 은 이미 보낸 날에도 초안 생성" || ko "dry-run 재생성"

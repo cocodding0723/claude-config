@@ -83,6 +83,8 @@ NO_ATLASSIAN = "@@atlassian-unavailable@@"  # 초안 작성 claude 가 Jira·Con
 NOTIFY_TIMEOUT = int(os.environ.get("LRM_SCRUM_NOTIFY_TIMEOUT", "120"))
 NOTIFY_RC_TIMEOUT = -1  # notify 가 시간 초과: 서버 반영 여부 모름
 NOTIFY_RC_OS = -2  # notify 실행 자체 실패: 보내지 않았음
+NOTIFY_RC_UNKNOWN = -3  # 응답이 Slack 오류 코드가 아니고 발송 기록도 없음: 올라갔는지 모름
+SENT_LOG = DIR / "slack-sent.jsonl"  # slack_notify.sh 가 Slack API ok 응답 뒤에만 적는 기록(file_id 포함)
 NOTIFY_EXIT_API = 1  # slack_notify.sh: 1 API 실패, 2 설정·양식 오류
 # ───────────────────────────────────────────────────────────────────────────────────────────
 
@@ -105,6 +107,7 @@ def load_state():
         s = {}
     s.setdefault("sent", {})
     s.setdefault("warned", {})
+    s.setdefault("pending", {})  # 전송 의도 기록: 날짜 → {at, path}. 결과 확인 전까지 남김
     return s
 
 
@@ -258,8 +261,18 @@ def topics(draft):
     return out
 
 
-def notify(args, retry=True):
-    """slack_notify.sh 호출. API 실패(1)만 대기 후 재시도. (종료 코드, 출력)"""
+def delivered(intent):
+    """전송 의도 이후 같은 첨부 파일의 발송 기록(slack-sent.jsonl)이 있으면 그 기록, 없으면 None"""
+    for r in collect.jsonl(SENT_LOG):
+        if r.get("kind") == "file" and r.get("path") == intent["path"] and collect.num(r.get("at")) >= intent["at"] and r.get("file_id"):
+            return r
+    return None
+
+
+def notify(args, retry=True, confirm=None):
+    """slack_notify.sh 호출. (종료 코드, 출력)
+    재시도는 Slack 이 오류 코드로 거절한 경우(미게시 확실)만. 시간 초과·원인 불명의 종료 코드 1 은 올라갔을 수 있으므로
+    confirm() 으로 발송 기록을 확인하고, 확인 못 하면 재시도 없이 NOTIFY_RC_UNKNOWN 반환(중복 게시 방지)"""
     waits = [0] + (RETRY_WAITS if retry else [])
     rc, text = 0, ""
     for i, w in enumerate(waits):
@@ -267,14 +280,20 @@ def notify(args, retry=True):
         try:
             out = subprocess.run([NOTIFY, *args], capture_output=True, text=True, timeout=NOTIFY_TIMEOUT)
         except subprocess.TimeoutExpired:
-            return NOTIFY_RC_TIMEOUT, "notify %d초 시간 초과" % NOTIFY_TIMEOUT
+            rc, text = NOTIFY_RC_TIMEOUT, "notify %d초 시간 초과" % NOTIFY_TIMEOUT
         except OSError as e:
             return NOTIFY_RC_OS, "notify 실행 불가(%s)" % e
-        rc, text = out.returncode, (out.stdout + out.stderr).strip()
+        else:
+            rc, text = out.returncode, (out.stdout + out.stderr).strip()
+        refused = rc == NOTIFY_EXIT_API and re.fullmatch(r"[a-z][a-z0-9_]*", text.splitlines()[-1] if text else "")
+        if rc == NOTIFY_RC_TIMEOUT or (rc == NOTIFY_EXIT_API and not refused):
+            if confirm and confirm():
+                return 0, "발송 기록 확인"
+            return NOTIFY_RC_UNKNOWN, text
         if rc != NOTIFY_EXIT_API:
             break
         if i + 1 < len(waits):
-            log("Slack API 실패 — %d초 뒤 재시도" % waits[i + 1])
+            log("Slack 이 거절(%s) — %d초 뒤 재시도" % (text, waits[i + 1]))
     return rc, text
 
 
@@ -342,10 +361,31 @@ def main():
         if not a.force and not a.dry_run and date.isoformat() in state["sent"]:
             log("%s 초안은 이미 보냄 — 건너뜀" % date)
             return 0
+        pend = state["pending"].get(date.isoformat())
+        if pend and not a.force and not a.dry_run:
+            return resolve_pending(date, state, pend)
         return run(a, date, state)
     finally:
         if fd is not None:
             release_lock(fd)
+
+
+def mark_sent(state, date, model, rec):
+    state["sent"][date.isoformat()] = {"at": int(time.time()), "model": model, "file_id": (rec or {}).get("file_id", "")}
+    state["pending"].pop(date.isoformat(), None)
+    save_state(state)
+
+
+def resolve_pending(date, state, pend):
+    """이전 실행이 결과 불명으로 끝난 날. 발송 기록이 있으면 보낸 것으로 확정, 없으면 중복 방지로 자동 재전송 안 함"""
+    rec = delivered(pend)
+    if rec:
+        mark_sent(state, date, pend.get("model", ""), rec)
+        log("%s 이전 전송이 실제로 올라가 있었음 — 보냄으로 확정(file_id %s)" % (date, rec.get("file_id")))
+        return 0
+    log("%s 이전 전송 결과 불명 — 중복 방지로 건너뜀. Slack DM 에서 초안 첨부를 확인하고, 없으면 scrum_run.sh --force" % date)
+    local_alert("스크럼 초안 전송 결과 불명 — Slack 확인 필요")
+    return 1
 
 
 def run(a, date, state):
@@ -391,13 +431,20 @@ def run(a, date, state):
         print(draft, end="")
         log("dry-run 완료 — 모델 %s, 초안 %s%s" % (model, path, " (Jira·Confluence 못 읽음)" if no_atl else ""))
         return 0
-    rc, text = notify(["--kind", "doc", "--tag", SLACK_TAG, summary_message(date, since, draft, model, missed, no_atl, lost), str(path)])
-    if rc != 0:
-        log("Slack 발송 실패 rc=%d %s — 초안 파일 %s 남김" % (rc, redact(text[:160]), path))
-        local_alert("Slack 발송 실패. 초안: %s" % path)
-        return 1
-    state["sent"][date.isoformat()] = {"at": int(time.time()), "model": model}
+    intent = {"at": int(time.time()), "path": str(path), "model": model}
+    state["pending"][date.isoformat()] = intent  # 전송 전에 의도를 남겨 중간에 죽어도 재실행이 중복 게시하지 않게 함
     save_state(state)
+    rc, text = notify(["--kind", "doc", "--tag", SLACK_TAG, summary_message(date, since, draft, model, missed, no_atl, lost), str(path)],
+                      confirm=lambda: delivered(intent))
+    if rc != 0:
+        unknown = rc in (NOTIFY_RC_TIMEOUT, NOTIFY_RC_UNKNOWN)
+        if not unknown:
+            state["pending"].pop(date.isoformat(), None)
+            save_state(state)
+        log("Slack 발송 %s rc=%d %s — 초안 파일 %s 남김" % ("결과 불명" if unknown else "실패", rc, redact(text[:160]), path))
+        local_alert("Slack 전송 결과 불명 — DM 확인. 초안: %s" % path if unknown else "Slack 발송 실패. 초안: %s" % path)
+        return 1
+    mark_sent(state, date, model, delivered(intent))
     log("발송 완료 — 모델 %s, 초안 %s" % (model, path))
     return 0
 
