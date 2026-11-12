@@ -88,7 +88,7 @@ bash install.sh                      # ~/.config/lrm-hubs/ws_gc.sh, ~/Library/La
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.lrm.wsgc.plist   # 처음 한 번(이미 올렸다면 install.sh --reload-launchd)
 ```
 
-plist 는 `--dry-run --quiet` 로 등록돼 있다. 로그는 `~/orca/archive/ws_gc.log`, launchd 가 잡은 오류 출력은 `~/orca/archive/ws_gc.launchd.log` 에 쌓인다.
+plist 는 30분마다 `--apply --quiet` 로 돈다(10절. 설치·load 는 병합 뒤 메인이 한다). 로그는 `~/orca/archive/ws_gc.log`, launchd 가 잡은 오류 출력은 `~/orca/archive/ws_gc.launchd.log` 에 쌓인다.
 
 ## 5. 쓰는 법
 
@@ -111,6 +111,8 @@ bash ~/.config/lrm-hubs/ws_gc.sh --dry-run --only LRM-284
 
 ## 6. 실삭제 전환(첫 1주 시험 뒤, 사용자 승인 필요)
 
+> 2026-11-12 이후 plist 는 처음부터 `--apply` 다(10절). 아래는 시험 모드로 되돌렸다가 다시 올릴 때의 절차로 읽는다.
+
 1. 1주 동안 `ws_gc.log` 의 `CANDIDATE` 를 훑어 지우면 안 되는 곳이 없는지 본다. 있으면 그 이유를 규칙으로 고친 뒤 다시 1주.
 2. 메인이 사용자 승인을 받는다.
 3. 저장소의 `hubs/launchd/ai.lrm.wsgc.plist` 에서 `<string>--dry-run</string>` 을 `<string>--apply</string>` 로 바꾸고 커밋한다.
@@ -128,7 +130,7 @@ bash ~/.config/lrm-hubs/ws_gc.sh --dry-run --only LRM-284
 ## 8. 알려진 한계
 
 - `git fetch` 를 하지 않는다. origin 정보가 낡았으면 "origin 에 있음"을 놓쳐 안전한 쪽(건너뜀)으로 판정한다. PR 상태는 gh 로 실시간 조회한다.
-- 기존 role-config 의 허브 자동 정리 규칙(보관 위치 `~/Documents/90_정리기록/…`, rsync)과 보관 위치가 다르다. 이 정리기는 `~/orca/archive` 만 쓴다. 허브가 손으로 정리하는 경로는 그대로 두었다.
+- 기존 role-config 의 허브 자동 정리 규칙(보관 위치 `~/Documents/90_정리기록/workspace-archive/YYYYMMDD/…`, rsync)과 보관 위치가 다르다. 10절의 결과물 보관도 `~/orca/archive` 를 쓴다. 이 정리기는 `~/orca/archive` 만 쓴다. 허브가 손으로 정리하는 경로는 그대로 두었다.
 - 서브모듈 안의 미push 판정은 "어느 원격 브랜치에도 없는 로컬 브랜치 커밋"만 센다. 서브모듈의 stash 는 보지 않는다.
 - 보관 대상은 정규식(`CFG_ARCHIVE_RE`)에 걸린 gitignore 결과물뿐이다. 다른 위치의 중요한 산출물은 보관되지 않는다. 새 종류가 생기면 정규식에 더한다.
 - Mac 이 잠든 시각의 회차는 깨어난 뒤 한 번만 실행된다.
@@ -139,6 +141,40 @@ bash ~/.config/lrm-hubs/ws_gc.sh --dry-run --only LRM-284
 bash tests/ws_gc/run.sh      # 임시 저장소·가짜 orca·gh·Slack 전송으로 조건별 시험, 실제 워크스페이스는 건드리지 않음
 bash tests/ws_gc/mutate.sh   # 결함을 심은 사본에서 시험이 실패하는지 확인
 ```
+
+## 10. 수명 관리(2026-11-12)
+
+허브 하위 작업 공간이 약 295곳까지 불어난 것이 계기다. 시험 점검 한 번의 보존 291곳 중 미커밋이 97곳이었고, 대부분 결과물 파일이었다.
+
+### 결과물만 남은 곳도 정리
+
+미커밋이 전부 "추적 안 되는 결과물"이면 후보가 된다. 보관 대조 뒤 허브 색인에 한 줄을 남기고 지운다.
+
+| 구분 | 기준 | 처리 |
+|---|---|---|
+| 결과물 | 미추적 `md html png jpg jpeg gif mp4 txt json log xml`, `TestResults/` (`CFG_OUTPUT_RE`) | 보관 → 색인 → 삭제 |
+| 코드·추적 수정 | 추적 파일 수정, 미추적 `.cs .py .sh .ts .js .uxml .uss .prefab .unity .asset` 등(`CFG_CODE_RE`) | 보존(`dirty`). `KEEP_CODE` 로그와 `--json` 의 `keep_code` 에 파일 목록 |
+| 소스 폴더 | `Assets/`·`Packages/`·`ProjectSettings/` 아래 미추적(`TestResults/` 제외) | 새 에셋일 수 있어 확장자와 무관하게 보존 |
+| 그 밖의 확장자 | 위 둘에 없는 미추적 | 보존(모르는 파일은 지우지 않음) |
+
+- 보관: gitignore 결과물에 더해 미추적 결과물을 `~/orca/archive/<저장소>/<폴더>/` 로 복제하고 파일마다 존재·내용을 대조한다. 하나라도 다르면 `archive_fail` 로 지우지 않는다.
+- 색인: `~/.config/lrm-hubs/hub-inbox/<허브 slug>.tsv` 에 `시각 · 작업 공간 · 보관 경로 · 파일 수` 를 탭으로 한 줄 추가한다(`WS_GC_INBOX`). 허브 slug 는 부모 폴더 `coord-<slug>-hub` 에서 뗀다. 부모가 없으면 `_none.tsv`. 보관한 파일이 있을 때만 쓰고, 삭제가 성공한 뒤에 쓴다.
+- 서브모듈·LICENSE 줄바꿈 규칙은 그대로다.
+
+### 반납 = 삭제: `release_ws.sh`
+
+```bash
+bash ~/.config/lrm-hubs/release_ws.sh --dispatch <id> [--dry-run] [--json]
+```
+
+`worker-release` 로 터미널을 닫은 뒤 `ws_gc.sh --path <그 작업 공간> --days 0 --apply` 로 같은 판정을 한 번 돌린다(판정 복사 없음). 종료 코드: 0 삭제, 1 삭제 실패, 2 인자 오류, 3 환경 오류, 4 남김(코드 변경·열린 PR·미병합 등, 이유 출력), 5 거부(허브 폴더·다른 워커나 터미널이 쓰는 곳·하위 보유). `--dry-run` 은 release 없이 판정만 하며 이 워커 터미널은 쉬는 중으로 친다.
+
+### 30분 주기와 허브당 10개 상한
+
+- plist: `StartInterval 1800`, `--apply --quiet`. Slack 은 삭제가 있거나 지난번과 다른 실패가 있을 때만 보낸다(같은 실패는 `.ws_gc.lastfail` 로 대조해 반복하지 않는다).
+- `create_worker_ws.sh`: 만들기 전에 부모 허브의 하위 수를 센다. 상한(`LRM_HUB_MAX_CHILDREN`, 기본 10) 이상이면 `ws_gc.sh --parent <허브> --apply` 를 1회 돌리고, 그래도 상한 이상이면 stderr 경고와 `hub_report.py add --kind block` 기록을 남긴다. 생성은 막지 않는다.
+
+시험: `bash tests/ws_gc/run.sh`, `bash tests/release_ws/run.sh`, `bash tests/create_worker_ws/run.sh`.
 
 ## 참고
 

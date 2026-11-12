@@ -9,6 +9,25 @@ while [ $# -gt 0 ]; do case "$1" in
   --branch) BRANCH="$2"; shift 2;; --base) BASE="$2"; shift 2;; --full) FULL=1; shift;;
   *) echo "알 수 없는 인자: $1" >&2; exit 2;; esac; done
 : "${HUB:?--hub 필요}" "${NAME:?--name 필요}"
+# 허브당 하위 작업 공간 상한(설정은 이 블록 한 곳). 넘으면 그 허브 하위만 ws_gc 로 1회 정리하고, 그래도 넘으면 경고·기록(생성은 계속)
+CFG_HUB_MAX="${LRM_HUB_MAX_CHILDREN:-10}"
+CFG_WS_GC="${LRM_WS_GC:-$HOME/.config/lrm-hubs/ws_gc.sh}"
+CFG_HUB_REPORT="${LRM_HUB_REPORT:-$HOME/.config/lrm-hubs/hub_report.py}"
+count_kids() { # 허브 경로 → 등록된 하위 수. 조회 실패 시 빈 값
+  orca worktree list --limit 1000 --json 2>/dev/null | jq -r --arg h "$1" \
+    '[.result.worktrees[].id] as $ids | [.result.worktrees[] | select(.path == $h) | (.childWorktreeIds // []) | map(select(. as $c | $ids | index($c))) | length][0] // empty' 2>/dev/null || true
+}
+kids=$(count_kids "$HUB")
+if [ -n "$kids" ] && [ "$kids" -ge "$CFG_HUB_MAX" ]; then
+  echo "하위 작업 공간 ${kids}개(상한 ${CFG_HUB_MAX}) — 이 허브 하위만 정리 1회 실행" >&2
+  bash "$CFG_WS_GC" --parent "$HUB" --apply --quiet --no-slack >/dev/null 2>&1 || echo "⚠️ 정리기 실행 실패 — ~/orca/archive/ws_gc.log 확인" >&2
+  kids=$(count_kids "$HUB")
+  if [ -n "$kids" ] && [ "$kids" -ge "$CFG_HUB_MAX" ]; then
+    echo "⚠️ 정리 뒤에도 하위 작업 공간 ${kids}개(상한 ${CFG_HUB_MAX}) — 남길 것만으로 초과. 끝난 워커는 release_ws.sh 로 반납할 것" >&2
+    hub_slug="$(basename "$HUB")"; hub_slug="${hub_slug#coord-}"; hub_slug="${hub_slug%-hub}"
+    python3 "$CFG_HUB_REPORT" add --hub "$hub_slug" --task 없음 --kind block --text "하위 작업 공간 ${kids}개, 남길 것만으로 ${CFG_HUB_MAX}개 초과" >/dev/null 2>&1 || echo "⚠️ 허브 보고 기록 실패(생성은 계속)" >&2
+  fi
+fi
 DIR_NAME="$(printf '%s' "${BRANCH:-$NAME}" | tr '/ []' '----' | tr -s '-' | sed 's/^-//;s/-$//')"
 P="$WS_ROOT/$DIR_NAME"
 git -C "$REPO" fetch -q origin 2>/dev/null || git -C "$REPO" -c credential.helper= -c credential.helper="!gh auth git-credential" fetch -q https://github.com/Basakansoft/LoveRevolutionMaker.git "+refs/heads/*:refs/remotes/origin/*" || echo "⚠️ fetch 실패 — 로컬 origin/* 기준으로 계속" >&2
