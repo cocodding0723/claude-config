@@ -290,5 +290,67 @@ class SenderTest(unittest.TestCase):
         self.assertNotIn(bad, open(self.conf.log, encoding="utf-8").read() if os.path.exists(self.conf.log) else "")
 
 
+    # --- Codex 재확인 회귀(1·2·3·4) ---
+    def test_record_without_files_key_does_not_stop_later_reports(self):
+        with open(self.conf.outbox, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"id": "nf", "at": 1, "hub": "ui", "task": "C1", "kind": "done", "text": "x"}) + "\n")
+        good = self.report(text="뒤 보고")
+        res = report_sender.run(self.conf)
+        self.assertEqual((res["sent"], res["bad"]), (1, 1))
+        self.assertTrue(self.state()["reports"][good["id"]]["sent"])
+
+    def test_emptied_or_malformed_state_halts_instead_of_reposting(self):
+        self.report()
+        report_sender.run(self.conf)
+        n = len(self.calls())
+        good = open(self.conf.state, encoding="utf-8").read()
+        rid = next(iter(json.loads(good)["reports"]))
+        for i, bad in enumerate(("{}", json.dumps({"topics": {}, "reports": {rid: None}, "warned": {}}),
+                                 json.dumps({"topics": {"C0012": "x"}, "reports": {}, "warned": {}}),
+                                 json.dumps({"topics": {}, "reports": {rid: {"sent": "yes"}}, "warned": {}}),
+                                 json.dumps({"topics": {}, "reports": [], "warned": {}}))):
+            with open(self.conf.state, "w", encoding="utf-8") as f:
+                f.write(bad)
+            res = report_sender.run(self.conf)
+            self.assertEqual(res["status"], "halted", bad)
+            self.assertFalse(any("progress" in c and "--thread" not in c for c in self.calls()[n + i:]), bad)  # 주제·본문 재게시 없음
+        self.assertEqual(len([c for c in self.calls() if "허브 보고 전송 중단" in c[-1]]), len(self.calls()) - n)  # 경고만 늘어남
+
+    def test_halt_warning_respects_round_deadline(self):
+        import time
+        self.report()
+        with open(self.conf.state, "w") as f:
+            f.write("{broken")
+        self.set_fake("sleep", 0.75)
+        self.conf.budget_s = 0.15
+        t0 = time.monotonic()
+        res = report_sender.run(self.conf)
+        self.assertEqual(res["status"], "halted")
+        self.assertLess(time.monotonic() - t0, 0.5)
+        self.assertFalse(os.path.exists(self.conf.state + ".warned"))  # 경고가 못 나갔으니 다음 회차에 재시도
+
+    def test_sender_repairs_missing_trailing_newline_of_whole_record(self):
+        rep = self.report()
+        with open(self.conf.outbox, encoding="utf-8") as f:
+            line = f.read().rstrip("\n")
+        with open(self.conf.outbox, "w", encoding="utf-8") as f:
+            f.write(line)  # 정상 JSON 인데 끝 개행만 없음
+        res = report_sender.run(self.conf)
+        self.assertEqual(res["sent"], 1)
+        self.assertTrue(self.state()["reports"][rep["id"]]["sent"])
+        with open(self.conf.outbox, encoding="utf-8") as f:
+            self.assertTrue(f.read().endswith("\n"))
+
+    def test_sender_quarantines_truncated_tail_and_continues(self):
+        good = self.report()
+        with open(self.conf.outbox, "a", encoding="utf-8") as f:
+            f.write('{"id":"cut')
+        res = report_sender.run(self.conf)
+        self.assertEqual(res["sent"], 1)
+        with open(self.conf.outbox + ".corrupt", encoding="utf-8") as f:
+            self.assertEqual(f.read(), '{"id":"cut\n')
+        self.assertTrue(self.state()["reports"][good["id"]]["sent"])
+
+
 if __name__ == "__main__":
     unittest.main()

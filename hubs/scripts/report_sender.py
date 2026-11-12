@@ -95,6 +95,7 @@ class StateCorrupt(Exception):
 
 
 STATE_KEYS = ("topics", "reports", "warned", "bad")
+REQUIRED_KEYS = STATE_KEYS[:3]  # bad 는 뒤에 생긴 키라 옛 상태 파일에는 없을 수 있음
 
 
 def load_state(path: str) -> dict:
@@ -108,8 +109,13 @@ def load_state(path: str) -> dict:
         raise StateCorrupt(f"읽기 실패({err.strerror})")
     except ValueError:
         raise StateCorrupt("JSON 손상")
-    if not isinstance(st, dict) or any(k in st and not isinstance(st[k], dict) for k in STATE_KEYS):
-        raise StateCorrupt("최상위·항목 모양 오류")
+    if not isinstance(st, dict) or any(not isinstance(st.get(k), dict) for k in REQUIRED_KEYS) or not isinstance(st.get("bad", {}), dict):
+        raise StateCorrupt("필수 항목(topics·reports·warned) 없음 또는 모양 오류")  # {} 로 비워진 파일을 새 상태로 보면 보고를 다시 올림
+    if (any(not isinstance(v, dict) or not isinstance(v.get("ts"), str) for v in st["topics"].values())
+            or any(not isinstance(v, dict) or not isinstance(v.get("sent", 0), (int, float)) or not isinstance(v.get("fails", 0), int)
+                   or any(k in v and not isinstance(v[k], str) for k in ("body_ts", "line_ts", "error")) for v in st["reports"].values())
+            or any(not isinstance(v, (int, float)) for v in st["warned"].values())):
+        raise StateCorrupt("항목 내용 모양 오류")
     return {k: st.get(k, {}) for k in STATE_KEYS}
 
 
@@ -288,16 +294,17 @@ def log(conf: Conf, line: str) -> None:
 def run(conf: Conf, dry: bool = False) -> dict:
     """한 회차. {'status': idle|done|partial|busy, 'sent': n, 'failed': n, 'pending': n, 'lines': [처리 로그]}"""
     out = {"status": "idle", "sent": 0, "failed": 0, "pending": 0, "lines": []}
+    deadline = time.monotonic() + conf.budget_s  # 회차 공통 시간 예산. 경고·주제·본문·진행 줄 전송이 모두 이 안에서 끝남
     if dry:
-        return _round(conf, out, True)
+        return _round(conf, out, True, deadline)
     with exclusive(conf.state) as got:
         if not got:
             out["status"] = "busy"
             return out
-        return _round(conf, out, False)
+        return _round(conf, out, False, deadline)
 
 
-def halt(conf: Conf, err: StateCorrupt, out: dict, dry: bool) -> dict:
+def halt(conf: Conf, err: StateCorrupt, out: dict, dry: bool, deadline: float) -> dict:
     """상태 파일을 못 읽음. 전송을 멈추고 복구 안내를 돌려줌. 메인 경고는 같은 손상 상태에 1번만"""
     out.update(status="halted", error=f"상태 파일 {err} — {conf.state}",
                guide="내용을 확인해 고치거나, 이미 올라간 보고가 다시 올라가도 괜찮으면 파일을 지운 뒤 다시 실행")
@@ -307,7 +314,7 @@ def halt(conf: Conf, err: StateCorrupt, out: dict, dry: bool) -> dict:
         return out
     msg = f"허브 보고 전송 중단\n\n• 원인: 상태 파일 {err}\n• 결과: 보고 전송 멈춤(같은 보고 재게시 방지)\n• 조치: {out['guide']}"
     try:
-        run_notify(conf, ["--kind", "warn", msg], time.monotonic() + NOTIFY_TIMEOUT_S)
+        run_notify(conf, ["--kind", "warn", msg], deadline)  # 회차 공통 deadline 을 지킴
         with open(marker, "w", encoding="utf-8") as f:
             f.write(sig)
     except (NotifyError, OSError):
@@ -338,7 +345,20 @@ def quarantine(conf: Conf, bad: list, st: dict, dry: bool) -> int:
     return len(bad)
 
 
-def _round(conf: Conf, out: dict, dry: bool) -> dict:
+def repair_outbox(conf: Conf) -> None:
+    """읽기 전에 잠금 아래에서 끝줄 개행 복구(정상 JSON 끝 개행 누락·잘린 줄 격리). 복구 실패는 읽기를 막지 않음(개행 없는 끝줄은 읽지 않음)"""
+    if not os.path.exists(conf.outbox):
+        return
+    try:
+        with hub_report.locked(conf.outbox):
+            hub_report.repair_tail(conf.outbox)
+    except hub_report.ReportError as err:
+        log(conf, f"outbox 끝줄 복구 실패: {err}")
+
+
+def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
+    if not dry:
+        repair_outbox(conf)
     bad = []
     reports = hub_report.read_outbox(conf.outbox, bad)
     allowed = hub_report.allowed_channels(conf.sync_state)
@@ -348,7 +368,7 @@ def _round(conf: Conf, out: dict, dry: bool) -> dict:
     try:
         st = load_state(conf.state)
     except StateCorrupt as err:
-        return halt(conf, err, out, dry)
+        return halt(conf, err, out, dry, deadline)
     out["bad"] = quarantine(conf, bad, st, dry)
     todo = [r for r in reports if not st["reports"].get(r["id"], {}).get("sent")]
     out["pending"] = len(todo)
@@ -358,7 +378,6 @@ def _round(conf: Conf, out: dict, dry: bool) -> dict:
         out["status"] = "dry-run"
         out["lines"] = [f"전송 예정 {r['id']} {r['hub']} {r['kind']} → {'결정 카드' if r['kind'] == 'decide' else '주제 ' + topic_key(r)}" for r in todo]
         return out
-    deadline = time.monotonic() + conf.budget_s
     blocked = set()  # 앞 보고가 실패한 주제는 순서가 바뀌지 않게 이번 회차에 건너뜀
     tried = 0
     for rep in todo:
