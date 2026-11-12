@@ -87,7 +87,7 @@ dirs_before=$(cd "$ROOT" && find . -mindepth 2 -maxdepth 2 -type d | sort)
 
 gc() { # 인자를 ws_gc.sh 에 전달. 결과: RC, $SB/out
   : > "$FAKE/orca.calls"; : > "$FAKE/notify.calls"
-  env PATH="$BIN:$PATH" FAKE_DIR="$FAKE" FAKE_ROOT="$ROOT" FAKE_RM_REFUSE="sub_clean" FAKE_GH_FAIL="feat/ghf" WS_GC_NOTIFY="$HERE/fake_send.sh" \
+  env PATH="$BIN:$PATH" FAKE_DIR="$FAKE" FAKE_ROOT="$ROOT" FAKE_RM_REFUSE="sub_clean sub_noise" FAKE_GH_FAIL="feat/ghf" WS_GC_NOTIFY="$HERE/fake_send.sh" \
     bash "$GC" --root "$ROOT" --archive-dir "$ARC" --log "$ARC/ws_gc.log" "$@" > "$SB/out" 2>&1
   RC=$?
 }
@@ -156,6 +156,64 @@ mk arcfail feat/arcfail; pr feat/arcfail '[{"number":40,"state":"MERGED"}]'; mkd
 jq -R -s '{ok:true,result:{worktrees:(split("\n")|map(select(length>0)|split("\t")|{id:("repo::"+.[0]),path:.[0],branch:.[1],lastActivityAt:(.[2]|tonumber),isMainWorktree:(.[3]=="true"),childWorktreeIds:[]}))}}' "$SB/reg.tsv" > "$FAKE/worktrees.json"
 gc --apply --only arcfail
 chk "보관 실패 → 폴더 유지·archive_fail·종료 1" '[ -e "$W/arcfail" ] && has "SKIP archive_fail" && [ "$RC" = 1 ] && [ "$(rm_calls)" = 0 ]' "rc=$RC"
+
+# ---- 6. eol=lf 속성과 혼합 줄바꿈 index 충돌 ------------------------------------------------
+LIC=Assets/Sound/s/a.LICENSE.txt
+for n in eol_only eol_other eol_content eol_late eol_arcfail eol_noise_late eol_archive_late lic_checkout lic_untracked eol_reason lic_noise; do
+  mk "$n" "feat/$n"; pr "feat/$n" '[{"number":50,"state":"MERGED"}]'
+  if [ "$n" = lic_checkout ]; then
+    printf 'line1\r\nline2\r\n' > "$W/$n/$LIC"
+    continue
+  fi
+  if [ "$n" = lic_untracked ]; then
+    : > "$W/$n/Assets/Sound/s/new.LICENSE.txt"
+    continue
+  fi
+  # 속성 적용 전 혼합 줄바꿈을 커밋해야 checkout 후에도 변경이 남는 실제 원인을 재현함.
+  printf 'line1\r\nline2\n' > "$W/$n/$LIC"
+  git -C "$W/$n" -c core.autocrlf=false add -- "$LIC"; oldc "$n" mixed
+  printf '%s text eol=lf\n' "$LIC" > "$W/$n/.gitattributes"
+  git -C "$W/$n" add -- .gitattributes; oldc "$n" attributes
+  git -C "$W/$n" -c core.autocrlf=false checkout -- "$LIC"
+done
+echo m > "$W/lic_noise/Assets/Sound/s/new.cs.meta"
+mk sub_noise feat/sub_noise; pr feat/sub_noise '[{"number":51,"state":"MERGED"}]'
+git -C "$W/sub_noise" -c protocol.file.allow=always submodule add -q "$O/sub.git" Assets/Sub 2>/dev/null
+git -C "$W/sub_noise" add -A; oldc sub_noise sub; git -C "$W/sub_noise" push -q origin feat/sub_noise 2>/dev/null
+echo m > "$W/sub_noise/Assets/new.cs.meta"
+echo edit >> "$W/eol_other/README.md"
+echo content >> "$W/eol_content/$LIC"
+: > "$ARC/repoA/eol_arcfail"
+jq -R -s '{ok:true,result:{worktrees:(split("\n")|map(select(length>0)|split("\t")|{id:("repo::"+.[0]),path:.[0],branch:.[1],lastActivityAt:(.[2]|tonumber),isMainWorktree:(.[3]=="true"),childWorktreeIds:[]}))}}' "$SB/reg.tsv" > "$FAKE/worktrees.json"
+chk "재현: core.autocrlf=false checkout 뒤에도 LICENSE 변경 잔존" '[ -n "$(git -C "$W/eol_only" status --porcelain)" ] && git -C "$W/eol_only" ls-files --eol -- "$LIC" | grep -q "i/mixed"'
+before=$(git -C "$W/eol_only" hash-object --no-filters -- "$LIC")
+gc --only eol_only
+chk "줄바꿈 dry-run: 후보이며 원본 불변" 'has "CANDIDATE repoA/eol_only " && [ "$before" = "$(git -C "$W/eol_only" hash-object --no-filters -- "$LIC")" ] && [ "$(rm_calls)" = 0 ]'
+FAKE_RM_CHECK_DIRTY=1 gc --apply --only eol_only
+chk "줄바꿈만: 일반 rm 거부 뒤 force 삭제 성공" '[ "$RC" = 0 ] && [ ! -e "$W/eol_only" ] && [ "$(rm_calls)" = 2 ] && grep -q -- "--force" "$FAKE/orca.calls"'
+chk "줄바꿈만: 삭제 전 결과물 보관" '[ "$(find "$ARC/repoA/eol_only/TestResults" -type f | wc -l | tr -d " ")" = 2 ] && [ -f "$ARC/repoA/eol_only/docs/out/x.html" ]'
+FAKE_RM_CHECK_DIRTY=1 gc --apply --only lic_checkout
+chk "일반 줄바꿈: checkout 후 force 없이 삭제" '[ "$RC" = 0 ] && [ ! -e "$W/lic_checkout" ] && [ "$(rm_calls)" = 1 ] && ! grep -q -- "--force" "$FAKE/orca.calls"'
+for n in eol_other eol_content lic_untracked; do
+  before=$(git -C "$W/$n" hash-object --no-filters -- "$LIC")
+  FAKE_RM_CHECK_DIRTY=1 gc --apply --only "$n"
+  chk "실변경 유지: $n, checkout·삭제 없음" '[ "$RC" = 0 ] && [ -e "$W/$n" ] && [ "$(rm_calls)" = 0 ] && [ "$before" = "$(git -C "$W/$n" hash-object --no-filters -- "$LIC")" ]'
+done
+FAKE_RM_CHECK_DIRTY=1 FAKE_RM_ADD_EDIT=1 gc --apply --only eol_late
+chk "rm 직전 다른 변경 발생: force 금지·보관본 유지" '[ "$RC" = 1 ] && [ -e "$W/eol_late" ] && [ "$(rm_calls)" = 1 ] && ! grep -q -- "--force" "$FAKE/orca.calls" && [ -f "$ARC/repoA/eol_late/TestResults/a.xml" ]'
+FAKE_RM_CHECK_DIRTY=1 gc --apply --only eol_arcfail
+chk "줄바꿈만·보관 실패: 삭제 시도 없음" '[ "$RC" = 1 ] && [ -e "$W/eol_arcfail" ] && [ "$(rm_calls)" = 0 ]'
+FAKE_RM_CHECK_DIRTY=1 FAKE_RM_ADD_NOISE=1 gc --apply --only eol_noise_late
+chk "rm 직전 일반 부산물 발생: LICENSE 전용 force 금지" '[ "$RC" = 1 ] && [ -e "$W/eol_noise_late" ] && [ "$(rm_calls)" = 1 ] && ! grep -q -- "--force" "$FAKE/orca.calls"'
+FAKE_RM_CHECK_DIRTY=1 FAKE_RM_BREAK_ARCHIVE="$ARC/repoA/eol_archive_late" gc --apply --only eol_archive_late
+chk "rm 거부 뒤 보관 파일 수 불일치: force 금지" '[ "$RC" = 1 ] && [ -e "$W/eol_archive_late" ] && [ "$(rm_calls)" = 1 ] && ! grep -q -- "--force" "$FAKE/orca.calls" && has "ARCHIVE_MISMATCH"'
+
+FAKE_RM_CHECK_DIRTY=1 FAKE_RM_REASON="error: worktree is locked" gc --apply --only eol_reason
+chk "다른 거부 사유(잠금): force 안 함·rm_fail" '[ "$RC" = 1 ] && [ -e "$W/eol_reason" ] && [ "$(rm_calls)" = 1 ] && ! grep -q -- "--force" "$FAKE/orca.calls" && has "SKIP rm_fail"'
+FAKE_RM_CHECK_DIRTY=1 gc --apply --only lic_noise
+chk "LICENSE 줄바꿈 + 기존 부산물: force 로 삭제" '[ "$RC" = 0 ] && [ ! -e "$W/lic_noise" ] && [ "$(rm_calls)" = 2 ] && grep -q -- "--force" "$FAKE/orca.calls"'
+FAKE_RM_CHECK_DIRTY=1 gc --apply --only sub_noise
+chk "서브모듈 + 기존 부산물: 이전처럼 force 삭제" '[ "$RC" = 0 ] && [ ! -e "$W/sub_noise" ] && grep -q -- "--force" "$FAKE/orca.calls"'
 
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]

@@ -18,6 +18,7 @@ CFG_NOISE_RE='(\.meta$)|(^|/)TextMesh Pro/|SDF[^/]*\.asset$'
 CFG_LICENSE_RE='^Assets/(.*/)?Sound/.*\.LICENSE\.txt$'
 # 삭제 전 보관할 gitignore 결과물(삭제 뒤 복구 불가라 먼저 복제)
 CFG_ARCHIVE_RE='(^|/)TestResults(/|$)|^docs/out(/|$)|\.html$|\.mp4$'
+CFG_RM_DIRTY_RE='modified or untracked|contain(s|ing) submodules|uncommitted|dirty'  # orca rm 거부 문구 중 미커밋 변경 계열만 force 허용(잠금·사용 중 등은 제외)
 CFG_NOISE_LOG_MAX=20                                     # 부산물 근거로 로그에 남길 경로 수
 CFG_LOG_MAX_BYTES=2097152                                # 로그가 이 크기를 넘으면 .1 로 돌림
 CFG_MAX_PAGES=50                                         # worker-list 쪽 수 상한
@@ -40,7 +41,7 @@ usage() {
   4 서브모듈 안에 미커밋·미push 가 없음
 절차(--apply): 결과물(TestResults·docs/out·*.html·*.mp4)을 <archive>/<저장소>/<폴더>/ 로 복제 → 파일 수 대조
   → orca worktree rm(브랜치는 지우지 않음) → 쉬고 있는 워커 기록 worker-release.
-  서브모듈 때문에 rm 이 거부되면 4번을 통과한 곳만 --force 로 다시 시도함.
+  rm 거부 시 서브모듈이 깨끗하거나 확인된 사운드 LICENSE 줄바꿈만 남은 곳은 보관·변경 재확인 후 --force 로 재시도함.
 
 옵션:
   --dry-run        (기본) 후보·건너뜀 이유만 기록
@@ -136,17 +137,20 @@ REASON="" DETAIL="" PR_LABEL="" N_NOISE=0 N_LIC=0
 # 미커밋 분류: 진짜 변경 수 → N_REAL, 부산물 → $TMP/noise.txt (근거 로그용)
 classify_changes() {
   local p="$1" k path
-  : > "$TMP/noise.txt"; N_REAL=0 N_NOISE=0 N_LIC=0
-  git -C "$p" status --porcelain=v1 -z --untracked-files=all --ignore-submodules=all 2>/dev/null | tr '\0' '\n' \
+  : > "$TMP/noise.txt"; : > "$TMP/licenses.txt"; N_REAL=0 N_NOISE=0 N_LIC=0
+  if ! git -C "$p" status --porcelain=v1 -z --untracked-files=all --ignore-submodules=all 2>/dev/null | tr '\0' '\n' \
     | NZ="$CFG_NOISE_RE" LZ="$CFG_LICENSE_RE" awk '
         skip { skip = 0; next }
         { xy = substr($0, 1, 2); q = substr($0, 4); if (xy ~ /^[RC]/ || xy ~ /^.[RC]/) skip = 1
-          if (q ~ ENVIRON["NZ"]) print "N\t" q; else if (q ~ ENVIRON["LZ"]) print "L\t" q; else print "R\t" q }' > "$TMP/chg.tsv"
+          if (q ~ ENVIRON["NZ"]) print "N\t" q; else if (q ~ ENVIRON["LZ"] && xy ~ /^[ M][ M]$/) print "L\t" q; else print "R\t" q }' > "$TMP/chg.tsv"; then
+    N_REAL=1; return 1
+  fi
   while IFS=$'\t' read -r k path; do
     case "$k" in
       N) N_NOISE=$((N_NOISE + 1)); printf '부산물 %s\n' "$path" >> "$TMP/noise.txt" ;;
       L) if git -C "$p" diff HEAD --ignore-all-space --ignore-cr-at-eol --quiet -- "$path" 2>/dev/null; then
            N_LIC=$((N_LIC + 1)); printf '줄바꿈만 %s\n' "$path" >> "$TMP/noise.txt"
+           printf '%s\n' "$path" >> "$TMP/licenses.txt"
          else N_REAL=$((N_REAL + 1)); fi ;;
       *) N_REAL=$((N_REAL + 1)) ;;
     esac
@@ -216,12 +220,26 @@ archive_outputs() {
 # 보관 대상 미리보기(dry-run 용): 개수만
 preview_outputs() { git -C "$1" ls-files -o -i --exclude-standard --directory -z 2>/dev/null | tr '\0' '\n' | ARZ="$CFG_ARCHIVE_RE" awk '$0 ~ ENVIRON["ARZ"]' | sed 's#/$##' | tr '\n' ',' | sed 's/,$//'; }
 
-remove_ws() { # 0 성공. 서브모듈 거부 때만 --force 재시도
-  local p="$1" out
+remove_ws() {
+  local p="$1" dest="$2" out path
+  classify_changes "$p"
+  [ "$N_REAL" = 0 ] || return 1
+  while IFS= read -r path; do
+    git -C "$p" -c core.autocrlf=false checkout -- "$path" >/dev/null 2>&1 || return 1
+  done < "$TMP/licenses.txt"
+  cp "$TMP/noise.txt" "$TMP/noise0.txt"
   out=$(orca worktree rm --worktree "path:$p" --json 2>&1) && return 0
-  if [ -f "$p/.gitmodules" ] && submodules_clean "$p"; then
-    log "RM_RETRY_FORCE 서브모듈 때문에 거부됨, 서브모듈 안 미커밋·미push 0 확인 → --force"
-    orca worktree rm --worktree "path:$p" --force --json >/dev/null 2>&1 && return 0
+  # 거부 사유가 미커밋 변경 계열일 때만 force. 잠금·사용 중 같은 다른 사유는 우회하지 않음.
+  if printf '%s' "$out" | grep -Eiq -- "$CFG_RM_DIRTY_RE"; then
+    # 혼합 줄바꿈 index 와 eol=lf 속성은 checkout 후에도 dirty. 강제 삭제 전 보관·변경 재확인 필요.
+    archive_outputs "$p" "$dest" || return 1
+    classify_changes "$p"
+    # 기존 부산물은 허용, 거부 뒤 새로 생긴 부산물은 차단
+    [ "$N_REAL" = 0 ] && [ -z "$(sort "$TMP/noise.txt" | comm -13 <(sort "$TMP/noise0.txt") -)" ] && submodules_clean "$p" || return 1
+    if [ "$N_LIC" -gt 0 ] || [ -f "$p/.gitmodules" ]; then
+      log "RM_RETRY_FORCE 보관 파일 수 일치·실변경 0·새 부산물 0·서브모듈 clean 확인, LICENSE ${N_LIC}건 → --force"
+      orca worktree rm --worktree "path:$p" --force --json >/dev/null 2>&1 && return 0
+    fi
   fi
   log "RM_FAIL $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
   return 1
@@ -267,7 +285,7 @@ while IFS=$'\t' read -r p last_ms kids; do
   dest="$CFG_ARCHIVE/$(dirname "$name")/$(basename "$name")"
   ARCHIVED_FILES=0
   if ! archive_outputs "$p" "$dest"; then echo archive_fail >> "$TMP/skips"; N_FAIL=$((N_FAIL + 1)); log "SKIP archive_fail $name — 보관 복제·대조 실패, 삭제 안 함(디스크 여유 확인)"; continue; fi
-  if remove_ws "$p"; then
+  if remove_ws "$p" "$dest"; then
     N_DEL=$((N_DEL + 1)); FREED_KB=$((FREED_KB + size_kb))
     log "DELETE $name $DETAIL size=$(human "$size_kb") 보관파일=$ARCHIVED_FILES (브랜치는 유지)"
     release_workers "$p"
