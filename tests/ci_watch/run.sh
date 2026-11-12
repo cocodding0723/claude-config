@@ -93,9 +93,33 @@ echo '[{"number":701,"title":"[LRM-397] x","headRefName":"b","headRefOid":"11111
 printf 'x\t2026-11-11T05:00:01.1Z not ok 3 - eye\n' > "$D/log.txt"; rm -rf "$D/artifact"
 c701() { printf '[{"name":"Run Unity validation / Unity validation","workflow":"PR Test Pipeline","bucket":"%s","link":"https://x/actions/runs/11/job/22"}]' "$1" > "$D/checks-701.json"; }
 c701 pending; run; c701 fail; run
-grep -q "\[CI→메인\] CI 실패 PR#701 · 담당 허브 VFX 허브(vfx) · 원인 Run Unity validation / Unity validation: not ok 3 - eye" "$D/orca.log" && [ -f "$D/ci-review/PR-701-111111111111-fail.md" ] && ok "CI 실패 → 메인 터미널 + fail.md" || ko "실패 전달" "$(cat "$D/orca.log")"
+grep -q "\[CI→메인\] CI 실패 PR#701 · 담당 허브 VFX 허브(vfx) (근거: 허브 표(ci-review-hubs.tsv) 일치) · 원인 Run Unity validation / Unity validation: not ok 3 - eye" "$D/orca.log" && [ -f "$D/ci-review/PR-701-111111111111-fail.md" ] && ok "CI 실패 → 메인 터미널 + fail.md" || ko "실패 전달" "$(cat "$D/orca.log")"
 grep -q -- "--thread 1700000000.000100" "$D/ci-review/PR-701-111111111111-fail.md" && ok "warn ts → fail.md 스레드 답 명령" || ko "스레드 ts" "$(cat "$D"/ci-review/PR-701-*-fail.md)"
 c701 pending; run; c701 fail; run; [ "$(grep -c 'CI 실패 PR#701' "$D/orca.log")" = 1 ] && ok "같은 커밋 실패는 1회" || ko "커밋 중복"
 sed -i '' 's/1111111111111111/2222222222222222/' "$D/prs.json"; c701 pending; run; c701 fail; run; [ "$(grep -c 'CI 실패 PR#701' "$D/orca.log")" = 2 ] && ok "새 커밋 실패는 다시 전달" || ko "새 커밋"
+
+# ---- CI 실패 담당 허브 자동 지정 ----
+cp "$HERE/../../hubs/hubs.tsv" "$D/hubs.tsv"
+wt() { printf '{"result":{"worktrees":[{"id":"r::/w/coord-ui-layer-hub","path":"/w/coord-ui-layer-hub","branch":"refs/heads/main"},{"id":"r::/w/x","path":"/w/x","branch":"refs/heads/%s","parentWorktreeId":"r::/w/coord-ui-layer-hub"}]}}' "$1" > "$D/worktrees.json"; }
+newpr() { echo "[{\"number\":$1,\"title\":\"[LRM-1] t\",\"headRefName\":\"$2\",\"headRefOid\":\"$3\"}]" > "$D/prs.json"; rm -f "$D/ci-watch.state.json" "$D/orca.log"; : > "$D/orca.log"; }
+runfail() { printf '[{"name":"Run Unity validation / Unity validation","workflow":"PR Test Pipeline","bucket":"%s","link":"https://x/actions/runs/11/job/22"}]' "$1" > "$D/checks-$2.json"; }
+newpr 710 feat/mine aaaaaaaaaaaaaaaa; wt feat/mine; runfail pending 710; run; runfail fail 710; run
+grep -q "담당 허브 UI 계층 통합 설계 (근거: PR 브랜치의 작업 공간 부모 허브)" "$D/orca.log" && ok "브랜치 → 부모 허브(1순위)" || ko "부모 허브" "$(cat "$D/orca.log")"
+newpr 711 feat/LRM-397-x bbbbbbbbbbbbbbbb; wt feat/other; runfail pending 711; run; runfail fail 711; run
+grep -q "담당 허브 VFX 허브(vfx) (근거: 허브 표" "$D/orca.log" && ok "작업 공간 없음 → 표(2순위)" || ko "표 대체" "$(cat "$D/orca.log")"
+newpr 712 feat/none cccccccccccccccc; rm -f "$D/worktrees.json"; runfail pending 712; run; runfail fail 712; run
+grep -q "담당 허브 미배정(메인 판단) (근거: 작업 공간·표·공통 원인 모두 없음)" "$D/orca.log" && ok "조회 실패+표 없음 → 미배정" || ko "미배정" "$(cat "$D/orca.log")"
+newpr 713 feat/LRM-397-y dddddddddddddddd; rm -f "$D/worktrees.json"; runfail pending 713; run; runfail fail 713; run
+grep -q "담당 허브 VFX 허브(vfx) (근거: 허브 표" "$D/orca.log" && ok "조회 실패 → 표로 안전하게" || ko "조회 실패 표" "$(cat "$D/orca.log")"
+python3 -c '
+import sys;sys.path.insert(0,sys.argv[1]);import ci_review as r
+n={"test-qa":"테스트·QA","ui-layer":"UI 계층 통합 설계"}
+f={"710":[{"key":"U","cause":"c"}],"711":[{"key":"U","cause":"c"}],"712":[{"key":"U","cause":"다름"}]}
+assert r.common_cause(f,"710")==["711"], "공통"
+assert r.common_cause(f,"712")==[], "단독"
+h,w=r.assign_hub("feat/zzz","t",[],[],n,["711"],"테스트·QA"); assert h=="테스트·QA" and "711" in w, "QA"
+assert r.assign_hub("feat/zzz","t",[],[],n,[],"테스트·QA")[0].startswith("미배정"), "공통 없음"
+assert r.assign_hub("feat/zzz","t",[],None,n)[0].startswith("미배정"), "조회 None"
+' "$S" && ok "공통 원인 → QA 허브, 단독이면 미배정" || ko "공통 원인"
 
 echo "통과 $PASS / 실패 $FAIL"; [ "$FAIL" = 0 ]

@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 import ci_review as review
+import main_terminal as mt
 
 DIR = Path(os.environ.get("LRM_HUB_DIR", Path.home() / ".config/lrm-hubs"))
 REPO = os.environ.get("LRM_CI_REPO", "Basakansoft/LoveRevolutionMaker")
@@ -24,8 +25,11 @@ WATCH_FILE = DIR / "ci-watch.txt"
 STATE = DIR / "ci-watch.state.json"
 GH = os.environ.get("LRM_GH", "gh")
 NOTIFY = os.environ.get("LRM_NOTIFY", str(DIR / "slack_notify.sh"))
-ORCA = os.environ.get("LRM_ORCA", "orca")
+ORCA = mt.find_orca()  # launchd 의 짧은 PATH 에서도 찾음(LRM_ORCA 우선)
 MAIN_ENV = os.environ.get("LRM_MAIN_ENV", str(DIR / "main.env"))
+HUBS_TSV = DIR / "hubs.tsv"
+QA_SLUG = os.environ.get("LRM_QA_HUB_SLUG", "test-qa")  # 공통 원인 담당 허브
+CAUSES = "_causes"  # PR 별 마지막 실패 검사·원인(공통 원인 판정용)
 HUB_TABLE = DIR / "ci-review-hubs.tsv"  # 정규식<TAB>허브. 브랜치·제목에 위에서부터 맞춤
 REVIEW_OUT = DIR / "ci-review"
 REVIEW_INIT = "_review_init"
@@ -135,7 +139,7 @@ def passed_message(pr):
     return "done", f"CI 통과\n\n참고: {ref}"
 
 
-def relay_review(pr, checks, prev, baseline, dry):
+def relay_review(pr, checks, prev, baseline, dry, state):
     """AI 리뷰가 끝났으면 새 지적을 메인 터미널에 전달. 첫 실행은 기존 지적을 본 것으로만 기록"""
     if not review.review_finished(checks):
         return
@@ -163,7 +167,8 @@ def relay_review(pr, checks, prev, baseline, dry):
             return
         seen |= {e["id"] for e in errs}
     if not baseline:
-        hub = review.hub_for(pr.get("headRefName", ""), pr.get("title", ""), review.load_table(HUB_TABLE))
+        hub, why_hub = pick_hub(pr, state)
+        hub = f"{hub} ({why_hub})"
         if dry:
             print(f"--- review\n{review.relay_text(pr, hub, len(new), '(dry-run)')}")
             for f in new:
@@ -186,7 +191,15 @@ def reviewer_errors(pr):
         return 0
 
 
-def relay_fail(pr, fails, prev, slack_ts=""):
+def pick_hub(pr, state, with_common=False):
+    """담당 허브와 근거. 작업 공간 조회가 실패하면 표·미배정으로 진행"""
+    names = review.load_hub_names(HUBS_TSV)
+    common = review.common_cause(state.get(CAUSES, {}), str(pr["number"])) if with_common else ()
+    return review.assign_hub(pr.get("headRefName", ""), pr.get("title", ""), review.load_table(HUB_TABLE),
+                             review.list_worktrees(ORCA), names, common, names.get(QA_SLUG, ""))
+
+
+def relay_fail(pr, fails, prev, state, slack_ts=""):
     """CI 실패를 메인 터미널에 전달(허브가 고치도록 메인이 배정). 같은 커밋은 1회. 전송 실패는 Slack warn 이 대신함
     리뷰어 오류로만 실패한 경우는 'AI 리뷰 오류' 알림이 이미 갔으므로 보내지 않음"""
     fails = [c for c in fails if not c.get("reviewer_error")]
@@ -195,12 +208,13 @@ def relay_fail(pr, fails, prev, slack_ts=""):
     sha = pr.get("headRefOid") or "unknown"
     if prev.get(FAIL_SENT) == sha:
         return
-    hub = review.hub_for(pr.get("headRefName", ""), pr.get("title", ""), review.load_table(HUB_TABLE))
-    path = review.write_fail(REVIEW_OUT, pr, hub, sha, fails, slack_ts)
+    state.setdefault(CAUSES, {})[str(pr["number"])] = [{"key": c["key"], "cause": c.get("cause", "")} for c in fails]
+    hub, why_hub = pick_hub(pr, state, with_common=True)
+    path = review.write_fail(REVIEW_OUT, pr, f"{hub} ({why_hub})", sha, fails, slack_ts)
     first = fails[0]
     why = first.get("cause") or "원인 줄 못 찾음"
     handle = review.main_handle(MAIN_ENV)
-    text = f"[CI→메인] CI 실패 PR#{pr['number']} · 담당 허브 {hub} · 원인 {first['key']}: {why} · 파일 {path}"
+    text = f"[CI→메인] CI 실패 PR#{pr['number']} · 담당 허브 {hub} ({why_hub}) · 원인 {first['key']}: {why} · 파일 {path}"
     if handle and review.send_main(ORCA, handle, text):
         prev[FAIL_SENT] = sha
 
@@ -263,7 +277,7 @@ def main():
         verdict = "fail" if fails else "pass" if passed and prev.get(VERDICT) != "pass" else None
         if verdict:
             prev[VERDICT] = verdict
-        relay_review(pr, checks, prev, review_base, dry)
+        relay_review(pr, checks, prev, review_base, dry, state)
         start_adv(pr, prev, adv_base, dry)
         state[n] = prev
         if not verdict or first:
@@ -281,6 +295,7 @@ def main():
             kind, msg = message(pr, fails)
         else:
             kind, msg = passed_message(pr)
+            state.get(CAUSES, {}).pop(n, None)  # 통과하면 공통 원인 후보에서 뺌
         if dry:
             print(f"--- {kind}\n{msg}")
             continue
@@ -288,7 +303,7 @@ def main():
         if fails:
             # warn 의 ts 를 실패 파일에 남겨 허브가 같은 스레드에 원인·고칠 방법을 답하게 함
             ts = out.stdout.split()[1] if out.returncode == 0 and out.stdout.startswith("ok ") and len(out.stdout.split()) > 1 else ""
-            relay_fail(pr, fails, prev, ts)
+            relay_fail(pr, fails, prev, state, ts)
         rc = out.returncode
         if rc == 0:
             sent += 1
