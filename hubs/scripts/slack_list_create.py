@@ -26,6 +26,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import tls_ctx  # noqa: E402
+import todo_items  # noqa: E402
 
 DEFAULT_API = "https://slack.com/api"
 DEFAULT_NAME = "강비서 할 일"
@@ -35,11 +36,18 @@ ENV_KEYS = ("SLACK_BOT_TOKEN", "SLACK_USER_ID")  # 이 두 키만 읽음. 파일
 API_TIMEOUT_S = 15
 ACCESS_LEVEL = "owner"
 USER_ID_RE = re.compile(r"^[UW][A-Z0-9]{6,}$")
-# 진행 목록(progress_digest.py)이 쓰는 칸과 같은 구성: 할 일(주 칸)·완료·링크
+# 진행 목록(progress_digest.py)이 쓰는 칸과 같은 구성. 종류 선택지는 todo_items.KINDS 가 정본
+# 보관: 끝난 행을 일정 시간 뒤 체크함. Slack 에 보기 필터 API 가 없어, 목록 보기에서 '보관 해제만' 필터를 한 번 걸어 숨김
 SCHEMA = [
     {"key": "title", "name": "할 일", "type": "text", "is_primary_column": True},
+    {"key": "kind", "name": "종류", "type": "select",
+     "options": {"format": "single_select", "choices": [{"value": k, "label": label, "color": color} for (k, label), color in zip(todo_items.KINDS, ("red", "blue", "yellow", "green"))]}},
+    {"key": "urgency", "name": "급함", "type": "number"},
+    {"key": "hub", "name": "허브", "type": "text"},
+    {"key": "answer", "name": "답하는 법", "type": "text"},
     {"key": "done", "name": "완료", "type": "checkbox"},
     {"key": "link", "name": "링크", "type": "text"},
+    {"key": "archive", "name": "보관", "type": "checkbox"},
 ]
 
 
@@ -129,6 +137,18 @@ def column_ids(resp):
     return out
 
 
+def column_options(resp):
+    """select 칸의 선택지 → {칸 key: {선택 key: Slack 이 정한 값}}. 라벨로 짝지음(Slack 이 값을 새로 매길 수 있음)"""
+    labels = {k: label for k, label in todo_items.KINDS}
+    out = {}
+    for col in (resp.get("list_metadata") or {}).get("schema") or []:
+        choices = (col.get("options") or {}).get("choices") or []
+        if col.get("key") and choices:
+            by_label = {c.get("label"): c.get("value") for c in choices}
+            out[col["key"]] = {k: by_label.get(labels.get(k), k) for k in labels} if col["key"] == "kind" else {}
+    return out
+
+
 def read_bot_env(env):
     """봇 환경 파일에서 ENV_KEYS 만 추출. 파일이 없거나 못 읽으면 빈 dict"""
     path = os.path.join(os.path.expanduser(env.get("LRM_HUB_DIR") or "~/.config/lrm-hubs"), BOT_ENV_NAME)
@@ -152,6 +172,9 @@ def run(a, env):
     token = env.get("SLACK_BOT_TOKEN", "")
     st = load_state(state_path)
     rec = st.get("lists", {}).get(a.name)
+    if a.replace and rec:  # 스키마가 바뀐 새 목록으로 교체: 옛 기록은 replaced 에 남김(옛 목록은 건드리지 않음)
+        st.setdefault("replaced", []).append(rec)
+        rec = None
 
     if not USER_ID_RE.match(user):
         raise Fail("사용자 Slack ID 없음 또는 형식 오류. SLACK_USER_ID 를 설정하거나 --user U… 로 지정", 2)
@@ -175,7 +198,7 @@ def run(a, env):
         list_id = d.get("list_id") or (d.get("list") or {}).get("id")
         if not list_id:
             raise Fail("slackLists.create 응답에 목록 ID 없음. Slack 상태 확인 후 목록 직접 점검(재실행 시 중복 가능)")
-        rec = {"id": list_id, "url": list_url(slack, list_id), "columns": column_ids(d), "shared": False}
+        rec = {"id": list_id, "url": list_url(slack, list_id), "columns": column_ids(d), "options": column_options(d), "shared": False}
         st.setdefault("lists", {})[a.name] = rec
         save_state(state_path, st)  # 공유가 실패해도 다음 실행이 재생성하지 않게 먼저 기록
     slack.call("slackLists.access.set", {"list_id": rec["id"], "access_level": ACCESS_LEVEL, "user_ids": [user]})
@@ -198,6 +221,7 @@ def parser():
     p.add_argument("--dry-run", action="store_true", help="계획만 출력. Slack 호출·상태 파일 쓰기 없음")
     p.add_argument("--json", action="store_true", help="결과를 JSON 으로 출력")
     p.add_argument("--name", default=DEFAULT_NAME, help=f"목록 이름(기본 {DEFAULT_NAME})")
+    p.add_argument("--replace", action="store_true", help="같은 이름의 기록이 있어도 새 목록을 만들고 기록을 교체(옛 목록은 그대로)")
     p.add_argument("--user", help="권한을 받을 사용자 Slack ID(기본 SLACK_USER_ID)")
     p.add_argument("--state", help=f"상태 파일(기본 {DEFAULT_STATE})")
     p.add_argument("--api", help="API 주소(기본 SLACK_API_BASE 또는 slack.com)")
