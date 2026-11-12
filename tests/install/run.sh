@@ -5,6 +5,7 @@ set -uo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd -P)
 INSTALL="$REPO/install.sh"
+PYREAL=$(command -v python3)  # plist 치환 시험에서 쓰는 실제 3.10 이상 python3 절대 경로
 unset GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM
 PASS=0 FAIL=0
 
@@ -324,13 +325,13 @@ mkdir -p "$SB8/.config/claude-config" "$SB8/.config/lrm-hubs" "$SB8/fakebin"
 cp "$SB/.config/claude-config/values.env" "$SB8/.config/claude-config/values.env"
 SOCK=".config/lrm-hubs/ai.lrm.slacksocket.plist"
 # 이 맥과 같은 상태: 라이브 보관본이 저장소 렌더 결과와 같음
-sed -e "s#__HOME__#$SB8#g" -e "s#__PYTHON3__#/opt/py/bin/python3#g" "$REPO/hubs/launchd/ai.lrm.slacksocket.plist" > "$SB8/$SOCK"
+sed -e "s#__HOME__#$SB8#g" -e "s#__PYTHON3__#$PYREAL#g" "$REPO/hubs/launchd/ai.lrm.slacksocket.plist" > "$SB8/$SOCK"
 cp "$REPO/hubs/scripts/slack_socket.py" "$SB8/.config/lrm-hubs/slack_socket.py"
 ino_before=$(ls -i "$SB8/$SOCK" "$SB8/.config/lrm-hubs/slack_socket.py" | awk '{print $1}' | tr '\n' ' ')
 # 진짜 launchctl 대신 호출 기록만 남기는 가짜. PATH 앞에 둬도 가로채지 못하면 시험을 건너뜀
 printf '#!/bin/sh\necho "$*" >> "%s/launchctl.log"\n' "$SB8" > "$SB8/fakebin/launchctl"; chmod +x "$SB8/fakebin/launchctl"
 if [ "$(PATH="$SB8/fakebin:$PATH" command -v launchctl)" = "$SB8/fakebin/launchctl" ]; then
-  out=$(PATH="$SB8/fakebin:$PATH" HOME="$SB8" CLAUDE_CONFIG_PYTHON3=/opt/py/bin/python3 env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF "$INSTALL" --reload-launchd 2>&1); rc=$?
+  out=$(PATH="$SB8/fakebin:$PATH" HOME="$SB8" CLAUDE_CONFIG_PYTHON3=$PYREAL env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF "$INSTALL" --reload-launchd 2>&1); rc=$?
   ino_after=$(ls -i "$SB8/$SOCK" "$SB8/.config/lrm-hubs/slack_socket.py" | awk '{print $1}' | tr '\n' ' ')
   [ "$rc" = 0 ] && echo "$out" | grep -q "SKIP   $SOCK (내용 동일)" && echo "$out" | grep -q 'SKIP   .config/lrm-hubs/slack_socket.py (내용 동일)' && [ "$ino_before" = "$ino_after" ] && ok "소켓 보관본: 라이브와 같으면 SKIP(파일 그대로)" || ko "소켓 SKIP" "rc=$rc"
   grep -q 'bootstrap .*ai.lrm.slackpoll.plist' "$SB8/launchctl.log" 2>/dev/null && ! grep -q slacksocket "$SB8/launchctl.log" && ! echo "$out" | grep -q '재적재.*slacksocket' && ok "--reload-launchd 도 slackpoll 만 적재, slacksocket 은 호출·안내 없음" || ko "소켓 launchd" "$(tr '\n' ' ' < "$SB8/launchctl.log" 2>/dev/null)"
@@ -342,7 +343,7 @@ fi
 # 라이브 보관본이 다르면 덮어쓰지 않고 중단
 echo '<!-- local edit -->' >> "$SB8/$SOCK"
 before=$(snapshot "$SB8")
-out=$(HOME="$SB8" CLAUDE_CONFIG_PYTHON3=/opt/py/bin/python3 env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF "$INSTALL" 2>&1); rc=$?
+out=$(HOME="$SB8" CLAUDE_CONFIG_PYTHON3=$PYREAL env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF "$INSTALL" 2>&1); rc=$?
 [ "$rc" != 0 ] && echo "$out" | grep -q "LIVE-NEWER $SOCK" && [ "$before" = "$(snapshot "$SB8")" ] && ok "소켓 보관본이 라이브와 다르면 LIVE-NEWER 로 중단·무변경" || ko "소켓 live-diff" "rc=$rc"
 rm -rf "${SB8:?}"
 # 첫 설치(보관본 없음): 새로 복사하는 경로에서도 --reload-launchd 는 slackpoll 만 적재
@@ -357,6 +358,24 @@ else
   printf 'SKIP  첫 설치 소켓 launchd 시험 — 가짜 launchctl 이 PATH 에서 우선하지 않음\n'
 fi
 rm -rf "${SB8B:?}"
+# __PYTHON3__ 치환 검증: 상대 경로·없는 경로·실행 권한 없음·3.10 미만은 설치 단계에서 원인·조치와 함께 실패, 통과 경로는 plist 에 그대로 들어감
+SB8D=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox8d.XXXXXX")
+mkdir -p "$SB8D/.config/claude-config" "$SB8D/old"
+cp "$SB/.config/claude-config/values.env" "$SB8D/.config/claude-config/values.env"
+printf '#!/bin/sh\nexit 0\n' > "$SB8D/noexec"; printf '#!/bin/sh\n[ "$2" = "-c" ] && echo 3.9 && exit 1\nexit 1\n' > "$SB8D/old/python3"; chmod +x "$SB8D/old/python3"
+printf '#!/bin/sh\necho boom >&2; exit 3\n' > "$SB8D/broken"; chmod +x "$SB8D/broken"
+py_install() { HOME="$SB8D" CLAUDE_CONFIG_PYTHON3="$1" env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF "$INSTALL" --dry-run 2>&1; }
+out=$(py_install python3); rc=$?;                 [ "$rc" != 0 ] && echo "$out" | grep -q "ERROR: python3 경로가 절대 경로가 아님" && echo "$out" | grep -q "CLAUDE_CONFIG_PYTHON3=<절대 경로>" && ok "__PYTHON3__: 상대 경로 'python3' 거부(원인·조치 메시지)" || ko "상대 경로 python3" "rc=$rc $(echo "$out" | tail -2 | tr '\n' ' ')"
+out=$(py_install "$SB8D/없음"); rc=$?;            [ "$rc" != 0 ] && echo "$out" | grep -q "ERROR: python3 실행 불가" && ok "__PYTHON3__: 없는 절대 경로 거부" || ko "없는 경로" "rc=$rc"
+chmod -x "$SB8D/noexec"; out=$(py_install "$SB8D/noexec"); rc=$?; [ "$rc" != 0 ] && echo "$out" | grep -q "ERROR: python3 실행 불가" && ok "__PYTHON3__: 실행 권한 없는 파일 거부" || ko "실행 권한 없음" "rc=$rc"
+out=$(py_install "$SB8D/old/python3"); rc=$?;     [ "$rc" != 0 ] && echo "$out" | grep -q "ERROR: python3 버전 3.9 은 3.10 미만" && echo "$out" | grep -q "brew install python" && ok "__PYTHON3__: 3.9 거부(버전·조치 메시지)" || ko "3.9 거부" "rc=$rc $(echo "$out" | tail -2 | tr '\n' ' ')"
+out=$(py_install "$SB8D/broken"); rc=$?;         [ "$rc" != 0 ] && echo "$out" | grep -q "ERROR: python3 실행 실패" && ok "__PYTHON3__: 실행이 실패하는 python3 거부" || ko "실행 실패" "rc=$rc"
+if [ -x /usr/bin/python3 ] && /usr/bin/python3 -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  out=$(py_install /usr/bin/python3); rc=$?;      [ "$rc" != 0 ] && echo "$out" | grep -q "ERROR: python3 버전 3.9 은 3.10 미만" && ok "__PYTHON3__: 시스템 /usr/bin/python3(3.9) 거부" || ko "시스템 3.9" "rc=$rc"
+fi
+out=$(py_install "$PYREAL"); rc=$?;               [ "$rc" = 0 ] && ok "__PYTHON3__: 3.10 이상 절대 경로는 통과" || ko "정상 python3 통과" "rc=$rc $(echo "$out" | tail -2 | tr '\n' ' ')"
+before=$(snapshot "$SB8D"); py_install python3 >/dev/null; [ "$before" = "$(snapshot "$SB8D")" ] && ok "__PYTHON3__ 거부 시 HOME 무변경" || ko "거부 시 무변경" "변경됨"
+rm -rf "${SB8D:?}"
 # 수신기 연결 실패: traceback 없이 한 줄 로그·종료 코드 2. slack_sdk 는 가짜 모듈로 대체(네트워크 없음)
 SB8C=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox8c.XXXXXX")
 mkdir -p "$SB8C/stub/slack_sdk/socket_mode" "$SB8C/hub"
