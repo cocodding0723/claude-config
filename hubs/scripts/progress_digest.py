@@ -17,6 +17,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -65,13 +66,24 @@ class Item:
     link: str = ""
     ref: dict = None  # 원본 메시지 위치. 링크 해석 전 값
     quote: str = ""  # 원본 첫 줄(DM 에 보이는 항목만 조회)
+    since: float = 0.0  # 생긴 시각(epoch). 목록 정렬용, 모르면 0
 
     def wants_link(self):
         """원본 메시지가 있어야 하는 항목(장부·허브·결정). PR 은 제목에 번호가 있어 제외"""
         return self.key.startswith(("ledger:", "hub:", "decision:"))
 
+    def list_title(self):
+        """목록 행 제목: 내부 번호 없이 쉬운 말, 허브 이름은 앞에 짧게"""
+        if self.key.startswith("ledger:"):
+            return self.title.split(" ", 1)[1] if " " in self.title else self.title  # 앞의 장부 번호(F11 등) 제거
+        if self.key.startswith("hub:"):
+            return re.sub(r"^((?:\[[^\]]+\] )?[^:\s]+): ", r"\1 · ", self.title)
+        if self.key.startswith("decision:"):
+            return "결정 · " + (self.title[3:] if self.title.startswith("결정 ") else self.title)
+        return self.title
+
     def line(self):
-        return f"{ICON[self.bucket]} {LABEL[self.bucket]} · {self.title}"
+        return f"{ICON[self.bucket]} {self.list_title()}"
 
 
 @dataclass
@@ -108,7 +120,7 @@ def load_items(use_pr):
     if snap is None or time.time() - snap.get("updatedAt", 0) > SNAP_MAX_AGE_S:
         note.append("스냅샷 없음·낡음 — 직접 수집")
         snap = pc.refresh(write=False, use_pr=use_pr)
-    items = [Item(i["key"], i["bucket"], i["title"], i.get("link", ""), i.get("ref") if isinstance(i.get("ref"), dict) else None) for i in snap["items"]]
+    items = [Item(i["key"], i["bucket"], i["title"], i.get("link", ""), i.get("ref") if isinstance(i.get("ref"), dict) else None, since=i["since"] if isinstance(i.get("since"), (int, float)) else 0.0) for i in snap["items"]]
     groups = snap.get("groups") if isinstance(snap.get("groups"), dict) else {}
     return items, note + list(snap.get("notes", [])), groups
 
@@ -246,6 +258,15 @@ def check_api_base(conf):
 
 def rich(text):
     return [{"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [{"type": "text", "text": text}]}]}]
+
+
+def rich_link(url, label):
+    """누르면 열리는 링크 칸 값(rich_text 의 link 요소). 맨 주소 글자는 목록 칸에서 눌리지 않음"""
+    return [{"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [{"type": "link", "url": url, "text": label}]}]}]
+
+
+def link_label(item):
+    return "결정 카드 열기" if item.key.startswith("decision:") else "메시지 열기"
 
 
 def api(conf, method, body):
@@ -404,7 +425,10 @@ def plan_list(items, state):
     for key, old in state["items"].items():
         if key not in current:
             ops.append(("done", Item(key, old["bucket"], old["title"]), old["record"]))
-    return ops
+    # 새 행은 사용자가 먼저 볼 순서(답 대기 → 막힘 → 진행, 같은 종류는 오래된 것 먼저)로 만듦. 목록은 만든 순서로 보임
+    order = {WAIT: 0, BLOCK: 1, DOING: 2}
+    creates = sorted((o for o in ops if o[0] == "create"), key=lambda o: (order.get(o[1].bucket, 3), o[1].since or float("inf"), o[1].key))
+    return creates + [o for o in ops if o[0] != "create"]
 
 
 def apply_list(conf, ops, state):
@@ -415,7 +439,7 @@ def apply_list(conf, ops, state):
             if op == "create":
                 fields = [{"column_id": COL_TITLE, "rich_text": rich(it.line())}]
                 if it.link:
-                    fields.append({"column_id": COL_LINK, "rich_text": rich(it.link)})
+                    fields.append({"column_id": COL_LINK, "rich_text": rich_link(it.link, link_label(it))})
                 d = api(conf, "slackLists.items.create", {"list_id": conf.list_id, "initial_fields": fields})
                 rid = (d.get("item") or {}).get("id") or d.get("id")
                 if not rid:
@@ -424,7 +448,7 @@ def apply_list(conf, ops, state):
             elif op == "update":
                 cells = [{"row_id": rec, "column_id": COL_TITLE, "rich_text": rich(it.line())}]
                 if it.link:
-                    cells.append({"row_id": rec, "column_id": COL_LINK, "rich_text": rich(it.link)})
+                    cells.append({"row_id": rec, "column_id": COL_LINK, "rich_text": rich_link(it.link, link_label(it))})
                 api(conf, "slackLists.items.update", {"list_id": conf.list_id, "cells": cells})
                 state["items"][it.key].update(title=it.title, bucket=it.bucket, link=it.link)
             else:

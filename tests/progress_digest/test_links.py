@@ -255,6 +255,55 @@ class Recovery(unittest.TestCase):
         self.assertEqual((api.calls, sent, ups), ([], [], []))
 
 
+class ListRows(unittest.TestCase):
+    """Slack 목록 행: 쉬운 제목, 눌리는 링크 칸, 결정 대기 → 막힘 → 진행 순서(오래된 것 먼저), 답이 오면 완료 체크"""
+
+    def test_titles_have_no_internal_ids_and_hub_name_first(self):
+        self.assertEqual(pd.Item("ledger:F11", pd.DOING, "F11 진행 목록 링크 추가").list_title(), "진행 목록 링크 추가")
+        self.assertEqual(pd.Item("hub:ui:t:ab12cd34", pd.DOING, "ui: 버튼 정리").list_title(), "ui · 버튼 정리")
+        self.assertEqual(pd.Item("hub:ui:t:ab12cd34", pd.DOING, "[낡음] ui: 버튼 정리").list_title(), "[낡음] ui · 버튼 정리")
+        self.assertEqual(pd.Item("decision:D-1", pd.WAIT, "결정 알림 시각").list_title(), "결정 · 알림 시각")
+        self.assertNotIn("ab12cd34", pd.Item("hub:ui:t:ab12cd34", pd.DOING, "ui: x").line())
+
+    def test_link_cell_is_rich_text_link_element(self):
+        cell = pd.rich_link(PERMA, "결정 카드 열기")
+        el = cell[0]["elements"][0]["elements"][0]
+        self.assertEqual(el, {"type": "link", "url": PERMA, "text": "결정 카드 열기"})
+        self.assertEqual(pd.link_label(pd.Item("decision:D-1", pd.WAIT, "x")), "결정 카드 열기")
+        self.assertEqual(pd.link_label(pd.Item("ledger:F1", pd.DOING, "x")), "메시지 열기")
+
+    def test_create_sends_link_as_link_element(self):
+        calls = []
+        conf = pd.Conf(token="t", api="http://127.0.0.1:9", list_id="L1")
+        it = pd.Item("decision:D-1", pd.WAIT, "결정 알림", link=PERMA)
+        with mock.patch.object(pd, "api", lambda c, m, b: calls.append((m, b)) or {"ok": True, "item": {"id": "R1"}}):
+            pd.apply_list(conf, [("create", it, "")], {"items": {}})
+        fields = {f["column_id"]: f for f in calls[0][1]["initial_fields"]}
+        self.assertEqual(fields[pd.COL_LINK]["rich_text"][0]["elements"][0]["elements"][0]["type"], "link")
+        self.assertEqual(fields[pd.COL_TITLE]["rich_text"][0]["elements"][0]["elements"][0]["text"], "⏳ 결정 · 알림")
+
+    def test_new_rows_ordered_wait_block_doing_oldest_first(self):
+        mk = lambda k, b, since: pd.Item(k, b, k, since=since)  # noqa: E731
+        items = [mk("ledger:a", pd.DOING, 1), mk("decision:new", pd.WAIT, 50), mk("ledger:blk", pd.BLOCK, 5), mk("decision:old", pd.WAIT, 10), mk("ledger:b", pd.DOING, 0)]
+        ops = pd.plan_list(items, {"items": {}})
+        self.assertEqual([o[1].key for o in ops], ["decision:old", "decision:new", "ledger:blk", "ledger:a", "ledger:b"])  # since 모르는 것(0)은 같은 종류 맨 뒤
+
+    def test_answered_decision_is_checked_done(self):
+        state = {"items": {"decision:D-1": {"record": "Rec9", "title": "결정 x", "bucket": pd.WAIT, "link": PERMA}}}
+        ops = pd.plan_list([], state)  # 답이 와 결정 대기에서 빠짐
+        self.assertEqual([(o[0], o[2]) for o in ops], [("done", "Rec9")])
+        calls = []
+        with mock.patch.object(pd, "api", lambda c, m, b: calls.append(b) or {"ok": True}):
+            pd.apply_list(pd.Conf(token="t", api="http://127.0.0.1:9", list_id="L1"), ops, state)
+        self.assertTrue(calls[0]["cells"][0]["checkbox"])
+
+    def test_collector_sets_since(self):
+        d = pc.decision_items({"items": [{"title": "a", "id": "D-1", "ts": "1700000000.000100", "channel": "D1"}]})
+        self.assertEqual(d[0]["since"], 1700000000.0001)
+        self.assertEqual(pc.received_epoch("garbage"), 0.0)
+        self.assertLess(pc.received_epoch("11-01", now=1794000000), pc.received_epoch("11-05", now=1794000000))
+
+
 class ListChange(unittest.TestCase):
     def test_defaults_point_to_new_list(self):
         self.assertEqual(pd.DEFAULT_LIST_ID, "F0CH72MJKBN")

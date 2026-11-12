@@ -73,9 +73,20 @@ def needs_user(text):
     return any(w in text for w in WAIT_WORDS)
 
 
-def item(key, bucket, title, group, link="", ref=None):
+def received_epoch(text, now=None):
+    """장부 접수일('MM-DD') → 그날 0시 epoch. 해석 못 하면 0(정렬에서 맨 뒤). 미래 날짜면 작년으로 봄"""
+    now = time.time() if now is None else now
+    try:
+        t = time.strptime(f"{time.localtime(now).tm_year}-{str(text).strip()}", "%Y-%m-%d")
+    except ValueError:
+        return 0.0
+    at = time.mktime(t)
+    return at if at <= now + 86400 else time.mktime(time.strptime(f"{t.tm_year - 1}-{t.tm_mon}-{t.tm_mday}", "%Y-%m-%d"))
+
+
+def item(key, bucket, title, group, link="", ref=None, since=0.0):
     """ref: 원본 Slack 메시지 위치({kind: topic|card, channel, ts} 또는 {kind: file, file}). 링크는 토큰이 있는 digest 가 chat.getPermalink 로 만듦(수집기는 주소를 만들지 않음)"""
-    return {"key": key, "bucket": bucket, "title": one_line(title), "group": group, "link": link, "ref": ref}
+    return {"key": key, "bucket": bucket, "title": one_line(title), "group": group, "link": link, "ref": ref, "since": since}
 
 
 class ReportRefs:
@@ -146,7 +157,7 @@ def collect_ledger(path, refs=None):
             bucket = BLOCK
         else:
             continue
-        out.append(item(f"ledger:{r['id']}", bucket, f"{r['id']} {r['request']}", "장부", ref=refs.for_task(r["id"]) if refs else None))
+        out.append(item(f"ledger:{r['id']}", bucket, f"{r['id']} {r['request']}", "장부", ref=refs.for_task(r["id"]) if refs else None, since=received_epoch(r["received"])))
     return out
 
 
@@ -177,10 +188,11 @@ def collect_hubs(status_dir, old_items=(), refs=None):
         stale = at is None or (time.time() - at.timestamp()) > limit_s
         tag = f"[{STALE_TAG}] " if stale else ""
         ref = refs.for_hub(slug) if refs else None
+        since = at.timestamp() if at else 0.0
         for task in data.get("tasks", []):
-            out.append(item(f"hub:{slug}:t:{short_hash(task)}", WAIT if needs_user(task) else DOING, f"{tag}{slug}: {task}", slug, ref=ref))
+            out.append(item(f"hub:{slug}:t:{short_hash(task)}", WAIT if needs_user(task) else DOING, f"{tag}{slug}: {task}", slug, ref=ref, since=since))
         for blocker in data.get("blockers", []):
-            out.append(item(f"hub:{slug}:b:{short_hash(blocker)}", WAIT if needs_user(blocker) else BLOCK, f"{tag}{slug}: {blocker}", slug, ref=ref))
+            out.append(item(f"hub:{slug}:b:{short_hash(blocker)}", WAIT if needs_user(blocker) else BLOCK, f"{tag}{slug}: {blocker}", slug, ref=ref, since=since))
     return out, notes, failed
 
 
@@ -280,6 +292,14 @@ def query_pending(now):
         raise SourceError(f"결정 대기 읽기 실패({e.code})")
 
 
+def ts_epoch(ts):
+    """Slack ts('초.마이크로초') → epoch. 아니면 0"""
+    try:
+        return float(ts)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def card_ref(p):
     """결정 카드의 원본 메시지 위치. 채널·ts 가 없으면 None(digest 가 '링크 없음'과 경고를 냄)"""
     ch, ts = p.get("channel"), p.get("ts")
@@ -291,7 +311,7 @@ def decision_items(pending):
     out = []
     for p in (pending or {}).get("items", []):
         ident = p.get("id") or short_hash(str(p.get("title", "")))
-        out.append(item(f"decision:{ident}", WAIT, f"결정 {p.get('title', '')}", "결정", ref=card_ref(p)))
+        out.append(item(f"decision:{ident}", WAIT, f"결정 {p.get('title', '')}", "결정", ref=card_ref(p), since=ts_epoch(p.get("ts"))))
     return out
 
 
