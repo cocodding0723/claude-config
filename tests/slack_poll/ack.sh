@@ -300,6 +300,7 @@ replies ""
 # ACK_WINDOW 를 0 으로 바꾼 사본(60초 창이 항상 비어 창 상한이 안 걸림)에서도 한 회차는 ACK_MAX(3)회까지만
 VAR="$SB/poll-nowin.sh"
 sed 's/^ACK_WINDOW, ACK_MAX = 60, 3 /ACK_WINDOW, ACK_MAX = 0, 3 /' "$POLL" > "$VAR"
+cp "$(dirname "$POLL")/tls_ctx.py" "$SB/"  # 사본이 같은 폴더에서 공용 인증서 모듈을 import 함
 if cmp -s "$POLL" "$VAR"; then ko "ⓜ 변형 사본 생성" "치환 실패(상수 선언이 바뀜)"; else
   H="$SB/hubM"; mkhub "$H"
   hist "$msgs"
