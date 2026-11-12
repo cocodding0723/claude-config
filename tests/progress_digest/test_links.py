@@ -190,5 +190,30 @@ class ListAccess(unittest.TestCase):
         self.assertEqual(len(sent), 1)
 
 
+class ListChange(unittest.TestCase):
+    def test_defaults_point_to_new_list(self):
+        self.assertEqual(pd.DEFAULT_LIST_ID, "F0CH72MJKBN")
+        self.assertTrue(pd.DEFAULT_LIST_URL.endswith("/F0CH72MJKBN"))
+        self.assertEqual((pd.COL_TITLE, pd.COL_DONE, pd.COL_LINK), ("Col0CHXNEMP1N", "Col0CH58810LR", "Col0CGN0B5WT1"))
+
+    def test_other_list_id_resets_row_mapping(self):
+        st = {"hash": "h", "dm_hash": "d", "items": {"ledger:F1": {"record": "Rec1", "title": "t", "bucket": "doing"}}, "list_id": "FOLD"}
+        self.assertTrue(pd.sync_list_id(st, "FNEW"))
+        self.assertEqual((st["items"], st["hash"], st["list_id"], st["dm_hash"]), ({}, "", "FNEW", "d"))
+
+    def test_legacy_state_without_list_id_resets(self):
+        st = {"hash": "h", "dm_hash": "", "items": {"ledger:F1": {"record": "Rec1"}}}
+        self.assertTrue(pd.sync_list_id(st, "FNEW"))
+        self.assertEqual(st["items"], {})
+
+    def test_same_list_keeps_rows_and_empty_state_just_records_id(self):
+        st = {"hash": "h", "dm_hash": "", "items": {"ledger:F1": {"record": "Rec1"}}, "list_id": "FNEW"}
+        self.assertFalse(pd.sync_list_id(st, "FNEW"))
+        self.assertIn("ledger:F1", st["items"])
+        empty = {"hash": "", "dm_hash": "", "items": {}}
+        self.assertFalse(pd.sync_list_id(empty, "FNEW"))
+        self.assertEqual(empty["list_id"], "FNEW")
+
+
 if __name__ == "__main__":
     unittest.main()

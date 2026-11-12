@@ -32,11 +32,11 @@ import progress_collect as pc  # noqa: E402
 import tls_ctx  # noqa: E402
 
 HUB_DIR = os.path.expanduser(os.environ.get("LRM_HUB_DIR") or "~/.config/lrm-hubs")
-DEFAULT_LIST_ID = "F0CF54PDVFT"
-DEFAULT_LIST_URL = "https://w1709475506-et9433868.slack.com/lists/T06M7SZGSP9/F0CF54PDVFT"
+DEFAULT_LIST_ID = "F0CH72MJKBN"
+DEFAULT_LIST_URL = "https://w1709475506-et9433868.slack.com/lists/T06M7SZGSP9/F0CH72MJKBN"
 DEFAULT_API = "https://slack.com/api"
 # 목록 열 ID: 할 일(text)·완료(checkbox). 종류 열은 선택지 ID 가 필요해 쓰지 않음
-COL_TITLE, COL_DONE, COL_LINK = "Col0CEX0ZCHMH", "Col0CF6UCE0KW", "Col0CFXJT428G"
+COL_TITLE, COL_DONE, COL_LINK = "Col0CHXNEMP1N", "Col0CH58810LR", "Col0CGN0B5WT1"
 API_TIMEOUT_S = 15
 LIST_FATAL = ("list_not_found", "not_in_channel", "missing_scope", "invalid_auth", "token_revoked")  # 목록 접근 자체가 막힌 오류
 GH_TIMEOUT_S = 30
@@ -183,6 +183,15 @@ def render(items, notes):
 
 
 # ---------- 상태 파일 ----------
+
+def sync_list_id(state, list_id):
+    """상태의 행 매핑은 기록한 목록의 행 ID 라 목록이 바뀌면 쓸 수 없음. 목록 ID 가 다르거나(옛 상태는 기록 없음) 행이 있는데 ID 가 없으면 행 매핑·해시를 비우고 새로 시작. 비웠으면 True"""
+    reset = bool(state["items"]) and state.get("list_id") != list_id
+    if reset:
+        state["items"], state["hash"] = {}, ""
+    state["list_id"] = list_id
+    return reset
+
 
 def load_state(path):
     try:
@@ -411,6 +420,8 @@ def send_dm(conf, text):
 
 def run(conf, a):
     state = load_state(conf.state)
+    if sync_list_id(state, conf.list_id):
+        print(f"목록이 바뀌어 행 매핑을 새로 시작함(새 목록 {conf.list_id})", file=sys.stderr)
     items, notes, groups = load_items(use_pr=not a.no_pr)
     resolve_links(items, Links(conf), dm_visible(items))
     digest = digest_hash(items, groups)

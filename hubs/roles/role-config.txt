@@ -4,7 +4,7 @@
 첫 작업 3개(구조 승인 먼저 — 승인 전 ~/.claude·~/.config/lrm-hubs 파일 이동·심볼릭 링크 금지):
 A. 저장소 구조안: ① 웹·GitHub 리서치 — dotfiles 관리 방식(심볼릭 링크·GNU stow·chezmoi 등), Claude Code 설정·스킬을 저장소로 공유하는 실제 사례 ② 지금 위치 조사 — ~/.claude(skills 37개·hooks·CLAUDE.md·settings.json·meat-proxy), 프로필 홈 ~/Library/Application Support/orca/claude-profiles/*/home(skills·CLAUDE.md), ~/.config/lrm-hubs(스크립트·roles) ③ 폴더 구조·설치 방식·포함/제외 목록(비밀: *.env·slack-bot.env·토큰·state·cache·history·projects·sessions 제외)·여러 맥(원격 맥) 동기화 방법. 산출: doc-kit HTML(결정 카드 포함).
 B. 문서 코디네이터 정리: 지금 문서 허브(coord-docs-hub, LRM sparse)와 그 하위 워크스페이스에 흩어진 문서 규칙·양식·산출물을 조사하고, ① 문서 규칙을 스킬 하나(또는 최소 개수)로 통합 ② 문서 허브를 이 저장소의 Orca 워크스페이스로 옮겨 프로젝트에 묶이지 않게 하는 안. 기존 스킬(doc-kit 등)과 메모리 규칙(docs-as-html·doc-three-stage-review·doc-one-fact-per-line·diagram-before-problem-after 등)의 겹침표 포함. 이전 실행은 승인 뒤, 문서 허브 진행 작업이 끝난 시점에.
-C. Slack 봇 최적화: 지금 구성 조사 — ~/.config/lrm-hubs/slack_notify.sh·slack_poll.sh(launchd ai.lrm.slackpoll 30초 폴링, 429 발생)·slack_cmd.sh·slack_pending.sh·slack-inbox.jsonl·Slack 목록 F0CF54PDVFT. 웹·GitHub 리서치 — Socket Mode·Bolt·이벤트 구독 vs 폴링, 레이트 리밋, 버튼·모달 결정 답변, 스레드 정리, 개인 비서형 봇 사례. 사용자 맞춤 개선안(결정은 메시지 1개=결정 1개, 이모지/버튼 답, 할 일 목록 연동 유지) → HTML → 승인 뒤 구현. slack-bot.env 는 읽지 말 것(토큰).
+C. Slack 봇 최적화: 지금 구성 조사 — ~/.config/lrm-hubs/slack_notify.sh·slack_poll.sh(launchd ai.lrm.slackpoll 30초 폴링, 429 발생)·slack_cmd.sh·slack_pending.sh·slack-inbox.jsonl·Slack 목록 F0CH72MJKBN. 웹·GitHub 리서치 — Socket Mode·Bolt·이벤트 구독 vs 폴링, 레이트 리밋, 버튼·모달 결정 답변, 스레드 정리, 개인 비서형 봇 사례. 사용자 맞춤 개선안(결정은 메시지 1개=결정 1개, 이모지/버튼 답, 할 일 목록 연동 유지) → HTML → 승인 뒤 구현. slack-bot.env 는 읽지 말 것(토큰).
 
 진행 순서: A·B·C 리서치·조사는 병렬 워커 3개, 구조안 문서도 각각. 문서는 3단계 검수(독자 검수 → 다른 모델 교차 → 사용자). 문서가 나오면 "[개인설정→메인] [HTML] 경로" + 핵심 3줄로 메인에 보고(Slack 업로드는 메인).
 결정 보고 형식: 질문 한 문장·왜 지금·선택지(결과·비용·되돌리기)·추천+이유.
