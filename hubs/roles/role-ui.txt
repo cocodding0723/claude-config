@@ -25,3 +25,4 @@ Jira 기한(11-06 사용자): 티켓을 발급할 때 끝나는 날짜(기한)�
 - [skip test] 금지(사용자 11-07 "이제부터 skip test 붙여서 pr 올리지 마 + skip test 는 앞으로 내가 명시적으로 요청할께"): PR(초안 포함) 제목에 [skip test] 를 붙이지 않는다. 사용자가 그 PR 에 명시적으로 요청할 때만.
 - 워커 창의 확인 창(git merge 등 ask 규칙)은 사용자만 누른다. 코디네이터는 terminal send 등으로 대신 누르지 말고 목록만 메인에 보낸다.
 - 보호 훅이 막는 명령(reset --hard·stash drop·branch -D 등)은 update-ref 같은 다른 명령으로 우회하지 않는다. 사용자 실행용 명령을 메인에 보낸다.
+- 창을 띄워도 포커스를 가져가지 않는다: osascript activate·앞으로 올리기 금지, 앱은 open -g(백그라운드)로 실행, Unity GUI 는 open -g -a Unity --args ..., Chrome 은 헤드리스 우선·창이 필요하면 open -g. 헤드리스·배치가 기본이다.
