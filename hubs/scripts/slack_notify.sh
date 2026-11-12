@@ -16,7 +16,7 @@ usage() {
                종류별 색 띠(decide·todo 주황, warn 빨강, progress 파랑, done·doc 초록)에 본문을 담고 첫 줄을 굵게 함(이미 굵으면 그대로)
   --choices    2~4(--kind decide 전용). 메시지 끝에 '👉 답:' 이모지 안내 줄을 붙임(본문에 👉 줄이 있으면 생략)
   --emoji-set  custom(기본, :비서-a: 등)|std(표준 :a: :regional_indicator_c: 등). 안내 줄 이모지 종류
-  --options    (--kind decide 전용) 번호 이모지로 고르는 카드. '번호=문구' 를 쉼표로 이음. 번호는 1부터 연속 2~4개, 문구 1~80자.
+  --options    (--kind decide 전용) 버튼·번호 이모지로 고르는 카드(파일 첨부 시 카드를 먼저 올리고 파일은 그 스레드에 붙임). '번호=문구' 를 쉼표로 이음. 번호는 1부터 연속 2~4개, 문구 1~80자.
                문구에 :이름:·👉·✅·❌·키캡은 못 씀(답 이모지로 오인). --thread 와 함께 못 씀(스레드 답글의 반응은 수집 안 됨).
                선택지 줄(:one: 등)·추천 줄·'👉 답:' 줄·결정 번호 줄을 도구가 붙임. 본문에는 제목과 배경만 씀(본문 '👉 답:' 줄은 거부)
   --recommend  (--options 필수) 추천 선택지 번호
@@ -27,7 +27,7 @@ usage() {
   --todo-id    (--kind todo 전용) 할 일 번호 T-영문·숫자 1~16자. 본문에 답 줄이 없으면 완료 안내 줄을 붙임
   --alive      주제(첫 줄) 아래에 봇 생존 줄('봇: 연결됨 · 마지막 수신 N분 전', bot_alive.py)을 넣음. 정기 점검·진행 메시지용
   --no-check   양식 검사 생략(slack-sent.jsonl 에 unchecked:true 기록)
-환경 변수: LRM_FORMAT=warn|strict|off (기본 warn). warn 은 위반해도 전송하고 stderr 경고, strict 는 위반 시 미전송·종료 코드 2
+환경 변수: LRM_BTN_WARN=off 는 '버튼 없음' 경고를 끔(시험용). LRM_FORMAT=warn|strict|off (기본 warn). warn 은 위반해도 전송하고 stderr 경고, strict 는 위반 시 미전송·종료 코드 2
   --kind decide 는 결정이 2개 이상이거나 python3 검사가 실패하면 모드와 무관하게 미전송·종료 코드 2(결정 1건 = 메시지 1개). --no-check·off 로 우회하면 로그에 한 줄 남음
 예:
   slack_notify.sh "빌드 완료"
@@ -88,6 +88,7 @@ fi
 if [ "$TID_SET" = 1 ] && [ "$KIND" != todo ]; then die "--todo-id 는 --kind todo 와만 사용 — --kind todo 를 함께 지정"; fi
 # 폴러·대기 목록은 최상위 메시지의 반응만 읽음. 스레드 답글로 나간 카드는 답할 수 없으므로 미전송
 if [ -n "$THREAD" ] && { [ "$OPT_SET" = 1 ] || [ "$TID_SET" = 1 ]; }; then die "--thread 는 --options·--todo-id 카드와 함께 쓸 수 없음 — 스레드 답글의 반응은 수집되지 않으므로 --thread 를 빼고 보내세요"; fi
+[ "$OPT_SET" = 0 ] || [ $# -lt 2 ] || [ -f "$2" ] || die "첨부 파일 없음: $2 — 경로 확인 뒤 다시 보내세요(카드도 보내지 않음)"
 DIR="$HOME/.config/lrm-hubs"
 ENV="$DIR/slack-bot.env"
 SENT="$DIR/slack-sent.jsonl"
@@ -431,6 +432,10 @@ if [ "$OPT_SET" = 1 ] || [ "$TID_SET" = 1 ]; then
     "$(setv "$DID_SET" "$DECISION_ID")" "$(setv "$SEQ_SET" "$SEQ")" "$(setv "$TID_SET" "$TODO_ID")")" \
     || { rc=$?; [ "$rc" = 2 ] || echo "카드 인자 검사 실패(전송 안 함) — python3 동작 확인 뒤 다시 보내세요" >&2; exit 2; }
 fi
+# 버튼은 --options 카드에만 붙음. --options 없는 결정 카드는 이모지 반응뿐이라 사용자가 스레드에 글로 답하게 됨
+if [ "$KIND" = decide ] && [ "$OPT_SET" = 0 ] && [ "${LRM_BTN_WARN:-on}" != off ]; then
+  echo "경고: 선택지 버튼 없음(전송함) — --options '1=문구,2=문구' --recommend N --decision-id D-xxxx 로 보내야 버튼이 붙음(지금은 이모지 반응·스레드 글로만 답 가능)" >&2
+fi
 # 같은 결정 번호 재사용은 경고만(재전송일 수 있음). 검사 실패·기록 없음은 전송에 영향 없음
 if [ "$OPT_SET" = 1 ]; then python3 -c "$FORM_PY" dup "$SENT" "$DECISION_ID" < /dev/null || true; fi
 GUIDED=0  # 답 줄을 도구가 붙이면 no-answer 검사 생략
@@ -533,11 +538,20 @@ if kind=="file":
     rec["path"]=os.environ.get("LRM_FILE_PATH","")
 with open(sent,"a",encoding="utf-8") as f: f.write(json.dumps(rec,ensure_ascii=False)+"\n")
 print("ok", rec["ts"])
-' "$SENT" "$CH" "$TITLE" "$TAG" "$THREAD" "$1" "$KIND" "$NOCHECK" "$CARD_JSON"
+' "$SENT" "$CH" "$TITLE" "$TAG" "$THREAD" "$1" "$KIND" "$NOCHECK" "${2-$CARD_JSON}"
 }
 
-if [ $# -ge 2 ]; then
-  F="$2"; export LRM_FILE_PATH="$F"; N=$(basename "$F"); L=$(stat -f %z "$F")
+# 텍스트 게시. 번호 카드면 색 띠 안에 버튼 블록이 들어감
+post_text() {
+  PAYLOAD="$(printf '%s' "$MSG" | python3 -c "$FORM_PY" payload "$KIND" "$CH" "$THREAD" "$CARD_JSON")" \
+    || die "페이로드 생성 실패(전송 안 함) — python3 동작 확인 뒤 다시 보내세요"
+  curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H 'Content-Type: application/json' \
+    -d "$PAYLOAD" $API/chat.postMessage | record text
+}
+# 파일 업로드. 인자: 경로, 본문, 스레드 ts, 기록에 붙일 카드 필드(카드 본체가 따로 있으면 빈 값)
+upload_file() {
+  local F="$1" BODY="$2" TH="$3" REC="$4" R U ID N L
+  export LRM_FILE_PATH="$F"; N=$(basename "$F"); L=$(stat -f %z "$F")
   R=$(curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" --data-urlencode "filename=$N" -d "length=$L" $API/files.getUploadURLExternal)
   U=$(echo "$R" | python3 -c 'import sys,json;print(json.load(sys.stdin)["upload_url"])'); ID=$(echo "$R" | python3 -c 'import sys,json;print(json.load(sys.stdin)["file_id"])')
   curl -s -o /dev/null -F "file=@$F" "$U"
@@ -546,11 +560,20 @@ if [ $# -ge 2 ]; then
 import json,sys
 b={"files":[{"id":sys.argv[1],"title":sys.argv[2]}],"channel_id":sys.argv[3],"initial_comment":sys.argv[4]}
 if sys.argv[5]: b["thread_ts"]=sys.argv[5]
-print(json.dumps(b))' "$ID" "$N" "$CH" "$MSG" "$THREAD")" \
-    $API/files.completeUploadExternal | record file
+print(json.dumps(b))' "$ID" "$N" "$CH" "$BODY" "$TH")" \
+    $API/files.completeUploadExternal | record file "$REC"
+}
+
+if [ $# -ge 2 ] && [ "$OPT_SET" = 1 ]; then
+  # 파일 업로드 메시지에는 버튼 블록을 달 수 없음(Slack API 한계). 버튼 카드를 먼저 올리고 파일은 그 스레드에 붙임.
+  # 카드가 최상위 메시지라 버튼·반응·스레드 글 답이 모두 카드 ts 에 묶임
+  OUT="$(post_text)" || { echo "$OUT"; exit 1; }
+  echo "$OUT"
+  case "$OUT" in "ok "?*) ;; *) exit 1 ;; esac
+  FOUT="$(upload_file "$2" "첨부: $(basename "$2")" "${OUT#ok }" "")" || true
+  case "$FOUT" in ok*) ;; *) echo "경고: 카드는 보냈지만 파일 첨부 실패(${FOUT:-응답 없음}) — 파일을 따로 보내세요" >&2 ;; esac
+elif [ $# -ge 2 ]; then
+  upload_file "$2" "$MSG" "$THREAD" "$CARD_JSON"
 else
-  PAYLOAD="$(printf '%s' "$MSG" | python3 -c "$FORM_PY" payload "$KIND" "$CH" "$THREAD" "$CARD_JSON")" \
-    || die "페이로드 생성 실패(전송 안 함) — python3 동작 확인 뒤 다시 보내세요"
-  curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H 'Content-Type: application/json' \
-    -d "$PAYLOAD" $API/chat.postMessage | record text
+  post_text
 fi
