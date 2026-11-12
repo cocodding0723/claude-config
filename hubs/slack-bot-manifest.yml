@@ -19,6 +19,8 @@ oauth_config:
       - im:history
       - reactions:read
       - reactions:write
+      - lists:read
+      - lists:write
 settings:
   event_subscriptions:
     bot_events:
