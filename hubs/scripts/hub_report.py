@@ -54,7 +54,10 @@ def has_secret(*texts: str) -> bool:
 
 
 def make_report(hub, task, kind, text, files, options=None, recommend=None, decision_id=None, reversible=None) -> dict:
-    """입력 검증 → 보고 dict(id·at 제외). 잘못되면 ReportError"""
+    """입력 검증 → 보고 dict(id·at 제외). 잘못되면 ReportError.
+    비밀 검사는 모든 입력 필드(hub·task·kind 포함)에 가장 먼저 함. 형식 오류 메시지가 입력을 되비추기 전에 걸러야 비밀이 출력·로그로 새지 않음"""
+    if has_secret(*[str(v) for v in (hub, task, kind, text, options, recommend, decision_id, reversible, *(files or [])) if v]):
+        raise ReportError("비밀 값(토큰·키·비밀번호)으로 보이는 내용 포함 — 기록 안 함. 값을 빼고 다시 기록")
     if not hub_status.SLUG_RE.match(hub or "") or len(hub) > 24:
         raise ReportError(f"--hub '{hub}' 형식 오류 — 소문자·숫자·하이픈 24자 이내(예: ui-layer)")
     if task != NO_TASK and not TASK_RE.match(task or ""):
@@ -70,8 +73,6 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
     if any(not f or "\n" in f for f in files) or len(files) > MAX_FILES:
         raise ReportError(f"--file 오류 — 한 줄 경로 {MAX_FILES}개 이하")
     extra = [options, recommend, decision_id, reversible]
-    if has_secret(*lines, *files, *[e for e in extra if e]):
-        raise ReportError("비밀 값(토큰·키·비밀번호)으로 보이는 내용 포함 — 기록 안 함. 값을 빼고 다시 기록")
     rep = {"hub": hub, "task": task, "kind": kind, "text": "\n".join(lines), "files": files}
     if kind == "decide":
         if not (options and recommend and decision_id):
@@ -92,23 +93,84 @@ def report_id(rep: dict) -> str:
     return hashlib.sha1(canon.encode("utf-8")).hexdigest()[:12]
 
 
-def read_outbox(path: str) -> list:
-    """outbox → 보고 목록(기록 순서). 파일이 없으면 빈 목록, 깨진 줄은 건너뜀"""
+def valid_record(d) -> bool:
+    """sender 가 KeyError 없이 쓸 수 있는 레코드인가: 필수 필드·타입·형식, decide 카드 필드, 비밀 값 없음"""
+    if not isinstance(d, dict):
+        return False
+    if not all(isinstance(d.get(k), str) and d[k].strip() for k in ("id", "hub", "task", "kind", "text")):
+        return False
+    files = d.get("files", [])
+    if not isinstance(files, list) or not all(isinstance(f, str) for f in files):
+        return False
+    if not hub_status.SLUG_RE.match(d["hub"]) or d["kind"] not in KINDS or not (d["task"] == NO_TASK or TASK_RE.match(d["task"])):
+        return False
+    if d["kind"] == "decide" and not all(isinstance(d.get(k), str) and d[k] for k in ("options", "recommend", "decision_id")):
+        return False
+    if d.get("reversible") is not None and not isinstance(d["reversible"], str):
+        return False
+    return not has_secret(*[v for v in d.values() if isinstance(v, str)], *files)
+
+
+def read_outbox(path: str, bad=None) -> list:
+    """outbox → 보고 목록(기록 순서). 파일이 없으면 빈 목록. 개행으로 끝나지 않은 마지막 줄은 기록 중이거나 잘린 줄이라 읽지 않음.
+    bad 가 목록이면 형식이 깨졌거나 필수 필드가 없는 줄의 원문을 모아 줌(호출자가 격리)"""
     out = []
     try:
-        with open(path, encoding="utf-8") as f:
-            for ln in f:
-                try:
-                    d = json.loads(ln)
-                except ValueError:
-                    continue
-                if isinstance(d, dict) and d.get("id") and d.get("hub") and d.get("kind") in KINDS:
-                    out.append(d)
+        with open(path, encoding="utf-8", errors="replace") as f:
+            raw = f.read()
     except FileNotFoundError:
         return []
     except OSError as err:
         raise ReportError(f"outbox 읽기 실패({err.strerror}) — LRM_REPORT_OUTBOX 경로·권한 확인", EXIT_IO)
+    lines = raw.split("\n")[:-1]
+    for ln in lines:
+        if not ln.strip():
+            continue
+        try:
+            d = json.loads(ln)
+        except ValueError:
+            d = None
+        if valid_record(d):
+            out.append(d)
+        elif bad is not None:
+            bad.append(ln)
     return out
+
+
+def repair_tail(path: str) -> None:
+    """잠금 아래에서 호출. 개행 없이 끝난 마지막 줄이 있으면 줄 경계를 복구함.
+    온전한 JSON 객체면 개행만 붙이고, 잘린 줄이면 <outbox>.corrupt 에 옮긴 뒤 outbox 에서 잘라냄. 복구가 안 되면 ReportError(종료 코드 1)"""
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except FileNotFoundError:
+        return
+    except OSError as err:
+        raise ReportError(f"outbox 읽기 실패({err.strerror}) — LRM_REPORT_OUTBOX 경로·권한 확인", EXIT_IO)
+    if not data or data.endswith(b"\n"):
+        return
+    cut = data.rfind(b"\n") + 1
+    tail = data[cut:]
+    try:
+        whole = isinstance(json.loads(tail.decode("utf-8")), dict)
+    except (ValueError, UnicodeDecodeError):
+        whole = False
+    try:
+        if whole:
+            with open(path, "ab") as f:
+                f.write(b"\n")
+                f.flush()
+                os.fsync(f.fileno())
+            return
+        fd = os.open(path + ".corrupt", os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "ab") as q:
+            q.write(tail + b"\n")
+            q.flush()
+            os.fsync(q.fileno())
+        os.truncate(path, cut)
+    except OSError as err:
+        raise ReportError(f"outbox 끝줄 복구 실패({err.strerror}) — 기록 안 함. {path} 끝의 잘린 줄을 직접 정리", EXIT_IO)
+    sys.stderr.write(f"경고: outbox 끝의 잘린 줄 {len(tail)}바이트를 {path}.corrupt 로 옮김\n")
 
 
 @contextlib.contextmanager
@@ -126,6 +188,8 @@ def add(path: str, rep: dict, now: float, dry: bool) -> tuple:
     """(보고 dict, 새로 기록했나). 같은 id 가 이미 있으면 기록하지 않음"""
     rep = {"id": report_id(rep), "at": int(now), **rep}
     with locked(path):
+        if not dry:
+            repair_tail(path)
         if any(r["id"] == rep["id"] for r in read_outbox(path)):
             return rep, False
         if not dry:
@@ -161,7 +225,7 @@ def build_parser() -> argparse.ArgumentParser:
     a = sub.add_parser("add", help="보고 1건 기록", description="보고 1건을 outbox 에 추가. 같은 내용은 무시(종료 코드 0).")
     a.add_argument("--hub", required=True, help="허브 slug(예 ui-layer)")
     a.add_argument("--task", required=True, help=f"작업 번호(예 C0012). 없으면 '{NO_TASK}'")
-    a.add_argument("--kind", required=True, choices=list(KINDS), metavar="|".join(KINDS), help="보고 종류")
+    a.add_argument("--kind", required=True, metavar="|".join(KINDS), help="보고 종류")  # 값 검사는 make_report 가 함(비밀 검사 뒤)
     a.add_argument("--text", required=True, help=f"본문 {MAX_LINES}줄·{MAX_CHARS}자 이내. decide 는 첫 줄이 결정 제목")
     a.add_argument("--file", action="append", default=[], dest="files", help="증거 경로(반복 가능, 최대 5개)")
     a.add_argument("--options", help="(decide) '1=문구,2=문구'")

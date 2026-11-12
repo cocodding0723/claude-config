@@ -98,6 +98,63 @@ class ReportTest(unittest.TestCase):
         ls = self.cli("list", "--json")
         self.assertEqual(len(json.loads(ls.stdout)), 1)
 
+    # --- Codex 리뷰 회귀(1·2·5) ---
+    def test_truncated_tail_is_quarantined_and_new_report_readable(self):
+        with open(self.box, "w") as f:
+            f.write('{"id":"cut')  # 개행 없는 잘린 JSON
+        r = self.add()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.rows()), 1)
+        with open(self.box + ".corrupt", encoding="utf-8") as f:
+            self.assertEqual(f.read(), '{"id":"cut\n')
+        with open(self.box, encoding="utf-8") as f:
+            self.assertEqual(len(f.read().splitlines()), 1)
+
+    def test_whole_json_tail_without_newline_keeps_record(self):
+        self.add()
+        with open(self.box, encoding="utf-8") as f:
+            line = f.read().rstrip("\n")
+        with open(self.box, "w", encoding="utf-8") as f:
+            f.write(line)  # 온전한 줄인데 개행만 없음
+        self.assertEqual(self.add(text="둘째").returncode, 0)
+        self.assertEqual(len(self.rows()), 2)
+        self.assertFalse(os.path.exists(self.box + ".corrupt"))
+
+    def test_unrecoverable_tail_fails_with_nonzero_exit_and_no_write(self):
+        with open(self.box, "w") as f:
+            f.write('{"id":"cut')
+        os.mkdir(self.box + ".corrupt")  # 격리 파일을 못 쓰는 상황
+        r = self.add()
+        self.assertEqual(r.returncode, 1)
+        with open(self.box) as f:
+            self.assertEqual(f.read(), '{"id":"cut')
+
+    def test_secret_in_hub_task_kind_rejected_without_echo(self):
+        bad = "xox" + "b-review-sentinel"
+        for kw in ({"hub": bad}, {"task": bad}, {"kind": bad}):
+            r = self.add(**kw)
+            self.assertEqual(r.returncode, 2, kw)
+            self.assertNotIn(bad, r.stderr + r.stdout)  # 형식 오류·argparse 메시지가 입력을 되비추지 않음
+        self.assertEqual(self.rows(), [])
+        self.assertFalse(os.path.exists(self.box))
+
+    def test_secret_in_decide_fields_rejected(self):
+        bad = "xox" + "b-review-sentinel"
+        r = self.add(text="제목\n배경", kind="decide", extra=["--options", f"1={bad},2=b", "--recommend", "1", "--decision-id", "D-1"])
+        self.assertEqual(r.returncode, 2)
+
+    def test_invalid_records_are_isolated_not_fatal(self):
+        good = hub_report.make_report("ui", "C1", "done", "정상", [])
+        good = {"id": "g1", "at": 1, **good}
+        lines = [json.dumps({"id": "bad", "hub": "ui", "kind": "done"}),  # task 없음
+                 json.dumps({**good, "id": "b2", "files": "x"}), json.dumps([1]), "not json", json.dumps(good)]
+        with open(self.box, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        bad = []
+        rows = hub_report.read_outbox(self.box, bad)
+        self.assertEqual([r["id"] for r in rows], ["g1"])
+        self.assertEqual(len(bad), 4)
+
     def test_help_and_usage_error_exit_codes(self):
         self.assertEqual(self.cli("--help").returncode, 0)
         self.assertEqual(self.cli("add").returncode, 2)
