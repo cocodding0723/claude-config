@@ -43,6 +43,14 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.lrm.scrum.plist
 launchctl print gui/$(id -u)/ai.lrm.scrum | head -5      # 등록 확인
 ```
 
+등록 직후, 첫 자동 실행 전에 launchd 와 같은 최소 환경으로 점검 1회(발송·초안 작성·상태 기록 없음. gh 인증·claude 로그인·Atlassian MCP 연결·Slack 봇 스크립트·본인 칸 제목만 확인하고 토큰 값은 출력하지 않는다):
+
+```sh
+env -i HOME="$HOME" PATH=/usr/bin:/bin ~/.config/lrm-hubs/scrum_run.sh --preflight
+```
+
+전부 `PASS` 면 종료 코드 0, 하나라도 `FAIL` 이면 1 이며 줄마다 조치를 안내한다.
+
 끄기(스케줄만 멈춤. 초안·상태 파일은 그대로):
 
 ```sh
@@ -64,6 +72,7 @@ rm -f ~/.config/lrm-hubs/scrum.state.json ~/.config/lrm-hubs/scrum.lock    # 상
 | 목적 | 명령 |
 |---|---|
 | Slack 없이 초안만 보기 | `~/.config/lrm-hubs/scrum_run.sh --dry-run --date 2026-11-12` |
+| 첫 실행 전 점검(발송 없음) | `~/.config/lrm-hubs/scrum_run.sh --preflight` |
 | 재료만 보기 | `python3 ~/.config/lrm-hubs/scrum_collect.py --date 2026-11-12` |
 | 오늘 분 다시 보내기 | `~/.config/lrm-hubs/scrum_run.sh --force` |
 
@@ -75,8 +84,11 @@ rm -f ~/.config/lrm-hubs/scrum.state.json ~/.config/lrm-hubs/scrum.lock    # 상
 |---|---|---|
 | Slack 에 `스크럼 초안 작성 실패` warn 1건 | 세 모델이 모두 실패(한도·인증·양식 불량) | 로그 `~/orca/archive/scrum_post.log` 의 `모델 실패` 줄에서 모델별 사유 확인 → `scrum_run.sh --force` |
 | 초안에 `경고: Jira·Confluence 를 못 읽어` | Atlassian MCP 가 `needs-auth` 캐시 상태라 claude -p 가 연결을 건너뜀 | 대화형 `claude` 에서 `/mcp` → atlassian 인증 1회. 그동안은 PR·커밋·허브 보고만으로 초안이 나간다 |
+| 초안에 `경고: 재료 수집 누락(commits 일부 워크트리)` | 워크트리 일부에서 `git log` 가 실패(잠김·손상) | 로그 `재료 수집 누락` 줄과 `scrum_collect.py --date <날짜>` 의 errors 에서 실패한 폴더 확인. 전부 실패하면 초안 대신 실패 알림이 나간다 |
 | 발송이 3번 실패 | Slack API 오류(종료 코드 1만 30초·90초 뒤 재시도) | 초안 파일은 남고 로컬 알림이 뜬다. 다음 평일 재시도는 없다 |
 | `본인 칸 제목 없음` | `scrum.env` 없음 | 2절 1번 |
+
+초안 claude 는 사용자 설정(`settings.json` 의 허용 목록·훅)과 기존 MCP 서버를 읽지 않는다(`--setting-sources ""`, `--strict-mcp-config`). 스크럼 전용 MCP 설정은 Atlassian 하나뿐이고, 읽기 도구만 허용한다. 인증은 키체인에 저장된 같은 이름(`atlassian`)·URL 항목을 쓴다.
 
 claude 는 `USER` 로 키체인 로그인 항목을 찾는다. 래퍼가 `USER`·`LOGNAME` 이 비어 있으면 채워 두므로 launchd 의 짧은 환경에서도 로그인이 풀리지 않는다. plist 는 `HOME`·`PATH`(claude·gh·python3 위치 포함)를 명시한다.
 
