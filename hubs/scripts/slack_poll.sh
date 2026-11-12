@@ -921,4 +921,12 @@ LRM_HUB_DIR="$DIR" python3 -I "$(dirname "$0")/intake.py" --once >/dev/null 2>&1
 # 새 메시지 묶음 전달(push). 수집이 실패한 회차에도 대기분을 전달하도록 RC 와 무관하게 호출.
 # 워커는 분리돼 바로 반환하므로 이 잠금(300초)을 쥐지 않고, 출력 파이프도 닫아 소켓 수신기의 capture_output 이 기다리지 않음
 LRM_HUB_DIR="$DIR" /bin/bash "$(dirname "$0")/slack_push.sh" --kick >/dev/null 2>&1 || true
+
+# 허브 보고 전송(outbox → 주제 스레드). 메인 전달 뒤에 불러 Slack 지연이 전달을 막지 않음.
+# 회차 총 예산(TOTAL)의 남은 만큼만 전송기 시간 상한으로 넘기고, 남은 예산이 없으면 이번 회차는 건너뜀(300초 잠금 만료 방지)
+left=$((TOTAL - ($(date +%s) - T0)))
+if [ "$left" -ge 1 ]; then
+  [ "$left" -gt "${LRM_REPORT_BUDGET_S:-40}" ] && left="${LRM_REPORT_BUDGET_S:-40}"
+  LRM_REPORT_BUDGET_S="$left" LRM_HUB_DIR="$DIR" python3 -I "$(dirname "$0")/report_sender.py" --once >/dev/null 2>&1 || true
+fi
 exit "$RC"
