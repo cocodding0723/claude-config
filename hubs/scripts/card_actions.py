@@ -5,6 +5,8 @@
 규칙: 선택지 1번이 '실행', 그 밖의 답(보류·직접 입력)은 동작 없이 항목만 지움. 항목은 꺼낼 때 지워 같은 카드를 두 번 눌러도 한 번만 실행함.
 """
 import argparse
+import contextlib
+import fcntl
 import json
 import os
 import subprocess
@@ -29,6 +31,26 @@ EPILOG = """종료 코드: 0 성공(등록 없음 포함), 1 후속 동작 실�
   card_actions.py handle --did D-RS0123456789 --pick 1
   card_actions.py list
 """
+
+
+@contextlib.contextmanager
+def flock(path: str, wait: bool = True):
+    """프로세스 간 배타 잠금(fcntl.flock). wait=False 인데 이미 잡혀 있으면 False 를 내주고 즉시 반환, 잡으면 True.
+    잠금 파일은 지우지 않음(지우면 서로 다른 inode 를 잡아 잠금이 무력화됨)"""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    got = True
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+        except BlockingIOError:
+            got = False
+        yield got
+    finally:
+        os.close(fd)  # 닫으면 잠금도 풀림
+
+
+LOCK = STORE + ".lock"
 
 
 def load() -> dict:
@@ -60,18 +82,20 @@ def save(data: dict) -> None:
 def register(did: str, kind: str, args: dict, now: float | None = None) -> None:
     """카드 한 장의 후속 동작 등록. 보존 기간이 지난 항목은 같이 정리"""
     now = time.time() if now is None else now
-    data = {k: v for k, v in load().items() if isinstance(v, dict) and now - v.get("createdAt", 0) < TTL_S}
-    data[did] = {"kind": kind, "args": args, "createdAt": now}
-    save(data)
+    with flock(LOCK):  # 읽기-수정-저장 전체를 잠금. 안 하면 오래된 읽기본이 take 로 지운 항목을 되살림(재실행 위험)
+        data = {k: v for k, v in load().items() if isinstance(v, dict) and now - v.get("createdAt", 0) < TTL_S}
+        data[did] = {"kind": kind, "args": args, "createdAt": now}
+        save(data)
 
 
 def take(did: str) -> dict | None:
     """등록 항목을 꺼내며 지움. 등록이 없으면 None(일반 결정 카드)"""
-    data = load()
-    entry = data.pop(did, None)
-    if entry is None:
-        return None
-    save(data)
+    with flock(LOCK):
+        data = load()
+        entry = data.pop(did, None)
+        if entry is None:
+            return None
+        save(data)
     return entry if isinstance(entry, dict) else None
 
 

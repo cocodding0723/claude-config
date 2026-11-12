@@ -27,6 +27,7 @@ printf '#!/bin/sh\necho "$FAKE_LSTART"\n' > "$BIN/ps"
 cat > "$BIN/notify" <<'SH'
 #!/bin/bash
 [ "${FAKE_NOTIFY_FAIL:-}" = 1 ] && exit 1
+[ -n "${FAKE_NOTIFY_SLEEP:-}" ] && sleep "$FAKE_NOTIFY_SLEEP"
 { printf '%s\n' "$@"; echo '---'; } >> "$FAKE_NOTIFY_LOG"
 SH
 cat > "$BIN/resume_all.sh" <<'SH'
@@ -177,6 +178,47 @@ kill "$(cat "$SB/k3/pid")" 2>/dev/null
 sockrun k4 '' LRM_SOCKET_WATCH_S=0; sleep 1.2
 chk "WATCH_S=0 이면 감시기를 부르지 않음" '! grep -q "감시 restart_watch" "$SB/k4/out"'
 kill "$(cat "$SB/k4/pid")" 2>/dev/null
+
+# ---- 11. 프로세스 간 잠금 ---------------------------------------------------------------------------
+# 11-1 읽기-수정-저장 경합: register(B)가 A 가 든 옛 읽기본을 쥔 채 멈춘 사이 take(A) 가 A 를 지움. 잠금이 없으면 register 가 A 를 되살려 두 번째 take 도 성공함
+RACE=$(python3 - "$SCRIPTS" "$SB/race" <<'PY'
+import os, sys, threading, time
+os.environ["LRM_HUB_DIR"] = sys.argv[2]
+sys.path.insert(0, sys.argv[1])
+import card_actions as c
+c.register("D-A", "resume", {"slugs": ["a"]})
+orig, ev, first = c.load, threading.Event(), [True]
+def slow_load():
+    d = orig()
+    if threading.current_thread().name == "reg" and first[0]:
+        first[0] = False
+        ev.set()
+        time.sleep(0.6)
+    return d
+c.load = slow_load
+res = {}
+def tk():
+    ev.wait()
+    res["t1"] = c.take("D-A") is not None
+ts = [threading.Thread(target=lambda: c.register("D-B", "resume", {}), name="reg"), threading.Thread(target=tk)]
+[t.start() for t in ts]; [t.join() for t in ts]
+print(res["t1"], c.take("D-A") is not None, c.take("D-B") is not None)
+PY
+)
+chk "register·take 경합(순서 강제): take(A) 첫 번째 True·두 번째 False, B 는 보존" '[ "$RACE" = "True False True" ]' "$RACE"
+# 11-2 감시기 동시 실행: 두 check 가 겹치면 한 쪽만 판정·전송, 다른 쪽은 기다리지 않고 건너뜀
+mkst alpha "$NOW" '["동시 시험 작업"]'
+status 700 rt-L
+C0=$(cards)
+FAKE_NOTIFY_SLEEP=1.5 rw --json > "$SB/p1" 2>&1 &
+sleep 0.4
+t0=$(python3 -c "import time;print(time.time())")
+rw --json > "$SB/p2" 2>&1
+t1=$(python3 -c "import time;print(time.time())")
+wait
+chk "동시 check 2개: 카드 1장만 전송" '[ "$(cards)" = "$((C0 + 1))" ]' "$(( $(cards) - C0 ))장"
+chk "잠금을 못 잡은 쪽은 busy 로 건너뜀(대기 없이 1초 안에 반환)" 'grep -q busy "$SB/p2" && grep -q "\"carded\"" "$SB/p1" && awk -v a="$t0" -v b="$t1" "BEGIN{exit !(b-a<1.0)}"'
+rw --json > "$SB/p3"; chk "잠금 해제 뒤 정상 실행(같은 재시작 → same, 카드 추가 없음)" 'grep -q "\"same\"" "$SB/p3" && [ "$(cards)" = "$((C0 + 1))" ]'
 
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

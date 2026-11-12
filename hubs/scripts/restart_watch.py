@@ -24,6 +24,7 @@ import main_terminal as mt  # noqa: E402
 
 DIR = card_actions.DIR
 STATE = os.path.join(DIR, "restart-watch.json")
+LOCK = os.path.join(DIR, ".restart-watch.lock")
 ORCA = os.environ.get("LRM_ORCA") or "orca"
 NOTIFY = os.environ.get("LRM_NOTIFY") or os.path.join(DIR, "slack_notify.sh")
 TSV = os.environ.get("HUBS_TSV") or next((p for p in (os.path.join(HERE, "..", "hubs.tsv"), os.path.join(DIR, "hubs.tsv")) if os.path.isfile(p)), "")
@@ -168,6 +169,13 @@ def send_card(did: str, text: str, options: str = "1=이어받기,2=보류") -> 
 
 
 def check(dry: bool) -> tuple[int, dict]:
+    """조회·판정·전송·저장 전체를 프로세스 간 잠금으로 직렬화. 잠금을 못 잡으면(다른 check 실행 중) 기다리지 않고 건너뜀.
+    결과 status 에 busy 추가"""
+    with card_actions.flock(LOCK, wait=False) as got:
+        return _check(dry) if got else (0, {"status": "busy"})
+
+
+def _check(dry: bool) -> tuple[int, dict]:
     """(종료 코드, 결과 요약). 결과 status: first_run|unavailable|same|carded|no_targets|dup|send_failed"""
     ident = probe()
     st = load_state()
