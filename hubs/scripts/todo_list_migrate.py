@@ -19,6 +19,8 @@ import progress_digest as pd  # noqa: E402
 
 BACKUP_DIR = "~/Documents/90_정리기록/workspace-archive/20261112"
 PAGE = 100
+PACE_S = float(os.environ.get("LRM_MIGRATE_PACE_S", "1.2"))  # 삭제 호출 간격. Slack 이 연속 삭제를 429 로 막음
+RETRIES, BACKOFF_S = 6, 10.0
 GONE = ("item_not_found", "record_not_found", "not_found")  # 이미 지워진 행
 
 
@@ -42,6 +44,17 @@ def write_backup(rows, list_id, directory, now):
         f.flush()
         os.fsync(f.fileno())
     return path
+
+
+def delete_row(conf, list_id, row_id):
+    """행 삭제. 429(요청 과다)는 간격을 늘려 재시도"""
+    for n in range(RETRIES):
+        try:
+            return pd.api(conf, "slackLists.items.delete", {"list_id": list_id, "id": row_id})
+        except pd.Fail as e:
+            if "429" not in str(e) or n == RETRIES - 1:
+                raise
+            time.sleep(BACKOFF_S * (n + 1) * (0.01 if os.environ.get("LRM_MIGRATE_PACE_S") == "0" else 1))  # 시험은 PACE 0 으로 대기 생략
 
 
 def mine(rows, state):
@@ -71,11 +84,12 @@ def main(argv=None):
         done = 0
         for r in target:
             try:
-                pd.api(conf, "slackLists.items.delete", {"list_id": a.list_id, "id": r["id"]})
+                delete_row(conf, a.list_id, r["id"])
                 done += 1
             except pd.Fail as e:
                 if e.api_error not in GONE:
                     raise
+            time.sleep(PACE_S)
         print(f"삭제 {done}행. 남은 행 {len(rows) - done}")
         return 0
     except pd.Fail as e:
