@@ -23,6 +23,7 @@ ME=Uuser1; BOT=Ubot1
 # APP_SECRET_FAKE: 허용 목록 밖 비밀이 curl 환경으로 새지 않는지 보는 시험용 값
 printf 'SLACK_BOT_TOKEN=%s\nSLACK_USER_ID=%s\nexport APP_SECRET_FAKE=fake-other-secret-9876\n' "$FAKE_TOKEN" "$ME" > "$H/slack-bot.env"
 
+cp "$HERE/../../hubs/intake-routes.tsv" "$H/intake-routes.tsv"  # 폴러 끝의 명령 접수기가 쓰는 머리말 표
 N=$(date +%s)
 LONG=$(printf 'x%.0s' $(seq 1 150))
 file() { # id name user url [mimetype]
@@ -81,6 +82,9 @@ printf '{"file_share_since":%s}' $((N - 60)) > "$H/slack-poll-state.json"
 poll r1; rc=$?
 [ "$rc" = 0 ] && ok "ⓔ 일부 첨부가 실패해도 폴링 종료 코드 0" || ko "ⓔ 종료 코드" "rc=$rc"
 [ "$(wc -l < "$H/slack-inbox.jsonl" | tr -d ' ')" = 3 ] && ok "ⓔ 실패 건 뒤의 메시지·스레드 답글까지 수집(레코드 3건)" || ko "ⓔ 수집 건수" "$(wc -l < "$H/slack-inbox.jsonl")"
+want=$(jq -c 'select((.type=="note" or .type=="command") and (.parent_ts|not) and (.command|not))' "$H/slack-inbox.jsonl" | wc -l | tr -d ' ')
+have=$(grep -c '^C[0-9]' "$H/feedback-ledger.tsv" 2>/dev/null || echo 0)
+[ "$want" -gt 0 ] && [ "$have" = "$want" ] && [ "$(wc -l < "$H/intake-routes.jsonl" | tr -d ' ')" = "$want" ] && ok "접수기: 폴러 회차 뒤 새 명령 ${want}건 장부 접수·라우팅 기록" || ko "접수기 연동" "대상 $want 장부 $have"
 
 ls "$FD" > "$SB/names.txt"
 grep -qx 'Fuser1_evil_name.pdf' "$SB/names.txt" && ok "ⓐ 사용자 파일 저장(Fuser1_evil_name.pdf)" || ko "ⓐ 저장" "$(tr '\n' ' ' < "$SB/names.txt")"

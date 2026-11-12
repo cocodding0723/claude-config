@@ -881,6 +881,9 @@ if [ $((now - last)) -ge 7200 ]; then echo "$now" > "$L"; LRM_PENDING_BUDGET="$(
 # 봇 DM 즉답 명령(대기·PR) 처리. 대기 명령이 대기 목록을 다시 부르므로 남은 예산을 그대로 물려줌
 LRM_PENDING_BUDGET="$(cap "${LRM_PENDING_BUDGET:-120}")" "$DIR/slack_cmd.sh" >/dev/null 2>&1 || true
 
+# 새 명령 접수(번호·장부·머리말 라우팅). 접수 실패가 메인 전달을 막지 않게 하고, 같은 줄은 멱등이라 회차마다 불러도 중복 접수 없음
+LRM_HUB_DIR="$DIR" python3 -I "$(dirname "$0")/intake.py" --once >/dev/null 2>&1 || true
+
 # 새 메시지 묶음 전달(push). 수집이 실패한 회차에도 대기분을 전달하도록 RC 와 무관하게 호출.
 # 워커는 분리돼 바로 반환하므로 이 잠금(300초)을 쥐지 않고, 출력 파이프도 닫아 소켓 수신기의 capture_output 이 기다리지 않음
 LRM_HUB_DIR="$DIR" /bin/bash "$(dirname "$0")/slack_push.sh" --kick >/dev/null 2>&1 || true
