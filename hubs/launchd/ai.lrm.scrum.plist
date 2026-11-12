@@ -25,7 +25,7 @@
   </dict>
   <key>WorkingDirectory</key><string>__HOME__</string>
   <key>ProcessType</key><string>Background</string>
-  <key>StandardOutPath</key><string>__HOME__/orca/archive/scrum.launchd.log</string>
-  <key>StandardErrorPath</key><string>__HOME__/orca/archive/scrum.launchd.log</string>
+  <key>StandardOutPath</key><string>__HOME__/.config/lrm-hubs/scrum.launchd.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.config/lrm-hubs/scrum.launchd.log</string>
 </dict>
 </plist>

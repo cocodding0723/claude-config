@@ -155,5 +155,17 @@ post --date 11-12; [ $? = 2 ] && grep -q "YYYY-MM-DD" "$D/err" && ok "날짜 형
 "$S/scrum_run.sh" --help > "$D/help"; [ $? = 0 ] && grep -q -- "--dry-run" "$D/help" && ok "래퍼 --help" || ko "--help"
 python3 "$S/scrum_collect.py" --date 2026-13-01 > /dev/null 2> "$D/err"; [ $? = 2 ] && ok "수집기 날짜 오류 → 종료 코드 2" || ko "수집기 오류"
 
+# ---- plist 로그 부모 폴더(리뷰 부가) ----
+# launchd 는 로그 파일을 열기 전 부모 폴더를 만들지 않음. install.sh 가 확실히 만드는 폴더(links.tsv 대상의 부모)여야 함
+python3 - "$HERE/../../hubs/launchd/ai.lrm.scrum.plist" "$HERE/../../links.tsv" <<'PY' && ok "plist 로그 경로의 부모 폴더는 install.sh 가 만드는 폴더" || ko "plist 로그 폴더"
+import plistlib, sys, posixpath
+pl = plistlib.load(open(sys.argv[1], "rb"))
+dsts = [ln.split("\t")[1] for ln in open(sys.argv[2], encoding="utf-8") if ln.strip() and not ln.startswith("#")]
+parents = {posixpath.dirname(d) for d in dsts}
+for k in ("StandardOutPath", "StandardErrorPath"):
+    rel = pl[k].replace("__HOME__/", "")
+    assert posixpath.dirname(rel) in parents, "%s 의 부모 %s 는 설치 대상이 아님" % (k, posixpath.dirname(rel))
+PY
+
 echo "---- PASS $PASS / FAIL $FAIL"
 [ "$FAIL" = 0 ]
