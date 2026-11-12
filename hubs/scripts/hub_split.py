@@ -320,11 +320,108 @@ def cmd_measure(a, run) -> int:
     return 0
 
 
+# ── 제안(결정 카드) ─────────────────────────────────────────────────────────────────────
+SLUG_OK = "abcdefghijklmnopqrstuvwxyz0123456789-"
+HUB_TAG = "main"  # 카드·보고는 메인 이름으로 남김(대상 허브는 본문에 씀)
+
+
+def tool(var: str, name: str) -> str:
+    """같은 폴더의 기존 도구 경로. 환경 변수로 바꿔 끼움(시험의 가짜 도구)"""
+    return os.path.expanduser(os.environ.get(var) or os.path.join(os.path.dirname(os.path.realpath(__file__)), name))
+
+
+def hub_report(args: list, dry: bool) -> dict:
+    """hub_report.py add 호출. dry 면 형식 검사만(outbox 에 안 씀). 실패는 SplitError"""
+    cmd = [sys.executable, tool("LRM_HUB_REPORT", "hub_report.py"), "add", "--hub", HUB_TAG, "--task", "없음", *args, "--json"]
+    if dry:
+        cmd.append("--dry-run")
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+    if p.returncode != 0:
+        raise SplitError(f"보고 기록 실패: {p.stderr.strip()} — hub_report.py 오류 문구대로 고침", p.returncode if p.returncode in (1, 2) else EXIT_IO)
+    try:
+        return json.loads(p.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return {"raw": p.stdout.strip()}
+
+
+def read_routes() -> list:
+    """접수 경로 표 행 [(머리말, 대상)]. 주석·빈 줄 제외"""
+    try:
+        with open(routes_tsv(), encoding="utf-8") as f:
+            return [tuple((ln.rstrip("\n").split("\t") + [""])[:2]) for ln in f if ln.strip() and not ln.startswith("#")]
+    except OSError as e:
+        raise SplitError(f"접수 경로 표 읽기 실패({routes_tsv()}: {e.strerror}) — LRM_INTAKE_ROUTES 확인", EXIT_IO)
+
+
+@dataclass
+class Plan:
+    """분할·병합 한 건. 제안 카드와 실행기가 같은 값을 씀"""
+    kind: str
+    parent: str
+    child: str
+    child_name: str = ""
+    prefix: str = ""
+
+
+def check_plan(pl: Plan, hubs: list) -> None:
+    by = {h.slug: h for h in hubs}
+    if pl.kind not in ("split", "merge"):
+        raise SplitError("--kind 는 split|merge")
+    if pl.kind == "split":
+        if pl.parent not in by:
+            raise SplitError(f"부모 허브 없음: {pl.parent} — 허브 목록 표 첫 칸 중 하나")
+        if by[pl.parent].parent:
+            raise SplitError(f"{pl.parent} 는 이미 하위 허브 — 한 층만 허용, 형제 허브로 나눔")
+        if not pl.child or set(pl.child) - set(SLUG_OK) or pl.child in by:
+            raise SplitError(f"--child 형식 오류·중복: {pl.child} — 소문자·숫자·하이픈, 목록에 없는 새 slug")
+        if not pl.child_name or not pl.prefix:
+            raise SplitError("분할은 --child-name 표시 이름·--prefix 새 접수 머리말 필요")
+        if any(r[0] == pl.prefix for r in read_routes()):
+            raise SplitError(f"머리말 '{pl.prefix}' 는 이미 접수 경로 표에 있음 — 새 머리말만 추가(기존 머리말은 부모에 둠)")
+    else:
+        h = by.get(pl.child)
+        if not h or not h.parent:
+            raise SplitError(f"병합 대상 {pl.child} 가 하위 허브가 아님 — 허브 목록 표 여섯째 칸 확인")
+        pl.parent = h.parent
+
+
+def card_text(pl: Plan, reasons: list) -> str:
+    if pl.kind == "split":
+        title = f"허브 분할 승인: {pl.parent} → {pl.child}"
+        what = f"새 하위 허브 '{pl.child_name}', 머리말 '{pl.prefix}' 추가. 미착수 작업만 이관, 진행 작업은 끝까지 부모"
+    else:
+        title = f"허브 병합 승인: {pl.child} → {pl.parent}"
+        what = "하위 허브를 부모로 합침: 장부 담당·접수 경로·작업 공간 부모를 되돌리고 하위 허브 종료"
+    return "\n".join([title[:40], what, ("근거: " + "; ".join(reasons))[:200] if reasons else "근거: hub_split.py measure 결과"])
+
+
+def cmd_propose(a, run) -> int:
+    pl = Plan(a.kind, a.hub if a.kind == "split" else "", a.child, a.child_name, a.prefix)
+    check_plan(pl, read_hubs())
+    if not a.file and not a.no_doc:
+        raise SplitError("결정 카드는 근거 문서 --file 필요(없으면 --no-doc 명시)")
+    args = ["--kind", "decide", "--text", card_text(pl, a.reason), "--options", "1=승인,2=보류", "--recommend", "1",
+            "--decision-id", a.decision_id, "--reversible", "보통"]
+    args += [x for f in a.file for x in ("--file", f)] + (["--no-doc"] if a.no_doc else [])
+    res = hub_report(args, dry=not a.record)
+    if a.record:
+        with locked(state_path()):
+            st = load_state()
+            st.setdefault("proposals", {})[a.decision_id] = {**asdict(pl), "at": int(time.time())}
+            save_state(st)
+    out = {"mode": "record" if a.record else "dry-run", "decision_id": a.decision_id, "plan": asdict(pl), "report": res}
+    print(json.dumps(out, ensure_ascii=False, indent=2) if a.json else
+          ("기록" if a.record else "[시험] 카드 형식 확인만, outbox 에 안 씀") + f": {a.decision_id} {card_text(pl, a.reason).splitlines()[0]}")
+    return 0
+
+
 # ── 명령줄 ──────────────────────────────────────────────────────────────────────────────
 EPILOG = """예:
   hub_split.py measure                           # 읽기 전용 판정(정리기 시험 실행 포함)
   hub_split.py measure --topic ui-layer=6 --json # 메인의 주제 갈림 판단을 넣어 판정
   hub_split.py measure --record                  # 주기 점검: 연속 횟수 기록
+  hub_split.py propose --kind split --hub ui-layer --child ui-popup --child-name 'UI 팝업' --prefix ui팝업 \\
+      --decision-id D-SPLIT2 --reason '작업 공간 11개' --file docs/split.html --record
 종료 코드: 0 성공, 1 파일 읽기·쓰기 실패, 2 인자 오류, 3 환경 오류(orca 응답 없음 등)
 """
 
@@ -348,6 +445,20 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--now", type=float, default=0, help=argparse.SUPPRESS)
     m.add_argument("--json", action="store_true", help="JSON 출력")
     m.set_defaults(fn=cmd_measure)
+    pr = sub.add_parser("propose", help="분할·병합 결정 카드 기록(기본 형식 확인만)", epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter,
+                        description="사용자 승인용 결정 카드를 hub_report.py 로 outbox 에 남김. --record 없으면 형식만 확인. 기록한 제안만 run --apply 가 받음.")
+    pr.add_argument("--kind", required=True, choices=("split", "merge"))
+    pr.add_argument("--hub", default="", help="(split) 나눌 부모 허브 slug")
+    pr.add_argument("--child", required=True, help="split: 새 하위 허브 slug / merge: 접을 하위 허브 slug")
+    pr.add_argument("--child-name", default="", help="(split) 하위 허브 표시 이름")
+    pr.add_argument("--prefix", default="", help="(split) 하위 허브로 보낼 새 접수 머리말")
+    pr.add_argument("--decision-id", required=True, help="결정 번호 D-영문·숫자")
+    pr.add_argument("--reason", action="append", default=[], help="판정 근거 한 줄(반복). measure 의 reasons")
+    pr.add_argument("--file", action="append", default=[], help="근거 문서(반복)")
+    pr.add_argument("--no-doc", action="store_true", help="근거 문서 없는 카드임을 명시")
+    pr.add_argument("--record", action="store_true", help="outbox 에 실제 기록하고 제안을 기록 파일에 남김")
+    pr.add_argument("--json", action="store_true")
+    pr.set_defaults(fn=cmd_propose)
     return p
 
 
