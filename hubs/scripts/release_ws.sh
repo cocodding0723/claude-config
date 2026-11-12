@@ -86,5 +86,5 @@ case " $CFG_REFUSE_REASONS " in
   *" $R "*) hint=""; [ "$R" = live ] && hint=" 터미널이 아직 닫히는 중일 수 있음 — 잠시 뒤 다시 실행"
             result refused "거부($R): $WSP ${D:+— $D}.$hint 허브·다른 워커가 쓰는 곳은 지우지 않음" 5 ;;
 esac
-KEEP=$(echo "$OUT" | jq -r '.keep_code[0] | if . then "추적 수정 \(.tracked)·코드 미추적 \(.untracked_code): \(.files | join(", "))" else empty end')
+KEEP=$(echo "$OUT" | jq -r '.keep_code[0] | if . then "추적 수정 \(.tracked)·미확인 \(.unverified): \(.files | join(", "))" else empty end')
 result kept "남김($R): $WSP ${D:+— $D}${KEEP:+. $KEEP}. 조치: 커밋하거나 직접 정리한 뒤 다시 실행" 4

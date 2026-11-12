@@ -39,7 +39,7 @@ mk() {
 }
 worker() { printf '%s\t%s\tterm_%s\t%s\n' "$1" "${3:-reclaimable}" "$1" "$W/$2" >> "$FAKE/workers.tsv"; }  # dispatch 이름 [상태]
 
-mk out_only; mkdir -p "$W/out_only/reports"; echo md > "$W/out_only/reports/s.md"; echo png > "$W/out_only/a.png"; worker d_out out_only
+mk out_only; echo md > "$W/out_only/s.md"; echo png > "$W/out_only/a.png"; worker d_out out_only
 mk clean_ws; worker d_clean clean_ws
 mk code_untr; echo 'class A{}' > "$W/code_untr/Foo.cs"; worker d_code code_untr
 mk tracked_mod; echo edit >> "$W/tracked_mod/README.md"; worker d_track tracked_mod
@@ -48,6 +48,8 @@ mk shared; worker d_s1 shared; worker d_s2 shared active
 mk arcfail; echo md > "$W/arcfail/r.md"; worker d_arc arcfail; mkdir -p "$ARC/repoA"; : > "$ARC/repoA/arcfail"   # 보관 폴더 자리에 파일 → 복제 불가
 mk dry_ws; echo md > "$W/dry_ws/r.md"; worker d_dry dry_ws active; printf 'term_d_dry\t%s\n' "$W/dry_ws" >> "$FAKE/terminals.tsv"
 mk kid_parent; worker d_kp kid_parent
+mk newcommit; echo more > "$W/newcommit/g.txt"; git -C "$W/newcommit" add -A; GIT_AUTHOR_DATE=$OLD GIT_COMMITTER_DATE=$OLD git -C "$W/newcommit" commit -q -m unpushed; worker d_nc newcommit
+mk ignored_code; mkdir -p "$W/ignored_code/secret"; echo 'class S{}' > "$W/ignored_code/secret/Foo.cs"; printf 'secret/\n' >> "$W/ignored_code/.git/info/exclude"; worker d_ic ignored_code
 
 jq -R -s '{ok:true,result:{worktrees:(split("\n")|map(select(length>0)|split("\t")|{id:("repo::"+.[0]),path:.[0],branch:.[1],lastActivityAt:(.[2]|tonumber),isMainWorktree:(.[3]=="true"),childWorktreeIds:[]}))}}' "$SB/reg.tsv" > "$FAKE/worktrees.json"
 jq -R -s '{ok:true,result:{terminals:(split("\n")|map(select(length>0)|split("\t")|{handle:.[0],worktreePath:.[1],connected:true,orphaned:false}))}}' "$FAKE/terminals.tsv" > "$FAKE/terminals.json"
@@ -65,7 +67,7 @@ rel --dispatch nope; chk "알 수 없는 dispatch: 종료 2·삭제 없음" '[ "
 
 rel --dispatch d_out
 chk "결과물만: release → 삭제, 종료 0" '[ "$RC" = 0 ] && released d_out && [ ! -e "$W/out_only" ] && grep -q "^삭제함" "$SB/out"' "rc=$RC $(cat "$SB/out" "$SB/err")"
-chk "결과물만: 보관·색인 남음" '[ "$(cat "$ARC/repoA/out_only/reports/s.md")" = md ] && [ -f "$ARC/repoA/out_only/TestResults/a.xml" ] && grep -q "repoA/out_only" "$SB/inbox/_none.tsv"'
+chk "결과물만: 보관·색인 남음" '[ "$(cat "$ARC/repoA/out_only/s.md")" = md ] && [ -f "$ARC/repoA/out_only/TestResults/a.xml" ] && grep -q "repoA/out_only" "$SB/inbox/_none.tsv"'
 chk "release 가 삭제보다 먼저" '[ "$(grep -n "worker-release --dispatch d_out" "$FAKE/orca.calls" | head -1 | cut -d: -f1)" -lt "$(grep -n "^worktree rm" "$FAKE/orca.calls" | head -1 | cut -d: -f1)" ]'
 rel --dispatch d_clean; chk "깨끗한 곳: 삭제, 종료 0" '[ "$RC" = 0 ] && [ ! -e "$W/clean_ws" ]'
 rel --dispatch d_clean; chk "이미 지운 뒤 재실행: 삭제 시도 없음(종료 4, 안내)" '[ "$RC" = 4 ] && [ "$(rm_calls)" = 0 ]' "rc=$RC $(cat "$SB/out")"
@@ -76,6 +78,8 @@ rel --dispatch d_s1; chk "다른 워커가 쓰는 곳: 거부 종료 5·삭제 �
 rel --dispatch d_arc; chk "보관 불일치(복제 불가): 삭제 안 함, 종료 1" '[ "$RC" = 1 ] && [ -e "$W/arcfail" ] && [ "$(rm_calls)" = 0 ] && grep -q "삭제 실패" "$SB/out"' "rc=$RC $(cat "$SB/out")"
 rel --dispatch d_dry --dry-run; chk "--dry-run: release·삭제 없음, 이 워커 터미널은 쉬는 중으로 침 → 삭제 가능 종료 0" '[ "$RC" = 0 ] && ! grep -q "worker-release" "$FAKE/orca.calls" && [ "$(rm_calls)" = 0 ] && [ -e "$W/dry_ws" ] && grep -q "삭제 가능" "$SB/out"' "rc=$RC $(cat "$SB/out")"
 rel --dispatch d_dry --dry-run --json; chk "--json: status·workspace 한 줄" 'jq -e ".status == \"candidate\" and (.workspace | test(\"dry_ws\"))" "$SB/out" >/dev/null' "$(cat "$SB/out")"
+rel --dispatch d_nc; chk "병합된 PR 뒤 push 안 한 커밋: 남김 종료 4·삭제 안 함" '[ "$RC" = 4 ] && [ -e "$W/newcommit" ] && [ "$(rm_calls)" = 0 ] && grep -q "남김(unmerged)" "$SB/out"' "rc=$RC $(cat "$SB/out")"
+rel --dispatch d_ic; chk "gitignore 코드 파일(secret/Foo.cs): 남김 종료 4·삭제 안 함" '[ "$RC" = 4 ] && [ -e "$W/ignored_code/secret/Foo.cs" ] && [ "$(rm_calls)" = 0 ] && grep -q "secret/Foo.cs" "$SB/out"' "rc=$RC $(cat "$SB/out")"
 rel --dispatch d_kp --dry-run; chk "--dry-run(깨끗): 삭제 가능" '[ "$RC" = 0 ] && [ -e "$W/kid_parent" ]'
 
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
