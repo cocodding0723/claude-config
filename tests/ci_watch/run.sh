@@ -175,4 +175,40 @@ fresh; log "not ok 9 - shared"; prs "$(pj 750 feat/mine 9090909090909090)"; cycl
 prs "$(pj 750 feat/mine 9090909090909090 ',"state":"CLOSED"')"; ck pending 11 750; run
 python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));assert "750" not in d.get("_causes",{}),d' "$D/ci-watch.state.json" && ok "닫힌 PR 원인 제거" || ko "닫힌 PR"
 
+# ---- 공통 원인은 시험 이름이 아니라 실패 메시지 앞부분(정규화) 기준 ----
+python3 -c '
+import sys;sys.path.insert(0,sys.argv[1]);import ci_review as r
+def e(*fs): return {"head":"h","fails":[{"key":"U","cause":c,"msg":m} for c,m in fs],"hub":""}
+c={"719":e(("StageClearTest: 스테이지 main.ch1.2 통과 판정 로그 없음","스테이지 main.ch1.2 통과 판정 로그 없음")),
+   "727":e(("StageClearTest: 1일차 가이드 입력 대상 미도달","1일차 가이드 입력 대상 미도달")),
+   "730":e(("StageClearTest: 스테이지 main.ch1.3 통과 판정 로그 없음","스테이지 main.ch1.3 통과 판정 로그 없음")),
+   "731":e(("T: 종료","Process completed with exit code 1."))}
+assert r.common_cause(c,"719")==["730"], "같은 메시지(숫자만 다름)는 공통, 시험 이름만 같은 727 은 제외"
+assert r.common_cause(c,"727")==[] and r.common_cause(c,"731")==[], "이름만 같음·종료 코드 요약 제외"
+s=lambda t:r.signature(t)
+assert s("실패 /Users/a/b/Foo.cs:12 at 2026-11-12T05:00:01.1Z abcdef1234567 PR #719 x 3")==s("실패 /w/z/Foo.cs:99 at 2026-11-13T07:01:02Z 7654321fedcba PR #800 x 9"), "가변 부분 정규화"
+assert len(s("가"*200))==r.SIG_LEN, "앞 N자"
+' "$S" && ok "공통 원인: 메시지 정규화 기준(이름만 같으면 분리, 숫자·경로·해시·시각 무시)" || ko "공통 원인 정규화"
+fresh; log "not ok 1 - same"; prs "$(pj 780 feat/a 1a1a1a1a1a1a1a1a),$(pj 781 feat/b 2b2b2b2b2b2b2b2b)"
+cycle 780 781
+python3 -c 'import json,sys;d=json.load(open(sys.argv[1]))["_causes"];assert all(f.get("msg") for e in d.values() for f in e["fails"]),d' "$D/ci-watch.state.json" && ok "상태 파일 원인에 메시지 값 저장" || ko "msg 저장"
+
+# ---- 소유 허브 2차: PR 제목 티켓 → 담당 허브(허브 상태 파일·접수 경로) ----
+tp() { echo "[{\"number\":$1,\"title\":\"$2\",\"headRefName\":\"sprint-x/bundle-automa\",\"headRefOid\":\"$3\"}]" > "$D/prs.json"; }
+mkdir -p "$D/hub-status"
+echo '{"slug":"ui-layer","tasks":["오토마 LRM-458 구현","LRM-461 보강"],"branches":["feat/LRM-458-a"]}' > "$D/hub-status/ui-layer.json"
+echo '{"slug":"vfx","tasks":["LRM-397 연출"],"branches":[]}' > "$D/hub-status/vfx.json"
+fresh; log "not ok 3 - eye"; tp 717 "[LRM-458][LRM-461] feat: 오토마" 3c3c3c3c3c3c3c3c; wt feat/mine; cycle 717
+grep -q "담당 허브 UI 계층 통합 설계 (근거: 제목 티켓 LRM-458 → UI 계층 통합 설계)" "$D/orca.log" && ok "묶음 브랜치 + 제목 티켓 → 담당 허브(근거 줄에 티켓·허브)" || ko "제목 티켓" "$(cat "$D/orca.log")"
+fresh; log "not ok 3 - eye"; tp 718 "[LRM-458][LRM-397] feat: 섞임" 4d4d4d4d4d4d4d4d; wt feat/mine; cycle 718
+grep -q "담당 허브 미배정(메인 판단) (근거: 제목 티켓이 여러 허브로 갈림" "$D/orca.log" && ! grep -q "VFX 허브(vfx)" "$D/orca.log" && ok "티켓이 여러 허브로 갈림 → 미배정" || ko "티켓 여러 허브" "$(cat "$D/orca.log")"
+rm -rf "$D/hub-status"; echo '{"id":"C1","hub":"ui","text":"LRM-470 팝업 접수"}' > "$D/intake-routes.jsonl"
+fresh; log "not ok 3 - eye"; tp 719 "[LRM-470] fix: 팝업" 5e5e5e5e5e5e5e5e; wt feat/mine; cycle 719
+grep -q "근거: 제목 티켓 LRM-470 → UI 계층 통합 설계" "$D/orca.log" && ok "접수 경로(별칭 ui → ui-layer)도 티켓 근거" || ko "접수 경로" "$(cat "$D/orca.log")"
+fresh; log "not ok 3 - eye"; tp 720 "[LRM-9999] x" 6f6f6f6f6f6f6f6f; wt feat/mine; cycle 720
+grep -q "담당 허브 미배정(메인 판단)" "$D/orca.log" && ok "근거 없는 티켓 → 미배정" || ko "근거 없음" "$(cat "$D/orca.log")"
+rm -f "$D/intake-routes.jsonl"
+fresh; log "not ok 3 - eye"; prs "$(pj 721 feat/mine 7a7a7a7a7a7a7a7a)"; wt feat/mine; cycle 721
+grep -q "근거: PR 브랜치의 작업 공간 허브" "$D/orca.log" && ok "작업 공간 허브가 티켓보다 우선" || ko "우선순위" "$(cat "$D/orca.log")"
+
 echo "통과 $PASS / 실패 $FAIL"; [ "$FAIL" = 0 ]

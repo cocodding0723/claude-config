@@ -69,6 +69,55 @@ def load_hub_names(path):
     return names
 
 
+def load_hub_aliases(path):
+    """hubs.tsv 의 역할 파일 role-<별칭>.txt → {별칭: slug}. 접수 경로(intake-routes)가 허브를 별칭으로 적기 때문"""
+    out = {}
+    try:
+        for ln in Path(path).read_text(encoding="utf-8").splitlines():
+            cols = ln.split("\t")
+            m = re.match(r"role-(.+)\.txt$", os.path.basename(cols[2])) if len(cols) > 2 else None
+            if ln.strip() and not ln.startswith("#") and m:
+                out[m.group(1)] = cols[0].strip()
+    except OSError:
+        pass
+    return out
+
+
+def ticket_hubs(status_dir, routes_path, hubs_path):
+    """티켓 번호 → 그 티켓을 맡은 허브 표시 이름 집합. 근거는 기존 데이터: 허브 상태 파일(tasks·branches 의 LRM-n)과 접수 경로(jsonl 의 text·hub)"""
+    names, aliases, out = load_hub_names(hubs_path), load_hub_aliases(hubs_path), {}
+    try:
+        files = sorted(Path(status_dir).glob("*.json"))
+    except OSError:
+        files = []
+    for f in files:
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        slug = str(d.get("slug") or f.stem)
+        for t in TICKET.findall(" ".join(map(str, (d.get("tasks") or []) + (d.get("branches") or [])))):
+            out.setdefault(t, set()).add(slug)
+    try:
+        rows = Path(routes_path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        rows = []
+    for ln in rows:
+        try:
+            r = json.loads(ln)
+        except ValueError:
+            continue
+        slug = aliases.get(str(r.get("hub")))
+        for t in TICKET.findall(str(r.get("text", ""))) if slug else ():
+            out.setdefault(t, set()).add(slug)
+    return {t: {names[s] for s in v if s in names} for t, v in out.items()}
+
+
+def title_hubs(title, tmap):
+    """PR 제목의 티켓들이 가리키는 (허브, 'LRM-n') 목록. 허브 이름 순"""
+    return sorted({(h, "LRM-" + t) for t in TICKET.findall(title or "") for h in tmap.get(t, ())})
+
+
 def hub_name(base, names):
     """폴더 이름 → 표시 이름. coord-<slug>-hub 의 slug, 또는 'coord-server-hub' 처럼 폴더 이름 자체가 slug 인 허브"""
     m = HUB_DIR.match(base)
@@ -134,11 +183,30 @@ def specific(cause):
     return bool(cause) and not GENERIC.search(cause)
 
 
+# 실패 메시지 정규화 규칙(공통 원인 비교용). 위에서부터 차례로 적용, 가변 부분을 자리표시자로 치환
+SIG_LEN = 60  # 정규화 뒤 앞 N자만 비교
+SIG_RULES = [(re.compile(p), r) for p, r in (
+    (r"\d{4}-\d\d-\d\dT?[\d:.]*Z?|\b\d{1,2}:\d\d(:\d\d)?(\.\d+)?\b", "<t>"),  # 날짜·시각
+    (r"(?:[\w.-]*/)+[\w.-]*(?::\d+)?", "<p>"),  # 경로(파일:줄 포함)
+    (r"\b[0-9a-f]{7,40}\b", "<h>"),  # 커밋·해시
+    (r"(?:PR|pr|#)\s?\d+", "<n>"),  # PR 번호
+    (r"\d+", "<n>"),  # 남은 숫자
+)]
+
+
+def signature(text):
+    """실패 메시지 → 공통 원인 비교값. 가변 부분 제거·공백 정리 뒤 앞 SIG_LEN 자"""
+    for rx, rep in SIG_RULES:
+        text = rx.sub(rep, text or "")
+    return " ".join(text.split())[:SIG_LEN]
+
+
 def common_cause(causes, own):
-    """다른 열린 PR 에도 같은 검사가 같은 구체 원인으로 실패했는지. causes: {PR 번호: {head, fails:[{key, cause}], hub}}, own: 이 PR 번호.
-    구체 식별자가 없으면 공통으로 보지 않음. 번호 순 정렬이라 처리 순서와 무관"""
+    """다른 열린 PR 에도 같은 검사가 같은 실패 메시지(정규화 앞부분)로 실패했는지. causes: {PR 번호: {head, fails:[{key, cause, msg}], hub}}, own: 이 PR 번호.
+    시험 이름이 같아도 메시지가 다르면 공통이 아님. msg 가 없으면 cause 로 비교. 구체 식별자가 없으면(종료 코드 요약 등) 제외.
+    번호 순 정렬이라 처리 순서와 무관"""
     def ids(e):
-        return {(c["key"], c.get("cause", "")) for c in (e or {}).get("fails", []) if specific(c.get("cause", ""))}
+        return {(c["key"], signature(c.get("msg") or c.get("cause", ""))) for c in (e or {}).get("fails", []) if specific(c.get("msg") or c.get("cause", ""))}
 
     mine = ids(causes.get(own))
     return sorted((n for n, e in causes.items() if n != own and mine & ids(e)), key=lambda n: (len(n), n))
@@ -155,14 +223,20 @@ def hub_for(branch, title, table):
     return assign_hub(branch, title, table)[0]
 
 
-def assign_hub(branch, title, table, worktrees=None, names=None, common=(), qa_hub="", repo=""):
+def assign_hub(branch, title, table, worktrees=None, names=None, common=(), qa_hub="", repo="", tmap=None):
     """담당 허브와 근거 (허브, 근거 문구). 1순위 같은 원인의 PR 이 여럿이면 qa_hub(소유 허브보다 먼저),
-    2순위 head 브랜치 작업 공간의 허브, 3순위 표(정규식\t허브) 첫 일치, 모두 실패하면 미배정"""
+    2순위 head 브랜치 작업 공간의 허브, 3순위 제목 티켓(tmap: 티켓→허브 집합)이 한 허브로 모일 때,
+    4순위 표(정규식\t허브) 첫 일치. 티켓이 여러 허브로 갈리면 즉시 미배정, 모두 실패해도 미배정"""
     if common and qa_hub:
         return qa_hub, f"근거: 같은 원인이 PR {', '.join('#' + str(n) for n in common)} 에도 있음 → 테스트·QA 허브"
     hub = parent_hub(branch, worktrees or [], names or {}, repo)
     if hub:
         return hub, "근거: PR 브랜치의 작업 공간 허브"
+    hit = title_hubs(title, tmap or {})
+    if len({h for h, _ in hit}) == 1:
+        return hit[0][0], f"근거: 제목 티켓 {hit[0][1]} → {hit[0][0]}"
+    if hit:  # 티켓이 여러 허브로 갈리면 표로 넘기지 않고 메인 판단
+        return UNASSIGNED, "근거: 제목 티켓이 여러 허브로 갈림(" + ", ".join(f"{t} → {h}" for h, t in hit) + ")"
     text = f"{branch} {title}"
     for pat, name in table:
         if re.search(pat, text):

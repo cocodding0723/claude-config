@@ -1,0 +1,59 @@
+PASS  첫 실행은 기준만 기록, 전송 0
+PASS  결론 변화 → 1건 전송
+PASS  실패면 warn + 원인 한 줄
+PASS  실패한 감시 대상만 보냄
+PASS  티켓 번호 본문 제외
+PASS  같은 결론 재전송 없음
+PASS  재실행 진행 중은 무음
+PASS  전부 통과 → done 1건(PR 번호는 참고 줄)
+PASS  통과 재전송 없음
+PASS  전송 실패 시 다음 주기 재시도
+PASS  ci-watch.txt PR 목록 사용
+PASS  생존 줄
+ok 1700000000.000100
+PASS  끊김 warn 1회만
+PASS  복구 시 표시 초기화
+PASS  리뷰 전달 첫 실행은 기존 지적 기준만
+PASS  리뷰 진행 중이면 수집 안 함
+PASS  새 지적 2건(권장+필수) → 메인 터미널, VFX 허브 매핑
+PASS  요약 파일: 새 지적만, 처리 규칙 포함
+PASS  같은 지적 재전달 없음
+PASS  메인 전송 실패 → Slack 경고
+PASS  실패분 다음 주기 재전달
+PASS  허브 표: 묶음→구조, LRM-4000 은 미배정
+PASS  ERROR·평가 결과 없음은 지적 아님 → 오류로 별도 전달
+PASS  오류 재전달 없음
+PASS  LRM-279 → UI 허브
+PASS  리뷰어 오류뿐인 게이트 실패: Slack 원인 1줄, 메인 CI 실패 전달 없음
+PASS  Shader error 원인 우선
+PASS  로그에 원인 없으면 결과 xml 실패 메시지
+PASS  CI 실패 → 메인 터미널 + fail.md
+PASS  warn ts → fail.md 스레드 답 명령
+PASS  같은 커밋 실패는 1회
+PASS  새 커밋 실패는 다시 전달
+PASS  브랜치 → 부모 허브(작업 공간 순위)
+PASS  작업 공간 없음 → 표
+PASS  조회 실패+표 없음 → 미배정
+PASS  조회 실패 → 표로 안전하게
+PASS  다른 저장소 같은 브랜치 → 소유 허브 미지정(표)
+PASS  truncated → 조회 불완전, 표로(없으면 미배정)
+PASS  원격 호스트 누락 → 조회 불완전
+PASS  허브 폴더 자체 브랜치 → 그 허브
+PASS  후보가 2개 → 지정 안 함
+PASS  worktree list 에 --repo path:·--limit 1000 전달
+PASS  --limit 설정값 반영
+PASS  저장소 매핑 실패 → 작업 공간 조회 안 하고 표로
+PASS  공통 원인 → QA 허브 + 먼저 간 PR 담당 변경 (720 721)
+PASS  공통 원인 → QA 허브 + 먼저 간 PR 담당 변경 (721 720)
+PASS  종료 요약만 같고 구체 원인 없음 → 공통 아님
+PASS  공통 원인 판정: 대칭·종료 요약 제외·닫힌 PR/옛 head 제거
+PASS  일반 종료 요약은 건너뛰고 구체 원인 추출
+PASS  닫힌 PR 원인 제거
+PASS  공통 원인: 메시지 정규화 기준(이름만 같으면 분리, 숫자·경로·해시·시각 무시)
+PASS  상태 파일 원인에 메시지 값 저장
+PASS  묶음 브랜치 + 제목 티켓 → 담당 허브(근거 줄에 티켓·허브)
+PASS  티켓이 여러 허브로 갈림 → 미배정
+PASS  접수 경로(별칭 ui → ui-layer)도 티켓 근거
+PASS  근거 없는 티켓 → 미배정
+PASS  작업 공간 허브가 티켓보다 우선
+통과 57 / 실패 0
