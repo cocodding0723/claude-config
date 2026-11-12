@@ -39,7 +39,7 @@ printf 'sub\n' > "$O/sub.git.work/s.txt"; git -C "$O/sub.git.work" add -A; git -
 git clone -q --bare "$O/sub.git.work" "$O/sub.git"
 SEED="$SB/seed"; git clone -q "$O/repoA.git" "$SEED" 2>/dev/null
 mkdir -p "$SEED/Assets/Sound/s"
-printf 'TestResults/\ndocs/out/\nLibrary/\n*.html\n*.mp4\nsecret/\n' > "$SEED/.gitignore"
+printf 'TestResults/\ndocs/out/\nLibrary/\n*.html\n*.mp4\nsecret/\n.dart_tool/\n' > "$SEED/.gitignore"
 printf 'readme\n' > "$SEED/README.md"; printf 'line1\nline2\n' > "$SEED/Assets/Sound/s/a.LICENSE.txt"
 git -C "$SEED" add -A; GIT_AUTHOR_DATE=$OLD GIT_COMMITTER_DATE=$OLD git -C "$SEED" commit -q -m seed; git -C "$SEED" push -q origin HEAD:main 2>/dev/null
 
@@ -52,7 +52,7 @@ mk() {
   if [ "$when" = recent ]; then git -C "$W/$n" commit -q -m "$n"; else oldc "$n" "$n"; fi
   [ "$mode" = push ] && git -C "$W/$n" push -q -u origin "$b" 2>/dev/null
   # 결과물(gitignore): 보관 대상 TestResults·docs/out·html, 보관 제외 Library
-  mkdir -p "$W/$n/TestResults" "$W/$n/docs/out" "$W/$n/Library/Cache"
+  mkdir -p "$W/$n/TestResults" "$W/$n/docs/out" "$W/$n/Library/Cache" "$W/$n/.dart_tool"; echo d > "$W/$n/.dart_tool/x"
   echo r1 > "$W/$n/TestResults/a.xml"; echo r2 > "$W/$n/TestResults/b.xml"; echo h > "$W/$n/docs/out/x.html"; echo c > "$W/$n/Library/Cache/c.bin"
   reg "$n" "refs/heads/$b" "$([ "$when" = recent ] && echo $NOW_MS || echo $OLD_MS)"
 }
@@ -150,7 +150,7 @@ chk "apply: 서브모듈 거부된 sub_dirty 는 rm 시도 자체 없음" '! gre
 chk "apply: 브랜치 삭제 옵션 없음" '! grep -q -- "--delete-branch" "$FAKE/orca.calls"'
 chk "apply: TestResults 보관(파일 수 일치)" '[ "$(find "$ARC/repoA/merged/TestResults" -type f | wc -l | tr -d " ")" = 2 ]'
 chk "apply: docs/out·html 보관" '[ -f "$ARC/repoA/merged/docs/out/x.html" ]'
-chk "apply: gitignore 캐시(Library)는 보관 안 함" '[ ! -e "$ARC/repoA/merged/Library" ]'
+chk "apply: gitignore 캐시(Library·.dart_tool)는 보관 안 함" '[ ! -e "$ARC/repoA/merged/Library" ] && [ ! -e "$ARC/repoA/merged/.dart_tool" ]'
 chk "apply: 보관 로그에 파일 수 대조" 'has "ARCHIVE TestResults 파일 2"'
 chk "apply: 쉬는 워커 worker-release" 'grep -q "^orchestration worker-release --dispatch d_idle" "$FAKE/orca.calls"'
 chk "apply: 활동 중 워커는 release 안 함" '! grep -q "d_active" "$FAKE/orca.calls"'

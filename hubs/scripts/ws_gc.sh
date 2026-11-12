@@ -22,7 +22,7 @@ CFG_OUTPUT_ROOT_RE='^[^/]+\.(html|md|png|jpe?g|gif|mp4|txt|log)$'       # 작업
 # 게임 소스 폴더 아래는 허용 목록과 겹쳐도 항상 보존(새 에셋·코드일 수 있음)
 CFG_SOURCE_DIR_RE='^(Assets|Packages|ProjectSettings)/'
 # 다시 만들어지는 gitignore 캐시: 보관 없이 버려도 되는 항목(폴더는 끝에 /)
-CFG_CACHE_RE='^(Library|Temp|obj|Logs|UserSettings|\.vs|\.idea|node_modules)/$|^\.claude/settings\.local\.json$|^\.DS_Store$'
+CFG_CACHE_RE='^(Library|Temp|obj|Logs|UserSettings|\.vs|\.idea|node_modules)/$|(^|/)\.dart_tool/$|^\.flutter-plugins(-dependencies)?$|^\.claude/settings\.local\.json$|^\.DS_Store$'
 CFG_INBOX="${WS_GC_INBOX:-$HOME/.config/lrm-hubs/hub-inbox}"  # 허브별 보관 색인(<허브 slug>.tsv). 허브 폴더 coord-<slug>-hub 에서 slug 를 뗌
 CFG_KEEP_CODE_LOG_MAX=5                                  # 보존 근거로 로그·JSON 에 남길 경로 수
 CFG_RM_DIRTY_RE='modified or untracked|contain(s|ing) submodules|uncommitted|dirty'  # orca rm 거부 문구 중 미커밋 변경 계열만 force 허용(잠금·사용 중 등은 제외)
