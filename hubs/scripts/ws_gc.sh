@@ -21,8 +21,12 @@ CFG_OUTPUT_DIRS_RE='^(docs/out|evidence|TestResults)/|/TestResults/'   # 결과�
 CFG_OUTPUT_ROOT_RE='^[^/]+\.(html|md|png|jpe?g|gif|mp4|txt|log)$'       # 작업 공간 루트의 결과물 파일(확장자 대소문자 무시)
 # 게임 소스 폴더 아래는 허용 목록과 겹쳐도 항상 보존(새 에셋·코드일 수 있음)
 CFG_SOURCE_DIR_RE='^(Assets|Packages|ProjectSettings)/'
-# 다시 만들어지는 gitignore 캐시: 보관 없이 버려도 되는 항목(폴더는 끝에 /)
+# 다시 만들어지는 gitignore 캐시 후보(폴더는 끝에 /). 폴더 이름만으로 캐시라고 단정하지 않음: 아래 CFG_CACHE_VALUABLE_RE 파일이 안에 있으면 보존
 CFG_CACHE_RE='^(Library|Temp|obj|Logs|UserSettings|\.vs|\.idea|node_modules)/$|(^|/)\.dart_tool/$|^\.flutter-plugins(-dependencies)?$|^\.claude/settings\.local\.json$|^\.DS_Store$'
+# 캐시 폴더 안에서도 소스·자산으로 보는 확장자(대소문자 무시). 이런 파일이 있으면 그 작업 공간은 보존
+CFG_CACHE_VALUABLE_RE='\.(cs|py|sh|ts|tsx|js|jsx|dart|uxml|uss|prefab|unity|shader|cginc|hlsl|asmdef|asmref|meta|asset|json|mat|anim|controller|md|txt|ya?ml|xml|csv)$'
+# 위 확장자여도 도구가 설치·생성하는 하위 경로는 건너뜀(Unity 패키지 캐시, node_modules, .dart_tool, Library 바로 아래 파일, dotnet obj 의 자동 생성 파일)
+CFG_CACHE_GENERATED_RE='^(Library/(PackageCache|Artifacts|Bee|ScriptAssemblies|ShaderCache|StateCache|BuildCache|PlayerDataCache|APIUpdater|Search|SourceAssetDB)/|node_modules/|(.*/)?\.dart_tool/)|^Library/[^/]+\.(asset|json|meta)$|^obj/(.*\.(AssemblyInfo|AssemblyAttributes|GlobalUsings\.g)\.cs|project\.assets\.json|[^/]+\.nuget\.[^/]+)$'
 CFG_INBOX="${WS_GC_INBOX:-$HOME/.config/lrm-hubs/hub-inbox}"  # 허브별 보관 색인(<허브 slug>.tsv). 허브 폴더 coord-<slug>-hub 에서 slug 를 뗌
 CFG_KEEP_CODE_LOG_MAX=5                                  # 보존 근거로 로그·JSON 에 남길 경로 수
 CFG_RM_DIRTY_RE='modified or untracked|contain(s|ing) submodules|uncommitted|dirty'  # orca rm 거부 문구 중 미커밋 변경 계열만 force 허용(잠금·사용 중 등은 제외)
@@ -171,13 +175,13 @@ CLASSIFY_AWK='
   skip { skip = 0; next }
   MODE_ == "tracked" {
     xy = substr($0, 1, 2); q = substr($0, 4); if (xy ~ /^[RC]/ || xy ~ /^.[RC]/) skip = 1
-    if (q ~ ENVIRON["NZ"]) print "N\t" q
+    # 부산물 예외는 미추적 파일에만. 추적 파일 수정은 확장자·폴더와 무관하게 R(보존)
+    if (xy == "??") print (q ~ ENVIRON["NZ"] ? "N" : (allowed(q) ? "O" : "U")) "\t" q
     else if (q ~ ENVIRON["LZ"] && xy ~ /^[ M][ M]$/) print "L\t" q
-    else if (xy == "??") print (allowed(q) ? "O" : "U") "\t" q
     else print "R\t" q
     next }
   { q = $0; if (q == "") next
-    if (q ~ ENVIRON["NZ"]) print "N\t" q
+    if (substr(q, 1, 1) == "!") print "I\t" substr(q, 2)
     else if (q ~ ENVIRON["SZ"]) print "I\t" q
     else if (q ~ ENVIRON["CZ"]) print "C\t" q
     else print (allowed(q) ? "G" : "I") "\t" q }'
@@ -186,7 +190,12 @@ ignored_entries() {
   local p="$1" e
   git -C "$p" ls-files -o -i --exclude-standard --directory -z 2>/dev/null | tr '\0' '\n' | while IFS= read -r e; do
     case "$e" in
-      */) if printf '%s' "$e" | grep -Eq -e "$DZ" -e "$CZ" -e "$SZ" -e "$NZ"; then printf '%s\n' "$e"; else git -C "$p" ls-files -o -i --exclude-standard -z -- "$e" 2>/dev/null | tr '\0' '\n'; fi ;;
+      */) if printf '%s' "$e" | grep -Eq -e "$CZ"; then
+            # 캐시 후보 폴더: 이름만 믿지 않고 안의 소스·자산 확장자 파일을 "!경로" 로 내보내 미확인 처리
+            (cd "$p" && find "${e%/}" \( -type f -o -type l \) -print 2>/dev/null) | GZ="$CFG_CACHE_GENERATED_RE" VZ="$CFG_CACHE_VALUABLE_RE" awk '$0 ~ ENVIRON["GZ"] { next } tolower($0) ~ ENVIRON["VZ"] { print "!" $0 }'
+            printf '%s\n' "$e"
+          elif printf '%s' "$e" | grep -Eq -e "$DZ" -e "$SZ"; then printf '%s\n' "$e"
+          else git -C "$p" ls-files -o -i --exclude-standard -z -- "$e" 2>/dev/null | tr '\0' '\n'; fi ;;
       *) printf '%s\n' "$e" ;;
     esac
   done
@@ -225,7 +234,9 @@ submodules_clean() {
   while IFS= read -r line; do
     case "$line" in -*) continue ;; esac            # 초기화 안 된 서브모듈은 작업물이 없음
     sp="$p/$(printf '%s' "$line" | sed -E 's/^.[0-9a-f]+ //; s/ \(.*\)$//')"
-    [ -n "$(git -C "$sp" status --porcelain 2>/dev/null)" ] && return 1
+    # 서브모듈 안도 상위와 같은 분류를 적용(미추적·gitignore 코드 포함). 보관 대상은 상위 폴더만 보관하므로 결과물·부산물도 있으면 안 됨.
+    # 서브셸에서 임시 폴더를 바꿔 호출해 상위 판정 상태를 건드리지 않음
+    ( TMP="$TMP/sub"; mkdir -p "$TMP" && classify_changes "$sp" && [ "$N_REAL" = 0 ] && [ "$N_OUT" = 0 ] && [ "$N_NOISE" = 0 ] && [ "$N_LIC" = 0 ] && [ ! -s "$TMP/outputs.txt" ] ) || return 1
     [ "$(git -C "$sp" rev-list --count HEAD --branches --not --remotes 2>/dev/null || echo 1)" = 0 ] || return 1
   done < <(git -C "$p" submodule status --recursive 2>/dev/null)
   return 0

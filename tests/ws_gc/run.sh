@@ -39,7 +39,7 @@ printf 'sub\n' > "$O/sub.git.work/s.txt"; git -C "$O/sub.git.work" add -A; git -
 git clone -q --bare "$O/sub.git.work" "$O/sub.git"
 SEED="$SB/seed"; git clone -q "$O/repoA.git" "$SEED" 2>/dev/null
 mkdir -p "$SEED/Assets/Sound/s"
-printf 'TestResults/\ndocs/out/\nLibrary/\n*.html\n*.mp4\nsecret/\n.dart_tool/\n' > "$SEED/.gitignore"
+printf 'TestResults/\ndocs/out/\nLibrary/\n*.html\n*.mp4\nsecret/\n.dart_tool/\n.idea/\nobj/\n' > "$SEED/.gitignore"
 printf 'readme\n' > "$SEED/README.md"; printf 'line1\nline2\n' > "$SEED/Assets/Sound/s/a.LICENSE.txt"
 git -C "$SEED" add -A; GIT_AUTHOR_DATE=$OLD GIT_COMMITTER_DATE=$OLD git -C "$SEED" commit -q -m seed; git -C "$SEED" push -q origin HEAD:main 2>/dev/null
 
@@ -323,6 +323,41 @@ FAKE_RM_CHECK_DIRTY=1 gc --only out_arcfail --apply
 chk "같은 실패 반복: Slack 다시 안 보냄" '[ "$RC" = 1 ] && [ ! -s "$FAKE/notify.calls" ]'
 gc --parent "$W/coord-q-hub" --only out_arcfail --dry-run; chk "--parent: 그 허브 하위만 평가" 'has "parent=$W/coord-q-hub" && has "repoA/out_arcfail"'
 JS=$(jsonrun --parent "$W/coord-q-hub"); chk "--parent: 허브 하위 2곳만 items(다른 허브·무소속 제외)" 'echo "$JS" | jq -e "[.items[].name] | sort == [\"repoA/out_arcfail\", \"repoA/out_only\"]" >/dev/null' "$JS"
+
+# ---- 8. 재리뷰: 캐시 폴더 이름만 믿지 않음 / 추적 수정은 부산물 예외보다 우선 / 서브모듈 안 gitignore 코드 ----
+for n in cache_lib cache_idea cache_obj cache_gen tracked_sdf tracked_meta sub_ignored sub_untracked; do mk "$n" "feat/$n"; pr "feat/$n" '[{"number":70,"state":"MERGED"}]'; done
+# [P1-1] 캐시 폴더(Library·.idea·obj) 안의 유일본 소스·자산
+mkdir -p "$W/cache_lib/Library"; echo 'class O{}' > "$W/cache_lib/Library/OnlyCopy.cs"
+mkdir -p "$W/cache_idea/.idea"; echo 'class O{}' > "$W/cache_idea/.idea/OnlyCopy.cs"
+mkdir -p "$W/cache_obj/obj"; echo 'class O{}' > "$W/cache_obj/obj/OnlyCopy.cs"
+# 도구가 만든 하위 경로(PackageCache·Library 바로 아래 .asset·obj AssemblyInfo)만 있으면 캐시로 보고 삭제
+mkdir -p "$W/cache_gen/Library/PackageCache/pkg" "$W/cache_gen/obj/Debug"; echo 'class P{}' > "$W/cache_gen/Library/PackageCache/pkg/Foo.cs"; echo a > "$W/cache_gen/Library/EditorUserBuildSettings.asset"; echo 'x' > "$W/cache_gen/obj/Debug/App.AssemblyInfo.cs"
+# [P1-2] 추적 파일 수정은 .meta·SDF 부산물 규칙보다 우선
+addtracked tracked_sdf "Assets/Fonts/GameSDFState.asset" "state: 1"; echo "state: 2" > "$W/tracked_sdf/Assets/Fonts/GameSDFState.asset"
+addtracked tracked_meta "Assets/Foo.cs.meta" "guid: aaaa"; echo "guid: bbbb" > "$W/tracked_meta/Assets/Foo.cs.meta"
+# [P1-3] 서브모듈 안 gitignore·미추적 코드
+for n in sub_ignored sub_untracked; do
+  git -C "$W/$n" -c protocol.file.allow=always submodule add -q "$O/sub.git" Assets/Sub 2>/dev/null; git -C "$W/$n" add -A; oldc "$n" sub; git -C "$W/$n" push -q origin "feat/$n" 2>/dev/null
+done
+mkdir -p "$W/sub_ignored/Assets/Sub/secret"; echo 'class O{}' > "$W/sub_ignored/Assets/Sub/secret/OnlyCopy.cs"
+printf 'secret/\n' >> "$(git -C "$W/sub_ignored/Assets/Sub" rev-parse --git-path info/exclude)"
+mkdir -p "$W/sub_untracked/Assets/Sub/src"; echo 'class O{}' > "$W/sub_untracked/Assets/Sub/src/OnlyCopy.cs"
+regen
+for n in cache_lib cache_idea cache_obj; do
+  FAKE_RM_CHECK_DIRTY=1 gc --only "$n" --apply
+  chk "[P1-1] 캐시 폴더 안 소스(OnlyCopy.cs): $n 보존·삭제 시도 없음" 'untouched "$n" && has "SKIP dirty repoA/$n" && has "미확인 무시파일 .*OnlyCopy.cs" && [ "$RC" = 0 ]'
+done
+chk "[P1-1] 보존한 파일이 그대로 남음" '[ -f "$W/cache_lib/Library/OnlyCopy.cs" ] && [ -f "$W/cache_idea/.idea/OnlyCopy.cs" ] && [ -f "$W/cache_obj/obj/OnlyCopy.cs" ]'
+gc --only cache_gen; chk "[P1-1] 도구 생성 하위 경로만 든 캐시: 후보(과잉 보존 방지)" 'has "CANDIDATE repoA/cache_gen "'
+for n in tracked_sdf tracked_meta; do
+  FAKE_RM_CHECK_DIRTY=1 gc --only "$n" --apply
+  chk "[P1-2] 추적 파일 수정($n): 보존, force·rm 없음" 'untouched "$n" && has "SKIP dirty repoA/$n" && has "추적 수정 1" && ! grep -q -- "--force" "$FAKE/orca.calls"'
+done
+for n in sub_ignored sub_untracked; do
+  FAKE_RM_CHECK_DIRTY=1 gc --only "$n" --apply
+  chk "[P1-3] 서브모듈 안 코드($n): 보존, rm·force 없음" 'untouched "$n" && has "SKIP submodule repoA/$n" && ! grep -q -- "--force" "$FAKE/orca.calls"'
+done
+chk "[P1-3] 서브모듈 안 파일이 그대로 남음" '[ -f "$W/sub_ignored/Assets/Sub/secret/OnlyCopy.cs" ] && [ -f "$W/sub_untracked/Assets/Sub/src/OnlyCopy.cs" ]'
 
 # [4] 워커 목록이 비어도 연결된 터미널이 있는 곳은 살아 있음
 GC_FAKE="$SB/fake2"; mkdir -p "$GC_FAKE/pr"; cp "$FAKE"/*.json "$GC_FAKE/"; cp "$FAKE/pr"/* "$GC_FAKE/pr/"
