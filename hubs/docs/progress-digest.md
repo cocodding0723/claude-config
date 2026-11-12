@@ -72,7 +72,7 @@ rm ~/.config/lrm-hubs/progress-digest.state.json      # 선택: 상태 초기화
 | --- | --- |
 | `LRM_HUB_DIR` | 작업 폴더(기본 `~/.config/lrm-hubs`) |
 | `LRM_PROGRESS` | 스냅샷 경로 |
-| `LRM_DIGEST_REPOS` | PR 조회 저장소(쉼표). 비면 실행 위치의 저장소 |
+| `LRM_DIGEST_REPOS` | PR 조회 저장소(쉼표). 비면 `PANEL_GH_REPOS`(환경 변수 → 작업 폴더 `panel.env`), 그것도 없으면 실행 위치의 저장소 |
 | `LRM_DIGEST_LIST_ID`·`LRM_DIGEST_LIST_URL` | Slack 목록 |
 | `SLACK_API_BASE` | API 주소(시험용). `LRM_DIGEST_LOCAL_ONLY=1` 이면 로컬 외 주소는 요청 전에 실패 |
 

@@ -7,7 +7,7 @@
 PR(gh)은 PR_INTERVAL_S 초에 한 번만 조회하고 그 사이는 직전 값을 씀.
 
 환경: LRM_HUB_DIR 작업 폴더 · LRM_PROGRESS 스냅샷 경로 · LRM_LEDGER 장부 · LRM_HUB_STATUS_DIR 허브 상태 폴더
-      LRM_DIGEST_GH gh 명령(없으면 PATH → /opt/homebrew/bin·/usr/local/bin) · LRM_DIGEST_REPOS PR 조회 저장소(쉼표, 없으면 현재 저장소) · LRM_HUB_STATUS_STALE_HOURS 낡음 기준(기본 24)
+      LRM_DIGEST_GH gh 명령(없으면 PATH → /opt/homebrew/bin·/usr/local/bin) · LRM_DIGEST_REPOS PR 조회 저장소(쉼표, 없으면 PANEL_GH_REPOS 환경 변수 → 작업 폴더 panel.env → 현재 저장소) · LRM_HUB_STATUS_STALE_HOURS 낡음 기준(기본 24)
       LRM_ORCA orca 명령(없으면 PATH → 알려진 설치 위치) · LRM_PROGRESS_PR_INTERVAL PR 조회 간격 초(기본 300) · LRM_PROGRESS_PR_BUDGET PR 조회 전체 시간 상한 초(기본 30)
 종료 코드: 0 성공(원료 일부 실패 포함), 2 설정·입력 오류
 """
@@ -266,13 +266,33 @@ def run_source(fn, prev, now):
     return {"ok": False, "err": err, "at": old.get("at"), "tried": now, "stale": True, "value": old.get("value")}
 
 
-def conf_from_env():
+def default_repos():
+    """PR 조회 저장소 기본값: 환경 변수 PANEL_GH_REPOS → 작업 폴더 panel.env 의 PANEL_GH_REPOS(옆 패널과 같은 설정). 파일은 읽기만 하고 실행하지 않음.
+    launchd 는 저장소 밖에서 돌아 '현재 저장소' 폴백이 실패하므로 필요"""
+    raw = os.environ.get("PANEL_GH_REPOS")
+    if raw is None:
+        raw = ""
+        try:
+            with open(os.path.join(HUB_DIR, "panel.env"), encoding="utf-8") as f:
+                for line in f:
+                    k, sep, v = line.strip().partition("=")
+                    if sep and k == "PANEL_GH_REPOS":
+                        raw = v.strip().strip('"').strip("'")
+        except (OSError, UnicodeDecodeError) as e:  # 깨진 설정이 수집 전체를 멈추지 않게 파일만 무시
+            if not isinstance(e, FileNotFoundError):
+                print(f"경고: panel.env 읽기 실패({type(e).__name__}) — 무시하고 현재 저장소로 조회", file=sys.stderr)
+            raw = ""
+    return [r for r in re.split(r"[\s,]+", raw) if r]
+
+
+def conf_from_env(read_panel=True):
+    """read_panel=False 면 panel.env 를 읽지 않음(PR 조회를 안 하거나 저장소를 명시한 실행)"""
     env = os.environ.get
     return {
         "ledger": env("LRM_LEDGER") or os.path.join(HUB_DIR, "feedback-ledger.tsv"),
         "status_dir": os.path.expanduser(env("LRM_HUB_STATUS_DIR") or os.path.join(HUB_DIR, "hub-status")),  # 작업 폴더 밑이 기본(시험이 격리됨)
         "gh": gh_bin(),
-        "repos": [r.strip() for r in (env("LRM_DIGEST_REPOS") or "").split(",") if r.strip()],
+        "repos": [r.strip() for r in (env("LRM_DIGEST_REPOS") or "").split(",") if r.strip()] or (default_repos() if read_panel else []),
     }
 
 
@@ -369,7 +389,7 @@ def refresh(pending=None, workers=None, write=True, use_pr=True, conf=None, work
         prev = load_snapshot(path) or {}
     except SourceError:
         prev = {}
-    snap = build(conf or conf_from_env(), prev, int(time.time()), pending, workers, use_pr, workspaces)
+    snap = build(conf or conf_from_env(read_panel=use_pr), prev, int(time.time()), pending, workers, use_pr, workspaces)
     if write:
         write_snapshot(path, snap)
     return snap
@@ -385,7 +405,7 @@ def main(argv=None):
     p.add_argument("--no-pr", action="store_true", help="PR 조회 생략")
     p.add_argument("--repo", action="append", default=[], help="PR 조회 저장소 owner/name (여러 번 가능)")
     a = p.parse_args(argv)
-    conf = conf_from_env()
+    conf = conf_from_env(read_panel=not a.no_pr and not a.repo)
     conf["repos"] = a.repo or conf["repos"]
     try:
         snap = refresh(write=not a.dry_run, use_pr=not a.no_pr, conf=conf)
