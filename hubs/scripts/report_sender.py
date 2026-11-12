@@ -361,10 +361,6 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
         repair_outbox(conf)
     bad = []
     reports = hub_report.read_outbox(conf.outbox, bad)
-    allowed = hub_report.allowed_channels(conf.sync_state)
-    for r in [r for r in reports if r.get("channel") and r["channel"] not in allowed]:  # 허용 밖 채널 지정은 게시하지 않고 격리
-        reports.remove(r)
-        bad.append(json.dumps(r, ensure_ascii=False))
     try:
         st = load_state(conf.state)
     except StateCorrupt as err:

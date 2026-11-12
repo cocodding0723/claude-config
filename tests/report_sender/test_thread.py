@@ -1,4 +1,4 @@
-"""hub_report --thread·--channel·--now 시험: 지정 스레드 답글·진행 줄 없음·ts·채널 검증·즉시 전송. 가짜 전송 스크립트만 씀."""
+"""hub_report --thread·--now 시험: 지정 스레드 답글·진행 줄 없음·ts 검증·채널 지정 거부·즉시 전송. 가짜 전송 스크립트만 씀."""
 import json
 import os
 import subprocess
@@ -27,7 +27,6 @@ class ThreadTest(unittest.TestCase):
         self.env = {**os.environ, "LRM_HUB_DIR": self.dir.name, "LRM_REPORT_OUTBOX": p("box.jsonl"), "LRM_REPORT_STATE": p("state.json"),
                     "LRM_REPORT_NOTIFY": FAKE, "LRM_LEDGER": p("ledger.tsv"), "LRM_LEDGER_STATE": p("sync.json"),
                     "LRM_REPORT_SENT": p("sent.jsonl"), "LRM_REPORT_LOG": p("log.txt"), "FAKE_DIR": self.dir.name}
-        self.env.pop("LRM_REPORT_CHANNELS", None)
 
     def cli(self, *args, script="hub_report.py"):
         return subprocess.run([sys.executable, "-I", os.path.join(SCRIPTS, script), *args], env=self.env, capture_output=True, text=True)
@@ -77,28 +76,26 @@ class ThreadTest(unittest.TestCase):
         r = self.add("--thread", THREAD, kind="decide", text="제목\n배경")
         self.assertEqual(r.returncode, 2)
 
-    def test_channel_outside_allow_list_rejected(self):
-        r = self.add("--thread", THREAD, "--channel", "C1OTHERCH1")
-        self.assertEqual(r.returncode, 2)
-        self.assertIn("허용 목록", r.stderr)
-        self.assertEqual(self.add("--thread", THREAD, "--channel", "bad channel").returncode, 2)
-        self.assertEqual(self.add("--channel", "D1ABCDEFG").returncode, 2)  # --thread 없이는 불가
+    def test_channel_option_is_not_supported(self):
+        for ch in ("D1ABCDEFG", "C1OTHERCH1"):  # 알림 스크립트는 봇 DM 에만 게시하므로 채널 지정 자체를 받지 않음
+            r = self.add("--thread", THREAD, "--channel", ch)
+            self.assertEqual(r.returncode, 2)
         self.assertEqual(self.rows(), [])
+        self.assertNotIn("--channel", self.cli("add", "--help").stdout)
+        self.env["LRM_REPORT_CHANNELS"] = "C1OTHERCH1"  # 옛 허용 목록 변수도 효과 없음
+        self.assertEqual(self.add("--thread", THREAD, "--channel", "C1OTHERCH1").returncode, 2)
 
-    def test_allowed_channel_default_dm_and_env_list(self):
-        self.assertEqual(self.add("--thread", THREAD, "--channel", "D1ABCDEFG").returncode, 0)  # 봇이 쓰는 DM
-        self.env["LRM_REPORT_CHANNELS"] = "C1TEAMCH01, C1OTHERCH1"
-        self.assertEqual(self.add("--thread", THREAD, "--channel", "C1OTHERCH1", text="다른").returncode, 0)
-
-    def test_sender_never_posts_record_with_unallowed_channel(self):
+    def test_sender_isolates_legacy_record_with_channel_and_continues(self):
         rep = hub_report.make_report("ci-hub", "없음", "warn", "x", [], thread=THREAD)
-        rep["channel"] = "C1EVILCH01"  # outbox 를 손으로 고친 경우
+        rep["channel"] = "C1EVILCH01"  # 채널 지원 제거 전에 기록된 레코드
         hub_report.add(self.p("box.jsonl"), rep, 1.0, False)
-        res = self.cli("--once", "--json", script="report_sender.py")
-        self.assertEqual(self.calls(), [])
-        self.assertEqual(json.loads(res.stdout)["bad"], 1)
+        self.add("--thread", THREAD, text="정상")
+        res = json.loads(self.cli("--once", "--json", script="report_sender.py").stdout)
+        self.assertEqual((res["bad"], res["sent"]), (1, 1))
+        self.assertEqual(len(self.calls()), 1)
+        self.assertNotIn("C1EVILCH01", json.dumps(self.calls()))
 
-    def test_secret_in_thread_or_channel_rejected(self):
+    def test_secret_in_thread_rejected(self):
         self.assertEqual(self.add("--thread", "xox" + "b-1234567890-abc").returncode, 2)
 
     def test_now_sends_right_after_recording(self):
