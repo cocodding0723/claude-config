@@ -35,6 +35,8 @@ usage() {
            레코드에 kind=decide·decision_id·pick·option_text(문구 앞 80자). 같은 카드 답이 갈리면 conflict:true·choices
            할 일(form_kind=todo): ✅·🛠️(hammer_and_wrench)=done ❌=hold, kind=todo·todo_id. 범위 밖·기록 모양 오류는 이름 그대로(stderr 1줄)
 스레드 답글: '채널에도 보내기'를 켠 답글(subtype thread_broadcast)도 thread_reply 로 수집
+           번호 카드 스레드의 글은 kind=decide·decision_id·action 을 더함. 글 전체가 A~D·🅰️·1~4·추천(전부 추천)이면 action=pick|approve(+pick·option_text),
+           그 밖은 action=free(원문 그대로). 옵션 기록 없는 카드도 free
 수신 확인 답장: 새 사용자 메시지의 스레드에 "📥 메시지 집계 중이에요" 1회(chat:write). 같은 스레드 30초 1회, 60초 3회, 회차 3회. 결정·승인 같은 명령 답글에는 달지 않음.
            slack_cmd.sh 즉답 명령·30분 넘게 묵은 항목은 제외. 권한 부족이면 조용히 건너뛰고 10분마다 재시도(상태: ack_disabled_reason).
            전송 전에 상태(acked·ack_sent)부터 저장하므로 실패해도 다시 보내지 않음. 이미 보낸 답장은 지우거나 고치지 않음(아래 전달 완료 표시만 예외)
@@ -108,6 +110,7 @@ REVIEW = "review"
 DECIDE, TODO = "decide", "todo"
 PICK_EMOJI = {"one": 1, "two": 2, "three": 3, "four": 4}
 TODO_ACTION = {"white_check_mark": "done", "hammer_and_wrench": "done", "x": "hold"}
+ANSWER_TYPES = ("reaction", "thread_reply")  # 결정 답이 되는 inbox 레코드 종류
 ANSWER_ACTIONS = ("pick", "approve", "hold")  # 결정 답. 이 셋만 충돌 판정·대기 목록 닫힘에 씀
 DECISION_ID_RE = re.compile(r"D-[0-9A-Za-z]{1,16}", re.ASCII)
 TODO_ID_RE = re.compile(r"T-[0-9A-Za-z]{1,16}", re.ASCII)
@@ -416,6 +419,35 @@ def interpret(rec, kind, name):
         out["option_text"] = opts.get(out["pick"], "")[:OPTION_TEXT_MAX]
     return out, None
 
+# 스레드 글 답 해석. 글 전체가 선택 표기 하나일 때만 선택으로 봄('1. 좌에서 우로…' 같은 긴 글의 머리 숫자는 의견이므로 자유 글).
+# 알파벳은 선택지 번호 순서(A=1), 이모지는 Slack 이 :이름: 으로 바꿔 보낸 꼴도 받음
+REPLY_LETTER = {"a": 1, "b": 2, "c": 3, "d": 4, "🅰": 1, "🅱": 2, "🅲": 3, "🅳": 4}
+REPLY_PICK_RE = re.compile(
+    r"^(?::비서-([a-d]):|:regional_indicator_([a-d]):|:([abcd]):|:(one|two|three|four):|([a-dA-D1-4🅰🅱🅲🅳])️?⃣?)"
+    r"\s*(?:번|안|으로|로)?\s*(?:ㄱㄱ?|가자|할게|해줘)?\s*[.!)]?$")
+REPLY_RECOMMEND_RE = re.compile(r"^(?:전부\s*|다\s*|모두\s*)?추천(?:\s*대로)?\s*(?:ㄱㄱ?|가자|으로|로|해줘)?\s*[.!]?$")
+
+def reply_answer(rec, text):
+    """결정 카드 스레드 글 → 레코드에 더할 필드. 카드가 아니면 {}. 선택·추천은 action=pick·approve, 그 밖은 action=free(원문 그대로 전달).
+    옵션 기록이 없는 카드(이모지 안내만)는 선택 번호를 알 수 없어 free"""
+    if rec is None or rec.get("form_kind") != DECIDE or not DECISION_ID_RE.fullmatch(str(rec.get("decision_id") or "")):
+        return {}
+    out = {"kind": DECIDE, "decision_id": rec["decision_id"], "action": "free"}
+    try:
+        _, opts, best = card_options(rec)
+    except ValueError:
+        return out
+    t = " ".join(unicodedata.normalize("NFC", text or "").split())
+    if REPLY_RECOMMEND_RE.match(t):
+        return {**out, "action": "approve", "pick": best, "option_text": opts[best][:OPTION_TEXT_MAX]}
+    m = REPLY_PICK_RE.match(t)
+    if m:
+        tok = next(g for g in m.groups() if g).lower()
+        n = {"one": 1, "two": 2, "three": 3, "four": 4}.get(tok) or (int(tok) if tok.isdigit() else REPLY_LETTER[tok])
+        if n in opts:
+            return {**out, "action": "pick", "pick": n, "option_text": opts[n][:OPTION_TEXT_MAX]}
+    return out
+
 def answer_key(d):
     """결정 답의 비교 값. 같은 답(선택 1 과 추천대로=1)은 같은 값"""
     return "hold" if d.get("action") == "hold" else str(d.get("pick"))
@@ -424,7 +456,7 @@ def mark_conflict(items, prior):
     """같은 카드(parent_ts·decision_id)의 이전 답(inbox)과 이번 회차 답이 둘 이상 갈리면 이번 회차 답 전부에 conflict·choices 를 붙임.
     inbox 는 추가 전용이라 앞서 기록된 줄은 고치지 않음. 취소를 볼 수 없어 1 취소 → 2 도 충돌로 남김(사용자 확인)"""
     head = items[0]
-    keys = {answer_key(d) for d in prior if d.get("type") == "reaction" and d.get("parent_ts") == head["parent_ts"]
+    keys = {answer_key(d) for d in prior if d.get("type") in ANSWER_TYPES and d.get("parent_ts") == head["parent_ts"]
             and d.get("decision_id") == head["decision_id"] and d.get("action") in ANSWER_ACTIONS}
     keys |= {answer_key(d) for d in items}
     if len(keys) > 1:
@@ -772,7 +804,7 @@ def main():
             rx_map(state).setdefault(item["ts"], "new")
         return True
 
-    def collect_replies(m, meta, floor=None):
+    def collect_replies(m, meta, floor=None, card=None):
         """답글이 바뀐 스레드만 조회해 사용자 답글을 thread_reply 로 추가. latest_reply 가 응답에 없을 수 있어 없으면 reply_count 로 비교.
         floor: 이 시각(초) 이전 답글은 기록만 하고 새 항목으로 만들지 않음(본인 메시지 스레드의 배포 전 답글)"""
         ts = m["ts"]
@@ -783,7 +815,7 @@ def main():
                 for rp in api("conversations.replies", channel=ch, ts=ts, limit=200).get("messages", []):
                     if rp["ts"] != ts and rp.get("user") == ME and not rp.get("bot_id") and rp.get("subtype") in REPLY_SUBTYPES:
                         kind, cmd, args = classify(rp.get("text", ""))
-                        item = {"type": "thread_reply", "ts": rp["ts"], "text": rp.get("text", ""), **meta}
+                        item = {"type": "thread_reply", "ts": rp["ts"], "text": rp.get("text", ""), **meta, **reply_answer(card, rp.get("text", ""))}
                         if cmd:
                             item.update({"command": cmd, "args": args})
                         add(f"msg:{rp['ts']}", item, rp.get("files"), is_backlog(rp) or bool(floor and float(rp["ts"]) < floor)
@@ -792,7 +824,6 @@ def main():
 
     # 반응·답글 수는 목록 응답에 들어 있어 메시지별 조회가 필요 없음. 반응은 오래된 메시지에도 달리므로 매번 기간 전체를 읽음
     hist = fetch_history(ch, f"{cutoff:.6f}")
-    prior = None  # 충돌 판정용 inbox. 번호 카드에 새 답이 올 때만 읽음
     for m in hist:
         ts = m["ts"]
         mine = m.get("user") == ME
@@ -818,7 +849,6 @@ def main():
         # 응답의 users 는 잘릴 수 있어 본인 반응이 안 보이고 개수가 더 많으면 그 메시지만 reactions.get 으로 보강
         if any(r.get("count", 0) > len(r.get("users", [])) and ME not in r.get("users", []) for r in reactions):
             reactions = api("reactions.get", channel=ch, timestamp=ts).get("message", {}).get("reactions", [])
-        answers = []
         for r in reactions:
             if ME in r.get("users", []):
                 name = r["name"]
@@ -828,13 +858,17 @@ def main():
                     mark_on(state, ts, now)
                     if why:  # 새 반응일 때만 1줄(주기 재조회에서 반복 안 함)
                         print(f"반응 해석 안 함({SKIP_WHY[why]}) — 이모지 이름 그대로 전달", file=sys.stderr)
-                    if item.get("decision_id") and item["action"] in ANSWER_ACTIONS:
-                        answers.append(item)
-        if answers:
-            if prior is None:
-                prior = load_jsonl(INBOX)
-            mark_conflict(answers, prior)
-        collect_replies(m, meta)
+        collect_replies(m, meta, card=rec)
+
+    # 같은 카드(parent_ts·decision_id)의 결정 답은 반응·스레드 글을 함께 충돌 판정. 앞 회차 답은 inbox 에서 읽음(아래에서 추가 기록하기 전)
+    groups = {}
+    for it in new:
+        if it.get("type") in ANSWER_TYPES and it.get("decision_id") and it.get("action") in ANSWER_ACTIONS:
+            groups.setdefault((it["parent_ts"], it["decision_id"]), []).append(it)
+    if groups:
+        prior = load_jsonl(INBOX)
+        for g in groups.values():
+            mark_conflict(g, prior)
 
     # 30일 지난 중복 방지 키 정리, 기간 밖 스레드 기록 정리
     for k in [k for k, v in seen.items() if v < now - 30 * 86400]:
@@ -881,7 +915,18 @@ if [ $((now - last)) -ge 7200 ]; then echo "$now" > "$L"; LRM_PENDING_BUDGET="$(
 # 봇 DM 즉답 명령(대기·PR) 처리. 대기 명령이 대기 목록을 다시 부르므로 남은 예산을 그대로 물려줌
 LRM_PENDING_BUDGET="$(cap "${LRM_PENDING_BUDGET:-120}")" "$DIR/slack_cmd.sh" >/dev/null 2>&1 || true
 
+# 새 명령 접수(번호·장부·머리말 라우팅). 접수 실패가 메인 전달을 막지 않게 하고, 같은 줄은 멱등이라 회차마다 불러도 중복 접수 없음
+LRM_HUB_DIR="$DIR" python3 -I "$(dirname "$0")/intake.py" --once >/dev/null 2>&1 || true
+
 # 새 메시지 묶음 전달(push). 수집이 실패한 회차에도 대기분을 전달하도록 RC 와 무관하게 호출.
 # 워커는 분리돼 바로 반환하므로 이 잠금(300초)을 쥐지 않고, 출력 파이프도 닫아 소켓 수신기의 capture_output 이 기다리지 않음
 LRM_HUB_DIR="$DIR" /bin/bash "$(dirname "$0")/slack_push.sh" --kick >/dev/null 2>&1 || true
+
+# 허브 보고 전송(outbox → 주제 스레드). 메인 전달 뒤에 불러 Slack 지연이 전달을 막지 않음.
+# 회차 총 예산(TOTAL)의 남은 만큼만 전송기 시간 상한으로 넘기고, 남은 예산이 없으면 이번 회차는 건너뜀(300초 잠금 만료 방지)
+left=$((TOTAL - ($(date +%s) - T0)))
+if [ "$left" -ge 1 ]; then
+  [ "$left" -gt "${LRM_REPORT_BUDGET_S:-40}" ] && left="${LRM_REPORT_BUDGET_S:-40}"
+  LRM_REPORT_BUDGET_S="$left" LRM_HUB_DIR="$DIR" python3 -I "$(dirname "$0")/report_sender.py" --once >/dev/null 2>&1 || true
+fi
 exit "$RC"

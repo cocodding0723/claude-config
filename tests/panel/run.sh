@@ -63,12 +63,12 @@ st() { q ".sources.hubs.value.rows[] | select(.hub == \"$1\") | .state" | head -
 [ "$(st coord-unk-hub)" = unknown ] && ok "분류: 표식 없음·방금 출력(글머리 '· 한국어…' 줄은 작업 표식 아님) → 확인불가" || ko "unknown" "$(st coord-unk-hub)"
 [ "$(st coord-quiet-hub)" = idle ] && [ "$(q '.sources.hubs.value.rows[] | select(.hub=="coord-quiet-hub") | .quietMin')" -ge 11 ] && ok "분류: 표식 없음·12분 출력 없음 → 대기, quietMin 계산" || ko "quiet" "$(st coord-quiet-hub)"
 [ "$(st coord-gone-hub)" = unknown ] && [ "$(q '.sources.hubs.value.rows[] | select(.hub=="coord-gone-hub") | .connected')" = false ] && ok "분류: 끊긴 터미널 → 확인불가 + connected:false" || ko "gone" "$(st coord-gone-hub)"
-[ "$(q '[.sources.hubs.value.rows[] | select(.hub=="coord-dup-hub") | .dup] | all and length == 2')" = true ] && ok "같은 허브 창 2개 → dup:true" || ko "dup" ""
+[ "$(q '[.sources.hubs.value.rows[] | select(.hub=="coord-dup-hub") | "\(.dup) \(.quietMin)"] | join(",")')" = "true 5" ] && ok "같은 허브 창 2개 → 최근 출력 1개만 남기고 dup:true" || ko "dup" ""
 [ "$(q '[.sources.hubs.value.rows[].hub] | (index("coord-noagent-hub") == null) and (index("feature-branch") == null)')" = true ] && ok "허브 식별: 에이전트 없는 창·coord-* 아닌 폴더 제외" || ko "식별" "$(q '[.sources.hubs.value.rows[].hub]|join(",")')"
-[ "$(q '.sources.hubs.value.counts | "\(.busy) \(.approval) \(.idle) \(.unknown)"')" = "3 1 4 2" ] && ok "분류 건수: 작업 중 3·승인창 1·대기 4·확인불가 2" || ko "counts" "$(q '.sources.hubs.value.counts')"
+[ "$(q '.sources.hubs.value.counts | "\(.busy) \(.approval) \(.idle) \(.unknown)"')" = "3 1 3 2" ] && ok "분류 건수(허브당 1줄): 작업 중 3·승인창 1·대기 3·확인불가 2" || ko "counts" "$(q '.sources.hubs.value.counts')"
 [ "$(q '.sources.hubs.value.rows[] | select(.hub=="coord-busy-hub") | .name')" = busy ] && ok "표시 이름: coord-·-hub 제거" || ko "name" ""
 colenv "PANEL_HUB_ROOT=/ws/proj" --print
-[ "$(jq -r '[.sources.hubs.value.rows[].hub] | index("coord-elsewhere-hub") == null' "$SB/out")" = true ] && [ "$(jq '.sources.hubs.value.rows|length' "$SB/out")" = 9 ] && ok "PANEL_HUB_ROOT 지정 → 그 아래 허브만" || ko "hub root" "$(jq '.sources.hubs.value.rows|length' "$SB/out")"
+[ "$(jq -r '[.sources.hubs.value.rows[].hub] | index("coord-elsewhere-hub") == null' "$SB/out")" = true ] && [ "$(jq '.sources.hubs.value.rows|length' "$SB/out")" = 8 ] && ok "PANEL_HUB_ROOT 지정 → 그 아래 허브만" || ko "hub root" "$(jq '.sources.hubs.value.rows|length' "$SB/out")"
 
 # ---- 4. 결정 대기 -------------------------------------------------------------------------------
 [ "$(q '.sources.pending.value.count')" = 2 ] && ok "결정 대기 2건(반응·완료 기록·답글·비결정·같은 제목 제외)" || ko "pending" "$(q '.sources.pending.value.count')"
@@ -275,7 +275,7 @@ else
 fi
 r=$(python3 -I "$HERE/no_delete_check.py" "$SCRIPTS/panel_collect.py" 2>&1)
 [ "$r" = ok ] && ok "구문 트리: os.remove·os.kill·unlink 등은 임시 파일·잠금·로그 회전·시간 초과 자식 정리 자리에만" || ko "삭제 호출" "$r"
-bad_calls=$( { sed 's/ tok=.*//' "$FAKE/orca.calls" | grep -vE '^(terminal list|orchestration (worker-list|task-list)|worktree list)( |$)'
+bad_calls=$( { sed 's/ tok=.*//' "$FAKE/orca.calls" | grep -vE '^(terminal (list|read --terminal [^ ]+ --screen)|orchestration (worker-list|task-list)|worktree list)( |$)'
   grep -vE '^merge-base --is-ancestor HEAD ' "$FAKE/git.calls" 2>/dev/null
   grep -vE '^pr list ' "$FAKE/gh.calls" 2>/dev/null
   grep -vE '^-sk ' "$FAKE/du.calls" 2>/dev/null

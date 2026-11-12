@@ -173,13 +173,30 @@ do_merge() {
 # launchd 처럼 PATH 가 짧은 곳에서 쓸 python3 절대 경로. 설치하는 셸의 python3 기준
 PYTHON3="${CLAUDE_CONFIG_PYTHON3:-$(command -v python3 || true)}"
 
+# plist 의 __PYTHON3__ 에 넣을 python3 검증: 절대 경로·실행 가능·3.10 이상(card_actions.py 가 3.10 문법 사용). 한 번 통과하면 다시 안 봄.
+# 못 찾으면 설치 단계에서 원인·조치와 함께 실패(launchd 는 짧은 PATH 로 돌아 상대 경로·낮은 버전은 주기 작업이 조용히 실패함)
+check_python3() {
+  local src="$1" out
+  [ "${PYTHON3_OK:-0}" = 1 ] && return 0
+  [ -n "$PYTHON3" ] || die "python3 없음: $src 의 __PYTHON3__ 를 채울 수 없음. python3(3.10 이상) 설치 또는 CLAUDE_CONFIG_PYTHON3=<절대 경로>"
+  case "$PYTHON3" in /*) ;; *) die "python3 경로가 절대 경로가 아님: '$PYTHON3'. launchd 는 짧은 PATH 로 실행함. CLAUDE_CONFIG_PYTHON3=<절대 경로> 로 지정" ;; esac
+  [ -f "$PYTHON3" ] && [ -x "$PYTHON3" ] || die "python3 실행 불가: $PYTHON3 (파일 없음·실행 권한 없음). CLAUDE_CONFIG_PYTHON3=<3.10 이상 절대 경로> 로 지정"
+  if ! out=$("$PYTHON3" -I -c 'import sys; print("%d.%d" % sys.version_info[:2]); sys.exit(0 if sys.version_info >= (3, 10) else 1)' 2>&1); then
+    case "$out" in
+      [0-9]*.[0-9]*) die "python3 버전 $out 은 3.10 미만: $PYTHON3 (launchd 주기 작업이 실패함). brew install python 후 CLAUDE_CONFIG_PYTHON3=<3.10 이상 절대 경로> 로 지정" ;;
+      *) die "python3 실행 실패: $PYTHON3 — $(printf '%s' "$out" | head -1). CLAUDE_CONFIG_PYTHON3=<3.10 이상 절대 경로> 로 지정" ;;
+    esac
+  fi
+  PYTHON3_OK=1
+}
+
 # 파일을 바이트 그대로 읽어 __HOME__·__PYTHON3__ 과 값 파일의 __KEY__ 를 치환해 $2 로 씀(끝 개행 유지)
 subst_file() {
   local src="$1" out="$2" content k v
   content=$(cat "$src"; printf x); content=${content%x}
   content=${content//__HOME__/$HOME}
   if [[ $content == *__PYTHON3__* ]]; then
-    [ -n "$PYTHON3" ] || die "python3 없음: $src 의 __PYTHON3__ 를 채울 수 없음. python3 설치 또는 CLAUDE_CONFIG_PYTHON3=<절대 경로>"
+    check_python3 "$src"
     content=${content//__PYTHON3__/$PYTHON3}
   fi
   if [ "${3:-}" = values ]; then

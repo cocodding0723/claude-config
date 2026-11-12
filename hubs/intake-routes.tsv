@@ -1,0 +1,21 @@
+# 머리말<TAB>대상 허브. 명령 첫 줄이 '머리말:' 로 시작하면 해당 허브로 라우팅. 허브 이름은 hubs/roles/role-<이름>.txt 와 같음
+# '*' 행은 머리말이 없거나 목록에 없을 때의 기본 대상(메인이 분류)
+# '!exact'·'!prefix' 행은 봇이 직접 답하는 즉답 명령(접수 제외). slack_poll.sh 의 CMD_REPLY_EXACT·CMD_REPLY_PREFIX 와 같아야 하며 시험이 대조함
+# !prefix 는 값 뒤에 공백이 붙은 문장으로 시작할 때 맞음
+!exact	대기
+!exact	미승인
+!exact	승인 대기
+!exact	PR
+!exact	pr
+!exact	초안 PR
+!exact	할일
+!exact	할 일
+!exact	CI
+!exact	ci
+!prefix	문서
+ui	ui
+vfx	vfx
+qa	test
+data	data
+config	config
+*	main

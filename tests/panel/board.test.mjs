@@ -139,3 +139,36 @@ test('idleLines: 워커를 끝까지 못 셌으면 하한 표시, 목록 잘림,
   assert.equal(b.idleLines({ ...base, workers: null, wsSize: { gb: null, at: null, dir, err: 'timeout' } })[0].text, '~/orca/workspaces 크기 ⚠ 측정 시간 초과')
   assert.deepEqual(b.idleLines({ ...base, workers: null, wsSize: { gb: null, at: null, dir, err: null } }), [])
 })
+
+test('progressBar: 퍼센트·막대·상태 꼬리, 깨진 값은 0~100% 로 자름', () => {
+  assert.equal(b.progressBar({ done: 5, total: 9, eta: '내일 15:00', state: 'on' }, 10).text, '██████░░░░ 56% 5/9  내일 15:00')
+  assert.equal(b.progressBar({ done: 1, total: 5, eta: '오늘 밤', state: 'blocked' }, 10).text, '██░░░░░░░░ 20% 1/5  막힘 · 오늘 밤')
+  assert.equal(b.progressBar({ done: 1, total: 1, state: 'done' }, 4).text, '████ 100% 1/1  완료')
+  assert.equal(b.progressBar({ done: 3, total: 0 }, 4).pct, 0)
+  assert.equal(b.progressBar({ done: 9, total: 3 }, 4).pct, 100)
+  assert.equal(b.progressBar({ done: NaN, total: 3 }, 4).bar, '░░░░')
+})
+
+test('progressGroups: 허브별로 묶고 묶음 표시, 값이 없으면 undefined(옛 손 칸으로 복귀)', () => {
+  assert.equal(b.progressGroups(undefined), undefined)
+  assert.equal(b.progressGroups(null), undefined)
+  const g = b.progressGroups({
+    counts: { doing: 2, wait: 1, block: 0 },
+    notes: [],
+    items: [
+      { key: 'a', bucket: 'wait', title: 'ui: 병합 대기', group: 'ui', link: '' },
+      { key: 'b', bucket: 'doing', title: 'ui: 버튼', group: 'ui', link: '' },
+      { key: 'c', bucket: 'doing', title: 'F1 로그인', group: '장부', link: '' },
+    ],
+  })
+  assert.deepEqual(g.map(x => x.group), ['ui', '장부'])
+  assert.deepEqual(g[0].lines, ['🔄 ui: 버튼', '⏳ ui: 병합 대기'])
+})
+
+test('hubLine: 하위 작업 공간 수, 10개 넘으면 경고', () => {
+  const h = { hub: 'coord-a-hub', name: 'a', agent: 'claude', state: 'busy', quietMin: 0, connected: true, dup: false }
+  assert.equal(b.hubLine(h, { children: 3, active: 1, warn: false }), '작업 중 · 하위 3개(활동 1)')
+  assert.equal(b.hubLine(h, { children: 12, active: 2, warn: true }), '작업 중 · 하위 12개(활동 2) ⚠️')
+  assert.equal(b.hubLine(h, { children: 0, active: 0, warn: false }), '작업 중')
+  assert.equal(b.hubLine(h), '작업 중')
+})

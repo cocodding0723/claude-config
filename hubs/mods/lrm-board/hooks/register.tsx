@@ -14,6 +14,8 @@ import {
   parseAuto,
   parseMain,
   pendingLine,
+  progressBar,
+  progressGroups,
   sourceNote,
 } from './board'
 
@@ -51,6 +53,7 @@ const C = {
   link: '#64B5F6',
   meta: '#9E9E9E',
   error: '#EF5350',
+  gauge: '#66BB6A',
   stale: '#FFCA28',
 } as const
 
@@ -142,12 +145,12 @@ export const register: Register = on => {
     const history: HistoryEntry[] = board?.history ?? []
     // 허브별 가지로 묶고, 허브 순서는 가장 최근 기록 순
     const historyGroups: Array<[string, HistoryEntry[]]> = []
-    for (const h of history) {
-      const group = historyGroups.find(([name]) => name === h.hub)
+    for (const entry of history) {
+      const group = historyGroups.find(([name]) => name === entry.hub)
       if (group === undefined) {
-        historyGroups.push([h.hub, [h]])
+        historyGroups.push([entry.hub, [entry]])
       } else {
-        group[1].push(h)
+        group[1].push(entry)
       }
     }
 
@@ -195,6 +198,7 @@ export const register: Register = on => {
 
     const autoHubs = src?.hubs?.value ?? undefined
     const pending = src?.pending?.value ?? undefined
+    const progress = progressGroups(src?.progress?.value)
     const push = src?.push?.value ?? undefined
     const workers = src?.workers?.value ?? undefined
     const gh = src?.gh
@@ -211,10 +215,30 @@ export const register: Register = on => {
         {board?.headline !== undefined && <Text wrap="wrap">{board.headline}</Text>}
         {error !== undefined && <Text color={C.error}>{error}</Text>}
 
+        {(board?.progress?.length ?? 0) > 0 && section('📊 진행', C.gauge)}
+        {(board?.progress ?? []).map(p => {
+          const g = progressBar(p)
+          const color = p.state === 'blocked' ? C.error : p.state === 'done' ? C.meta : C.gauge
+          return (
+            <Box flexDirection="column">
+              <Text bold color={C.title} wrap="wrap">{p.title}</Text>
+              <Text color={color}>{g.text}</Text>
+              {p.steps !== undefined && <Text color={C.detail} wrap="wrap">{`└ ${p.steps}`}</Text>}
+            </Box>
+          )
+        })}
+
         {section(`🙋 내가 승인할 것 (${approvals.length})`, C.approve)}
         {approvals.length === 0 && <Text dimColor>없음</Text>}
         {itemRows(approvals, C.approve)}
 
+        {progress !== undefined && section(`📋 진행 (진행 중 ${src?.progress?.value?.counts.doing ?? 0} · 답 대기 ${src?.progress?.value?.counts.wait ?? 0} · 막힘 ${src?.progress?.value?.counts.block ?? 0})`, C.hub, sourceNote(src?.progress, nowMs))}
+        {progress !== undefined && progress.map(g => (
+          <Box flexDirection="column">
+            <Text bold color={C.title}>{g.group}</Text>
+            {tree(g.lines.map(l => [l, C.detail] as [string, string]))}
+          </Box>
+        ))}
         {section(`🛠️ 내가 할 일 (${todos.length})`, C.todo)}
         {todos.length === 0 && <Text dimColor>없음</Text>}
         {itemRows(todos, C.todo)}
@@ -226,11 +250,11 @@ export const register: Register = on => {
         {autoHubs !== undefined ? (
           <Box flexDirection="column">
             {section(`🔄 허브 (${autoHubs.rows.length})`, C.hub, `${sourceNote(src?.hubs, nowMs)}${autoHubs.truncated === true ? ' · 터미널 목록 잘림' : ''}`)}
-            {autoHubs.rows.map(h => (
+            {autoHubs.rows.map(hub => (
               <Text wrap="wrap">
-                <Text color={STATE_COLOR[h.state] ?? C.meta}>{'● '}</Text>
-                <Text bold>{h.name}</Text>
-                <Text dimColor>{` ${hubLine(h)}`}</Text>
+                <Text color={STATE_COLOR[hub.state] ?? C.meta}>{'● '}</Text>
+                <Text bold>{hub.name}</Text>
+                <Text dimColor>{` ${hubLine(hub, src?.progress?.value?.groups?.[hub.name])}`}</Text>
               </Text>
             ))}
           </Box>
@@ -278,10 +302,10 @@ export const register: Register = on => {
         {historyGroups.map(([hub, entries]) => (
           <Box flexDirection="column" marginBottom={1}>
             <Text bold color={C.title}>{hub}</Text>
-            {entries.map((h, i) =>
+            {entries.map((entry, i) =>
               hang(
                 i === entries.length - 1 ? '└' : '├',
-                `${h.at !== "" ? `${h.at}  ` : ""}${h.text}${h.ref !== undefined ? `  (${h.ref})` : ''}`,
+                `${entry.at !== "" ? `${entry.at}  ` : ""}${entry.text}${entry.ref !== undefined ? `  (${entry.ref})` : ''}`,
                 C.detail,
               ),
             )}

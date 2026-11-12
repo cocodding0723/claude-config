@@ -1,0 +1,54 @@
+# 명령 접수기 시험 2026-11-12 12:26 (독립 리뷰 지적 ①~⑤ 수정 뒤)
+
+## tests/intake/run.sh
+test_dry_run_writes_nothing (test_intake.CoreTest.test_dry_run_writes_nothing) ... ok
+test_excluded_kinds_do_not_consume_numbers (test_intake.CoreTest.test_excluded_kinds_do_not_consume_numbers) ... ok
+test_first_install_skips_old_backlog_but_running_state_takes_old_unprocessed (test_intake.CoreTest.test_first_install_skips_old_backlog_but_running_state_takes_old_unprocessed) ... ok
+test_instant_reply_commands_excluded_but_decision_command_taken (test_intake.CoreTest.test_instant_reply_commands_excluded_but_decision_command_taken) ... ok
+test_new_line_after_rerun_gets_next_number (test_intake.CoreTest.test_new_line_after_rerun_gets_next_number) ... ok
+test_number_reserved_before_ledger_write (test_intake.CoreTest.test_number_reserved_before_ledger_write) ... ok
+test_prefix_only_command_skipped_and_rest_continue (test_intake.CoreTest.test_prefix_only_command_skipped_and_rest_continue) ... ok
+test_reply_table_matches_slack_poll_contract (test_intake.CoreTest.test_reply_table_matches_slack_poll_contract)
+즉답 목록이 slack_poll.sh 와 어긋나면 한쪽만 접수·제외하게 됨 ... ok
+test_resume_after_crash_between_ledger_and_state (test_intake.CoreTest.test_resume_after_crash_between_ledger_and_state) ... ok
+test_state_lost_after_ledger_write_does_not_swallow_next_command (test_intake.CoreTest.test_state_lost_after_ledger_write_does_not_swallow_next_command)
+A 의 장부·기록만 남고 상태 저장이 실패한 뒤 B 가 추가돼도 B 가 A 번호를 가로채 누락되지 않음 ... ok
+test_taken_number_with_other_content_gets_new_number (test_intake.CoreTest.test_taken_number_with_other_content_gets_new_number) ... ok
+test_three_commands_numbers_ledger_routes_then_rerun_zero (test_intake.CoreTest.test_three_commands_numbers_ledger_routes_then_rerun_zero) ... ok
+test_concurrent_runs_no_duplicates (test_intake.ProcessTest.test_concurrent_runs_no_duplicates) ... ok
+test_copy_install_imports_sibling_ledger (test_intake.ProcessTest.test_copy_install_imports_sibling_ledger)
+복사 설치본: 설치 폴더에는 intake.py·ledger.py 만 있어도 -I 로 import 되어야 함(links.tsv 등록 누락 방지) ... ok
+test_default_ledger_stays_inside_hub_dir (test_intake.ProcessTest.test_default_ledger_stays_inside_hub_dir) ... ok
+test_help_and_exit_codes (test_intake.ProcessTest.test_help_and_exit_codes) ... ok
+test_ledger_lock_held_returns_busy_then_resumes_same_number (test_intake.ProcessTest.test_ledger_lock_held_returns_busy_then_resumes_same_number) ... ok
+test_state_lock_held_returns_busy_within_budget_then_next_round_takes_all (test_intake.ProcessTest.test_state_lock_held_returns_busy_within_budget_then_next_round_takes_all) ... ok
+test_bad_table (test_intake.RouteTest.test_bad_table) ... ok
+test_prefix_only_on_first_line_start (test_intake.RouteTest.test_prefix_only_on_first_line_start) ... ok
+test_prefix_routes (test_intake.RouteTest.test_prefix_routes) ... ok
+
+----------------------------------------------------------------------
+Ran 21 tests in 2.666s
+
+OK
+종료 코드 0
+
+## tests/install/run.sh
+PASS  links.tsv 원본 전부 존재 (122줄)
+PASS  links.tsv dst 중복 없음
+PASS  links.tsv 역방향: 추적 파일 전부 목록에 포함
+PASS  dry-run 항목 수 = links.tsv (122)
+PASS  복사 설치본 intake.py: -I 실행·번호 2개·장부 2행·라우팅(ui, main)
+PASS  복사 설치본 재실행: 접수 0건(멱등)
+PASS  복사 설치본 ledger·ledger_sync·intake import
+PASS  머리말 표 intake-routes.tsv 설치
+결과: PASS 100, FAIL 0
+
+## tests/slack_poll/run.sh
+PASS  접수기: 폴러 회차 뒤 새 명령 2건 장부 접수·라우팅 기록
+결과: PASS 82, FAIL 0
+
+## tests/ledger/run.sh
+----------------------------------------------------------------------
+Ran 33 tests in 0.059s
+
+OK

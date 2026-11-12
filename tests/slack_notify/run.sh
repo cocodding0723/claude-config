@@ -21,6 +21,7 @@ chmod 755 "$BIN/python3"
 API=http://127.0.0.1:9
 FAKE_TOKEN="fake-token-0123456789-abcdefghij"
 unset LRM_FORMAT
+export LRM_BTN_WARN=off  # 버튼 없음 경고는 J 에서만 확인(기존 시험이 stderr 0줄을 봄)
 
 HOME_DIR="" CFG=""
 newhome() { # 이름: 설정 파일만 있는 새 HOME(로그·sent 기록 분리용)
@@ -31,11 +32,13 @@ newhome() { # 이름: 설정 파일만 있는 새 HOME(로그·sent 기록 분�
 newhome main
 
 run_n() { # 인자를 slack_notify.sh 에 그대로 전달. 결과: RC, $SB/out, $SB/err, $LOG/post.json
-  : > "$LOG/calls.log"; : > "$LOG/post.json"
+  : > "$LOG/calls.log"; : > "$LOG/post.json"; : > "$LOG/posts.log"
   HOME="$HOME_DIR" PATH="$BIN:$PATH" SLACK_API_BASE="$API" FAKE_CURL_LOG="$LOG" bash "$NOTIFY" "$@" > "$SB/out" 2> "$SB/err"
   RC=$?
 }
-text() { jq -r '.text // .initial_comment // empty' "$LOG/post.json" 2>/dev/null; }
+# 본문 조회. 색 띠 본문(attachments[0].text)이 있으면 그것을, 첫 줄 자동 굵게(*…*)는 풀어서 반환. 없으면 text·initial_comment
+text() { jq -r '(.attachments[0].text // .attachments[0].blocks[0].text.text // .text // .initial_comment // empty) | sub("^\\*(?<a>[^*\n]+)\\*(?<b>\n|$)"; "\(.a)\(.b)")' "$LOG/post.json" 2>/dev/null; }
+payload() { jq -r "$1" "$LOG/post.json" 2>/dev/null; }
 posted() { [ -s "$LOG/post.json" ]; }
 nocall() { [ ! -s "$LOG/calls.log" ]; }
 errn() { grep -c . "$SB/err" || true; }
@@ -446,6 +449,10 @@ run_n --kind decide --options '1=가 안,2=나 안' --recommend 1 --decision-id 
 [ "$(text)" = $':비서-선택해주세요: 주제\n\n• 왜: 배경\n\n:one: 가 안\n:two: 나 안\n:star: 추천: :one:\n👉 답: :one: :two: 중 하나 · :white_check_mark: 추천대로 · :x: 보류\n\n참고: 샘플-1\n결정 D-0002' ] \
   && [ "$(lastrec | jq -c 'has("reversible"), has("seq")' | tr '\n' ,)" = "false,false," ] && ok "H '참고:' 가 있으면 선택지는 그 앞, 결정 번호는 참고 블록 끝. 되돌리기·순번 없으면 줄·필드 없음" || ko "H 참고 앞" "$(text) / $(lastrec)"
 run_n --kind decide --options '1=가,2=나,3=다,4=라' --recommend 4 --decision-id D-0003 "$CBODY"
+[ "$(payload '[.attachments[0].blocks[1].elements[].action_id] | join(",")')" = "pick_1,pick_2,pick_3,pick_4,custom" ] \
+  && [ "$(payload '.attachments[0].blocks[1].elements[3].style')" = primary ] && [ "$(payload '.attachments[0].blocks[1].elements[0].style')" = null ] \
+  && [ "$(payload '.attachments[0].blocks[1].block_id')" = "lrm_decide:D-0003" ] && [ "$(payload '.attachments[0].blocks[1].elements[1].value')" = "D-0003|2" ] \
+  && ok "Z 번호 카드 → 버튼 4개(추천 primary)·직접 입력·결정 번호 값" || ko "Z 버튼" "$(payload '.attachments[0].blocks[1]' | head -c 300)"
 [ "$RC" = 0 ] && text | grep -qx ':four: 라' && text | grep -qxF '👉 답: :one: :two: :three: :four: 중 하나 · :white_check_mark: 추천대로 · :x: 보류' && text | grep -qx ':star: 추천: :four:' && ok "H 선택지 4개·추천 4" || ko "H 4개" "rc=$RC $(text)"
 run_n --kind decide --options '1=9시, 10시 사이,2=b' --recommend 1 --decision-id D-0004 "$CBODY"
 [ "$(lastrec | jq -r '.options["1"]')" = "9시, 10시 사이" ] && ok "H 문구 안 쉼표(뒤에 '숫자=' 없음)는 문구로 유지" || ko "H 쉼표" "$(lastrec)"
@@ -472,7 +479,8 @@ grep -q '^경고: 본문 줄 머리에 선택지 이모지' "$SB/err" && ok "H �
 LRM_FORMAT=strict run_n --kind decide --options "$OK3" --recommend 3 --decision-id D-0011 "$CBODY"
 [ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "H strict: 답 줄을 도구가 채우므로 통과" || ko "H strict" "rc=$RC $(cat "$SB/err")"
 run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0012 "$CBODY" "$SB/f.txt"
-[ "$RC" = 0 ] && text | grep -qxF ':one: 오전 9시' && [ "$(lastrec | jq -r '[.kind,.decision_id] | join(",")')" = "file,D-0012" ] && ok "H 파일 첨부 설명글에도 카드 줄, sent 기록에 decision_id" || ko "H 첨부" "$(text) / $(lastrec)"
+[ "$RC" = 0 ] && sed -n 1p "$LOG/posts.log" | jq -r '.attachments[0].blocks[0].text.text' | grep -qxF ':one: 오전 9시' && [ "$(tail -n 2 "$CFG/slack-sent.jsonl" | head -n 1 | jq -r '[.kind,.decision_id] | join(",")')" = "text,D-0012" ] \
+  && ok "H 파일 첨부 카드: 선택지 줄은 버튼 카드 메시지에, sent 기록에 decision_id(순서는 J)" || ko "H 첨부" "$(cat "$LOG/posts.log") / $(lastrec)"
 run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0013 "$(printf '주제\n\n• 왜: ✅ 와 ❌')"
 text | grep -qxF '• 왜: :비서-추천대로: 와 :비서-보류:' && text | grep -qF ':white_check_mark: 추천대로 · :x: 보류' && ok "H 본문 ✅❌ 는 기존 치환, 답 줄은 표준 :white_check_mark:·:x:(치환 안 됨)" || ko "H 치환 경계" "$(text)"
 # 거부(종료 코드 2, API 호출 0회): 인자 값·조합
@@ -572,9 +580,77 @@ run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0402 "$CBODY"
 run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0403 $'주제\n\n• 왜: 배경\n\n참고: 샘플-1\n\n추가 설명 줄'
 [ "$RC" = 0 ] && [ "$(text | tail -n 2)" = $'추가 설명 줄\n결정 D-0403' ] && ok "H '참고:' 뒤 추가 줄이 있으면 결정 번호 줄은 메시지 맨 끝(문서 규칙)" || ko "H 참고 뒤 줄" "$(text)"
 
+# ---- I. 색 띠(attachment)·제목 굵게 ------------------------------------------------------------
+newhome i
+for spec in "decide|#F2994A" "todo|#F2994A" "warn|#EB5757" "progress|#2F80ED" "done|#27AE60" "doc|#27AE60"; do
+  k=${spec%%|*}; c=${spec#*|}
+  run_n --kind "$k" $'주제\n\n• 무엇: 본문'"$ANS"
+  [ "$RC" = 0 ] && [ "$(payload '.attachments | length')" = 1 ] && [ "$(payload '.attachments[0].color')" = "$c" ] \
+    && [ "$(payload '.attachments[0].mrkdwn_in | index("text")')" = 0 ] && ok "I --kind $k → 색 띠 $c, mrkdwn 본문" || ko "I 색 $k" "rc=$RC $(cat "$SB/err") $(cat "$SB/out")"
+done
+run_n --kind done $'알림 시각 통일\n\n• 결과: 완료'
+[ "$(payload '.attachments[0].text | split("\n")[0]')" = "*:white_check_mark: 알림 시각 통일*" ] && ok "I 첫 줄(종류 이모지 포함)이 *굵게*" || ko "I 제목 굵게" "$(payload '.attachments[0].text')"
+[ "$(payload '.attachments[0].text | split("\n")[2]')" = "• 결과: 완료" ] && ok "I 둘째 줄 이후 본문은 그대로" || ko "I 본문 불변" "$(payload '.attachments[0].text')"
+[ "$(payload '.text')" = ":white_check_mark: 알림 시각 통일" ] && [ "$(payload '.attachments[0].fallback')" = ":white_check_mark: 알림 시각 통일" ] && ok "I 알림 미리보기 text·fallback 에 제목(별표 없이)" || ko "I fallback" "$(cat "$LOG/post.json")"
+run_n --kind done $'✅ *열린 PR*\n\n• 무엇: 확인'
+[ "$(payload '.attachments[0].text | split("\n")[0]')" = ":white_check_mark: *열린 PR*" ] && [ "$(payload '.text')" = ":white_check_mark: 열린 PR" ] && ok "I 첫 줄이 이미 굵으면 중복 굵게 없음, 미리보기엔 별표 제거" || ko "I 중복 굵게" "$(cat "$LOG/post.json")"
+run_n --kind done $'주제\n\n• 무엇: *핵심* 하나'
+[ "$RC" = 0 ] && [ "$(errn)" = 0 ] && ok "I 제목 줄은 굵게 검사 제외(자동 굵게 + 본문 굵게 1곳 → 경고 없음)" || ko "I 굵게 제외" "$(cat "$SB/err")"
+run_n --kind done $'*주제*\n\n• 무엇: *핵심* 하나'
+[ "$(errn)" = 0 ] && ok "I 제목에 직접 쓴 굵게도 검사 제외" || ko "I 제목 직접 굵게" "$(cat "$SB/err")"
+run_n --kind done $'주제\n\n• 무엇: *하나* 와 *둘*'
+grep -q '^경고: 굵게가 2곳' "$SB/err" && ok "I 본문 굵게 2곳은 여전히 경고" || ko "I 본문 굵게 2곳" "$(cat "$SB/err")"
+run_n --kind warn --thread 1700000000.000001 $'스레드\n\n• 무엇: 답글'
+[ "$(payload '.thread_ts')" = 1700000000.000001 ] && [ "$(payload '.attachments | length')" = 1 ] && ok "I 스레드 답글도 thread_ts 유지 + 색 띠" || ko "I 스레드" "$(cat "$LOG/post.json")"
+run_n --kind decide --choices 3 $'알림 시각\n\n• 왜: 배경'
+[ "$(payload '.attachments[0].text | contains("👉 답: :비서-a: A")')" = true ] && ok "I --choices 안내 줄이 색 띠 본문 안에 있음" || ko "I choices" "$(cat "$LOG/post.json")"
+run_n --kind decide --options "1=가 안,2=나 안" --recommend 1 --decision-id D-0900 $'주제\n\n• 왜: 배경'
+[ "$(payload '.attachments[0].blocks[0].text.text | contains(":one: 가 안") and contains("결정 D-0900")')" = true ] && [ "$(lastrec | jq -r '.decision_id')" = D-0900 ] && ok "I --options 카드: 선택지·결정 번호가 색 띠 본문에, 기록의 decision_id 유지" || ko "I options" "$(cat "$LOG/post.json")"
+run_n --kind done "끝"
+r=$(lastrec)
+[ "$(printf '%s' "$r" | jq -r '.ts')" = 1700000000.000100 ] && [ "$(printf '%s' "$r" | jq -r '.channel')" = Dfake ] && [ "$(printf '%s' "$r" | jq -r '.title')" = ":white_check_mark: 끝" ] \
+  && ok "I sent 기록에 ts·channel 유지, title 에 별표 없음" || ko "I sent 기록" "$r"
+run_n "종류 없는 호출"
+[ "$(payload 'keys | join(",")')" = "channel,text" ] && [ "$(payload '.text')" = "종류 없는 호출" ] && ok "I --kind 없는 호출은 페이로드 불변(attachments 없음, 굵게 없음)" || ko "I 종류 없음" "$(cat "$LOG/post.json")"
+printf '<html></html>' > "$SB/doc.html"
+run_n --kind doc $'문서\n\n• 무엇: 첨부' "$SB/doc.html"
+[ "$RC" = 0 ] && [ "$(payload 'has("attachments")')" = false ] && [ "$(payload '.initial_comment | split("\n")[0]')" = ":비서-공유합니다: 문서" ] && [ "$(lastrec | jq -r '.file_id')" = Ffake1 ] \
+  && ok "I 파일 첨부는 기존 경로 그대로(색 띠 없음, file_id 기록)" || ko "I 파일 첨부" "rc=$RC $(cat "$LOG/post.json") $(cat "$SB/err")"
+# 색 값은 스크립트 한 곳에만 둠
+n=$(grep -c '#F2994A\|#EB5757\|#2F80ED\|#27AE60' "$NOTIFY")
+[ "$n" = 4 ] && ok "I 색 값은 스크립트의 KIND_COLOR 한 곳(4줄)에만 있음" || ko "I 색 값 위치" "$n"
+
 # ---- Z. 토큰·실제 접속 ----------------------------------------------------------------------
 leak=$(grep -rlF -- "$FAKE_TOKEN" "$SB" 2>/dev/null | grep -v '/slack-bot\.env$' || true)
 [ -z "$leak" ] && ok "Z 토큰이 stdout·stderr·로그·sent 기록·가짜 curl 호출 기록에 없음(설정 파일 제외 전체 검색)" || ko "Z 토큰 노출" "$leak"
+
+# ---- Y. --alive 생존 줄 -----------------------------------------------------------------------
+printf 'print("봇: 연결됨 · 마지막 수신 2분 전")\n' > "$SB/alive.sh"
+LRM_BOT_ALIVE="$SB/alive.sh"; export LRM_BOT_ALIVE
+run_n --kind progress --alive "점검$ANS"
+[ "$RC" = 0 ] && [ "$(text | sed -n 2p)" = "봇: 연결됨 · 마지막 수신 2분 전" ] && [ "$(errn)" = 0 ] && ok "Y --alive → 주제 바로 아래 생존 줄, 경고 없음" || ko "Y --alive" "rc=$RC $(text | head -2)"
+printf 'raise SystemExit(1)\n' > "$SB/alive.sh"
+run_n --kind progress --alive "점검$ANS"
+[ "$RC" = 0 ] && [ "$(text | sed -n 2p)" = "" ] && ok "Y 생존 조회 실패 → 줄 없이 전송" || ko "Y 조회 실패" "rc=$RC"
+unset LRM_BOT_ALIVE
+
+# ---- J. 첨부 + 번호 카드: 버튼 카드를 먼저, 파일은 카드 스레드에 / 버튼 없는 결정 카드 경고 -------------------
+newhome j; : > "$LOG/posts.log"
+printf 'x' > "$SB/clip.mp4"
+run_n --kind decide --options '1=A 안,2=B 안' --recommend 2 --decision-id D-0J01 "주제" "$SB/clip.mp4"
+c1=$(sed -n 1p "$LOG/posts.log"); c2=$(sed -n 2p "$LOG/posts.log")
+[ "$RC" = 0 ] && [ "$(printf '%s' "$c1" | jq -r '.attachments[0].blocks[1].elements | map(.value) | join(",")')" = 'D-0J01|1,D-0J01|2,D-0J01|custom' ] \
+  && ok "J 첨부+--options: 첫 호출이 버튼 달린 카드(chat.postMessage)" || ko "J 카드 먼저" "rc=$RC $c1"
+[ "$(printf '%s' "$c2" | jq -r '.thread_ts')" = 1700000000.000100 ] && [ "$(printf '%s' "$c2" | jq -r '.files[0].title')" = clip.mp4 ] \
+  && ok "J 파일은 카드 ts 의 스레드로 업로드" || ko "J 파일 스레드" "$c2"
+[ "$(wc -l < "$CFG/slack-sent.jsonl" | tr -d ' ')" = 2 ] && [ "$(sed -n 1p "$CFG/slack-sent.jsonl" | jq -r '[.ts,.decision_id,.kind]|join(",")')" = '1700000000.000100,D-0J01,text' ] \
+  && [ "$(sed -n 2p "$CFG/slack-sent.jsonl" | jq 'has("decision_id")')" = false ] && ok "J 보낸 기록: 카드(ts·decision_id) 1줄 + 파일 1줄(카드 필드 없음)" || ko "J 보낸 기록" "$(cat "$CFG/slack-sent.jsonl")"
+run_n --kind decide --options '1=A 안,2=B 안' --recommend 2 --decision-id D-0J02 "주제" "$SB/none.mp4"
+[ "$RC" = 2 ] && nocall && ok "J 첨부 파일이 없으면 카드도 보내지 않음(종료 코드 2)" || ko "J 파일 없음" "rc=$RC"
+LRM_BTN_WARN=on run_n --kind decide --choices 2 "주제"
+[ "$RC" = 0 ] && grep -q '선택지 버튼 없음' "$SB/err" && ok "J --options 없는 결정 카드 → 버튼 없음 경고(전송은 함)" || ko "J 버튼 없음 경고" "rc=$RC $(cat "$SB/err")"
+LRM_BTN_WARN=on run_n --kind decide --options '1=A 안,2=B 안' --recommend 2 --decision-id D-0J03 "주제"
+! grep -q '선택지 버튼 없음' "$SB/err" && ok "J --options 카드는 경고 없음" || ko "J 정상 카드 경고" "$(cat "$SB/err")"
 
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

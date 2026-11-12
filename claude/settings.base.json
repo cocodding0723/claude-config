@@ -101,6 +101,9 @@
       "Bash(git tag --force:*)"
     ]
   },
+  "env": {
+    "LRM_FORMAT": "strict"
+  },
   "model": "opus",
   "hooks": {
     "PreToolUse": [
@@ -112,6 +115,12 @@
             "command": "~/.claude/hooks/git-guard.sh",
             "timeout": 10,
             "statusMessage": "git-guard 검사 중"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/slack-format-guard.sh",
+            "timeout": 10,
+            "statusMessage": "slack-format-guard 검사 중"
           }
         ]
       }

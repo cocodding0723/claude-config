@@ -1,5 +1,5 @@
 // 패널의 순수 함수: 파일 해석·오래됨 판정·표시 문자열. 엔진($) 없이 node 로 시험함(tests/panel/board.test.mjs)
-import type { AutoBoard, AutoHub, AutoIdle, AutoSource, Board } from '../types'
+import type { AutoBoard, AutoHub, AutoIdle, AutoProgress, AutoSource, Board } from '../types'
 
 /** 자동 칸이 이만큼 갱신되지 않으면 맨 위 경고. 수집 주기 90초의 6배 이상 */
 export const AUTO_STALE_MIN = 10
@@ -85,11 +85,12 @@ export const sourceNote = <T>(src: AutoSource<T> | undefined, nowMs: number): st
   return `자동 · ⚠ 수집 실패(${src.err ?? '?'}) · ${src.at !== null ? `${age} 값` : age}`
 }
 
-export const hubLine = (h: AutoHub): string => {
+export const hubLine = (h: AutoHub, ws?: { children: number; active: number; warn: boolean }): string => {
   const parts = [STATE_LABEL[h.state] ?? h.state]
   if (h.quietMin !== null && h.quietMin >= 1) parts.push(`${h.quietMin}분 출력 없음`)
   if (h.dup) parts.push('👥중복')
   if (!h.connected) parts.push('🔌끊김')
+  if (ws !== undefined && ws.children > 0) parts.push(`하위 ${ws.children}개(활동 ${ws.active})${ws.warn ? ' ⚠️' : ''}`)
   return parts.join(' · ')
 }
 
@@ -154,4 +155,40 @@ export const idleLines = (v: AutoIdle | null | undefined): IdleLine[] => {
     else if (note) out.push({ text: `${s.dir} 크기 ⚠ ${note}`, warn: false })
   }
   return out
+}
+
+// 진행 게이지 한 줄: 막대·퍼센트·남은 시각. 값이 깨져도(0·음수·NaN) 0~100% 로 자름
+export const progressBar = (p: { done: number; total: number; eta?: string; state?: string }, width = 12) => {
+  const total = Number.isFinite(p.total) && p.total > 0 ? p.total : 0
+  const done = Number.isFinite(p.done) ? Math.min(Math.max(p.done, 0), total) : 0
+  const pct = total === 0 ? 0 : Math.round((done / total) * 100)
+  const fill = Math.round((pct / 100) * width)
+  const bar = '█'.repeat(fill) + '░'.repeat(width - fill)
+  const tail = p.state === 'done' ? '완료' : p.state === 'blocked' ? `막힘${p.eta ? ` · ${p.eta}` : ''}` : (p.eta ?? '')
+  return { bar, pct, text: `${bar} ${pct}% ${done}/${total}${tail ? `  ${tail}` : ''}` }
+}
+
+export const BUCKET_LABEL: Record<string, string> = { doing: '🔄 진행 중', wait: '⏳ 답 대기', block: '🚧 막힘' }
+const BUCKET_ORDER = ['doing', 'wait', 'block'] as const
+
+export type ProgressGroup = { group: string; lines: string[] }
+
+/**
+ * 진행 칸: 허브(그룹)별로 묶고 줄 앞에 묶음 표시. 그룹 순서는 처음 나온 순.
+ * 값이 없으면 undefined → 호출한 쪽이 옛 손 칸으로 돌아감
+ */
+export const progressGroups = (v: AutoProgress | null | undefined): ProgressGroup[] | undefined => {
+  if (v === null || v === undefined || !Array.isArray(v.items)) return undefined
+  const groups: ProgressGroup[] = []
+  for (const bucket of BUCKET_ORDER) {
+    for (const it of v.items.filter(i => i.bucket === bucket)) {
+      let g = groups.find(x => x.group === it.group)
+      if (g === undefined) {
+        g = { group: it.group, lines: [] }
+        groups.push(g)
+      }
+      g.lines.push(`${BUCKET_LABEL[bucket]?.split(' ')[0] ?? ''} ${it.title}`)
+    }
+  }
+  return groups
 }

@@ -25,4 +25,6 @@ Jira 기한(11-06 사용자): 티켓을 발급할 때 끝나는 날짜(기한)�
 - [skip test] 금지(사용자 11-07 "이제부터 skip test 붙여서 pr 올리지 마 + skip test 는 앞으로 내가 명시적으로 요청할께"): PR(초안 포함) 제목에 [skip test] 를 붙이지 않는다. 사용자가 그 PR 에 명시적으로 요청할 때만.
 - 워커 창의 확인 창(git merge 등 ask 규칙)은 사용자만 누른다. 코디네이터는 terminal send 등으로 대신 누르지 말고 목록만 메인에 보낸다.
 - 보호 훅이 막는 명령(reset --hard·stash drop·branch -D 등)은 update-ref 같은 다른 명령으로 우회하지 않는다. 사용자 실행용 명령을 메인에 보낸다.
+
+Spine 작업 규칙(11-11 사용자): Spine 관련 작업(리그·생성기·원화 분절)은 개인 비공개 저장소 https://github.com/cocodding0723/lrm-spine 에서 이 허브(VFX)가 관리한다. 도구류(part-cutter·part-psd)는 lrm-art-tools. 게임 저장소에는 게임이 실제로 쓰는 런타임 코드만 둔다. 원작 이미지·PSD 원본은 커밋 금지(허용 범위는 사용자 결정), Unity 녹화는 게임 프로젝트에서 하고 산출물·리그만 lrm-spine 에 커밋.
 - 창을 띄워도 포커스를 가져가지 않는다: osascript activate·앞으로 올리기 금지, 앱은 open -g(백그라운드)로 실행, Unity GUI 는 open -g -a Unity --args ..., Chrome 은 헤드리스 우선·창이 필요하면 open -g. 헤드리스·배치가 기본이다.

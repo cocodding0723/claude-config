@@ -5,6 +5,7 @@ set -uo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd -P)
 INSTALL="$REPO/install.sh"
+PYREAL=$(command -v python3)  # plist 치환 시험에서 쓰는 실제 3.10 이상 python3 절대 경로
 unset GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM
 PASS=0 FAIL=0
 
@@ -103,6 +104,22 @@ got=$(echo "$dry" | grep -cE '^\[dry-run\] (LINK|BACKUP\+LINK|MERGE|COPY|RENDER|
 "$INSTALL" >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && ok "설치 종료 코드 0" || ko "설치" "rc=$rc"
 check "점검 모드 통과" "$INSTALL" --check
+# 복사 설치된 slack_socket.py 는 같은 폴더의 main_terminal.py 를 import 함. 공용 모듈이 설치되지 않으면 ModuleNotFoundError 로 즉시 종료
+SOCK_INST="$SB/.config/lrm-hubs/slack_socket.py"
+[ -f "$SOCK_INST" ] && [ ! -L "$SOCK_INST" ] && ok "slack_socket.py 는 복사 설치(링크 아님)" || ko "slack_socket 복사 설치" "링크이거나 없음"
+out=$(python3 -I - "$SOCK_INST" 2>&1 <<'PY'
+import sys, types, runpy
+for n in ("slack_sdk", "slack_sdk.socket_mode", "slack_sdk.socket_mode.request", "slack_sdk.socket_mode.response"):
+    sys.modules[n] = types.ModuleType(n)
+sys.modules["slack_sdk"].WebClient = object
+sys.modules["slack_sdk.socket_mode"].SocketModeClient = object
+sys.modules["slack_sdk.socket_mode.request"].SocketModeRequest = object
+sys.modules["slack_sdk.socket_mode.response"].SocketModeResponse = object
+ns = runpy.run_path(sys.argv[1], run_name="not_main")  # 가짜 slack_sdk 로 import 만 수행(실제 연결 없음)
+print("import-ok" if callable(ns.get("send_main")) else "no-send_main")
+PY
+)
+[ "$out" = import-ok ] && ok "복사 설치된 slack_socket.py 가 공용 모듈(main_terminal.py)까지 import 됨" || ko "복사 설치본 import" "$(echo "$out" | tail -2)"
 # doc-kit: 스킬·역할 파일 링크가 설치되고, 링크 너머로 스크립트가 실행되며, --check 가 끊긴 링크를 잡음
 DK="$SB/.claude/skills/doc-kit"; DKROLE="$SB/.config/lrm-hubs/roles/role-doc-kit.txt"
 [ "$(readlink "$DK")" = "$REPO/skills/doc-kit" ] && [ "$(readlink "$DKROLE")" = "$REPO/hubs/roles/role-doc-kit.txt" ] && ok "doc-kit 스킬·역할 파일 링크 설치" || ko "doc-kit 링크" "원본을 가리키지 않음"
@@ -139,15 +156,26 @@ grep -q "$SB" "$SB/Library/LaunchAgents/ai.lrm.slackpoll.plist" && ! grep -q '__
 PCP="$SB/Library/LaunchAgents/ai.lrm.panelcollect.plist"
 grep -q "<string>$SB/.config/lrm-hubs/panel_collect.sh</string>" "$PCP" && grep -q "<string>$SB/.config/lrm-hubs/panel-collect.log</string>" "$PCP" && ! grep -q '__HOME__' "$PCP" && plutil -lint "$PCP" >/dev/null && ok "수집기 plist __HOME__ 치환·형식 정상" || ko "수집기 plist" "치환·형식 오류"
 PYTHONDONTWRITEBYTECODE=1 bash "$SB/.config/lrm-hubs/panel_collect.sh" --help 2>&1 | grep -q -- '--once' && [ -L "$SB/.config/lrm-hubs/panel_collect.py" ] && ok "수집기: 링크 경로로 --help 실행" || ko "수집기 링크 실행" ""
-# 옆 패널 mod: 사용자 전역 위치(~/.claude/skills/lrm-board, Claude Code 가 모든 세션에 자동 로드)에 실제 파일 5개.
+# 옆 패널 mod: Orca 세션이 실제로 읽는 dev-mods 위치에 실제 파일 5개(11-11 실측: skills 위치는 안 읽힘).
 # 패널 데이터 2개·메인 체크아웃 경로가 이 HOME 기준. 옛 위치(~/.config/lrm-hubs/mods)는 더 만들지 않음
-MOD="$SB/.claude/skills/lrm-board"
+MOD="$SB/.claude/dev-mods/ab8a5233-c566-4f47-b3ee-4b573b330e22/lrm-board"
 mod_bad=0; for f in .claude-plugin/plugin.json hooks/hooks.json hooks/register.tsx hooks/board.ts types/index.d.ts; do [ -f "$MOD/$f" ] && [ ! -L "$MOD/$f" ] || mod_bad=1; done
 [ "$mod_bad" = 0 ] && jq -e '.name == "lrm-board"' "$MOD/.claude-plugin/plugin.json" >/dev/null && jq -e '.modules' "$MOD/hooks/hooks.json" >/dev/null && ok "lrm-board mod 파일 5개 복사·JSON 정상" || ko "lrm-board 복사" "파일 누락·링크·JSON 오류"
 grep -qF "'$SB/.config/lrm-hubs/panel.json'" "$MOD/hooks/register.tsx" && grep -qF "'$SB/.config/lrm-hubs/panel-auto.json'" "$MOD/hooks/register.tsx" && grep -qF "'$SB/orca/LoveRevolutionMaker'" "$MOD/hooks/register.tsx" && ! grep -q '__HOME__' "$MOD/hooks/register.tsx" && ok "lrm-board: panel.json·panel-auto.json·메인 체크아웃 경로 __HOME__ 치환" || ko "lrm-board 치환" ""
 [ -d "$MOD" ] && [ ! -L "$MOD" ] && [ ! -e "$SB/.config/lrm-hubs/mods" ] && ok "lrm-board: 전역 mod 위치에 실제 폴더, 옛 mods 위치 미생성" || ko "lrm-board 위치" ""
 SOCKP="$SB/.config/lrm-hubs/ai.lrm.slacksocket.plist"
 grep -q "<string>$SB/.config/lrm-hubs/slack_socket.py</string>" "$SOCKP" && grep -q "<string>$(command -v python3)</string>" "$SOCKP" && ! grep -q '__[A-Z0-9_]*__' "$SOCKP" && plutil -lint "$SOCKP" >/dev/null && cmp -s "$REPO/hubs/scripts/slack_socket.py" "$SB/.config/lrm-hubs/slack_socket.py" && ok "소켓 plist __HOME__·__PYTHON3__ 치환·형식 정상, 수신기 복사" || ko "소켓 plist" "치환·형식 오류"
+# 복사 설치본 import: 설치 폴더 안 파일만으로 접수기가 돌고(-I), 수신기가 import 하는 장부 모듈도 함께 설치됐는지
+LH="$SB/.config/lrm-hubs"
+for m in ledger.py ledger_sync.py intake.py; do [ -f "$LH/$m" ] && [ ! -L "$LH/$m" ] || ko "복사 설치 $m" "실제 파일 없음"; done
+mkdir -p "$SB/intake-hub"
+printf '{"type":"note","ts":"%s","text":"ui: 설치 시험"}\n{"type":"note","ts":"%s","text":"머리말 없음"}\n' "$(date +%s).000001" "$(date +%s).000002" > "$SB/intake-hub/slack-inbox.jsonl"
+out=$(cd "$SB" && LRM_HUB_DIR="$SB/intake-hub" LRM_ORCA=/usr/bin/false LRM_INTAKE_ROUTES="$LH/intake-routes.tsv" python3 -I "$LH/intake.py" --once --json 2>&1); rc=$?
+echo "$out" | grep -q '"hub": "ui"' && echo "$out" | grep -q '"hub": "main"' && [ "$rc" = 0 ] && [ "$(grep -c . "$SB/intake-hub/feedback-ledger.tsv")" = 3 ] && ok "복사 설치본 intake.py: -I 실행·번호 2개·장부 2행·라우팅(ui, main)" || ko "복사 설치본 intake.py" "rc=$rc $(echo "$out" | head -2 | tr '\n' ' ')"
+out=$(cd "$SB" && LRM_HUB_DIR="$SB/intake-hub" LRM_ORCA=/usr/bin/false LRM_INTAKE_ROUTES="$LH/intake-routes.tsv" python3 -I "$LH/intake.py" --once --json 2>&1)
+echo "$out" | grep -q '"new": \[\]' && ok "복사 설치본 재실행: 접수 0건(멱등)" || ko "복사 설치본 재실행" "$out"
+PYTHONDONTWRITEBYTECODE=1 python3 -I -c "import sys; sys.path.insert(0,'$LH'); import ledger, ledger_sync, main_terminal, slack_push, intake" 2>/dev/null && ok "복사 설치본 ledger·ledger_sync·intake import" || ko "복사 설치본 import" "ledger_sync 등 누락"
+[ -f "$LH/intake-routes.tsv" ] && ok "머리말 표 intake-routes.tsv 설치" || ko "머리말 표" "미설치"
 [ "$(git config --global core.hooksPath)" = "~/.config/git/hooks" ] && [ "$(git config --global pull.rebase)" = true ] && [ "$(git config --global merge.ff)" = false ] && ok "git 설정 4개 키" || ko "git 설정" ""
 grep -q 'name = sandbox' "$SB/.gitconfig" && ok "git 사용자 값 보존" || ko "git 사용자 값" "사라짐"
 BK=$(ls -d "$SB/.claude-config-backup"/*/ | head -1); BK=${BK%/}
@@ -308,13 +336,13 @@ mkdir -p "$SB8/.config/claude-config" "$SB8/.config/lrm-hubs" "$SB8/fakebin"
 cp "$SB/.config/claude-config/values.env" "$SB8/.config/claude-config/values.env"
 SOCK=".config/lrm-hubs/ai.lrm.slacksocket.plist"
 # 이 맥과 같은 상태: 라이브 보관본이 저장소 렌더 결과와 같음
-sed -e "s#__HOME__#$SB8#g" -e "s#__PYTHON3__#/opt/py/bin/python3#g" "$REPO/hubs/launchd/ai.lrm.slacksocket.plist" > "$SB8/$SOCK"
+sed -e "s#__HOME__#$SB8#g" -e "s#__PYTHON3__#$PYREAL#g" "$REPO/hubs/launchd/ai.lrm.slacksocket.plist" > "$SB8/$SOCK"
 cp "$REPO/hubs/scripts/slack_socket.py" "$SB8/.config/lrm-hubs/slack_socket.py"
 ino_before=$(ls -i "$SB8/$SOCK" "$SB8/.config/lrm-hubs/slack_socket.py" | awk '{print $1}' | tr '\n' ' ')
 # 진짜 launchctl 대신 호출 기록만 남기는 가짜. PATH 앞에 둬도 가로채지 못하면 시험을 건너뜀
 printf '#!/bin/sh\necho "$*" >> "%s/launchctl.log"\n' "$SB8" > "$SB8/fakebin/launchctl"; chmod +x "$SB8/fakebin/launchctl"
 if [ "$(PATH="$SB8/fakebin:$PATH" command -v launchctl)" = "$SB8/fakebin/launchctl" ]; then
-  out=$(PATH="$SB8/fakebin:$PATH" HOME="$SB8" CLAUDE_CONFIG_PYTHON3=/opt/py/bin/python3 env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF "$INSTALL" --reload-launchd 2>&1); rc=$?
+  out=$(PATH="$SB8/fakebin:$PATH" HOME="$SB8" CLAUDE_CONFIG_PYTHON3=$PYREAL env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF "$INSTALL" --reload-launchd 2>&1); rc=$?
   ino_after=$(ls -i "$SB8/$SOCK" "$SB8/.config/lrm-hubs/slack_socket.py" | awk '{print $1}' | tr '\n' ' ')
   [ "$rc" = 0 ] && echo "$out" | grep -q "SKIP   $SOCK (내용 동일)" && echo "$out" | grep -q 'SKIP   .config/lrm-hubs/slack_socket.py (내용 동일)' && [ "$ino_before" = "$ino_after" ] && ok "소켓 보관본: 라이브와 같으면 SKIP(파일 그대로)" || ko "소켓 SKIP" "rc=$rc"
   grep -q 'bootstrap .*ai.lrm.slackpoll.plist' "$SB8/launchctl.log" 2>/dev/null && ! grep -q slacksocket "$SB8/launchctl.log" && ! echo "$out" | grep -q '재적재.*slacksocket' && ok "--reload-launchd 도 slackpoll 만 적재, slacksocket 은 호출·안내 없음" || ko "소켓 launchd" "$(tr '\n' ' ' < "$SB8/launchctl.log" 2>/dev/null)"
@@ -326,7 +354,7 @@ fi
 # 라이브 보관본이 다르면 덮어쓰지 않고 중단
 echo '<!-- local edit -->' >> "$SB8/$SOCK"
 before=$(snapshot "$SB8")
-out=$(HOME="$SB8" CLAUDE_CONFIG_PYTHON3=/opt/py/bin/python3 env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF "$INSTALL" 2>&1); rc=$?
+out=$(HOME="$SB8" CLAUDE_CONFIG_PYTHON3=$PYREAL env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF "$INSTALL" 2>&1); rc=$?
 [ "$rc" != 0 ] && echo "$out" | grep -q "LIVE-NEWER $SOCK" && [ "$before" = "$(snapshot "$SB8")" ] && ok "소켓 보관본이 라이브와 다르면 LIVE-NEWER 로 중단·무변경" || ko "소켓 live-diff" "rc=$rc"
 rm -rf "${SB8:?}"
 # 첫 설치(보관본 없음): 새로 복사하는 경로에서도 --reload-launchd 는 slackpoll 만 적재
@@ -341,10 +369,28 @@ else
   printf 'SKIP  첫 설치 소켓 launchd 시험 — 가짜 launchctl 이 PATH 에서 우선하지 않음\n'
 fi
 rm -rf "${SB8B:?}"
+# __PYTHON3__ 치환 검증: 상대 경로·없는 경로·실행 권한 없음·3.10 미만은 설치 단계에서 원인·조치와 함께 실패, 통과 경로는 plist 에 그대로 들어감
+SB8D=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox8d.XXXXXX")
+mkdir -p "$SB8D/.config/claude-config" "$SB8D/old"
+cp "$SB/.config/claude-config/values.env" "$SB8D/.config/claude-config/values.env"
+printf '#!/bin/sh\nexit 0\n' > "$SB8D/noexec"; printf '#!/bin/sh\n[ "$2" = "-c" ] && echo 3.9 && exit 1\nexit 1\n' > "$SB8D/old/python3"; chmod +x "$SB8D/old/python3"
+printf '#!/bin/sh\necho boom >&2; exit 3\n' > "$SB8D/broken"; chmod +x "$SB8D/broken"
+py_install() { HOME="$SB8D" CLAUDE_CONFIG_PYTHON3="$1" env -u CLAUDE_CONFIG_ALLOW_LIVE_DIFF "$INSTALL" --dry-run 2>&1; }
+out=$(py_install python3); rc=$?;                 [ "$rc" != 0 ] && echo "$out" | grep -q "ERROR: python3 경로가 절대 경로가 아님" && echo "$out" | grep -q "CLAUDE_CONFIG_PYTHON3=<절대 경로>" && ok "__PYTHON3__: 상대 경로 'python3' 거부(원인·조치 메시지)" || ko "상대 경로 python3" "rc=$rc $(echo "$out" | tail -2 | tr '\n' ' ')"
+out=$(py_install "$SB8D/없음"); rc=$?;            [ "$rc" != 0 ] && echo "$out" | grep -q "ERROR: python3 실행 불가" && ok "__PYTHON3__: 없는 절대 경로 거부" || ko "없는 경로" "rc=$rc"
+chmod -x "$SB8D/noexec"; out=$(py_install "$SB8D/noexec"); rc=$?; [ "$rc" != 0 ] && echo "$out" | grep -q "ERROR: python3 실행 불가" && ok "__PYTHON3__: 실행 권한 없는 파일 거부" || ko "실행 권한 없음" "rc=$rc"
+out=$(py_install "$SB8D/old/python3"); rc=$?;     [ "$rc" != 0 ] && echo "$out" | grep -q "ERROR: python3 버전 3.9 은 3.10 미만" && echo "$out" | grep -q "brew install python" && ok "__PYTHON3__: 3.9 거부(버전·조치 메시지)" || ko "3.9 거부" "rc=$rc $(echo "$out" | tail -2 | tr '\n' ' ')"
+out=$(py_install "$SB8D/broken"); rc=$?;         [ "$rc" != 0 ] && echo "$out" | grep -q "ERROR: python3 실행 실패" && ok "__PYTHON3__: 실행이 실패하는 python3 거부" || ko "실행 실패" "rc=$rc"
+if [ -x /usr/bin/python3 ] && /usr/bin/python3 -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
+  out=$(py_install /usr/bin/python3); rc=$?;      [ "$rc" != 0 ] && echo "$out" | grep -q "ERROR: python3 버전 3.9 은 3.10 미만" && ok "__PYTHON3__: 시스템 /usr/bin/python3(3.9) 거부" || ko "시스템 3.9" "rc=$rc"
+fi
+out=$(py_install "$PYREAL"); rc=$?;               [ "$rc" = 0 ] && ok "__PYTHON3__: 3.10 이상 절대 경로는 통과" || ko "정상 python3 통과" "rc=$rc $(echo "$out" | tail -2 | tr '\n' ' ')"
+before=$(snapshot "$SB8D"); py_install python3 >/dev/null; [ "$before" = "$(snapshot "$SB8D")" ] && ok "__PYTHON3__ 거부 시 HOME 무변경" || ko "거부 시 무변경" "변경됨"
+rm -rf "${SB8D:?}"
 # 수신기 연결 실패: traceback 없이 한 줄 로그·종료 코드 2. slack_sdk 는 가짜 모듈로 대체(네트워크 없음)
 SB8C=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox8c.XXXXXX")
 mkdir -p "$SB8C/stub/slack_sdk/socket_mode" "$SB8C/hub"
-: > "$SB8C/stub/slack_sdk/__init__.py"
+printf 'class WebClient:\n    def __init__(self, token=None): pass\n' > "$SB8C/stub/slack_sdk/__init__.py"
 printf 'class SocketModeClient:\n    def __init__(self, app_token): self.socket_mode_request_listeners = []\n    def connect(self): raise ConnectionError("FAKE_DETAIL")\n' > "$SB8C/stub/slack_sdk/socket_mode/__init__.py"
 
 printf 'class SocketModeRequest: pass\n' > "$SB8C/stub/slack_sdk/socket_mode/request.py"

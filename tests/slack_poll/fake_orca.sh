@@ -27,6 +27,7 @@ case "$sub" in
     printf 'show %s\n' "$*" >> "$FO/calls.log"; now >> "$FO/shows.log"
     H=""; while [ $# -gt 0 ]; do case "$1" in --terminal) H=$2; shift 2 ;; *) shift ;; esac; done
     mode=$(rd show.mode ok)
+    [ ! -f "$FO/show.mode.$H" ] || mode=$(cat "$FO/show.mode.$H")  # 핸들별 응답(재탐색 시험: 옛 핸들 gone, 새 핸들 ok)
     if [ "$mode" = seq ]; then  # show.seq 의 n번째 줄 = n번째 show 응답(끝을 넘으면 마지막 줄 반복). 화면 이름이면 그 화면, 아니면 show.mode 값
       i=$(($(rd show.n 0) + 1)); echo "$i" > "$FO/show.n"
       tok=$(sed -n "${i}p" "$FO/show.seq"); [ -n "$tok" ] || tok=$(sed -n '$p' "$FO/show.seq")
@@ -82,6 +83,7 @@ case "$sub" in
         *) shift ;;
       esac
     done
+    smode() { [ -f "$FO/send.mode.$H" ] && cat "$FO/send.mode.$H" || rd send.mode ok; }  # 핸들별 send 응답(재탐색 시험)
     n=$(($(wc -l < "$FO/sends.log" 2>/dev/null || echo 0) + 1))
     printf '%s' "$T" > "$FO/send.$n.txt"
     printf '%s\t%s\t%s\t%s\t%s\n' "$n" "$(now)" "$H" "${R:-none}" "${W:-none}" >> "$FO/sends.log"
@@ -102,12 +104,13 @@ case "$sub" in
         '{id:"x",ok:false,error:({code:$c,message:"x",data:{orchestrationRequestId:$r}} | if $extra then .data = $extra else . end)}'
     }
     deliver() { echo "$n" >> "$FO/delivered"; : > "$FO/ledger/$R"; }
-    if [ -e "$FO/ledger/$R" ] && [ "$(rd send.mode ok)" != blocked ]; then  # 같은 요청 ID: 다시 입력하지 않고 영수증만
+    if [ -e "$FO/ledger/$R" ] && [ "$(smode)" != blocked ]; then  # 같은 요청 ID: 다시 입력하지 않고 영수증만
       echo "$n" >> "$FO/replays"; started; exit 0
     fi
-    case "$(rd send.mode ok)" in
+    case "$(smode)" in
       ok) deliver; started ;;
       fail) err send_failed; exit 1 ;;
+      gone) err terminal_gone; exit 1 ;;                        # 핸들 무효 거절(입력 전). deliver 하지 않음
       failn)
         left=$(rd failn 0)
         if [ "$left" -gt 0 ]; then echo $((left - 1)) > "$FO/failn"; err send_failed; exit 1; fi
@@ -120,6 +123,14 @@ case "$sub" in
       unsubmitted) deliver; receipt '["input_accepted"]' supported ;;  # 실측(2026-11-10) 모양: 제출됐어도 turn_started 없음
       nostage) deliver; receipt '[]' supported ;;
       badreceipt) deliver; echo '{"id":"x","ok":true,"result":{"accepted":true}}' ;;
+    esac
+    ;;
+  list)  # list.json 을 result.terminals 로 돌려줌. list.mode=fail 이면 시간 초과가 아닌 일반 오류, trunc 이면 truncated=true
+    printf 'list %s\n' "$*" >> "$FO/calls.log"
+    case "$(rd list.mode ok)" in
+      fail) echo '{"id":"x","ok":false,"error":{"code":"runtime_unavailable","message":"x"}}'; exit 1 ;;
+      trunc) jq -c '{id:"x",ok:true,result:{terminals:.,truncated:true}}' "$FO/list.json" ;;
+      *) jq -c '{id:"x",ok:true,result:{terminals:.,truncated:false}}' "$FO/list.json" ;;
     esac
     ;;
   *) printf '%s %s\n' "$sub" "$*" >> "$FO/calls.log"; echo '{"ok":false,"error":{"code":"unsupported"}}'; exit 1 ;;

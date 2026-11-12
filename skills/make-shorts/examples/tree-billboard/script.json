@@ -1,0 +1,90 @@
+{
+  "mode": "gamedev",
+  "title": [
+    "게임 속 먼 나무는",
+    "왜 종이 한 장일까?"
+  ],
+  "beats": [
+    {
+      "scene": "hook",
+      "text": "게임에서 멀리 보이는 나무들은 사실 종이 한 장에 불과합니다."
+    },
+    {
+      "scene": "detail",
+      "text": "나무 한 그루를 제대로 만들면 잎과 가지 때문에 삼각형이 수만 개씩 들어가죠."
+    },
+    {
+      "scene": "forest",
+      "text": "이런 나무로 숲을 채우면 그래픽 카드가 버티지 못합니다."
+    },
+    {
+      "scene": "lod",
+      "text": "그래서 게임들은 나무가 멀어질수록 덜 정교한 모델로 몰래 바꿔치기합니다."
+    },
+    {
+      "scene": "lod",
+      "text": "이걸 레벨 오브 디테일, 줄여서 LOD라고 합니다.",
+      "say": "이걸 레벨 오브 디테일, 줄여서 엘오디라고 합니다."
+    },
+    {
+      "scene": "billboard",
+      "text": "아주 멀리 있는 나무는 아예 사진 한 장을 세워 두고, 항상 카메라를 바라보게 돌려 버리죠."
+    },
+    {
+      "scene": "billboard",
+      "text": "이런 판때기를 빌보드라고 합니다."
+    },
+    {
+      "scene": "billboard",
+      "text": "오블리비언의 먼 숲이 바로 이 방식이었죠."
+    },
+    {
+      "scene": "flat",
+      "text": "하지만 사진이 한 장뿐이라 위에서 내려다보면 납작한 게 들통납니다."
+    },
+    {
+      "scene": "impostor",
+      "text": "그래서 나무를 여러 방향에서 미리 찍어 두고, 보는 각도에 맞는 사진으로 갈아 끼웁니다."
+    },
+    {
+      "scene": "impostor",
+      "text": "이 방식을 임포스터라고 하고, 포트나이트가 먼 나무에 이걸 썼다고 합니다."
+    },
+    {
+      "scene": "dither",
+      "text": "가까이 가면 진짜 모델로 돌아오는데, 이때 툭 튀는 걸 감추려고 점점이 섞어 가며 바꾸기도 하죠."
+    },
+    {
+      "scene": "outro",
+      "text": "이렇게 게임들은 멀리 있는 나무를 가짜로 바꿔서 넓은 숲을 그려 낸다고 하네요."
+    }
+  ],
+  "description": "make-shorts 스킬로 만든 샘플. 화면·음성·자막 전부 코드로 생성",
+  "sources": [
+    {
+      "title": "Level of detail (computer graphics) — Wikipedia",
+      "url": "https://en.wikipedia.org/wiki/Level_of_detail_(computer_graphics)"
+    },
+    {
+      "title": "Unity 매뉴얼: Level of Detail",
+      "url": "https://docs.unity3d.com/Manual/LevelOfDetail.html"
+    },
+    {
+      "title": "오블리비언 SpeedTree 나무의 빌보드 만들기 — UESP Construction Set Wiki",
+      "url": "https://cs.uesp.net/wiki/How_to_create_billboards_for_Oblivion_SpeedTree_trees"
+    },
+    {
+      "title": "Impostor Baker for UE4 (Ryan Brucks, 포트나이트 원경) — 80.lv",
+      "url": "https://80.lv/articles/impostor-baker-for-ue4/"
+    },
+    {
+      "title": "Octahedral Impostors — Ryan Brucks",
+      "url": "https://shaderbits.com/blog/octahedral-impostors"
+    }
+  ],
+  "notes": [
+    "화면의 삼각형 수(34,608 · 976 · 70)는 이 영상의 코드가 실제로 만든 나무 모델에서 센 값이다.",
+    "실제 게임 영상은 쓰지 않았다. 오블리비언 장면은 방식을 재현한 도해다.",
+    "나레이션은 합성 음성(edge-tts), 배경음은 ffmpeg 로 합성한 화음이다."
+  ]
+}

@@ -17,7 +17,7 @@
 | 9 | 테스트 | 허브 / QA 허브 | Roslyn 컴파일 → QA 통합 워크트리 EditMode+녹화 1회, `unity_slot.sh` |
 | 10 | 기능 단위 로컬 커밋 | 워커 | `review-before-commit` 기준, 무인 판단은 `decision-log` |
 | 11 | 완료 문서·영상 | 문서 허브 | `doc-kit`, 비주얼은 `ux-flow-board` + 전후 비교 |
-| 12 | 검수 대기 허브로 이동 + Jira 댓글 | 허브 | `jira-issue` 댓글 규칙 |
+| 12 | 완료 기록(`hub_report.py add --kind done`, 증거 경로) + Jira 댓글 | 허브 | `jira-issue` 댓글 규칙 |
 | 13 | 사용자 보고 | 메인 | `slack_notify.sh` + `html_preview.sh`, `slack_pending.sh` |
 | 14 | 사용자 검수 → fixup 반복 | 허브 | — |
 | 15 | push·PR (명시 승인 뒤) | 허브 | `create-pr`, `pr-review-game` |
