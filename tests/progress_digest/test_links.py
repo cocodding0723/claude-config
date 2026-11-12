@@ -109,7 +109,7 @@ class Resolve(unittest.TestCase):
         pd.resolve_links([it], lk, [it])
         self.assertEqual(it.link, "")
         self.assertTrue(any("D-7" in w for w in warns))
-        self.assertEqual(pd.name_lines([it]), ["- 결정 알림 시각 · 링크 없음"])
+        self.assertEqual(pd.name_lines([it]), ["- 결정 알림 시각 · 카드 링크 없음 ⚠️"])  # 눈에 띄게
 
     def test_pr_item_has_no_link_marker(self):
         it = pd.Item("pr:x/y#1", pd.WAIT, "PR 병합 대기", "https://github.com/x/y/pull/1")
@@ -188,6 +188,71 @@ class ListAccess(unittest.TestCase):
             rc = pd.run(conf, args)
         self.assertEqual(rc, 1)
         self.assertEqual(len(sent), 1)
+
+
+class Recovery(unittest.TestCase):
+    """링크 조회가 일시 실패했다 복구돼도 DM 이 다시 가지 않고, 링크·인용은 캐시"""
+
+    def run_once(self, conf, api, dry=False, items=None):
+        sent = []
+        it = items or [pd.Item("ledger:F1", pd.WAIT, "F1 로그인", ref={"kind": "topic", "channel": "D1", "ts": "1700000000.000100"})]
+        updates = []
+
+        def fake_api(c, method, body):
+            updates.append((method, body))
+            return {"ok": True, "item": {"id": "Rec1"}}
+
+        argv = ["--force"] + (["--dry-run"] if dry else [])
+        args = pd.parser().parse_args(argv + ["--no-pr"])
+        with mock.patch.object(pd, "load_items", lambda use_pr: (it, [], {})), mock.patch.object(pd, "api", fake_api), \
+                mock.patch.object(pd, "send_dm", lambda c, t: sent.append(t)), mock.patch.object(pd, "api_get", api):
+            pd.run(conf, args)
+        return sent, updates
+
+    def conf(self):
+        return pd.Conf(token="t", api="http://127.0.0.1:9", state=os.path.join(tempfile.mkdtemp(), "s.json"))
+
+    def test_hash_ignores_link_and_quote(self):
+        a = pd.Item("ledger:F1", pd.WAIT, "F1")
+        b = pd.Item("ledger:F1", pd.WAIT, "F1", link=PERMA, quote="인용")
+        self.assertEqual(pd.digest_hash([a]), pd.digest_hash([b]))
+        self.assertNotEqual(pd.digest_hash([a]), pd.digest_hash([pd.Item("ledger:F1", pd.DOING, "F1")]))
+
+    def test_recovery_does_not_resend_dm_but_fills_list_link(self):
+        conf = self.conf()
+        sent, ups = self.run_once(conf, FakeApi(fail=("chat.getPermalink",)))
+        self.assertEqual(len(sent), 1)
+        self.assertIn("링크 없음", sent[0])
+        sent2, ups2 = self.run_once(conf, FakeApi())  # 복구된 회차
+        self.assertEqual(sent2, [])  # DM 재전송 없음
+        self.assertTrue(any(m == "slackLists.items.update" and PERMA in json.dumps(b) for m, b in ups2))  # 목록 행에 링크 조용히 보강
+
+    def test_cache_persists_in_state_and_skips_lookups(self):
+        conf = self.conf()
+        api1 = FakeApi()
+        self.run_once(conf, api1)
+        self.assertGreater(len(api1.calls), 0)
+        state = pd.load_state(conf.state)
+        self.assertTrue(any(k.startswith("link:") for k in state["links"]))
+        api2 = FakeApi()
+        self.run_once(conf, api2)
+        self.assertEqual(api2.calls, [])  # 다음 회차는 캐시로 해결(전수 재조회 없음)
+
+    def test_failure_is_not_cached_and_expired_entries_are_dropped(self):
+        cache = {}
+        lk = pd.Links(pd.Conf(token="t", api="http://127.0.0.1:9"), cache, now=1000.0, warn=lambda m: None)
+        with mock.patch.object(pd, "api_get", FakeApi(fail=("chat.getPermalink",))):
+            self.assertEqual(lk.link({"kind": "topic", "channel": "D1", "ts": "1.1"}), "")
+        self.assertEqual(cache, {})
+        lk2 = pd.Links(pd.Conf(token="t", api="http://127.0.0.1:9"), {"link:D1:1.1": {"v": "u", "at": 1000.0}}, now=1000.0 + pd.LINK_TTL_S + 1)
+        lk2.prune()
+        self.assertEqual(lk2.cache, {})
+
+    def test_dry_run_makes_no_slack_calls(self):
+        conf = self.conf()
+        api = FakeApi()
+        sent, ups = self.run_once(conf, api, dry=True)
+        self.assertEqual((api.calls, sent, ups), ([], [], []))
 
 
 class ListChange(unittest.TestCase):

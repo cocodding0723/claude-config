@@ -118,7 +118,8 @@ def load_items(use_pr):
 def digest_hash(items, groups=None):
     """전송 여부 판단용 해시. 하위 작업 공간은 경고 대상(10개 초과) 허브만 넣어 수가 오르내려도 DM 이 가지 않게 함"""
     warn = sorted(k for k, g in (groups or {}).items() if isinstance(g, dict) and g.get("warn"))
-    body = json.dumps([sorted([i.key, i.bucket, i.title, i.link, i.quote] for i in items), warn], ensure_ascii=False)
+    # 항목 내용만 해시에 넣음. 링크·인용은 일시 실패로 오르내리므로 넣으면 복구 때 같은 DM 이 다시 감(링크는 목록 행에 조용히 보강)
+    body = json.dumps([sorted([i.key, i.bucket, i.title] for i in items), warn], ensure_ascii=False)
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
@@ -141,7 +142,9 @@ def card_name(i):
         out += f' · "{i.quote}"'
     if not i.wants_link():
         return out
-    return f"{out} <{i.link}|원본>" if i.link else f"{out} · 링크 없음"
+    if i.link:
+        return f"{out} <{i.link}|원본>"
+    return f"{out} · 카드 링크 없음 ⚠️" if i.key.startswith("decision:") else f"{out} · 링크 없음"
 
 
 def name_lines(items, limit=NAMES_MAX):
@@ -198,7 +201,7 @@ def load_state(path):
         with open(path, encoding="utf-8") as f:
             st = json.load(f)
     except FileNotFoundError:
-        return {"hash": "", "dm_hash": "", "items": {}}
+        return {"hash": "", "dm_hash": "", "items": {}, "links": {}}
     except (OSError, ValueError) as e:
         raise Fail(f"상태 파일 읽기 실패({e}) — {path} 확인. 지우면 처음부터 다시 만들며 목록에 같은 행이 한 번 더 생길 수 있음")
     if not isinstance(st, dict) or not isinstance(st.get("items", {}), dict):
@@ -206,6 +209,8 @@ def load_state(path):
     st.setdefault("hash", "")
     st.setdefault("dm_hash", "")
     st.setdefault("items", {})
+    if not isinstance(st.get("links"), dict):
+        st["links"] = {}
     return st
 
 
@@ -279,71 +284,102 @@ def api_get(conf, method, params):
     return data
 
 
-class Links:
-    """항목의 원본 메시지 → chat.getPermalink 정식 주소·첫 줄 인용. 회차마다 새로 만들어 같은 메시지는 한 번만 조회(실패도 캐시).
-    손수 만든 주소로 대체하지 않음: 조회 실패면 링크 없음으로 두고 경고"""
+LINK_TTL_S = 24 * 3600  # 링크·인용 캐시 수명
 
-    def __init__(self, conf, warn=None):
-        self.conf, self.warn = conf, warn or (lambda m: print(m, file=sys.stderr))
-        self.where, self.perma, self.text = {}, {}, {}
+
+class Links:
+    """항목의 원본 메시지 → chat.getPermalink 정식 주소·첫 줄 인용. 손수 만든 주소로 대체하지 않음(조회 실패면 링크 없음 + 경고).
+    성공한 조회는 cache(상태 파일의 links 칸)에 LINK_TTL_S 동안 남겨 회차마다 전수 재조회하지 않음. 실패는 캐시하지 않아 다음 회차에 그 항목만 다시 시도.
+    offline=True 면 Slack 을 부르지 않고 캐시만 씀(--dry-run)"""
+
+    def __init__(self, conf, cache=None, now=None, warn=None, offline=False):
+        self.conf, self.warn, self.offline = conf, warn or (lambda m: print(m, file=sys.stderr)), offline
+        self.cache = cache if cache is not None else {}
+        self.now = time.time() if now is None else now
+        self.failed = set()  # 이번 회차에 이미 실패한 조회(같은 회차 반복 호출 방지)
+
+    def _get(self, key):
+        e = self.cache.get(key)
+        if isinstance(e, dict) and isinstance(e.get("at"), (int, float)) and self.now - e["at"] < LINK_TTL_S and "v" in e:
+            return e["v"]
+        return None
+
+    def _put(self, key, value):
+        self.cache[key] = {"v": value, "at": self.now}
+        return value
+
+    def prune(self):
+        """만료·모양 이상 항목 제거"""
+        for k in [k for k, e in self.cache.items() if self._get(k) is None]:
+            del self.cache[k]
+
+    def _call(self, method, params):
+        """API 호출. 실패·오프라인이면 None(실패는 경고, 같은 회차에 같은 호출 반복 안 함)"""
+        if self.offline:
+            return None
+        sig = (method, tuple(sorted(params.items())))
+        if sig in self.failed:
+            return None
+        try:
+            return api_get(self.conf, method, params)
+        except Fail as e:
+            self.failed.add(sig)
+            self.warn(f"{method} 조회 실패({e})")
+            return None
 
     def locate(self, ref):
-        """ref → (channel, ts, thread_ts) 또는 None. 파일 ref 는 files.info 의 공유 위치"""
-        key = ref.get("file") or (ref.get("channel"), ref.get("ts"))
-        if key not in self.where:
-            self.where[key] = None
-            try:
-                if ref.get("kind") == "file":
-                    f = api_get(self.conf, "files.info", {"file": ref["file"]}).get("file") or {}
-                    shares = {**(f.get("shares") or {}).get("public", {}), **(f.get("shares") or {}).get("private", {})}
-                    ch, rows = next(iter(shares.items()), (None, None))
-                    row = (rows or [{}])[0]
-                    if ch and row.get("ts"):
-                        self.where[key] = (ch, row["ts"], row.get("thread_ts", ""))
-                elif ref.get("channel") and ref.get("ts"):
-                    self.where[key] = (ref["channel"], ref["ts"], "")
-            except Fail as e:
-                self.warn(f"원본 위치 조회 실패({e})")
-        return self.where[key]
+        """ref → [channel, ts, thread_ts] 또는 None. 파일 ref 는 files.info 의 공유 위치"""
+        if ref.get("kind") != "file":
+            return [ref["channel"], ref["ts"], ""] if ref.get("channel") and ref.get("ts") else None
+        key = "loc:" + str(ref.get("file"))
+        hit = self._get(key)
+        if hit:
+            return hit
+        d = self._call("files.info", {"file": ref["file"]})
+        f = (d or {}).get("file") or {}
+        shares = {**(f.get("shares") or {}).get("public", {}), **(f.get("shares") or {}).get("private", {})}
+        ch, rows = next(iter(shares.items()), (None, None))
+        row = (rows or [{}])[0]
+        return self._put(key, [ch, row["ts"], row.get("thread_ts", "")]) if ch and row.get("ts") else None
 
     def link(self, ref):
         loc = self.locate(ref) if ref else None
         if not loc:
             return ""
-        if loc[:2] not in self.perma:
-            try:
-                self.perma[loc[:2]] = api_get(self.conf, "chat.getPermalink", {"channel": loc[0], "message_ts": loc[1]}).get("permalink", "")
-            except Fail as e:
-                self.perma[loc[:2]] = ""
-                self.warn(f"링크 조회 실패({e}) — 링크 없음으로 표시")
-        return self.perma[loc[:2]]
+        key = f"link:{loc[0]}:{loc[1]}"
+        hit = self._get(key)
+        if hit:
+            return hit
+        d = self._call("chat.getPermalink", {"channel": loc[0], "message_ts": loc[1]})
+        url = (d or {}).get("permalink") or ""
+        return self._put(key, url) if url else ""
 
     def quote(self, ref):
         loc = self.locate(ref) if ref else None
         if not loc:
             return ""
-        if loc[:2] not in self.text:
-            params = {"channel": loc[0], "oldest": loc[1], "latest": loc[1], "inclusive": "true", "limit": 1}
-            try:
-                if loc[2]:
-                    msgs = api_get(self.conf, "conversations.replies", {**params, "ts": loc[2]}).get("messages")
-                    msg = next((m for m in msgs or [] if m.get("ts") == loc[1]), {})
-                else:
-                    msg = (api_get(self.conf, "conversations.history", params).get("messages") or [{}])[0]
-                self.text[loc[:2]] = clean_quote(msg.get("text"))
-            except Fail:
-                self.text[loc[:2]] = ""  # 인용만 생략, 링크는 유지
-        return self.text[loc[:2]]
+        key = f"quote:{loc[0]}:{loc[1]}"
+        hit = self._get(key)
+        if hit is not None:
+            return hit
+        params = {"channel": loc[0], "oldest": loc[1], "latest": loc[1], "inclusive": "true", "limit": 1}
+        if loc[2]:
+            d = self._call("conversations.replies", {**params, "ts": loc[2]})
+            msg = next((m for m in (d or {}).get("messages") or [] if m.get("ts") == loc[1]), {}) if d else None
+        else:
+            d = self._call("conversations.history", params)
+            msg = ((d or {}).get("messages") or [{}])[0] if d else None
+        return self._put(key, clean_quote(msg.get("text"))) if msg is not None else ""  # 실패면 인용만 생략하고 캐시하지 않음
 
 
 def resolve_links(items, links, dm_items=()):
     """모든 항목의 link 를 정식 주소로 채우고, DM 에 보이는 항목(dm_items)에만 인용을 채움.
-    결정 대기에 카드 위치가 없으면 '링크 없음'과 함께 경고"""
+    결정 대기에 카드 위치가 없으면 경고(DM 에는 '카드 링크 없음 ⚠️')"""
     for i in items:
         if not i.wants_link():
             continue
         if i.ref is None and i.key.startswith("decision:"):
-            links.warn(f"결정 카드 위치(ts) 없음 — {i.key} 는 링크 없음으로 표시")
+            links.warn(f"결정 카드 위치(ts) 없음 — {i.key}: DM 에 '카드 링크 없음'으로 표시")
         i.link = links.link(i.ref)
         i.quote = ""
     for i in dm_items:
@@ -423,7 +459,9 @@ def run(conf, a):
     if sync_list_id(state, conf.list_id):
         print(f"목록이 바뀌어 행 매핑을 새로 시작함(새 목록 {conf.list_id})", file=sys.stderr)
     items, notes, groups = load_items(use_pr=not a.no_pr)
-    resolve_links(items, Links(conf), dm_visible(items))
+    links = Links(conf, state["links"], offline=a.dry_run)
+    resolve_links(items, links, dm_visible(items))
+    links.prune()
     digest = digest_hash(items, groups)
     ops = plan_list(items, state)
     text = dm_text(items, conf.list_url, groups)
