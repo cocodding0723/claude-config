@@ -136,8 +136,8 @@ noh_case() { # 이름 main.env 내용(- 이면 파일 없음) 설명
   if [ "$2" = - ]; then mv "$H/main.env" "$H/main.env.off"; else printf '%s' "$2" > "$H/main.env"; fi
   addmsg note 1310.000001 "핸들 없음"
   LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
-  [ "$(nsend)" = 0 ] && [ "$(st .push_pending.reason)" = no_main_handle ] && [ ! -e "$FO/calls.log" ] && grep -q 'push hold reason=no_main_handle .*handle=none$' "$H/slack-push.log" && [ -z "$(mk)" ] \
-    && [ "$(nnot)" = 1 ] && ok "ⓓ $3 → 보류(no_main_handle)·orca 호출 0·읽음 표식 불변·알림 1회" || ko "ⓓ $3" "sends=$(nsend) $(st .push_pending.reason) notify=$(nnot) $(cat "$FO/calls.log" 2>/dev/null)"
+  [ "$(nsend)" = 0 ] && [ "$(st .push_pending.reason)" = no_main_handle ] && ! grep -qv '^list ' "$FO/calls.log" && grep -q 'push hold reason=no_main_handle .*handle=none$' "$H/slack-push.log" && [ -z "$(mk)" ] \
+    && [ "$(nnot)" = 1 ] && ok "ⓓ $3 → 보류(no_main_handle)·재탐색 list 외 orca 호출 0·읽음 표식 불변·알림 1회" || ko "ⓓ $3" "sends=$(nsend) $(st .push_pending.reason) notify=$(nnot) $(cat "$FO/calls.log" 2>/dev/null)"
 }
 noh_case N1 - "main.env 없음"
 newhub N0; addmsg note 1310.000009 "개행 핸들"  # 끝 개행 붙은 값은 무효(정규식 $ 는 개행을 통과시킴)

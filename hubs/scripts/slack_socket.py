@@ -32,6 +32,9 @@ from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # 링크로 설치돼도 원본 폴더의 공용 모듈을 찾음
+import main_terminal as mt  # noqa: E402
+
 DIR = os.environ.get("LRM_HUB_DIR", os.path.expanduser("~/.config/lrm-hubs"))
 POLL = os.path.join(DIR, "slack_poll.sh")
 MAX_FAILS = 5  # 재연결 연속 실패 상한. 넘으면 EXIT_RESTART 로 끝냄
@@ -45,6 +48,7 @@ NOTIFY = os.environ.get("LRM_NOTIFY", os.path.join(DIR, "slack_notify.sh"))
 BLOCK_RE = re.compile(r"^lrm_decide:([A-Za-z0-9-]{1,32})$")
 MODAL_ID = "lrm_custom"
 CUSTOM_MAX = 500  # 직접 입력 글자 상한
+SPEC = mt.Spec.from_env()  # 메인 판정 기준. slack_push 와 같은 환경 변수(LRM_PUSH_MAIN·LRM_PUSH_PANE)
 
 
 def card_title(message: dict) -> str:
@@ -79,17 +83,36 @@ def main_handle(path: str):
     return None
 
 
-def send_main(text: str) -> bool:
-    handle = main_handle(MAIN_ENV)
-    if not handle:
-        log("메인 터미널 없음 — main.env 의 MAIN_TERMINAL 확인")
-        return False
+def orca_run(args: list, timeout: float):
+    return mt.run_orca(ORCA, args, timeout)
+
+
+def send_to(handle: str, text: str) -> bool:
     try:
         p = subprocess.run([ORCA, "terminal", "send", "--terminal", handle, "--text", text, "--enter", "--wait-submit", "20", "--json"],
                            capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
         return p.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+def send_main(text: str) -> bool:
+    """메인 터미널로 전달. 핸들이 없거나 전송이 실패했는데 메인 핸들 문제(mt.REDISCOVER)면 재탐색해 main.env 를 고치고 1회 다시 보냄"""
+    handle = main_handle(MAIN_ENV)
+    why = None if handle else "no_main_handle"
+    if handle:
+        if send_to(handle, text):
+            return True
+        _, why = mt.check_link(orca_run, SPEC, handle)  # 실패 원인 확인. 조회 실패·화면 상태는 재탐색 대상 아님
+    if why not in mt.REDISCOVER:
+        log("메인 터미널 없음 — main.env 의 MAIN_TERMINAL 확인" if not handle else f"메인 전달 실패 사유={why}")
+        return False
+    found = mt.rediscover(orca_run, SPEC, MAIN_ENV)
+    if found.status != "updated":
+        log(f"메인 재탐색 {found.status} 후보={found.count} (사유={why}) — set_main_terminal.sh 확인")
+        return False
+    log(f"재탐색으로 갱신 {found.handle[:8]}")
+    return send_to(found.handle, text)
 
 
 def warn_slack(thread: str, text: str) -> None:
