@@ -164,3 +164,11 @@ test('progressGroups: 허브별로 묶고 묶음 표시, 값이 없으면 undefi
   assert.deepEqual(g.map(x => x.group), ['ui', '장부'])
   assert.deepEqual(g[0].lines, ['🔄 ui: 버튼', '⏳ ui: 병합 대기'])
 })
+
+test('hubLine: 하위 작업 공간 수, 10개 넘으면 경고', () => {
+  const h = { hub: 'coord-a-hub', name: 'a', agent: 'claude', state: 'busy', quietMin: 0, connected: true, dup: false }
+  assert.equal(b.hubLine(h, { children: 3, active: 1, warn: false }), '작업 중 · 하위 3개(활동 1)')
+  assert.equal(b.hubLine(h, { children: 12, active: 2, warn: true }), '작업 중 · 하위 12개(활동 2) ⚠️')
+  assert.equal(b.hubLine(h, { children: 0, active: 0, warn: false }), '작업 중')
+  assert.equal(b.hubLine(h), '작업 중')
+})

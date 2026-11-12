@@ -40,7 +40,8 @@ class Base(unittest.TestCase):
     def run_once(self, *args, interval="0", **extra):
         env = {k: v for k, v in os.environ.items() if not k.startswith(("SLACK_", "LRM_"))}
         env.update(HOME=self.t.name, LRM_HUB_DIR=self.t.name, LRM_PROGRESS=self.snap, LRM_LEDGER=self.ledger,
-                   LRM_HUB_STATUS_DIR=self.status, LRM_DIGEST_GH=self.gh, LRM_PROGRESS_PR_INTERVAL=interval, **extra)
+                   LRM_HUB_STATUS_DIR=self.status, LRM_DIGEST_GH=self.gh, LRM_PROGRESS_PR_INTERVAL=interval, LRM_ORCA=os.path.join(self.t.name, "no-orca"))
+        env.update(extra)
         return subprocess.run([sys.executable, "-I", COLLECT, *args], env=env, capture_output=True, text=True, timeout=60)
 
     def load(self):
@@ -148,6 +149,36 @@ class ReviewFixTest(Base):
         self.assertIn("__PYTHON3__", x)
         self.assertNotIn("/usr/bin/python3", x)
         self.assertIn("/opt/homebrew/bin", x)
+
+
+class WorkspaceCountTest(Base):
+    def fake_orca(self, children, active_ids=()):
+        hub = "9::/w/coord-config-hub"
+        kids = [f"9::/w/config/k{i}" for i in range(children)]
+        wts = [{"id": hub, "path": "/w/coord-config-hub", "childWorktreeIds": kids, "parentWorktreeId": None}]
+        wts += [{"id": k, "path": k.split("::")[1], "parentWorktreeId": hub} for k in kids]
+        wts.append({"id": "9::/w/other", "path": "/w/other", "childWorktreeIds": ["x"]})  # 허브 아님
+        terms = [{"worktreeId": kids[i]} for i in active_ids]
+        out = os.path.join(self.t.name, "orca")
+        with open(out, "w") as f:
+            f.write("#!/bin/sh\ncase \"$*\" in\n*worktree*) cat <<'J'\n" + json.dumps({"ok": True, "result": {"worktrees": wts}}) + "\nJ\n;;\n*terminal*) cat <<'J'\n" + json.dumps({"ok": True, "result": {"terminals": terms}}) + "\nJ\n;;\nesac\n")
+        os.chmod(out, os.stat(out).st_mode | stat.S_IXUSR)
+        return out
+
+    def test_children_and_active_counted_per_hub(self):
+        d = json.loads(self.run_once("--dry-run", "--no-pr", LRM_ORCA=self.fake_orca(3, (0, 2))).stdout)
+        self.assertEqual(d["groups"], {"config": {"children": 3, "active": 2, "warn": False}})
+
+    def test_more_than_ten_children_warns(self):
+        d = json.loads(self.run_once("--dry-run", "--no-pr", LRM_ORCA=self.fake_orca(11)).stdout)
+        self.assertTrue(d["groups"]["config"]["warn"])
+
+    def test_orca_failure_keeps_previous_counts(self):
+        self.run_once("--once", "--no-pr", LRM_ORCA=self.fake_orca(4))
+        self.assertEqual(self.run_once("--once", "--no-pr").returncode, 0)  # orca 없음
+        d = self.load()
+        self.assertFalse(d["sources"]["workspaces"]["ok"])
+        self.assertEqual(d["groups"]["config"]["children"], 4)
 
 
 if __name__ == "__main__":

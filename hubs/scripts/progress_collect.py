@@ -8,13 +8,14 @@ PR(gh)은 PR_INTERVAL_S 초에 한 번만 조회하고 그 사이는 직전 값�
 
 환경: LRM_HUB_DIR 작업 폴더 · LRM_PROGRESS 스냅샷 경로 · LRM_LEDGER 장부 · LRM_HUB_STATUS_DIR 허브 상태 폴더
       LRM_DIGEST_GH gh 명령(없으면 PATH → /opt/homebrew/bin·/usr/local/bin) · LRM_DIGEST_REPOS PR 조회 저장소(쉼표, 없으면 현재 저장소) · LRM_HUB_STATUS_STALE_HOURS 낡음 기준(기본 24)
-      LRM_PROGRESS_PR_INTERVAL PR 조회 간격 초(기본 300) · LRM_PROGRESS_PR_BUDGET PR 조회 전체 시간 상한 초(기본 30)
+      LRM_ORCA orca 명령(하위 작업 공간 조회) · LRM_PROGRESS_PR_INTERVAL PR 조회 간격 초(기본 300) · LRM_PROGRESS_PR_BUDGET PR 조회 전체 시간 상한 초(기본 30)
 종료 코드: 0 성공(원료 일부 실패 포함), 2 설정·입력 오류
 """
 import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -49,8 +50,9 @@ STALE_TAG = "낡음"
 PR_PREFIX = "pr:"
 LEDGER_OPEN = ("접수", "진행")
 LEDGER_BLOCK = "보류"
-FAIL_NOTE = {"ledger": "장부 수집 실패", "hubs": "허브 상태 수집 실패", "prs": "PR 조회 실패", "decisions": "결정 대기 수집 실패"}
+FAIL_NOTE = {"ledger": "장부 수집 실패", "hubs": "허브 상태 수집 실패", "prs": "PR 조회 실패", "decisions": "결정 대기 수집 실패", "workspaces": "하위 작업 공간 수 수집 실패"}
 SOURCES = ("ledger", "hubs", "prs", "decisions", "workers")
+LIST_LIMIT = "1000"  # orca worktree·terminal list 기본 개수에서 잘림(panel_collect 와 같은 값)
 PR_FIELDS = "number,title,url,isDraft,reviewDecision,mergeable"
 
 
@@ -182,6 +184,55 @@ def collect_prs(gh, repos):
     return out
 
 
+def hub_slug(base):
+    """작업 폴더 이름 coord-<이름>-hub → 허브 상태 파일 slug(panel_collect.hub_name 과 같은 규칙)"""
+    return re.sub(r"(-hub)+$", "", re.sub(r"^(coord-)+", "", base)) or base
+
+
+def workspace_counts(worktrees, terminals):
+    """허브(폴더 이름 coord-*)별 하위 작업 공간 수 → {slug: {children, active}}.
+    하위 = 허브 워크스페이스의 childWorktreeIds(보관된 것 제외), 활동 = 그 하위에 열린 터미널이 있음"""
+    if not isinstance(worktrees, list) or not isinstance(terminals, list):
+        raise SourceError("orca 목록 형식 오류 — worktree·terminal list 응답 확인")
+    rows = {w["id"]: w for w in worktrees if isinstance(w, dict) and isinstance(w.get("id"), str)}
+    used = {t.get("worktreeId") for t in terminals if isinstance(t, dict) and t.get("worktreeId")}
+    out = {}
+    for wid, w in rows.items():
+        base = os.path.basename(str(w.get("path") or "").rstrip("/"))
+        if not base.startswith("coord-"):
+            continue
+        kids = {c for c in w.get("childWorktreeIds") or [] if isinstance(c, str)}
+        kids |= {i for i, x in rows.items() if x.get("parentWorktreeId") == wid}
+        kids = {k for k in kids if not (rows.get(k) or {}).get("isArchived")}
+        slot = out.setdefault(hub_slug(base), {"children": 0, "active": 0})
+        slot["children"] += len(kids)
+        slot["active"] += sum(1 for k in kids if k in used)
+    return out
+
+
+def orca_json(*args):
+    """orca 읽기 명령의 result. 실패는 SourceError"""
+    try:
+        p = subprocess.run([orca_bin(), *args, "--json"], capture_output=True, text=True, timeout=ORCA_TIMEOUT_S, stdin=subprocess.DEVNULL)
+        d = json.loads(p.stdout) if p.returncode == 0 else None
+    except subprocess.TimeoutExpired:
+        raise SourceError("orca 시간 초과")
+    except (OSError, ValueError):
+        raise SourceError("orca 실행 실패")
+    if not isinstance(d, dict) or not d.get("ok") or not isinstance(d.get("result"), dict):
+        raise SourceError("orca 응답 오류")
+    return d["result"]
+
+
+def orca_bin():
+    return os.environ.get("LRM_ORCA") or "orca"
+
+
+def query_workspaces():
+    return workspace_counts(orca_json("worktree", "list", "--limit", LIST_LIMIT).get("worktrees"),
+                            orca_json("terminal", "list", "--limit", LIST_LIMIT).get("terminals"))
+
+
 def query_pending(now):
     """결정 대기를 panel_collect 와 같은 규칙으로 직접 조회(panel_collect 를 거치지 않고 실행될 때)"""
     import panel_collect  # 지연 가져오기: 작업 폴더 경로가 환경 변수로 정해진 뒤
@@ -223,8 +274,8 @@ def conf_from_env():
     }
 
 
-def build(conf, prev, now, pending=None, workers=None, use_pr=True):
-    """스냅샷 dict. prev 는 직전 스냅샷(없으면 {}). pending·workers 는 panel_collect 가 이미 모은 값.
+def build(conf, prev, now, pending=None, workers=None, use_pr=True, workspaces=None):
+    """스냅샷 dict. prev 는 직전 스냅샷(없으면 {}). pending·workers 는 panel_collect 가 이미 모은 값, workspaces 는 {slug: {children, active}} 를 돌려주는 함수(없으면 orca 직접 조회).
     pending 이 없으면 결정 대기를 직접 조회함(결정 원료를 끄면 미해결 결정이 목록에서 완료 처리되므로 끄지 않음)"""
     old = prev.get("sources", {}) if isinstance(prev, dict) else {}
     hub_notes, hub_failed = [], []
@@ -251,6 +302,8 @@ def build(conf, prev, now, pending=None, workers=None, use_pr=True):
     src["decisions"] = run_source(lambda: decision_items(pending if pending is not None else query_pending(now)), old.get("decisions"), now)
     src["workers"] = {"ok": workers is not None, "err": None if workers is not None else "n/a", "at": now if workers is not None else None,
                       "tried": now, "stale": workers is None, "value": workers, "off": workers is None}
+    src["workspaces"] = run_source(workspaces or query_workspaces, old.get("workspaces"), now)
+    groups = {slug: {**c, "warn": c["children"] > CHILD_WARN} for slug, c in (src["workspaces"].get("value") or {}).items()}
     items, seen = [], set()
     for name in SOURCES:
         for it in (src[name].get("value") or []) if name != "workers" else []:
@@ -260,7 +313,7 @@ def build(conf, prev, now, pending=None, workers=None, use_pr=True):
     notes = hub_notes + [f"{FAIL_NOTE[name]} — {s['err']}" + ("(이전 값 유지)" if s.get("value") is not None else "") for name, s in src.items() if not s["ok"] and name != "workers"]
     return {"version": VERSION, "updatedAt": now, "updatedAtText": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
             "counts": {b: sum(1 for i in items if i["bucket"] == b) for b, _, _ in BUCKETS},
-            "items": items, "notes": notes, "sources": src}
+            "groups": groups, "items": items, "notes": notes, "sources": src}
 
 
 def valid_snapshot(d):
@@ -307,14 +360,14 @@ def write_snapshot(path, snap):
         raise
 
 
-def refresh(pending=None, workers=None, write=True, use_pr=True, conf=None):
+def refresh(pending=None, workers=None, write=True, use_pr=True, conf=None, workspaces=None):
     """직전 스냅샷을 읽어 새로 만들고(write 면) 원자 교체. 손상된 직전 파일은 무시하고 새로 씀. 반환: 스냅샷"""
     path = snapshot_path()
     try:
         prev = load_snapshot(path) or {}
     except SourceError:
         prev = {}
-    snap = build(conf or conf_from_env(), prev, int(time.time()), pending, workers, use_pr)
+    snap = build(conf or conf_from_env(), prev, int(time.time()), pending, workers, use_pr, workspaces)
     if write:
         write_snapshot(path, snap)
     return snap

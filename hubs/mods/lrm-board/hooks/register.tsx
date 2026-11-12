@@ -254,7 +254,7 @@ export const register: Register = on => {
               <Text wrap="wrap">
                 <Text color={STATE_COLOR[hub.state] ?? C.meta}>{'● '}</Text>
                 <Text bold>{hub.name}</Text>
-                <Text dimColor>{` ${hubLine(hub)}`}</Text>
+                <Text dimColor>{` ${hubLine(hub, src?.progress?.value?.groups?.[hub.name])}`}</Text>
               </Text>
             ))}
           </Box>

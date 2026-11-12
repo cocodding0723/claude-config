@@ -89,7 +89,9 @@ export type AutoPendingItem = { title: string; ageMin: number | null; id?: strin
 export type AutoPending = { count: number; items: AutoPendingItem[] }
 /** 진행 스냅샷(progress_collect.py). bucket: doing 진행 중·wait 답 대기·block 막힘, group 은 허브 이름·장부·PR·결정 */
 export type AutoProgressItem = { key: string; bucket: 'doing' | 'wait' | 'block'; title: string; group: string; link: string }
-export type AutoProgress = { counts: { doing: number; wait: number; block: number }; items: AutoProgressItem[]; notes: string[] }
+/** 허브(slug)별 하위 작업 공간 수. warn 은 10개 초과 */
+export type AutoWorkspaces = Record<string, { children: number; active: number; warn: boolean }>
+export type AutoProgress = { counts: { doing: number; wait: number; block: number }; items: AutoProgressItem[]; notes: string[]; groups?: AutoWorkspaces }
 export type AutoPush = { lines: Array<{ at: string; event: string; reason: string | null }> }
 export type AutoWorkers = { live: number; recent: Array<{ title: string | null; status: string; at: number | null }> }
 /** 쉬는 자원. 부분마다 따로 실패해 한 부분이 null 일 수 있음 */

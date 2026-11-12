@@ -38,6 +38,7 @@ COL_TITLE, COL_DONE, COL_LINK = "Col0CEX0ZCHMH", "Col0CF6UCE0KW", "Col0CFXJT428G
 API_TIMEOUT_S = 15
 GH_TIMEOUT_S = 30
 NAMES_MAX = 3
+WS_NAMES_MAX = 5
 NAME_MAX = 30  # DM 줄에 넣는 항목 이름 길이
 TITLE_MAX = 80
 
@@ -88,7 +89,7 @@ one_line = pc.one_line
 
 
 def load_items(use_pr):
-    """스냅샷 → (항목, 알림). 없거나 낡으면 직접 수집(파일 쓰기 없음)"""
+    """스냅샷 → (항목, 알림, 허브별 하위 작업 공간 수). 없거나 낡으면 직접 수집(파일 쓰기 없음)"""
     note = []
     try:
         snap = pc.load_snapshot(pc.snapshot_path())
@@ -98,13 +99,16 @@ def load_items(use_pr):
         note.append("스냅샷 없음·낡음 — 직접 수집")
         snap = pc.refresh(write=False, use_pr=use_pr)
     items = [Item(i["key"], i["bucket"], i["title"], i.get("link", "")) for i in snap["items"]]
-    return items, note + list(snap.get("notes", []))
+    groups = snap.get("groups") if isinstance(snap.get("groups"), dict) else {}
+    return items, note + list(snap.get("notes", [])), groups
 
 
 # ---------- 요약 ----------
 
-def digest_hash(items):
-    body = json.dumps(sorted([i.key, i.bucket, i.title, i.link] for i in items), ensure_ascii=False)
+def digest_hash(items, groups=None):
+    """전송 여부 판단용 해시. 하위 작업 공간은 경고 대상(10개 초과) 허브만 넣어 수가 오르내려도 DM 이 가지 않게 함"""
+    warn = sorted(k for k, g in (groups or {}).items() if isinstance(g, dict) and g.get("warn"))
+    body = json.dumps([sorted([i.key, i.bucket, i.title, i.link] for i in items), warn], ensure_ascii=False)
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
@@ -114,13 +118,26 @@ def names(items, limit=NAMES_MAX):
     return ", ".join(shown) + (f" 외 {extra}" if extra > 0 else "")
 
 
-def dm_text(items, list_url):
+def ws_line(groups):
+    """허브별 '이름 하위 n개(활동 m)', 10개 넘으면 ⚠️. 하위가 없는 허브는 생략"""
+    rows = [(k, g) for k, g in sorted(groups.items()) if isinstance(g, dict) and g.get("children")]
+    if not rows:
+        return ""
+    shown = [f"{k} 하위 {g['children']}개(활동 {g.get('active', 0)})" + (" ⚠️" if g.get("warn") else "") for k, g in rows[:WS_NAMES_MAX]]
+    extra = len(rows) - WS_NAMES_MAX
+    return "🗂️ " + ", ".join(shown) + (f" 외 {extra}" if extra > 0 else "")
+
+
+def dm_text(items, list_url, groups=None):
     by = {b: [i for i in items if i.bucket == b] for b, _, _ in BUCKETS}
     head = " · ".join(f"{LABEL[b]} {len(by[b])}" for b, _, _ in BUCKETS)
     lines = [f"{head} — <{list_url}|목록 열기>"]
     for b in (WAIT, BLOCK):
         if by[b]:
             lines.append(f"{ICON[b]} {LABEL[b]}: {names(by[b])}")
+    ws = ws_line(groups or {})
+    if ws:
+        lines.append(ws)
     return "\n".join(lines)
 
 
@@ -265,16 +282,16 @@ def send_dm(conf, text):
 
 def run(conf, a):
     state = load_state(conf.state)
-    items, notes = load_items(use_pr=not a.no_pr)
-    digest = digest_hash(items)
+    items, notes, groups = load_items(use_pr=not a.no_pr)
+    digest = digest_hash(items, groups)
     ops = plan_list(items, state)
-    text = dm_text(items, conf.list_url)
+    text = dm_text(items, conf.list_url, groups)
     # 해시가 같아도 못 보낸 목록 작업이 남았으면 동기화(--no-list 로 건너뛴 행, 링크만 바뀐 행)
     changed = a.force or digest != state["hash"] or (bool(ops) and not a.no_list)
     result = {
         "counts": {b: sum(1 for i in items if i.bucket == b) for b, _, _ in BUCKETS},
         "items": [{"key": i.key, "bucket": i.bucket, "title": i.title} for i in items],
-        "notes": notes, "changed": changed, "dm": text,
+        "notes": notes, "groups": groups, "changed": changed, "dm": text,
         "list_ops": [{"op": op, "key": it.key, "title": it.line()} for op, it, _ in ops],
     }
     if a.json:

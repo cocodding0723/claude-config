@@ -85,11 +85,12 @@ export const sourceNote = <T>(src: AutoSource<T> | undefined, nowMs: number): st
   return `자동 · ⚠ 수집 실패(${src.err ?? '?'}) · ${src.at !== null ? `${age} 값` : age}`
 }
 
-export const hubLine = (h: AutoHub): string => {
+export const hubLine = (h: AutoHub, ws?: { children: number; active: number; warn: boolean }): string => {
   const parts = [STATE_LABEL[h.state] ?? h.state]
   if (h.quietMin !== null && h.quietMin >= 1) parts.push(`${h.quietMin}분 출력 없음`)
   if (h.dup) parts.push('👥중복')
   if (!h.connected) parts.push('🔌끊김')
+  if (ws !== undefined && ws.children > 0) parts.push(`하위 ${ws.children}개(활동 ${ws.active})${ws.warn ? ' ⚠️' : ''}`)
   return parts.join(' · ')
 }
 

@@ -700,7 +700,7 @@ def collect(conf, repos, interval, prev, now, mark_gh):
         "workers": run_source(lambda: collect_workers(conf, get), prev.get("workers"), now),
         "idle": collect_idle(conf, get, prev.get("idle"), now, mark_gh),
     }
-    src["progress"] = run_source(lambda: collect_progress(src, repos, mark_gh), prev.get("progress"), now)
+    src["progress"] = run_source(lambda: collect_progress(src, repos, mark_gh, get), prev.get("progress"), now)
     gh = "off" if not repos else "run" if gh_due(interval, now) else "skip"
     if gh == "off":
         src["gh"] = {"ok": True, "err": None, "at": now, "tried": now, "stale": False, "value": None, "off": True}
@@ -718,7 +718,7 @@ def collect(conf, repos, interval, prev, now, mark_gh):
             "sources": src}, gh
 
 
-def collect_progress(src, repos, write):
+def collect_progress(src, repos, write, get):
     """진행 스냅샷(progress_collect.py)을 만들어 패널용 값으로 싣음. write 면 progress.json 도 원자 교체(쓰는 쪽은 이 회차 하나).
     결정 대기·워커 수는 앞서 모은 원료를 재사용. PR 은 PANEL_GH_REPOS 가 있을 때만(실행 위치에 기대지 않음)"""
     import progress_collect  # 지연 가져오기: 실패해도 다른 원료는 그대로
@@ -726,8 +726,9 @@ def collect_progress(src, repos, write):
     conf["gh"], conf["repos"] = os.environ.get("PANEL_GH", "gh"), repos
     workers = (src["workers"].get("value") or {})
     snap = progress_collect.refresh(pending=src["pending"].get("value"), workers={"live": workers["live"]} if "live" in workers else None,
-                                    write=write, use_pr=bool(repos), conf=conf)
-    return {"counts": snap["counts"], "items": snap["items"], "notes": snap["notes"]}
+                                    write=write, use_pr=bool(repos), conf=conf,
+                                    workspaces=lambda: progress_collect.workspace_counts(get("worktree", "list", "--limit", LIST_LIMIT).get("worktrees"), terminals(get)))
+    return {"counts": snap["counts"], "items": snap["items"], "notes": snap["notes"], "groups": snap["groups"]}
 
 
 def touch(path):

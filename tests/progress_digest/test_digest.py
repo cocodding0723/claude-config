@@ -82,7 +82,7 @@ class DigestTest(unittest.TestCase):
     def env(self, **extra):
         env = {k: v for k, v in os.environ.items() if not k.startswith(("SLACK_", "LRM_"))}
         env.update(HOME=self.t.name, LRM_HUB_DIR=self.hub, LRM_LEDGER=self.ledger, LRM_HUB_STATUS_DIR=self.status,
-                   LRM_DIGEST_NOTIFY=self.notify, LRM_PROGRESS=os.path.join(self.hub, "progress.json"), LRM_PROGRESS_PR_INTERVAL="0", LRM_DIGEST_GH=self.gh, LRM_DIGEST_LOCAL_ONLY="1",
+                   LRM_DIGEST_NOTIFY=self.notify, LRM_ORCA=os.path.join(self.t.name, "no-orca"), LRM_PROGRESS=os.path.join(self.hub, "progress.json"), LRM_PROGRESS_PR_INTERVAL="0", LRM_DIGEST_GH=self.gh, LRM_DIGEST_LOCAL_ONLY="1",
                    SLACK_API_BASE=f"http://127.0.0.1:{self.srv.server_port}/api", SLACK_BOT_TOKEN="fake-test-token")
         env.update(extra)
         return env
@@ -234,6 +234,24 @@ class DigestTest(unittest.TestCase):
         self.assertEqual(self.run_digest().returncode, 0)
         self.assertEqual(len(FakeSlack.calls), 3)  # 장부 3행 생성
         self.assertEqual(len(self.dms()), 1)
+
+    def test_dm_shows_child_counts_and_hash_ignores_small_changes(self):
+        def snapshot(children, active, warn):
+            self.run_digest("--no-pr", "--dry-run")  # 환경 점검용(예외 없음)
+            with open(os.path.join(self.hub, "progress.json"), "w") as f:
+                json.dump({"version": 1, "updatedAt": __import__("time").time(), "counts": {}, "notes": [], "sources": {},
+                           "groups": {"config": {"children": children, "active": active, "warn": warn}},
+                           "items": [{"key": "ledger:F1", "bucket": "doing", "title": "F1 로그인", "group": "장부", "link": ""}]}, f)
+        snapshot(3, 1, False)
+        self.run_digest("--no-pr")
+        self.assertIn("config 하위 3개(활동 1)", self.dms()[0])
+        os.remove(self.dmlog)
+        snapshot(4, 2, False)  # 경고 아님: 수만 변함 → 전송 없음
+        self.run_digest("--no-pr")
+        self.assertEqual(self.dms(), [])
+        snapshot(12, 2, True)  # 경고 진입 → 전송
+        self.run_digest("--no-pr")
+        self.assertIn("config 하위 12개(활동 2) ⚠️", self.dms()[0])
 
 
 if __name__ == "__main__":
