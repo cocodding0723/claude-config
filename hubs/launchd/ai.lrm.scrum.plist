@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.lrm.scrum</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__HOME__/.config/lrm-hubs/scrum_run.sh</string>
+  </array>
+  <!-- 평일(월~금) 10:00. 자고 있던 Mac 은 깨어난 뒤 한 번 실행됨. 같은 날 두 번 보내지 않는 잠금은 scrum_post.py 가 가짐 -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
+  <!-- launchd 는 짧은 PATH 로 띄움. claude(~/.local/bin)·gh(homebrew)·python3 위치를 명시 -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>__HOME__</string>
+    <key>PATH</key><string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/Library/Frameworks/Python.framework/Versions/3.13/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>WorkingDirectory</key><string>__HOME__</string>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>__HOME__/orca/archive/scrum.launchd.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/orca/archive/scrum.launchd.log</string>
+</dict>
+</plist>
