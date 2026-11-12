@@ -27,6 +27,7 @@ import urllib.request
 from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import hub_report  # noqa: E402
 import progress_collect as pc  # noqa: E402
 import tls_ctx  # noqa: E402
 
@@ -37,6 +38,7 @@ DEFAULT_API = "https://slack.com/api"
 # 목록 열 ID: 할 일(text)·완료(checkbox). 종류 열은 선택지 ID 가 필요해 쓰지 않음
 COL_TITLE, COL_DONE, COL_LINK = "Col0CEX0ZCHMH", "Col0CF6UCE0KW", "Col0CFXJT428G"
 API_TIMEOUT_S = 15
+LIST_FATAL = ("list_not_found", "not_in_channel", "missing_scope", "invalid_auth", "token_revoked")  # 목록 접근 자체가 막힌 오류
 GH_TIMEOUT_S = 30
 NAMES_MAX = 3
 WS_NAMES_MAX = 5
@@ -49,9 +51,10 @@ PR_FAIL_NOTE = "PR 조회 실패"
 
 
 class Fail(Exception):
-    def __init__(self, msg, code=2):
+    def __init__(self, msg, code=2, api_error=""):
         super().__init__(msg)
         self.code = code
+        self.api_error = api_error  # Slack 응답의 error 값(예 list_not_found)
 
 
 @dataclass
@@ -60,6 +63,12 @@ class Item:
     bucket: str
     title: str
     link: str = ""
+    ref: dict = None  # 원본 메시지 위치. 링크 해석 전 값
+    quote: str = ""  # 원본 첫 줄(DM 에 보이는 항목만 조회)
+
+    def wants_link(self):
+        """원본 메시지가 있어야 하는 항목(장부·허브·결정). PR 은 제목에 번호가 있어 제외"""
+        return self.key.startswith(("ledger:", "hub:", "decision:"))
 
     def line(self):
         return f"{ICON[self.bucket]} {LABEL[self.bucket]} · {self.title}"
@@ -99,7 +108,7 @@ def load_items(use_pr):
     if snap is None or time.time() - snap.get("updatedAt", 0) > SNAP_MAX_AGE_S:
         note.append("스냅샷 없음·낡음 — 직접 수집")
         snap = pc.refresh(write=False, use_pr=use_pr)
-    items = [Item(i["key"], i["bucket"], i["title"], i.get("link", "")) for i in snap["items"]]
+    items = [Item(i["key"], i["bucket"], i["title"], i.get("link", ""), i.get("ref") if isinstance(i.get("ref"), dict) else None) for i in snap["items"]]
     groups = snap.get("groups") if isinstance(snap.get("groups"), dict) else {}
     return items, note + list(snap.get("notes", [])), groups
 
@@ -109,16 +118,30 @@ def load_items(use_pr):
 def digest_hash(items, groups=None):
     """전송 여부 판단용 해시. 하위 작업 공간은 경고 대상(10개 초과) 허브만 넣어 수가 오르내려도 DM 이 가지 않게 함"""
     warn = sorted(k for k, g in (groups or {}).items() if isinstance(g, dict) and g.get("warn"))
-    body = json.dumps([sorted([i.key, i.bucket, i.title, i.link] for i in items), warn], ensure_ascii=False)
+    body = json.dumps([sorted([i.key, i.bucket, i.title, i.link, i.quote] for i in items), warn], ensure_ascii=False)
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
+QUOTE_MAX = 40
+
+
+def clean_quote(text):
+    """원본 첫 줄 → DM 인용. 링크 문법·서식 문자 제거, 길이 제한. 비밀·로컬 경로가 있으면 빈 값"""
+    t = " ".join(str(text or "").split("\n", 1)[0].split())
+    t = "".join(c for c in t if c not in "<>|*`\"")
+    if hub_report.has_secret(t) or hub_report.local_paths(t):
+        return ""
+    return one_line(t, QUOTE_MAX)
+
+
 def card_name(i):
-    """결정 항목은 카드 링크가 있으면 제목을 Slack 링크(<주소|제목>)로. 링크 문법을 깨는 문자(<>|)는 뺌"""
-    name = one_line(i.title, NAME_MAX)
-    if i.key.startswith("decision:") and i.link:
-        return f"<{i.link}|{name.translate(str.maketrans('', '', '<>|'))}>"
-    return name
+    """'이름 · "원본 첫 줄" <링크|원본>'. 원본이 필요한 항목에 링크가 없으면 '링크 없음'. 링크 문법을 깨는 문자(<>|)는 이름에서 뺌"""
+    out = one_line(i.title, NAME_MAX).translate(str.maketrans("", "", "<>|"))
+    if i.quote:
+        out += f' · "{i.quote}"'
+    if not i.wants_link():
+        return out
+    return f"{out} <{i.link}|원본>" if i.link else f"{out} · 링크 없음"
 
 
 def name_lines(items, limit=NAMES_MAX):
@@ -226,8 +249,102 @@ def api(conf, method, body):
     except (urllib.error.URLError, OSError, ValueError) as e:
         raise Fail(f"{method} 호출 실패({one_line(str(e), 50)})", 1)
     if not data.get("ok"):
-        raise Fail(f"{method} 오류({data.get('error', '알 수 없음')})", 1)
+        raise Fail(f"{method} 오류({data.get('error', '알 수 없음')})", 1, data.get("error", ""))
     return data
+
+
+def api_get(conf, method, params):
+    """읽기 전용 Slack 조회(GET). 실패는 Fail(코드 1)"""
+    check_api_base(conf)
+    if not conf.token:
+        raise Fail(f"{method} 조회 불가(SLACK_BOT_TOKEN 없음)", 1)
+    req = urllib.request.Request(f"{conf.api}/{method}?" + urllib.parse.urlencode(params), headers={"Authorization": "Bearer " + conf.token})
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=tls_ctx.ssl_context()))
+    try:
+        with opener.open(req, timeout=API_TIMEOUT_S) as r:
+            data = json.load(r)
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        raise Fail(f"{method} 호출 실패({one_line(str(e), 50)})", 1)
+    if not data.get("ok"):
+        raise Fail(f"{method} 오류({data.get('error', '알 수 없음')})", 1, data.get("error", ""))
+    return data
+
+
+class Links:
+    """항목의 원본 메시지 → chat.getPermalink 정식 주소·첫 줄 인용. 회차마다 새로 만들어 같은 메시지는 한 번만 조회(실패도 캐시).
+    손수 만든 주소로 대체하지 않음: 조회 실패면 링크 없음으로 두고 경고"""
+
+    def __init__(self, conf, warn=None):
+        self.conf, self.warn = conf, warn or (lambda m: print(m, file=sys.stderr))
+        self.where, self.perma, self.text = {}, {}, {}
+
+    def locate(self, ref):
+        """ref → (channel, ts, thread_ts) 또는 None. 파일 ref 는 files.info 의 공유 위치"""
+        key = ref.get("file") or (ref.get("channel"), ref.get("ts"))
+        if key not in self.where:
+            self.where[key] = None
+            try:
+                if ref.get("kind") == "file":
+                    f = api_get(self.conf, "files.info", {"file": ref["file"]}).get("file") or {}
+                    shares = {**(f.get("shares") or {}).get("public", {}), **(f.get("shares") or {}).get("private", {})}
+                    ch, rows = next(iter(shares.items()), (None, None))
+                    row = (rows or [{}])[0]
+                    if ch and row.get("ts"):
+                        self.where[key] = (ch, row["ts"], row.get("thread_ts", ""))
+                elif ref.get("channel") and ref.get("ts"):
+                    self.where[key] = (ref["channel"], ref["ts"], "")
+            except Fail as e:
+                self.warn(f"원본 위치 조회 실패({e})")
+        return self.where[key]
+
+    def link(self, ref):
+        loc = self.locate(ref) if ref else None
+        if not loc:
+            return ""
+        if loc[:2] not in self.perma:
+            try:
+                self.perma[loc[:2]] = api_get(self.conf, "chat.getPermalink", {"channel": loc[0], "message_ts": loc[1]}).get("permalink", "")
+            except Fail as e:
+                self.perma[loc[:2]] = ""
+                self.warn(f"링크 조회 실패({e}) — 링크 없음으로 표시")
+        return self.perma[loc[:2]]
+
+    def quote(self, ref):
+        loc = self.locate(ref) if ref else None
+        if not loc:
+            return ""
+        if loc[:2] not in self.text:
+            params = {"channel": loc[0], "oldest": loc[1], "latest": loc[1], "inclusive": "true", "limit": 1}
+            try:
+                if loc[2]:
+                    msgs = api_get(self.conf, "conversations.replies", {**params, "ts": loc[2]}).get("messages")
+                    msg = next((m for m in msgs or [] if m.get("ts") == loc[1]), {})
+                else:
+                    msg = (api_get(self.conf, "conversations.history", params).get("messages") or [{}])[0]
+                self.text[loc[:2]] = clean_quote(msg.get("text"))
+            except Fail:
+                self.text[loc[:2]] = ""  # 인용만 생략, 링크는 유지
+        return self.text[loc[:2]]
+
+
+def resolve_links(items, links, dm_items=()):
+    """모든 항목의 link 를 정식 주소로 채우고, DM 에 보이는 항목(dm_items)에만 인용을 채움.
+    결정 대기에 카드 위치가 없으면 '링크 없음'과 함께 경고"""
+    for i in items:
+        if not i.wants_link():
+            continue
+        if i.ref is None and i.key.startswith("decision:"):
+            links.warn(f"결정 카드 위치(ts) 없음 — {i.key} 는 링크 없음으로 표시")
+        i.link = links.link(i.ref)
+        i.quote = ""
+    for i in dm_items:
+        if i.link:
+            i.quote = links.quote(i.ref)
+
+
+def dm_visible(items, limit=NAMES_MAX):
+    """DM 에 이름이 나가는 항목(답 대기·막힘 각 limit 개)"""
+    return [i for b in (WAIT, BLOCK) for i in [x for x in items if x.bucket == b][:limit]]
 
 
 def plan_list(items, state):
@@ -271,6 +388,9 @@ def apply_list(conf, ops, state):
         except Fail as e:
             if e.code == 2:
                 raise  # 설정 오류는 나머지도 같으니 중단
+            if e.api_error in LIST_FATAL:  # 목록 자체를 못 쓰는 오류는 행마다 반복하지 않고 이번 회차 목록 갱신을 건너뜀(DM 은 계속)
+                errors.append(f"목록 갱신 건너뜀({e}) — 봇이 목록 {conf.list_id} 에 접근할 수 있게 해야 함")
+                break
             errors.append(f"목록 {op} {it.key}: {e}")
     return errors
 
@@ -292,6 +412,7 @@ def send_dm(conf, text):
 def run(conf, a):
     state = load_state(conf.state)
     items, notes, groups = load_items(use_pr=not a.no_pr)
+    resolve_links(items, Links(conf), dm_visible(items))
     digest = digest_hash(items, groups)
     ops = plan_list(items, state)
     text = dm_text(items, conf.list_url, groups)

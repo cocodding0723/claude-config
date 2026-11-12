@@ -400,6 +400,7 @@ def send_files(conf: Conf, rep: dict, rs: dict, st: dict, target: str, deadline:
 def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
     """보고 1건 전송. 단계(topic·body·line)마다 상태를 저장하고, 끝나면 결과 요약을 돌려줌. 실패는 NotifyError"""
     rs = st["reports"].setdefault(rep["id"], {})
+    rs.setdefault("task", rep["task"])  # 진행 목록이 작업별 첨부 메시지를 찾는 데 씀
     decide = rep["kind"] == "decide"
     key = topic_key(rep)
     if rep.get("thread"):  # 지정 스레드 답글. 진행 스레드 한 줄은 올리지 않음
