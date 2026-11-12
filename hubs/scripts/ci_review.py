@@ -8,8 +8,10 @@ import json
 import os
 import re
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import hub_status
 import main_terminal as mt
 
 MARK = re.compile(r"<!-- lrm-ai-review:(\w+) -->")
@@ -83,9 +85,34 @@ def load_hub_aliases(path):
     return out
 
 
-def ticket_hubs(status_dir, routes_path, hubs_path):
-    """티켓 번호 → 그 티켓을 맡은 허브 표시 이름 집합. 근거는 기존 데이터: 허브 상태 파일(tasks·branches 의 LRM-n)과 접수 경로(jsonl 의 text·hub)"""
-    names, aliases, out = load_hub_names(hubs_path), load_hub_aliases(hubs_path), {}
+def load_hub_repos(path):
+    """hubs.tsv → {slug: 저장소 이름}. 5번째 칸이 '-'·빈 칸이면 기본 게임 저장소(빈 문자열), 아니면 경로의 마지막 폴더 이름"""
+    out = {}
+    try:
+        for ln in Path(path).read_text(encoding="utf-8").splitlines():
+            cols = [c.strip() for c in ln.split("\t")]
+            if ln.strip() and not ln.startswith("#") and len(cols) >= 2:
+                out[cols[0]] = os.path.basename(cols[4].rstrip("/")) if len(cols) > 4 and cols[4] not in ("", "-") else ""
+    except OSError:
+        pass
+    return out
+
+
+def fresh_status(data, now=None):
+    """허브 상태 파일이 낡지 않았는지. updatedAt 이 없거나 읽을 수 없거나 hub_status 의 낡음 기준(stale_hours) 초과면 False"""
+    at = hub_status.parse_iso((data or {}).get("updatedAt"))
+    now = now or datetime.now(timezone.utc)
+    return at is not None and now - at <= timedelta(hours=hub_status.stale_hours())
+
+
+def ticket_hubs(status_dir, routes_path, hubs_path, repo="", game_repo=""):
+    """티켓 번호 → 그 티켓을 맡은 허브 표시 이름 집합. 근거는 기존 데이터: 허브 상태 파일(tasks·branches 의 LRM-n, 낡은 파일 제외)과
+    접수 경로(jsonl 의 text·hub). repo: 대상 PR 저장소('owner/name'), game_repo: hubs.tsv 저장소 칸이 '-' 인 허브의 저장소.
+    PR 저장소와 다른 저장소의 허브는 같은 티켓 번호여도 제외. repo 가 비면 저장소 검사를 하지 않음"""
+    names, aliases, repos, out = load_hub_names(hubs_path), load_hub_aliases(hubs_path), load_hub_repos(hubs_path), {}
+    want = repo.split("/")[-1].lower()
+    home = game_repo.split("/")[-1].lower()
+    ok_repo = lambda slug: not want or (repos.get(slug) or home).lower() == want  # noqa: E731
     try:
         files = sorted(Path(status_dir).glob("*.json"))
     except OSError:
@@ -96,6 +123,8 @@ def ticket_hubs(status_dir, routes_path, hubs_path):
         except (OSError, ValueError):
             continue
         slug = str(d.get("slug") or f.stem)
+        if not fresh_status(d) or not ok_repo(slug):
+            continue
         for t in TICKET.findall(" ".join(map(str, (d.get("tasks") or []) + (d.get("branches") or [])))):
             out.setdefault(t, set()).add(slug)
     try:
@@ -108,7 +137,7 @@ def ticket_hubs(status_dir, routes_path, hubs_path):
         except ValueError:
             continue
         slug = aliases.get(str(r.get("hub")))
-        for t in TICKET.findall(str(r.get("text", ""))) if slug else ():
+        for t in TICKET.findall(str(r.get("text", ""))) if slug and ok_repo(slug) else ():
             out.setdefault(t, set()).add(slug)
     return {t: {names[s] for s in v if s in names} for t, v in out.items()}
 
@@ -183,30 +212,39 @@ def specific(cause):
     return bool(cause) and not GENERIC.search(cause)
 
 
-# 실패 메시지 정규화 규칙(공통 원인 비교용). 위에서부터 차례로 적용, 가변 부분을 자리표시자로 치환
-SIG_LEN = 60  # 정규화 뒤 앞 N자만 비교
+# 실패 메시지 정규화 규칙(공통 원인 비교용). 확인된 가변 필드만 자리표시자로 치환. 스테이지 이름·기댓값 같은 숫자는 보존
 SIG_RULES = [(re.compile(p), r) for p, r in (
     (r"\d{4}-\d\d-\d\dT?[\d:.]*Z?|\b\d{1,2}:\d\d(:\d\d)?(\.\d+)?\b", "<t>"),  # 날짜·시각
     (r"(?:[\w.-]*/)+[\w.-]*(?::\d+)?", "<p>"),  # 경로(파일:줄 포함)
-    (r"\b[0-9a-f]{7,40}\b", "<h>"),  # 커밋·해시
+    (r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b", "<h>"),  # 커밋·해시(숫자·a-f 문자 모두 포함)
     (r"(?:PR|pr|#)\s?\d+", "<n>"),  # PR 번호
-    (r"\d+", "<n>"),  # 남은 숫자
+    (r"\b\d+(?:\.\d+)?\s?(?:ms|msec|sec|s|초|분|시간)(?![\w])", "<d>"),  # 소요 시간
 )]
 
 
 def signature(text):
-    """실패 메시지 → 공통 원인 비교값. 가변 부분 제거·공백 정리 뒤 앞 SIG_LEN 자"""
+    """실패 메시지 → 공통 원인 비교값. 가변 필드 제거·공백 정리한 전체 메시지(자르지 않음)"""
     for rx, rep in SIG_RULES:
         text = rx.sub(rep, text or "")
-    return " ".join(text.split())[:SIG_LEN]
+    return " ".join(text.split())
+
+
+def fail_sigs(c):
+    """실패 항목의 비교값 집합. 신형(msg 있음)은 메시지만. 구형(msg 없음)은 cause 전체와 '시험명: ' 을 뗀 나머지 둘 다(신구 혼합 상태 비교용)"""
+    if c.get("msg"):
+        return {signature(c["msg"])} if specific(c["msg"]) else set()
+    text = c.get("cause", "")
+    if not specific(text):
+        return set()
+    return {signature(text)} | ({signature(text.split(": ", 1)[1])} if ": " in text else set())
 
 
 def common_cause(causes, own):
-    """다른 열린 PR 에도 같은 검사가 같은 실패 메시지(정규화 앞부분)로 실패했는지. causes: {PR 번호: {head, fails:[{key, cause, msg}], hub}}, own: 이 PR 번호.
-    시험 이름이 같아도 메시지가 다르면 공통이 아님. msg 가 없으면 cause 로 비교. 구체 식별자가 없으면(종료 코드 요약 등) 제외.
+    """다른 열린 PR 에도 같은 검사가 같은 실패 메시지(정규화 전체)로 실패했는지. causes: {PR 번호: {head, fails:[{key, cause, msg}], hub}}, own: 이 PR 번호.
+    시험 이름만 같고 메시지가 다르면 공통이 아님. 구형 상태(msg 없음)는 fail_sigs 로 이관 없이 비교. 구체 식별자가 없으면(종료 코드 요약 등) 제외.
     번호 순 정렬이라 처리 순서와 무관"""
     def ids(e):
-        return {(c["key"], signature(c.get("msg") or c.get("cause", ""))) for c in (e or {}).get("fails", []) if specific(c.get("msg") or c.get("cause", ""))}
+        return {(c["key"], g) for c in (e or {}).get("fails", []) for g in fail_sigs(c)}
 
     mine = ids(causes.get(own))
     return sorted((n for n, e in causes.items() if n != own and mine & ids(e)), key=lambda n: (len(n), n))

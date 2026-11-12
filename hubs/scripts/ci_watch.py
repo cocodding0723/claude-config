@@ -33,6 +33,7 @@ WT_LIMIT = int(os.environ.get("LRM_WT_LIMIT", "1000"))  # worktree list 행 상�
 CAUSES = "_causes"  # PR 별 마지막 실패 검사·원인(공통 원인 판정용)
 STATUS_DIR = Path(os.environ.get("LRM_HUB_STATUS_DIR") or DIR / "hub-status")  # 티켓→허브 근거 1: 허브 상태 파일
 ROUTES = DIR / "intake-routes.jsonl"  # 티켓→허브 근거 2: 접수 경로
+GAME_REPO = REPO  # hubs.tsv 저장소 칸이 '-' 인 허브(기본 게임 저장소)가 속한 저장소
 HUB_TABLE = DIR / "ci-review-hubs.tsv"  # 정규식<TAB>허브. 브랜치·제목에 위에서부터 맞춤
 REVIEW_OUT = DIR / "ci-review"
 REVIEW_INIT = "_review_init"
@@ -201,7 +202,7 @@ def pick_hub(pr, state, with_common=False):
     common = review.common_cause(state.get(CAUSES, {}), str(pr["number"])) if with_common else ()
     return review.assign_hub(pr.get("headRefName", ""), pr.get("title", ""), review.load_table(HUB_TABLE),
                              review.list_worktrees(ORCA, REPO, WT_LIMIT), names, common, names.get(QA_SLUG, ""), REPO,
-                             review.ticket_hubs(STATUS_DIR, ROUTES, HUBS_TSV))
+                             review.ticket_hubs(STATUS_DIR, ROUTES, HUBS_TSV, REPO, GAME_REPO))
 
 
 def relay_fail(pr, fails, prev, state, slack_ts=""):
