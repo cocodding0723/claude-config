@@ -134,3 +134,7 @@ hubs/mods/lrm-board/hooks/hooks.json	.claude/dev-mods/ab8a5233-c566-4f47-b3ee-4b
 hubs/mods/lrm-board/hooks/register.tsx	.claude/dev-mods/ab8a5233-c566-4f47-b3ee-4b573b330e22/lrm-board/hooks/register.tsx	render
 hubs/mods/lrm-board/hooks/board.ts	.claude/dev-mods/ab8a5233-c566-4f47-b3ee-4b573b330e22/lrm-board/hooks/board.ts	copy
 hubs/mods/lrm-board/types/index.d.ts	.claude/dev-mods/ab8a5233-c566-4f47-b3ee-4b573b330e22/lrm-board/types/index.d.ts	copy
+hubs/scripts/progress_collect.py	.config/lrm-hubs/progress_collect.py	link
+hubs/scripts/progress_digest.py	.config/lrm-hubs/progress_digest.py	link
+hubs/docs/progress-digest.md	.config/lrm-hubs/docs/progress-digest.md	link
+hubs/launchd/ai.lrm.progressdigest.plist	Library/LaunchAgents/ai.lrm.progressdigest.plist	copy

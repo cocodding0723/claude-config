@@ -83,7 +83,7 @@ class DigestTest(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if not k.startswith(("SLACK_", "LRM_"))}
         env.update(HOME=self.t.name, LRM_HUB_DIR=self.hub, LRM_LEDGER=self.ledger, LRM_HUB_STATUS_DIR=self.status,
                    LRM_DIGEST_NOTIFY=self.notify, LRM_PROGRESS=os.path.join(self.hub, "progress.json"), LRM_PROGRESS_PR_INTERVAL="0", LRM_DIGEST_GH=self.gh, LRM_DIGEST_LOCAL_ONLY="1",
-                   SLACK_API_BASE=f"http://127.0.0.1:{self.srv.server_port}/api", SLACK_BOT_TOKEN="xoxb-fake-test-token")
+                   SLACK_API_BASE=f"http://127.0.0.1:{self.srv.server_port}/api", SLACK_BOT_TOKEN="fake-test-token")
         env.update(extra)
         return env
 

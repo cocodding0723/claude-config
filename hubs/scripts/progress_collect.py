@@ -184,7 +184,7 @@ def conf_from_env():
     env = os.environ.get
     return {
         "ledger": env("LRM_LEDGER") or os.path.join(HUB_DIR, "feedback-ledger.tsv"),
-        "status_dir": hub_status.status_dir(),
+        "status_dir": os.path.expanduser(env("LRM_HUB_STATUS_DIR") or os.path.join(HUB_DIR, "hub-status")),  # 작업 폴더 밑이 기본(시험이 격리됨)
         "gh": env("LRM_DIGEST_GH") or "gh",
         "repos": [r.strip() for r in (env("LRM_DIGEST_REPOS") or "").split(",") if r.strip()],
     }

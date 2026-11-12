@@ -87,6 +87,9 @@ export type AutoHubs = {
 /** 결정 대기 한 건. id·state 는 번호 카드(slack_notify.sh --options)만, 옛 카드는 null(옛 파일엔 키 없음) */
 export type AutoPendingItem = { title: string; ageMin: number | null; id?: string | null; state?: 'hold' | 'conflict' | null }
 export type AutoPending = { count: number; items: AutoPendingItem[] }
+/** 진행 스냅샷(progress_collect.py). bucket: doing 진행 중·wait 답 대기·block 막힘, group 은 허브 이름·장부·PR·결정 */
+export type AutoProgressItem = { key: string; bucket: 'doing' | 'wait' | 'block'; title: string; group: string; link: string }
+export type AutoProgress = { counts: { doing: number; wait: number; block: number }; items: AutoProgressItem[]; notes: string[] }
 export type AutoPush = { lines: Array<{ at: string; event: string; reason: string | null }> }
 export type AutoWorkers = { live: number; recent: Array<{ title: string | null; status: string; at: number | null }> }
 /** 쉬는 자원. 부분마다 따로 실패해 한 부분이 null 일 수 있음 */
@@ -124,6 +127,7 @@ export type AutoBoard = {
   sources: {
     hubs?: AutoSource<AutoHubs>
     pending?: AutoSource<AutoPending>
+    progress?: AutoSource<AutoProgress>
     push?: AutoSource<AutoPush>
     workers?: AutoSource<AutoWorkers>
     gh?: AutoSource<AutoGh>
