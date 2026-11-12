@@ -27,6 +27,7 @@ _RULES = (
 )
 _PREFIX = re.compile(r"^(?:\[낡음\] )?([^:\s]+): ")
 _NOISE = re.compile(r"ctx_[0-9a-f]+|\b[0-9a-f]{7,}\b|\([^)]*\)|\[[^\]]*\]")
+_LEDGER_ID = re.compile(r"^[A-Z]+\d+ ")
 _PR_NUM = re.compile(r"#(\d+)")
 _CODE = re.compile(r"\bD-[A-Z0-9]{3,}")
 _COUNT = re.compile(r"결정(?: 대기)? ?(\d+)개")
@@ -57,6 +58,8 @@ def _body(key, title):
     t = re.sub(r"^(?:\[낡음\] )?", "", title or "")
     if key.startswith("hub:"):
         t = _PREFIX.sub("", t, count=1)
+    if key.startswith("ledger:"):
+        t = _LEDGER_ID.sub("", t, count=1)  # 장부 번호(F11 등)는 내부 기호
     return t.strip()
 
 

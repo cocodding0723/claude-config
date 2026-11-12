@@ -112,7 +112,7 @@ class DigestTest(unittest.TestCase):
     def test_unchanged_sends_nothing(self):
         self.assertEqual(self.run_digest().returncode, 0)
         n_calls, n_dm = len(FakeSlack.calls), len(self.dms())
-        self.assertEqual(n_calls, 3)
+        self.assertEqual(n_calls, 1)  # 할 일은 답 대기 1건(F2)뿐. 진행·막힘은 목록에 안 올림
         self.assertEqual(n_dm, 1)
         r = self.run_digest()
         self.assertEqual(r.returncode, 0)
@@ -123,17 +123,17 @@ class DigestTest(unittest.TestCase):
         self.run_digest()
         FakeSlack.calls.clear()
         os.remove(self.dmlog)
-        self.write_ledger([("F1", "완료", "로그인 개선", "증거: x"), ("F2", "진행", "패널 정리", "병합 대기"), ("F3", "보류", "CI 불안정", "외부 대기"), ("F4", "진행", "새 일", "")])
+        self.write_ledger([("F1", "완료", "로그인 개선", "증거: x"), ("F2", "완료", "패널 정리", "병합 완료"), ("F3", "보류", "CI 불안정", "외부 대기"), ("F4", "진행", "새 일", "답 대기")])
         self.assertEqual(self.run_digest().returncode, 0)
         ops = [(m, json.dumps(b, ensure_ascii=False)) for m, b in FakeSlack.calls]
         self.assertEqual(len(ops), 2)
         self.assertTrue(any(m == "slackLists.items.create" and "새 일" in b for m, b in ops))
-        self.assertTrue(any(m == "slackLists.items.update" and '"checkbox": true' in b for m, b in ops))
+        self.assertTrue(any(m == "slackLists.items.update" and '"checkbox": true' in b for m, b in ops))  # F2 끝남 → 완료 체크
         self.assertEqual(len(self.dms()), 1)
         lines = self.dms()[0].split("\n")
         self.assertTrue(lines[0].endswith("진행 목록"))  # 가짜 전송이 인자를 앞에 붙임
         self.assertEqual(lines[1], "")
-        self.assertEqual(lines[2:5], ["- 진행 중 1", "- 답 대기 1", "- 막힘 1"])  # 항목마다 한 줄
+        self.assertEqual(lines[2:5], ["- 진행 중 0", "- 답 대기 1", "- 막힘 1"])  # 항목마다 한 줄
         self.assertNotIn(" · ", "\n".join(lines[2:5]))
 
     def test_dm_names_capped_at_three(self):
@@ -176,13 +176,14 @@ class DigestTest(unittest.TestCase):
     def test_manual_rows_untouched(self):
         self.run_digest()
         st = json.load(open(os.path.join(self.hub, "progress-digest.state.json")))
-        self.assertEqual(set(st["items"]), {"ledger:F1", "ledger:F2", "ledger:F3"})
+        self.assertEqual(set(st["items"]), {"ledger:F2"})
         self.write_ledger([])  # 모두 끝남 → 이 도구가 만든 행만 완료 처리
         FakeSlack.calls.clear()
         self.run_digest()
         rows = {b["cells"][0]["row_id"] for m, b in FakeSlack.calls}
         self.assertEqual(rows, {v["record"] for v in st["items"].values()})
-        self.assertFalse(any(m.endswith("delete") for m, _ in FakeSlack.calls))
+        self.assertFalse(any(m.endswith("delete") for m, _ in FakeSlack.calls))  # 삭제 대신 완료 체크
+        self.assertEqual(set(json.load(open(os.path.join(self.hub, "progress-digest.state.json")))["items"]), {"done:" + v["record"] for v in st["items"].values()})
 
     def test_external_api_blocked(self):
         r = self.run_digest(SLACK_API_BASE="https://slack.com/api")
@@ -219,7 +220,7 @@ class DigestTest(unittest.TestCase):
         with open(os.path.join(self.hub, "slack-sent.jsonl"), "w") as f:
             f.write(json.dumps({"ts": "1.1", "title": "결정 알림 시각", "at": 1}) + "\n")
         self.run_digest("--no-pr")  # 스냅샷 없음 → 직접 수집
-        self.assertTrue(any("결정 알림 시각" in json.dumps(b, ensure_ascii=False) for _, b in FakeSlack.calls))
+        self.assertTrue(any("알림 시각 결정" in json.dumps(b, ensure_ascii=False) for _, b in FakeSlack.calls))
         FakeSlack.calls.clear()
         with open(os.path.join(self.hub, "progress.json"), "w") as f:  # 낡은 스냅샷(결정 원료 없음)
             json.dump({"version": 1, "updatedAt": 1, "items": [], "sources": {}}, f)
@@ -227,10 +228,10 @@ class DigestTest(unittest.TestCase):
         self.assertEqual([c for c in FakeSlack.calls if "checkbox" in json.dumps(c[1])], [])  # 완료 처리 없음
 
     def test_link_only_change_updates_row(self):
-        self.write_gh([{"number": 5, "title": "기능", "url": "https://x/1", "reviewDecision": "", "mergeable": "MERGEABLE"}])
+        self.write_gh([{"number": 5, "title": "기능", "url": "https://x/1", "reviewDecision": "APPROVED", "mergeable": "MERGEABLE"}])
         self.run_digest()
         FakeSlack.calls.clear()
-        self.write_gh([{"number": 5, "title": "기능", "url": "https://x/2", "reviewDecision": "", "mergeable": "MERGEABLE"}])
+        self.write_gh([{"number": 5, "title": "기능", "url": "https://x/2", "reviewDecision": "APPROVED", "mergeable": "MERGEABLE"}])
         self.run_digest()
         self.assertEqual([m for m, _ in FakeSlack.calls], ["slackLists.items.update"])
         self.assertIn("https://x/2", json.dumps(FakeSlack.calls[0][1]))
@@ -239,7 +240,7 @@ class DigestTest(unittest.TestCase):
         self.assertEqual(self.run_digest("--no-list").returncode, 0)
         self.assertEqual(FakeSlack.calls, [])
         self.assertEqual(self.run_digest().returncode, 0)
-        self.assertEqual(len(FakeSlack.calls), 3)  # 장부 3행 생성
+        self.assertEqual(len(FakeSlack.calls), 1)  # 할 일 1행 생성
         self.assertEqual(len(self.dms()), 1)
 
     def test_dm_shows_child_counts_and_hash_ignores_small_changes(self):
@@ -259,6 +260,53 @@ class DigestTest(unittest.TestCase):
         snapshot(12, 2, True)  # 경고 진입 → 전송
         self.run_digest("--no-pr")
         self.assertIn("config 하위 12개(활동 2) ⚠️", self.dms()[0])
+
+    # --- 할 일 목록: 사용자가 손댈 것만, 열 추가, 완료 뒤 보관 ---
+    def bot_state(self):
+        p = os.path.join(self.t.name, "bot-list.json")
+        cols = {"title": "CT", "kind": "CK", "urgency": "CU", "hub": "CH", "answer": "CA", "done": "CD", "link": "CL", "archive": "CR"}
+        with open(p, "w") as f:
+            json.dump({"lists": {"x": {"id": "LNEW", "columns": cols, "options": {"kind": {"decision": "OptD", "merge": "OptM", "input": "OptI", "review": "OptR"}}}}}, f)
+        return p
+
+    def test_progress_rows_not_in_list(self):
+        self.put_hub("ui", tasks=["버튼 구현", "카드 병합: 사용자 실행 대기"], blockers=["키 발급 막힘"])
+        self.write_gh([{"number": 8, "title": "추가", "url": "u", "reviewDecision": "", "mergeable": "MERGEABLE"}])
+        d = json.loads(self.run_digest("--dry-run", "--json").stdout)
+        titles = [o["title"] for o in d["list_ops"]]
+        self.assertEqual(len(titles), 2)  # 장부 답 대기 1 + 허브 병합 대기 1. 진행·PR 상태·막힘 문구 없는 것은 제외
+        self.assertFalse(any("🔄" in t or "추가" in t or "버튼 구현" in t for t in titles))
+
+    def test_new_columns_written(self):
+        self.write_ledger([("F1", "진행", "일", "")])
+        self.put_hub("server", blockers=["라이브 규칙 창 직접 승인"])
+        self.run_digest(LRM_BOTLIST_STATE=self.bot_state(), LRM_DIGEST_LIST_ID="LNEW")
+        create = [b for m, b in FakeSlack.calls if m == "slackLists.items.create"]
+        self.assertEqual(len(create), 1)
+        f = {x["column_id"]: x for x in create[0]["initial_fields"]}
+        self.assertEqual(f["CK"]["select"], ["OptI"])
+        self.assertEqual(f["CU"]["number"], [2])  # 막힘 → 한 단계 위
+        self.assertEqual(f["CA"]["rich_text"][0]["elements"][0]["elements"][0]["text"], "server 허브 창 1. Yes")
+        self.assertEqual(f["CT"]["rich_text"][0]["elements"][0]["elements"][0]["text"], "라이브 규칙 창 직접 승인 — server 허브 창")
+        self.assertEqual(f["CH"]["rich_text"][0]["elements"][0]["elements"][0]["text"], "server")
+
+    def test_done_row_archived_after_delay(self):
+        env = dict(LRM_BOTLIST_STATE=self.bot_state(), LRM_DIGEST_LIST_ID="LNEW")
+        self.run_digest(**env)
+        self.write_ledger([])
+        self.run_digest(**env)  # 완료 체크
+        stp = os.path.join(self.hub, "progress-digest.state.json")
+        st = json.load(open(stp))
+        (key,) = st["items"]
+        self.assertTrue(key.startswith("done:"))
+        FakeSlack.calls.clear()
+        self.run_digest(**env)
+        self.assertEqual(FakeSlack.calls, [])  # 아직 보관 시각 전
+        st["items"][key]["done_at"] -= 7 * 3600
+        json.dump(st, open(stp, "w"))
+        self.run_digest(**env)
+        self.assertEqual([(m, b["cells"][0]["column_id"]) for m, b in FakeSlack.calls], [("slackLists.items.update", "CR")])
+        self.assertEqual(json.load(open(stp))["items"], {})
 
 
 if __name__ == "__main__":
