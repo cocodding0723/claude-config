@@ -26,12 +26,12 @@ test_concurrent_runs_only_one_proceeds (test_sender.SenderTest.test_concurrent_r
 test_corrupt_state_halts_without_reposting_and_warns_once (test_sender.SenderTest.test_corrupt_state_halts_without_reposting_and_warns_once) ... ok
 test_decide_uses_button_card_form_without_thread (test_sender.SenderTest.test_decide_uses_button_card_form_without_thread) ... ok
 test_dry_run_sends_nothing_and_writes_no_state (test_sender.SenderTest.test_dry_run_sends_nothing_and_writes_no_state) ... ok
-test_emptied_or_malformed_state_halts_instead_of_reposting (test_sender.SenderTest.test_emptied_or_malformed_state_halts_instead_of_reposting) ... /Users/gangchanhyeong/orca/workspaces/claude-config/fix-report-sender-permanent/tests/report_sender/test_sender.py:423: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/mb/130tt8qx31112yx1j11l965h0000gn/T/tmpxrksrthn/state.json' mode='r' encoding='utf-8'>
+test_emptied_or_malformed_state_halts_instead_of_reposting (test_sender.SenderTest.test_emptied_or_malformed_state_halts_instead_of_reposting) ... ~/orca/workspaces/claude-config/fix-report-sender-permanent/tests/report_sender/test_sender.py:423: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/mb/130tt8qx31112yx1j11l965h0000gn/T/tmpxrksrthn/state.json' mode='r' encoding='utf-8'>
   good = open(self.conf.state, encoding="utf-8").read()
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
 test_empty_body_ts_state_halts_instead_of_silent_sent (test_sender.SenderTest.test_empty_body_ts_state_halts_instead_of_silent_sent) ... ok
-test_empty_topic_ts_or_missing_topic_halts (test_sender.SenderTest.test_empty_topic_ts_or_missing_topic_halts) ... /Users/gangchanhyeong/orca/workspaces/claude-config/fix-report-sender-permanent/tests/report_sender/test_sender.py:525: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/mb/130tt8qx31112yx1j11l965h0000gn/T/tmpzi6tymvf/state.json' mode='r' encoding='utf-8'>
+test_empty_topic_ts_or_missing_topic_halts (test_sender.SenderTest.test_empty_topic_ts_or_missing_topic_halts) ... ~/orca/workspaces/claude-config/fix-report-sender-permanent/tests/report_sender/test_sender.py:525: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/mb/130tt8qx31112yx1j11l965h0000gn/T/tmpzi6tymvf/state.json' mode='r' encoding='utf-8'>
   good = json.load(open(self.conf.state, encoding="utf-8"))
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
@@ -55,7 +55,7 @@ test_record_without_files_key_does_not_stop_later_reports (test_sender.SenderTes
 test_repair_lock_wait_respects_budget (test_sender.SenderTest.test_repair_lock_wait_respects_budget) ... ok
 test_retry_cap_stops_with_one_warning_in_topic_thread (test_sender.SenderTest.test_retry_cap_stops_with_one_warning_in_topic_thread) ... ok
 test_second_report_same_task_replies_in_same_thread (test_sender.SenderTest.test_second_report_same_task_replies_in_same_thread) ... ok
-test_secret_in_legacy_record_never_reaches_slack_or_log (test_sender.SenderTest.test_secret_in_legacy_record_never_reaches_slack_or_log) ... /Users/gangchanhyeong/orca/workspaces/claude-config/fix-report-sender-permanent/tests/report_sender/test_sender.py:407: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/mb/130tt8qx31112yx1j11l965h0000gn/T/tmp30ik1dik/log.txt' mode='r' encoding='utf-8'>
+test_secret_in_legacy_record_never_reaches_slack_or_log (test_sender.SenderTest.test_secret_in_legacy_record_never_reaches_slack_or_log) ... ~/orca/workspaces/claude-config/fix-report-sender-permanent/tests/report_sender/test_sender.py:407: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/mb/130tt8qx31112yx1j11l965h0000gn/T/tmp30ik1dik/log.txt' mode='r' encoding='utf-8'>
   self.assertNotIn(bad, open(self.conf.log, encoding="utf-8").read() if os.path.exists(self.conf.log) else "")
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok

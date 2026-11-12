@@ -15,6 +15,7 @@ import threading
 FAKE = "fake-token-urlguard-0123456789"
 os.environ["SLACK_BOT_TOKEN"] = FAKE
 os.environ["SLACK_USER_ID"] = "Ume"
+os.environ["LRM_PY_DIR"] = os.path.dirname(os.path.abspath(sys.argv[1]))  # 인라인 파이썬이 공용 모듈을 찾는 폴더
 SRC, WITH_CURL = sys.argv[1], sys.argv[2] == "curl"
 text = open(SRC, encoding="utf-8").read()
 py = text.split("<<'PY' || RC=$?\n", 1)[1].split("\nPY\n", 1)[0]

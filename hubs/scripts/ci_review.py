@@ -110,10 +110,12 @@ def fresh_status(data, now=None):
     return at is not None and now - at <= timedelta(hours=hub_status.stale_hours())
 
 
-def ticket_hubs(status_dir, routes_path, hubs_path, repo="", game_repo=""):
+def ticket_hubs(status_dir, routes_path, hubs_path, repo="", game_repo="", worktrees=None):
     """티켓 번호 → 그 티켓을 맡은 허브 표시 이름 집합. 근거는 기존 데이터: 허브 상태 파일(tasks·branches 의 LRM-n, 낡은 파일 제외)과
     접수 경로(jsonl 의 text·hub). repo: 대상 PR 저장소('owner/name'), game_repo: hubs.tsv 저장소 칸이 '-' 인 허브의 저장소.
-    허브 저장소는 owner/name 전체로 비교하며 소속을 확인할 수 없으면(경로만 있음, game_repo 비어 있음) 제외. repo 가 비면 저장소 검사를 하지 않음"""
+    허브 저장소는 owner/name 전체로 비교하며 소속을 확인할 수 없으면(경로만 있음, game_repo 비어 있음) 제외. repo 가 비면 저장소 검사를 하지 않음.
+    worktrees: Orca 작업 공간 목록(조회 실패·불완전이면 None → 이 근거만 건너뜀). 표시 이름·브랜치의 LRM-n 을 부모 허브 폴더(coord-<slug>-hub)로 연결.
+    작업 공간 근거는 PR 과 같은 저장소(projectId)만 쓰며, 상태 파일·접수 경로에 없는 허브가 더해지면 티켓이 갈린 것으로 보아 미배정이 됨"""
     names, aliases, repos, out = load_hub_names(hubs_path), load_hub_aliases(hubs_path), load_hub_repos(hubs_path), {}
     want, home = repo.lower(), game_repo.lower()
 
@@ -147,7 +149,26 @@ def ticket_hubs(status_dir, routes_path, hubs_path, repo="", game_repo=""):
         slug = aliases.get(str(r.get("hub")))
         for t in TICKET.findall(str(r.get("text", ""))) if slug and ok_repo(slug) else ():
             out.setdefault(t, set()).add(slug)
+    for t, slugs in workspace_tickets(worktrees, names, repo).items():
+        out.setdefault(t, set()).update(slugs)
     return {t: {names[s] for s in v if s in names} for t, v in out.items()}
+
+
+def workspace_tickets(worktrees, names, repo=""):
+    """작업 공간 목록 → {티켓 번호: {허브 slug}}. 표시 이름·브랜치의 LRM-n 이 있는 작업 공간의 부모 허브 폴더 이름(coord-<slug>-hub)에서 slug 결정.
+    PR 저장소와 projectId 가 다르거나 부모가 허브가 아니면 제외"""
+    by_id = {w.get("id"): w for w in worktrees or []}
+    out = {}
+    for w in worktrees or []:
+        if not same_repo(w, repo):
+            continue
+        parent = by_id.get(w.get("parentWorktreeId"))
+        m = HUB_DIR.match(os.path.basename((parent or {}).get("path") or str(w.get("parentWorktreeId") or "").split("::")[-1]))
+        if not (m and m.group(1) in names):
+            continue
+        for t in TICKET.findall(f"{w.get('displayName', '')} {w.get('branch', '')}"):
+            out.setdefault(t, set()).add(m.group(1))
+    return out
 
 
 def title_hubs(title, tmap):
@@ -278,10 +299,10 @@ def hub_for(branch, title, table):
     return assign_hub(branch, title, table)[0]
 
 
-def assign_hub(branch, title, table, worktrees=None, names=None, common=(), qa_hub="", repo="", tmap=None):
+def assign_hub(branch, title, table, worktrees=None, names=None, common=(), qa_hub="", repo="", tmap=None, ws=None):
     """담당 허브와 근거 (허브, 근거 문구). 1순위 같은 원인의 PR 이 여럿이면 qa_hub(소유 허브보다 먼저),
     2순위 head 브랜치 작업 공간의 허브, 3순위 제목 티켓(tmap: 티켓→허브 집합)이 한 허브로 모일 때,
-    4순위 표(정규식\t허브) 첫 일치. 티켓이 여러 허브로 갈리면 즉시 미배정, 모두 실패해도 미배정"""
+    4순위 표(정규식\t허브) 첫 일치. ws: 작업 공간 근거({티켓: {slug}}, workspace_tickets 결과)로, 있으면 근거 문구에 '작업 공간 [LRM-n] → slug' 를 씀. 티켓이 여러 허브로 갈리면 즉시 미배정, 모두 실패해도 미배정"""
     if common and qa_hub:
         return qa_hub, f"근거: 같은 원인이 PR {', '.join('#' + str(n) for n in common)} 에도 있음 → 테스트·QA 허브"
     hub = parent_hub(branch, worktrees or [], names or {}, repo)
@@ -289,6 +310,9 @@ def assign_hub(branch, title, table, worktrees=None, names=None, common=(), qa_h
         return hub, "근거: PR 브랜치의 작업 공간 허브"
     hit = title_hubs(title, tmap or {})
     if len({h for h, _ in hit}) == 1:
+        slug = next((x for x in (ws or {}).get(hit[0][1][4:], ()) if (names or {}).get(x) == hit[0][0]), "")
+        if slug:
+            return hit[0][0], f"근거: 제목 티켓 {hit[0][1]} · 작업 공간 [{hit[0][1]}] → {slug}"
         return hit[0][0], f"근거: 제목 티켓 {hit[0][1]} → {hit[0][0]}"
     if hit:  # 티켓이 여러 허브로 갈리면 표로 넘기지 않고 메인 판단
         return UNASSIGNED, "근거: 제목 티켓이 여러 허브로 갈림(" + ", ".join(f"{t} → {h}" for h, t in hit) + ")"

@@ -89,8 +89,11 @@ cap() {  # cap <단계 상한>: 남은 총 예산과 상한 중 작은 값, 최�
   [ "$v" -lt 1 ] && v=1
   echo "$v"
 }
-LRM_POLL_BUDGET="$(cap "${LRM_POLL_BUDGET:-90}")" python3 -I - "$DIR" "$DAYS" "$JSON" <<'PY' || RC=$?
+LRM_PY_DIR="$(cd "$(dirname "$0")" && pwd)" LRM_POLL_BUDGET="$(cap "${LRM_POLL_BUDGET:-90}")" python3 -I - "$DIR" "$DAYS" "$JSON" <<'PY' || RC=$?
 import json, os, re, subprocess, sys, time, unicodedata, urllib.error, urllib.parse, urllib.request
+sys.path.insert(0, os.environ["LRM_PY_DIR"])  # -I 는 같은 폴더를 import 경로에 넣지 않음
+import tls_ctx
+SSL_CTX = tls_ctx.ssl_context()
 DIR, DAYS, AS_JSON = sys.argv[1], int(sys.argv[2]), sys.argv[3] == "1"
 TOKEN, ME = os.environ["SLACK_BOT_TOKEN"], os.environ["SLACK_USER_ID"]
 BASE = os.environ.get("SLACK_API_BASE", "https://slack.com/api")
@@ -209,7 +212,7 @@ def api(method, _post=False, **params):
         else:
             req = urllib.request.Request(f"{BASE}/{method}?{q}", headers={"Authorization": f"Bearer {TOKEN}"})
         try:
-            with urllib.request.urlopen(req, timeout=min(15, left)) as r:
+            with urllib.request.urlopen(req, timeout=min(15, left), context=SSL_CTX) as r:
                 d = json.load(r)
             break
         except urllib.error.HTTPError as e:

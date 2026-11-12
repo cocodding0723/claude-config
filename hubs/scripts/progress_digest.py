@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import progress_collect as pc  # noqa: E402
+import tls_ctx  # noqa: E402
 
 HUB_DIR = os.path.expanduser(os.environ.get("LRM_HUB_DIR") or "~/.config/lrm-hubs")
 DEFAULT_LIST_ID = "F0CF54PDVFT"
@@ -217,7 +218,8 @@ def api(conf, method, body):
     req = urllib.request.Request(
         f"{conf.api}/{method}", data=json.dumps(body).encode("utf-8"),
         headers={"Authorization": "Bearer " + conf.token, "Content-Type": "application/json; charset=utf-8"})
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # 환경 프록시로 우회 금지
+    opener = urllib.request.build_opener(  # 환경 프록시로 우회 금지
+        urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=tls_ctx.ssl_context()))
     try:
         with opener.open(req, timeout=API_TIMEOUT_S) as r:
             data = json.load(r)
