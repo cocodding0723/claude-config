@@ -20,4 +20,12 @@ mutant M1 "미커밋 변경 검사 제거(조건 2)"        's/\[ "\$N_REAL" -gt
 mutant M2 "기본 모드를 --apply 로 변경(dry-run 무삭제)" 's/APPLY=0 DAYS=/APPLY=1 DAYS=/'
 mutant M3 "살아 있는 터미널 검사 제거"          's/grep -Fxq -- "\$p" "\$TMP\/live" && \{ REASON=live; return 1; \}//'
 mutant M4 "PR OPEN 검사 제거"                    's/then REASON=pr_open; DETAIL="\$PR_LABEL"; return 1; fi/then :; fi/'
+mutant M5 "워커 목록이 비면 터미널 줄을 워커로 읽는 awk(NR==FNR)로 되돌림" 's/FILENAME == ARGV\[1\]/NR==FNR/'
+mutant M6 "HEAD 가 원격에 있는지 검사 제거(병합된 PR 뒤 미push 커밋)" 's/(rev-list --count HEAD --not --remotes 2>\/dev\/null \|\| echo 1\)" )!= 0 \]; then(\s+head_sha)/$1== 99 ]; then$2/'
+mutant M7 "gitignore 파일 판정 제거" 's/&& ignored_entries "\$p" \| awk -v MODE_=ignored "\$CLASSIFY_AWK"; \}/; }/'
+mutant M8 "잠금 제거(동시 실행 허용)" 's/if \[ -z "\$\{WS_GC_LOCKED:-\}" \]; then/if false; then/'
+mutant M9 "보관 내용 대조(cmp) 제거" 's/cmp -s "\$src" "\$dest\/\$e" \|\|/true ||/'
+mutant M10 "추적 파일 수정에도 부산물(.meta·SDF) 예외 적용" 's/(    else if \(q ~ ENVIRON\["LZ"\] && xy)/    else if (q ~ ENVIRON["NZ"]) print "N\\t" q\n$1/'
+mutant M11 "캐시 폴더 안을 목록 방식으로 되돌림(생성 목록 밖도 버림, .kt·.mp4 놓침)" 's/\{ print "!" \$0 \}\x27/\/\\.(cs|meta|asset|json)\$\/ { print "!" \$0 }\x27/'
+mutant M12 "서브모듈 안 분류 생략(상위 판정만)" 's/\( TMP="\$TMP\/sub"; mkdir -p "\$TMP" && classify_changes "\$sp" && /( true && /'
 exit "$MISSED"

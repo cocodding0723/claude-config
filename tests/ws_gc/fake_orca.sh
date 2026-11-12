@@ -3,12 +3,13 @@
 # worktree rm 은 FAKE_ROOT(임시 작업 폴더) 아래 경로만 지움. FAKE_RM_REFUSE="이름 …" 이면 그 폴더는 --force 없이 거부(서브모듈 거부 흉내).
 # FAKE_RM_REASON="문구" 이면 force 없는 rm 을 그 문구로 거부(잠금 등 다른 사유 흉내).
 # 문구 안의 @P@ 는 거부된 경로로 치환(실제 Orca 는 경로를 문구에 넣음).
+# FAKE_SLEEP=초 이면 worktree list 를 그만큼 늦춤(동시 실행·잠금 시험).
 # FAKE_ORCA_FAIL=1 이면 모든 호출 실패(Orca 꺼짐 흉내).
 D="${FAKE_DIR:?}"
 echo "$*" >> "$D/orca.calls"
 [ "${FAKE_ORCA_FAIL:-}" = 1 ] && { echo "orca 응답 없음" >&2; exit 1; }
 case "$*" in
-  "worktree list --limit 1000 --json") cat "$D/worktrees.json" ;;
+  "worktree list --limit 1000 --json") [ -z "${FAKE_SLEEP:-}" ] || sleep "$FAKE_SLEEP"; cat "$D/worktrees.json" ;;
   "terminal list --limit 1000 --json") cat "$D/terminals.json" ;;
   "orchestration worker-list --full --limit 100 --json") cat "$D/workers.json" ;;
   "orchestration worker-release --dispatch "*) echo '{"ok":true,"result":{}}' ;;

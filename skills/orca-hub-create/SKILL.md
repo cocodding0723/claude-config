@@ -19,7 +19,7 @@ description: Orca 에 새 코디네이터 허브(sparse 관리 워크스페이�
    sparse 체크아웃(origin/dev, detached) → `[관리] <이름> 코디네이터` 표시 이름·메인 하위 연결 → Opus 5.5 코디네이터 기동 → 프롬프트 제출 확인(붙여넣기만 되고 멈추면 Enter 재전송)까지 한다.
 4. **보고**: 허브 경로·크기·터미널 핸들·코디네이터 첫 상태 한 줄. 메모리 `orca-coordinator-sparse-hub` 에 허브 한 줄 추가.
 
-워커 워크스페이스는 코디네이터가 만든다: `bash scripts/create_worker_ws.sh --hub <허브 경로> --name "[LRM-n] 하는 일" --paths "…" [--branch <브랜치>]`. 브랜치를 주지 않으면 읽기 전용(detached)이다. Unity 실행·녹화·빌드는 `--full` 로 전체 체크아웃.
+워커 워크스페이스는 코디네이터가 만든다: `bash scripts/create_worker_ws.sh --hub <허브 경로> --name "[LRM-n] 하는 일" --paths "…" [--branch <브랜치>]`. 브랜치를 주지 않으면 읽기 전용(detached)이다. Unity 실행·녹화·빌드는 `--full` 로 전체 체크아웃. 출력은 경로 한 줄이고 `--json` 을 주면 `{path, branch, displayName, parent}` JSON 한 줄이다. 허브는 이 출력의 경로를 그대로 쓰고 `LRM-n-*` 폴더를 추측해 고르지 않는다. 같은 이름 폴더가 있으면 덮어쓰지 않고 종료 3 으로 거부한다.
 
 ## 공통 규칙 요약 (정본: references/common-rules.txt, 스크립트가 코디네이터 프롬프트에 붙임)
 
