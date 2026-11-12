@@ -25,5 +25,7 @@ mutant M6 "HEAD 가 원격에 있는지 검사 제거(병합된 PR 뒤 미push �
 mutant M7 "gitignore 파일 판정 제거" 's/&& ignored_entries "\$p" \| awk -v MODE_=ignored "\$CLASSIFY_AWK"; \}/; }/'
 mutant M8 "잠금 제거(동시 실행 허용)" 's/if \[ -z "\$\{WS_GC_LOCKED:-\}" \]; then/if false; then/'
 mutant M9 "보관 내용 대조(cmp) 제거" 's/cmp -s "\$src" "\$dest\/\$e" \|\|/true ||/'
-mutant M10 "부산물 규칙에 TextMesh Pro 폴더 이름 판정 복원" 's/CFG_NOISE_RE=\x27\(\\.meta\$\)\|/CFG_NOISE_RE=\x27(TextMesh Pro\/)|(\\.meta\$)|/'
+mutant M10 "추적 파일 수정에도 부산물(.meta·SDF) 예외 적용" 's/(    else if \(q ~ ENVIRON\["LZ"\] && xy)/    else if (q ~ ENVIRON["NZ"]) print "N\\t" q\n$1/'
+mutant M11 "캐시 폴더 이름만 믿고 안의 소스 검사 생략" 's/tolower\(\$0\) ~ ENVIRON\["VZ"\] \{ print "!" \$0 \}/{ }/'
+mutant M12 "서브모듈 안 분류 생략(상위 판정만)" 's/\( TMP="\$TMP\/sub"; mkdir -p "\$TMP" && classify_changes "\$sp" && /( true && /'
 exit "$MISSED"
