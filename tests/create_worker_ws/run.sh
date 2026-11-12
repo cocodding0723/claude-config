@@ -37,6 +37,8 @@ cat > "$BIN/ws_gc.sh" <<'EOS'
 echo "$*" >> "$FAKE_DIR/gc.calls"
 [ -z "${FAKE_GC_SLEEP:-}" ] || { sleep "$FAKE_GC_SLEEP"; echo done > "$FAKE_DIR/gc.finished"; }
 [ "${FAKE_GC_FAIL:-}" != 1 ] || exit 7
+# TERM 을 무시하고 4초 뒤 표시를 남기는 자식(시간 초과 뒤 잔존 여부 시험)
+[ -z "${FAKE_GC_STUBBORN:-}" ] || { bash -c 'trap "" TERM; sleep 4; echo stray > "$FAKE_DIR/gc.stray"' & sleep 30; }
 [ -z "${FAKE_GC_DROP:-}" ] || jq --argjson n "$FAKE_GC_DROP" '(.result.worktrees[] | select(.childWorktreeIds | length > 0) | .childWorktreeIds) |= .[$n:]' "$FAKE_DIR/list.json" > "$FAKE_DIR/list.tmp" && mv "$FAKE_DIR/list.tmp" "$FAKE_DIR/list.json"
 EOS
 cat > "$BIN/hub_report.py" <<'EOS'
@@ -81,5 +83,10 @@ chk "[8] 끊긴 정리기는 남아 돌지 않음(3초 뒤에도 끝 표시 없�
 setlist 10; run w8 FAKE_GC_FAIL=1
 chk "[8] 정리기 실패(종료 7): 경고 뒤 생성 계속" '[ "$RC" = 0 ] && made w8 && grep -q "정리기 실행 실패(종료 7)" "$SB/err"'
 
+# [P2] TERM 을 무시하는 자식이 시간 초과 뒤에도 남지 않음(유예 1초 뒤 그룹 KILL)
+setlist 10; rm -f "$F/gc.stray"; run w9 FAKE_GC_STUBBORN=1 LRM_HUB_GC_TIMEOUT=1 LRM_HUB_GC_GRACE=1
+chk "[P2] TERM 무시 자식이 있어도 시간 초과 뒤 생성 계속" '[ "$RC" = 0 ] && made w9 && grep -q "1초 안에 끝나지 않아 중단" "$SB/err"' "rc=$RC $(cat "$SB/err")"
+sleep 5
+chk "[P2] TERM 무시 자식이 그룹 KILL 로 종료됨(4초 뒤 표시 없음)" '[ ! -e "$F/gc.stray" ]'
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]

@@ -153,12 +153,13 @@ bash tests/ws_gc/mutate.sh   # 결함을 심은 사본에서 시험이 실패하
 | 구분 | 기준(설정은 `ws_gc.sh` 위쪽 `CFG_*` 한 곳) | 처리 |
 |---|---|---|
 | 허용 결과물 | 결과물 폴더 `docs/out/`·`evidence/`·`TestResults/`(`CFG_OUTPUT_DIRS_RE`), 작업 공간 **루트**의 `*.html *.md *.png *.jpg *.jpeg *.gif *.mp4 *.txt *.log`(`CFG_OUTPUT_ROOT_RE`, 확장자 대소문자 무시) | 보관 → 색인 → 삭제 |
-| 캐시 | gitignore 된 `Library/ Temp/ obj/ Logs/ UserSettings/ .vs/ .idea/ node_modules/ .dart_tool/`, `.flutter-plugins(-dependencies)`, `.claude/settings.local.json`, `.DS_Store`(`CFG_CACHE_RE`) | 보관 없이 삭제 |
+| 캐시 후보 | gitignore 된 `Library/ Temp/ obj/ Logs/ UserSettings/ .vs/ .idea/ node_modules/ .dart_tool/`, `.flutter-plugins(-dependencies)`, `.claude/settings.local.json`, `.DS_Store`(`CFG_CACHE_RE`). **폴더 이름만으로 캐시로 치지 않는다.** 안에 소스·자산 확장자(`.cs .py .js .meta .asset .prefab .unity .json` 등, `CFG_CACHE_VALUABLE_RE`) 파일이 있으면 미확인으로 보존한다. 도구가 만든 하위 경로(`Library/PackageCache` 등, `CFG_CACHE_GENERATED_RE`)는 검사에서 뺀다 | 소스·자산 파일이 없을 때만 보관 없이 삭제 |
 | 소스 폴더 | `Assets/ Packages/ ProjectSettings/` 아래(`CFG_SOURCE_DIR_RE`). 허용 목록과 겹쳐도(예 `Assets/TestResults/`) 항상 | 보존 |
-| 추적 파일 수정 | 추적 파일이 바뀐 모든 경우. 폴더 이름만으로 부산물로 치지 않음 | 보존 |
+| 추적 파일 수정 | 추적 파일이 바뀐 모든 경우. `.meta`·`*SDF*.asset` 부산물 예외보다 항상 우선(예외는 미추적 파일에만 적용) | 보존 |
 | 미확인 | 위 어디에도 없는 미추적·gitignore 파일(예 `secret/Foo.cs`, `result.json`, `reports/s.md`, `Foo.CS`) | 보존(`dirty`) |
-| 확인된 부산물 | 줄바꿈만 바뀐 사운드 `LICENSE.txt`, `*.meta`, `*SDF*.asset`(TMP 아틀라스) 파일. 규칙은 파일 단위이고 `TextMesh Pro/` 폴더 이름은 보지 않음 | 0 으로 침 |
+| 확인된 부산물 | 줄바꿈만 바뀐 추적 사운드 `LICENSE.txt`, 미추적 `*.meta`·`*SDF*.asset`. 파일 단위이고 폴더 이름은 보지 않음 | 0 으로 침 |
 
+- 서브모듈: 안에도 상위와 같은 분류를 적용한다(미추적·gitignore 소스, 결과물, 부산물이 하나라도 있으면 `submodule` 로 보존, 미push 커밋도 포함).
 - gitignore 파일은 git 이 폴더째 묶어 보여 주므로, 허용·캐시·소스 판정이 서지 않는 폴더는 파일 단위로 풀어 본다.
 - 보존 이유는 `KEEP_CODE` 로그와 `--json` 의 `keep_code`(`tracked`·`unverified`·`files`)에 남는다.
 - 보관: 결과물을 `~/orca/archive/<저장소>/<폴더>/` 로 복제한 뒤 항목마다 **byte 단위**로 대조한다(파일은 `cmp`, 폴더는 `diff -r`). 복사 실패·내용 불일치·보관본에 남는 다른 파일이 있으면 `archive_fail` 로 지우지 않는다. 삭제 직전에 한 번 더 판정·보관해, 판정 뒤 새로 생긴 결과물도 보관한다.
@@ -178,7 +179,7 @@ bash ~/.config/lrm-hubs/release_ws.sh --dispatch <id> [--dry-run] [--json]
 ### 30분 주기와 허브당 10개 상한
 
 - plist: `StartInterval 1800`, `--apply --quiet`. Slack 은 삭제가 있거나 지난번과 다른 실패가 있을 때만 보낸다(같은 실패는 `.ws_gc.lastfail` 로 대조해 반복하지 않는다).
-- `create_worker_ws.sh`: 만들기 전에 부모 허브의 하위 수를 센다. 상한(`LRM_HUB_MAX_CHILDREN`, 기본 10) 이상이면 `ws_gc.sh --parent <허브> --apply` 를 1회 돌리고, 그래도 상한 이상이면 stderr 경고와 `hub_report.py add --kind block` 기록을 남긴다. 정리에는 제한 시간(`LRM_HUB_GC_TIMEOUT`, 기본 60초)이 있어, 넘기면 정리기와 자식 프로세스를 끊고 생성을 계속한다. 정리 실패·시간 초과도 생성을 막지 않는다.
+- `create_worker_ws.sh`: 만들기 전에 부모 허브의 하위 수를 센다. 상한(`LRM_HUB_MAX_CHILDREN`, 기본 10) 이상이면 `ws_gc.sh --parent <허브> --apply` 를 1회 돌리고, 그래도 상한 이상이면 stderr 경고와 `hub_report.py add --kind block` 기록을 남긴다. 정리에는 제한 시간(`LRM_HUB_GC_TIMEOUT`, 기본 60초)이 있어, 넘기면 정리기 프로세스 그룹에 TERM 을 보내고 유예(`LRM_HUB_GC_GRACE`, 기본 5초) 뒤에도 남으면 그룹 전체를 KILL 한 뒤 생성을 계속한다. TERM 을 무시하는 자식도 남기지 않는다. 정리 실패·시간 초과도 생성을 막지 않는다.
 
 시험: `bash tests/ws_gc/run.sh`, `bash tests/release_ws/run.sh`, `bash tests/create_worker_ws/run.sh`.
 

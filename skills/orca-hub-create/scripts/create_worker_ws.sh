@@ -13,6 +13,7 @@ while [ $# -gt 0 ]; do case "$1" in
 CFG_HUB_MAX="${LRM_HUB_MAX_CHILDREN:-10}"
 CFG_WS_GC="${LRM_WS_GC:-$HOME/.config/lrm-hubs/ws_gc.sh}"
 CFG_GC_TIMEOUT="${LRM_HUB_GC_TIMEOUT:-60}"   # 상한 정리에 줄 제한 시간(초). 넘기면 정리를 끊고 생성을 계속함
+CFG_GC_GRACE="${LRM_HUB_GC_GRACE:-5}"        # 시간 초과 때 TERM 뒤 KILL 까지 유예(초)
 CFG_HUB_REPORT="${LRM_HUB_REPORT:-$HOME/.config/lrm-hubs/hub_report.py}"
 count_kids() { # 허브 경로 → 등록된 하위 수. 조회 실패 시 빈 값
   orca worktree list --limit 1000 --json 2>/dev/null | jq -r --arg h "$1" \
@@ -22,18 +23,32 @@ kids=$(count_kids "$HUB")
 if [ -n "$kids" ] && [ "$kids" -ge "$CFG_HUB_MAX" ]; then
   echo "하위 작업 공간 ${kids}개(상한 ${CFG_HUB_MAX}) — 이 허브 하위만 정리 1회 실행" >&2
   gc_rc=0
-  # 제한 시간 안에 못 끝나면 정리기와 그 자식 프로세스 전체를 종료(TERM 뒤 5초 지나면 KILL). 정리 실패·시간 초과여도 생성은 계속
-  python3 -c 'import os, signal, subprocess, sys
-p = subprocess.Popen(sys.argv[2:], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-try:
-    sys.exit(p.wait(int(sys.argv[1])))
-except subprocess.TimeoutExpired:
-    os.killpg(p.pid, signal.SIGTERM)
+  # 제한 시간 안에 못 끝나면 정리기와 그 자식 프로세스 그룹 전체를 종료(TERM 뒤 그룹이 비지 않고 유예가 지나면 KILL). TERM 을 무시하는 자식도 남기지 않음. 정리 실패·시간 초과여도 생성은 계속
+  python3 -c 'import os, signal, subprocess, sys, time
+timeout, grace = float(sys.argv[1]), float(sys.argv[2])
+p = subprocess.Popen(sys.argv[3:], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+pg = p.pid  # start_new_session: 정리기와 자식이 한 프로세스 그룹
+def alive():
     try:
-        p.wait(5)
-    except subprocess.TimeoutExpired:
-        os.killpg(p.pid, signal.SIGKILL)
-    sys.exit(124)' "$CFG_GC_TIMEOUT" bash "$CFG_WS_GC" --parent "$HUB" --apply --quiet --no-slack || gc_rc=$?
+        os.killpg(pg, 0)
+        return True
+    except (ProcessLookupError, PermissionError):  # macOS 는 좀비만 남은 그룹에 EPERM 을 돌려줌
+        return False
+rc = 0
+try:
+    rc = p.wait(timeout)
+except subprocess.TimeoutExpired:
+    rc = 124
+p.poll()  # 종료한 직계 자식을 거둬 좀비로 남지 않게 함
+if alive():  # 시간 초과거나 자식이 남은 경우: TERM 뒤 그룹이 비길 기다리고, 유예가 지나도 남으면 그룹 전체 KILL
+    os.killpg(pg, signal.SIGTERM)
+    end = time.time() + grace
+    while alive() and time.time() < end:
+        p.poll()
+        time.sleep(0.1)
+    if alive():
+        os.killpg(pg, signal.SIGKILL)
+sys.exit(rc)' "$CFG_GC_TIMEOUT" "$CFG_GC_GRACE" bash "$CFG_WS_GC" --parent "$HUB" --apply --quiet --no-slack || gc_rc=$?
   if [ "$gc_rc" = 124 ]; then echo "⚠️ 정리기가 ${CFG_GC_TIMEOUT}초 안에 끝나지 않아 중단 — 생성은 계속(~/orca/archive/ws_gc.log 확인)" >&2
   elif [ "$gc_rc" != 0 ]; then echo "⚠️ 정리기 실행 실패(종료 ${gc_rc}) — ~/orca/archive/ws_gc.log 확인" >&2; fi
   kids=$(count_kids "$HUB")
