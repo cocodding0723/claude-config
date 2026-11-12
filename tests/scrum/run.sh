@@ -77,6 +77,19 @@ for t in Bash Read Write Edit WebFetch mcp__atlassian__createJiraIssue mcp__atla
   printf '%s' "$denied" | tr ',' '\n' | grep -qx "$t" || ko "--disallowedTools" "$t 누락"
 done; ok "--disallowedTools 에 Bash·파일·웹·Atlassian 쓰기 도구 명시"
 
+# ---- 수집 오류 반영(리뷰 지적 5) ----
+reset; echo err-all > "$D/plan-collect"; post --date $WK; rc=$?
+[ $rc = 1 ] && [ ! -e "$D/claude.log" ] && grep -q -- "--kind warn" "$D/sent.log" && grep -q "collect_required_missing" "$D/sent.log" && [ ! -d "$D/draft" ] && ok "prs·commits 수집 둘 다 실패 → 초안 없이 warn(정상 초안으로 확정 안 함)" || ko "수집 전부 실패" "rc=$rc"
+python3 -c 'import json,sys;sys.exit(1 if "2026-11-12" in json.load(open(sys.argv[1]))["sent"] else 0)' "$D/scrum.state.json" && ok "수집 실패한 날은 '보냄' 기록 없음" || ko "수집 실패 기록"
+! grep -q "keyring" "$D/sent.log" && ok "수집 오류 원문(keyring)은 Slack 으로 안 나감" || ko "오류 원문 노출"
+reset; echo err-only > "$D/plan-collect"; post --date $WK; rc=$?
+[ $rc = 1 ] && grep -q "collect_all_empty" "$D/sent.log" && ok "전 출처가 비고 오류가 있으면 실패" || ko "전부 빔" "rc=$rc"
+reset; echo err-prs > "$D/plan-collect"; post --date $WK; rc=$?
+[ $rc = 0 ] && grep -q -- "--kind doc" "$D/sent.log" && grep -q "경고: 재료 수집 누락(prs)" "$D/sent.log" && ok "일부 출처 누락 → 초안은 보내되 누락 출처를 경고 줄로 명시" || ko "일부 누락" "rc=$rc"
+reset; echo badjson > "$D/plan-collect"; post --date $WK; rc=$?
+[ $rc = 1 ] && grep -q "collect_bad_json" "$D/sent.log" && ok "수집 출력이 JSON 이 아니면 실패" || ko "깨진 JSON" "rc=$rc"
+reset; post --date $WK; ! grep -q "수집 누락" "$D/sent.log" && ok "오류 없으면 누락 경고 없음" || ko "정상 경고"
+
 # ---- 실패 시 warn 1건 ----
 reset; for m in claude-fable-5-1 claude-fable-5-2 claude-opus-5-5; do echo fail > "$D/plan-$m"; done; post --date $WK; rc=$?
 [ $rc = 1 ] && [ "$(sent)" = 1 ] && grep -q -- "--kind warn" "$D/sent.log" && grep -q "• 무엇" "$D/sent.log" && grep -q "• 왜" "$D/sent.log" && grep -q "• 결과" "$D/sent.log" && grep -q "👉 답" "$D/sent.log" && ok "전부 실패 → warn 1건(무엇·왜·결과·답 양식), 종료 코드 1" || ko "warn" "rc=$rc $(sent)"

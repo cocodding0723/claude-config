@@ -71,6 +71,8 @@ MAX_LINES = 30  # 칸 길이 상한(11-12 실측 25줄 안팎에 여유)
 RETRY_WAITS = [int(x) for x in os.environ.get("LRM_SCRUM_RETRY_WAITS", "30,90").split(",") if x]  # 발송 API 실패(종료 코드 1)만 재시도
 NET_HOST = os.environ.get("LRM_SCRUM_NET_HOST", "api.anthropic.com")
 NET_WAIT_SEC = int(os.environ.get("LRM_SCRUM_NET_WAIT", "120"))  # 깨어난 직후 네트워크가 붙기를 기다리는 최대 시간
+SOURCES = ("prs", "commits", "hub_reports", "handoffs", "instructions")  # scrum_collect.collect 의 출처 키
+REQUIRED_SOURCES = ("prs", "commits")  # 둘 다 못 모이면 초안이 근거 없음
 SLACK_TAG = "scrum"
 NO_ATLASSIAN = "@@atlassian-unavailable@@"  # 초안 작성 claude 가 Jira·Confluence 를 못 읽었을 때 맨 끝에 붙이는 표시
 NOTIFY_EXIT_API = 1  # slack_notify.sh: 1 API 실패, 2 설정·양식 오류
@@ -137,6 +139,25 @@ def wait_network():
                 return False
             time.sleep(5)
     return True
+
+
+def parse_material(text):
+    """수집기 JSON → (누락 출처 키 목록, 실패 사유 또는 ''). errors 항목은 '<출처>: <원문>' 이며 원문은 Slack 으로 내보내지 않음.
+    필수 입력(prs·commits)이 둘 다 못 모였거나 전 출처가 비면서 오류가 있으면 실패: 인증 실패를 '조용한 날'로 오판하지 않기 위함"""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return [], "collect_bad_json"
+    missing = []
+    for e in data.get("errors") or []:
+        key = str(e).split(":", 1)[0].strip()
+        if key and key not in missing:
+            missing.append(key)
+    if all(k in missing for k in REQUIRED_SOURCES):
+        return missing, "collect_required_missing"
+    if missing and not any(data.get(k) for k in SOURCES):
+        return missing, "collect_all_empty"
+    return missing, ""
 
 
 def build_prompt(date, since, material):
@@ -243,7 +264,7 @@ def local_alert(msg):
         pass
 
 
-def summary_message(date, since, draft, model, missed, no_atl):
+def summary_message(date, since, draft, model, missed, no_atl, lost=()):
     ts = topics(draft)
     n = sum(1 for ln in draft.splitlines() if ln.startswith("    - "))
     lines = ["%s 스크럼 초안 도착" % date.strftime("%m-%d"),
@@ -253,6 +274,8 @@ def summary_message(date, since, draft, model, missed, no_atl):
         lines.append("• 경고: %s 초안이 안 나갔음(그날 Mac 이 자고 있었을 수 있음)" % missed)
     if no_atl:
         lines.append("• 경고: Jira·Confluence 를 못 읽어 PR·커밋·허브 보고만으로 씀(Atlassian MCP 인증 필요)")
+    if lost:
+        lines.append("• 경고: 재료 수집 누락(%s) — 해당 출처 내용이 초안에 빠졌을 수 있음" % ", ".join(lost))
     lines += ["", "참고: 모델 %s · 범위 %s 이후" % (model, since.strftime("%m-%d %H:%M"))]
     return "\n".join(lines)
 
@@ -313,11 +336,18 @@ def run(a, date, state):
     mat = subprocess.run([sys.executable, COLLECT, "--date", date.isoformat()], capture_output=True, text=True)
     log("네트워크 대기 %d초 · 재료 수집 %d초" % (t1 - t0, time.time() - t1))
     fails = []
-    draft, model, no_atl = None, "", False
+    draft, model, no_atl, lost = None, "", False, []
     if mat.returncode != 0:
-        fails.append("재료 수집 실패: %s" % (mat.stderr.strip()[-160:] or mat.returncode))
+        fails.append("collect_failed(rc=%d)" % mat.returncode)
+        log("재료 수집 실패: %s" % mat.stderr.strip()[-160:])
     else:
-        draft, model, fails, no_atl = make_draft(date, since, mat.stdout)
+        lost, why = parse_material(mat.stdout)
+        if lost:
+            log("재료 수집 누락: %s" % ", ".join(lost))
+        if why:
+            fails.append("%s(%s)" % (why, ", ".join(lost)))
+        else:
+            draft, model, fails, no_atl = make_draft(date, since, mat.stdout)
     if draft is None:
         log("초안 실패 — %s" % "; ".join(fails))
         if a.dry_run:
@@ -339,7 +369,7 @@ def run(a, date, state):
         print(draft, end="")
         log("dry-run 완료 — 모델 %s, 초안 %s%s" % (model, path, " (Jira·Confluence 못 읽음)" if no_atl else ""))
         return 0
-    rc, text = notify(["--kind", "doc", "--tag", SLACK_TAG, summary_message(date, since, draft, model, missed, no_atl), str(path)])
+    rc, text = notify(["--kind", "doc", "--tag", SLACK_TAG, summary_message(date, since, draft, model, missed, no_atl, lost), str(path)])
     if rc != 0:
         log("Slack 발송 실패 rc=%d %s — 초안 파일 %s 남김" % (rc, text[:160], path))
         local_alert("Slack 발송 실패. 초안: %s" % path)
