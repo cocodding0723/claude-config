@@ -68,13 +68,13 @@ h2:before{content:"";width:12px;height:12px;background:var(--pink);border:2px so
 .tab{border:3px solid var(--ink);border-radius:12px;background:#fff;padding:5px 12px;font-size:15px}
 .tab.on{background:var(--sky);color:#fff;text-shadow:0 1px 0 var(--ink)}
 .dia{background:#fff;border:3px solid var(--ink);border-radius:14px;padding:8px;overflow-x:auto}
-.dia svg{display:block;width:100%;height:auto;max-height:420px;min-width:520px}
+.dia svg{display:block;width:100%;height:auto;max-height:420px}
 .dia g.entity[data-hit]{cursor:pointer}
 .dia g.entity[data-hit]:hover rect{stroke:var(--pink) !important;stroke-width:4 !important}
 .cap{font-size:13px;color:var(--mut);margin:6px 2px}
 #nodeCode{display:none;margin-top:8px}#nodeCode.on{display:block;animation:popIn .3s}
 ol.why{margin:0;padding-left:22px;line-height:1.6}
-ol.why li{margin-bottom:8px}
+ol.why li{margin-bottom:8px;overflow-wrap:anywhere}
 ol.why span{display:block;font-size:15px}
 .k{display:inline-block;font-size:12px;border:2px solid var(--ink);border-radius:6px;padding:0 5px;margin-right:4px;background:var(--skyS)}
 .k.y{background:var(--lemon)}.k.g{background:var(--mintS)}
@@ -93,7 +93,7 @@ ul.miss{padding-left:20px;line-height:1.6}
 @keyframes scr{0%,100%{transform:none}25%{transform:translate(-6px,3px)}50%{transform:translate(5px,-4px)}75%{transform:translate(-3px,2px)}}
 @keyframes pulse{50%{filter:brightness(1.15)}}
 @keyframes comboUp{0%{opacity:0;transform:translate(-50%,-50%) scale(.3)}25%{opacity:1;transform:translate(-50%,-50%) scale(1.25)}45%{transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(-50%,-150%) scale(1)}}
-@media (max-width:480px){.ask{font-size:19px}.opt{font-size:16px}.cmp{grid-template-columns:1fr}.media .pair{grid-template-columns:1fr}.lobby h1{font-size:26px}}
+@media (max-width:480px){.dia{padding:4px}.dia svg{max-height:none}.ask{font-size:19px}.opt{font-size:16px}.cmp{grid-template-columns:1fr}.media .pair{grid-template-columns:1fr}.lobby h1{font-size:26px}}
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01s !important}}
 </style>
 </head>
