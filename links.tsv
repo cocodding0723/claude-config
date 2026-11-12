@@ -120,6 +120,7 @@ hubs/docs/install-orca-main.md	.config/lrm-hubs/docs/install-orca-main.md	link
 hubs/docs/panel.md	.config/lrm-hubs/docs/panel.md	link
 hubs/docs/progress-digest.md	.config/lrm-hubs/docs/progress-digest.md	link
 hubs/docs/ws-gc.md	.config/lrm-hubs/docs/ws-gc.md	link
+hubs/docs/hub-split.md	.config/lrm-hubs/docs/hub-split.md	link
 hubs/docs/scrum-auto.md	.config/lrm-hubs/docs/scrum-auto.md	link
 hubs/launchd/ai.lrm.slackpoll.plist	Library/LaunchAgents/ai.lrm.slackpoll.plist	copy
 hubs/launchd/ai.lrm.panelcollect.plist	Library/LaunchAgents/ai.lrm.panelcollect.plist	copy

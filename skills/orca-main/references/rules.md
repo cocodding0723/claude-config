@@ -16,6 +16,7 @@
 - 작업 브랜치 로컬 커밋: 승인 불필요.
 - push·PR·merge·rebase·reset --hard·clean·branch -D: 사용자 승인. PR 은 직전에 초안 HTML 검수.
 - 전역 설치·다운로드: 사용자 답을 받은 뒤에만.
+- 허브 분할·병합: 매번 결정 카드 승인 뒤 `hub_split.py run --apply`. 첫 회는 시험 실행만(`~/.config/lrm-hubs/docs/hub-split.md`).
 - 야간 모드 지시가 있으면 추천안으로 자율 확정·로컬 커밋까지, decision-log 기록, 원격 쓰기는 아침 승인 목록.
 
 ## 자원
