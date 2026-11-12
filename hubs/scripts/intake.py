@@ -76,7 +76,7 @@ class Conf:
         self.sent = self.sent or join("intake-sent.json")
         self.hubs_table = self.hubs_table or os.environ.get("LRM_HUBS_TABLE") or join("hubs.tsv")
         self.main_env = self.main_env or os.environ.get("LRM_MAIN_ENV") or join("main.env")
-        self.orca = self.orca or os.environ.get("LRM_ORCA") or shutil.which("orca") or "orca"
+        self.orca = self.orca or mt.find_orca()  # launchd 최소 PATH 에서도 후보 설치 경로까지 찾음
         self.main_spec = self.main_spec or mt.Spec.from_env()
         self.ws_root = self.ws_root or os.environ.get("LRM_HUB_WS_ROOT") or os.path.expanduser("~/orca/workspaces/LoveRevolutionMaker")
 

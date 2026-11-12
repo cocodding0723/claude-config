@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 REPO = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SCRIPTS = os.path.join(REPO, "hubs", "scripts")
@@ -640,6 +641,26 @@ class DeliverTest(Base):
         r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "intake.py"), "--once", "--json"], env=env, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout)["deliver"]["sent"], ["C0001"])
+
+    def test_min_path_finds_orca_in_candidates(self):
+        """launchd 최소 PATH 에는 orca 가 없음 → 후보 설치 경로의 orca 로 하달(11-12 실측: '터미널 목록 조회 실패')"""
+        cand = os.path.join(self.d, "cand", "orca")
+        os.makedirs(os.path.dirname(cand))
+        shutil.copy(FAKE_ORCA, cand)
+        os.chmod(cand, 0o755)
+        self.conf.inbox = os.path.join(self.d, "slack-inbox.jsonl")
+        self.put(msg("ui: a", 1))
+        saved = intake.mt.find_orca.__defaults__
+        intake.mt.find_orca.__defaults__ = (None, None, (cand,))
+        self.addCleanup(setattr, intake.mt.find_orca, "__defaults__", saved)
+        with unittest.mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}):
+            os.environ.pop("LRM_ORCA", None)
+            conf = intake.Conf(inbox=self.conf.inbox, state=self.conf.state, routes_log=self.conf.routes_log, ledger=self.conf.ledger,
+                               table=TABLE, hubs_table=self.conf.hubs_table, main_env=self.conf.main_env, sent=self.conf.sent,
+                               ws_root="/ws", main_spec=self.conf.main_spec)
+        self.assertEqual(conf.orca, cand)
+        intake.intake(conf, NOW)
+        self.assertEqual(intake.deliver(conf, NOW)["sent"], ["C0001"])
 
 
 if __name__ == "__main__":
