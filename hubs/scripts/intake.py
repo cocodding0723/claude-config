@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # 복사·링크 설치에서도 같은 폴더의 ledger 를 찾음
 import ledger  # noqa: E402
 import main_terminal as mt  # noqa: E402
+import slack_push as sp  # noqa: E402  # turn_started 없는 영수증의 화면 보강 확인(confirm_screen·box_state·LRM_PUSH_CONFIRM 설정)을 그대로 씀
 
 HUB_DIR = os.environ.get("LRM_HUB_DIR", os.path.expanduser("~/.config/lrm-hubs"))
 EXIT_IO, EXIT_CONF, EXIT_BUSY = 1, 2, 3
@@ -52,7 +53,7 @@ class Conf:
     max_age_s: int = 86400  # 첫 설치 이관에만 적용
     req_max: int = 80
     budget_s: float = 10.0  # 접수 한 번의 전체 시간 상한(잠금 대기 포함)
-    deliver_s: float = 40.0  # 하달 단계 시간 상한. orca 호출 대기가 길어 접수 예산과 따로 둠
+    deliver_s: float = 60.0  # 하달 단계 시간 상한. orca 호출 대기가 길어 접수 예산과 따로 둠
     sent: str = ""  # 하달 상태 파일 {번호: {st, hub, at, why}}
     hubs_table: str = ""
     main_env: str = ""
@@ -363,7 +364,50 @@ def send_line(run, handle: str, text: str) -> str:
         return "rejected"
     prompt = send.get("prompt") if isinstance(send.get("prompt"), dict) else {}
     stages = prompt.get("stages") if isinstance(prompt.get("stages"), list) else []
-    return "sent" if "turn_started" in stages else "unconfirmed"
+    if "turn_started" in stages:
+        return "sent"
+    return "unconfirmed" if "input_accepted" in stages else "unknown"  # 입력 접수 근거가 있을 때만 화면 보강 확인 대상
+
+
+def screen_probe(run, ok_target):
+    """화면 1회 관찰 함수(sp.confirm_screen 의 check). ok_target(터미널 dict) -> None | 'not_writable' | 그 밖의 사유(= 보낸 터미널이 아님).
+    판정 'submitted' | 'draft' | 'unknown' | 'changed'. 읽기만 함"""
+    def check(handle):
+        rc, d = run(["terminal", "show", "--terminal", handle, "--json"], 20)
+        if rc is None or rc == 127:
+            return "unknown", "show_fail"
+        t = ((d or {}).get("result") or {}).get("terminal") if isinstance(d, dict) else None
+        if rc != 0 or not isinstance(t, dict):
+            return ("changed", "handle_gone") if mt.error_code(d) in mt.HANDLE_GONE_CODES else ("unknown", "show_fail")
+        if t.get("handle") not in (None, handle):
+            return "changed", "handle_gone"
+        why = ok_target(t)
+        if why == "not_writable":
+            return "unknown", why
+        if why:
+            return "changed", why
+        pv = t.get("preview")
+        return sp.box_state(pv) if isinstance(pv, str) else ("unknown", "no_preview")
+    return check
+
+
+def hub_target(t: dict):
+    """허브 터미널 화면 관찰 대상 검증. 경로는 목록 조회로 이미 확인했으므로 같은 핸들이 여전히 살아 있는 claude 인지만 봄"""
+    if t.get("connected") is not True or t.get("orphaned"):
+        return "handle_dead"
+    if t.get("writable") is not True:
+        return "not_writable"
+    return None if t.get("agentIdentity") == "claude" else "not_claude"
+
+
+def send_confirmed(run, handle: str, text: str, ok_target) -> str:
+    """send_line 결과가 'unconfirmed'(입력 접수·turn_started 없음)이면 slack_push 와 같은 화면 재확인으로 제출을 확인:
+    제출 확인 → 'sent', 아니면(입력 칸에 글 남음·화면 판별 불가·읽기 실패) 'unconfirmed'. LRM_PUSH_CONFIRM=off 면 확인하지 않음. 재전송하지 않음"""
+    res = send_line(run, handle, text)
+    if res != "unconfirmed" or not sp.CONFIRM:
+        return res
+    verdict, _, _ = sp.confirm_screen(handle, check=screen_probe(run, ok_target))
+    return "sent" if verdict == "sent" else "unconfirmed"
 
 
 def tell_main(conf: Conf, run, text: str) -> str:
@@ -371,12 +415,13 @@ def tell_main(conf: Conf, run, text: str) -> str:
     slack_socket.send_main 과 같은 원칙: 보내기 전에 check_link 로 메인(경로·claude·pane)임을 확인하고,
     확인 실패가 사람이 고쳐야 풀리는 사유(REDISCOVER)일 때나 입력 전 거절일 때만 재탐색 1회. 조회 실패·쓰기 불가는 보내지 않음"""
     handle = mt.read_handle(conf.main_env)
+    main_ok = lambda t: mt.target_why(t, conf.main_spec)  # noqa: E731
     if handle:
         _, why = mt.check_link(run, conf.main_spec, handle)
         if why and why not in mt.REDISCOVER:
             return "failed"
         if not why:
-            res = send_line(run, handle, text)
+            res = send_confirmed(run, handle, text, main_ok)
             if res in ("sent", "unconfirmed"):
                 return res
             if res != "rejected":
@@ -387,7 +432,7 @@ def tell_main(conf: Conf, run, text: str) -> str:
         new = mt.read_handle(conf.main_env) or ""
     if not new or new == handle:
         return "failed"
-    res = send_line(run, new, text)
+    res = send_confirmed(run, new, text, main_ok)
     return res if res in ("sent", "unconfirmed") else "failed"
 
 
@@ -461,7 +506,7 @@ def deliver(conf: Conf, now: float, run=None, dry: bool = False) -> dict:
                         st[rid] = {"st": ST_SENDING, "hub": hub, "at": int(now)}
                         if not dry:
                             save_sent(conf.sent, st)  # 전송 직전 저장: 이 뒤에 죽으면 재전송 없이 도착 불명 처리
-                        res = send_line(run, handle, line_for(rid, e.get("text") or ""))
+                        res = send_confirmed(run, handle, line_for(rid, e.get("text") or ""), hub_target)
                         if res == "sent":
                             st[rid] = {"st": ST_SENT, "hub": hub, "at": int(now)}
                             out["sent"].append(rid)
@@ -470,7 +515,7 @@ def deliver(conf: Conf, now: float, run=None, dry: bool = False) -> dict:
                                     ledger.set_state(conf.ledger, rid, "진행", None, f"{hub} 허브에 하달", now, False)
                             continue
                         why = {"rejected": "허브 터미널이 입력을 거절함",
-                               "unconfirmed": "입력은 접수됐지만 턴 시작 미확인·도착 여부 불명(재전송 안 함, 허브에서 직접 확인)"}.get(res, "전송 응답 없음·도착 여부 불명(재전송 안 함, 허브에서 직접 확인)")
+                               "unconfirmed": "입력은 접수됐지만 턴 시작·화면 제출을 확인하지 못함·도착 여부 불명(재전송 안 함, 허브에서 직접 확인)"}.get(res, "전송 응답 없음·도착 여부 불명(재전송 안 함, 허브에서 직접 확인)")
                 st[rid] = {"st": ST_FAILED, "hub": hub, "at": int(now), "why": why}
             elif ent.get("st") == ST_SENDING:  # 전송 중 죽은 회차
                 st[rid] = {"st": ST_FAILED, "hub": hub, "at": int(now), "why": "전송 중 중단·도착 여부 불명(재전송 안 함, 허브에서 직접 확인)"}

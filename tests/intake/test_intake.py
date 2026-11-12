@@ -11,6 +11,8 @@ import unittest
 REPO = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SCRIPTS = os.path.join(REPO, "hubs", "scripts")
 TABLE = os.path.join(REPO, "hubs", "intake-routes.tsv")
+# 화면 보강 확인(slack_push 설정)을 시험용으로 짧게. intake 가 slack_push 를 import 하기 전에 정해야 함
+os.environ.update(LRM_PUSH_CONFIRM="1", LRM_PUSH_TEST_CONFIRM_GAP="0.05", LRM_PUSH_CONFIRM_TICK="0.05")
 sys.path.insert(0, SCRIPTS)
 import intake  # noqa: E402
 import ledger  # noqa: E402
@@ -277,10 +279,10 @@ class ProcessTest(Base):
         self.assertTrue(os.path.exists(os.path.join(self.d, "feedback-ledger.tsv")))
 
     def test_copy_install_imports_sibling_ledger(self):
-        """복사 설치본: 설치 폴더에는 intake.py·ledger.py·main_terminal.py 만 있어도 -I 로 import 되어야 함(links.tsv 등록 누락 방지)"""
+        """복사 설치본: 설치 폴더에는 intake.py·ledger.py·main_terminal.py·slack_push.py 만 있어도 -I 로 import 되어야 함(links.tsv 등록 누락 방지)"""
         inst = os.path.join(self.d, "installed")
         os.mkdir(inst)
-        for n in ("intake.py", "ledger.py", "main_terminal.py"):
+        for n in ("intake.py", "ledger.py", "main_terminal.py", "slack_push.py"):
             shutil.copy(os.path.join(SCRIPTS, n), os.path.join(inst, n))
         self.put(msg("a", 1), msg("ui: b", 2))
         r = subprocess.run([sys.executable, "-I", os.path.join(inst, "intake.py"), "--once", "--json"], cwd=self.d, env=self.env(), capture_output=True, text=True)
@@ -329,6 +331,15 @@ class DeliverTest(Base):
     def mode(self, name, value):
         with open(os.path.join(self.fo, name), "w", encoding="utf-8") as f:
             f.write(value)
+
+    DRAFT = "❯ [Pasted text #1 +12 lines]"
+    IDLE = "작업 중\n────────────\n❯ \n────────────\n  ? for shortcuts"
+
+    def screen(self, handle, preview=None, mode="custom"):
+        """핸들별 화면 응답. 가짜 orca 의 show.mode.<핸들> + 공통 show.preview(custom). 시험이 한 핸들만 바꾸도록 같은 preview 는 한 시험에서 한 종류만 씀"""
+        self.mode(f"show.mode.{handle}", mode)
+        if preview is not None:
+            self.mode("show.preview", preview)
 
     def sends(self):
         """[(핸들, 본문)] 전송 순서"""
@@ -446,12 +457,67 @@ class DeliverTest(Base):
     def test_unconfirmed_receipt_is_not_sent(self):
         """입력은 접수됐지만 turn_started 가 없는 영수증(시간 초과 관찰 포함)은 하달 성공이 아님: 보류 + 메인 알림, 재전송 없음"""
         self.mode(f"send.mode.{HUB_H}", "unsubmitted")
+        self.screen(HUB_H, self.DRAFT)  # 화면에 입력 칸 글이 남아 제출 확인 불가
         _, dv = self.go(msg("ui: a", 1))
         self.assertEqual((dv["sent"], dv["notified"]), ([], ["C0001"]))
         self.assertEqual(self.row()["state"], "보류")
-        self.assertIn("턴 시작 미확인", self.sends()[1][1])
+        self.assertIn("화면 제출을 확인하지 못함", self.sends()[1][1])
         intake.deliver(self.conf, NOW)
         self.assertEqual([h for h, _ in self.sends()], [HUB_H, MAIN_H])
+
+    def test_screen_confirm_submitted_counts_as_sent(self):
+        """turn_started 는 없고(Orca 가 Claude 턴 시작을 못 잡는 환경) 화면에서 입력 칸이 비어 제출이 확인되면 하달 성공"""
+        self.mode(f"send.mode.{HUB_H}", "unsubmitted")
+        self.screen(HUB_H, self.IDLE)
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual((dv["sent"], dv["notified"]), (["C0001"], []))
+        self.assertEqual(self.row()["state"], "진행")
+        self.assertEqual([h for h, _ in self.sends()], [HUB_H])
+
+    def test_screen_confirm_draft_holds(self):
+        self.mode(f"send.mode.{HUB_H}", "unsubmitted")
+        self.screen(HUB_H, self.DRAFT)
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual((dv["sent"], dv["notified"]), ([], ["C0001"]))
+        self.assertEqual(self.row()["state"], "보류")
+        self.assertEqual([h for h, _ in self.sends()], [HUB_H, MAIN_H])
+
+    def test_screen_confirm_read_failure_holds(self):
+        self.mode(f"send.mode.{HUB_H}", "unsubmitted")
+        self.screen(HUB_H, mode="unavail")
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual((dv["sent"], dv["notified"]), ([], ["C0001"]))
+        self.assertEqual(self.row()["state"], "보류")
+
+    def test_screen_confirm_other_terminal_holds(self):
+        """확인 중 그 핸들이 다른 터미널(codex)로 바뀌었으면 제출 근거가 아님"""
+        self.mode(f"send.mode.{HUB_H}", "unsubmitted")
+        self.screen(HUB_H, mode="codex")
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual(dv["sent"], [])
+
+    def test_receipt_without_input_accepted_is_not_screen_confirmed(self):
+        self.mode(f"send.mode.{HUB_H}", "nostage")
+        self.screen(HUB_H, self.IDLE)
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual(dv["sent"], [])
+
+    def test_main_notice_screen_confirm_submitted(self):
+        self.terms()
+        self.mode(f"send.mode.{MAIN_H}", "unsubmitted")
+        self.screen(MAIN_H, self.IDLE)
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual(dv["notified"], ["C0001"])
+        self.assertEqual([h for h, _ in self.sends()], [MAIN_H])
+
+    def test_confirm_off_keeps_receipt_only(self):
+        self.mode(f"send.mode.{HUB_H}", "unsubmitted")
+        self.screen(HUB_H, self.IDLE)
+        old = intake.sp.CONFIRM
+        intake.sp.CONFIRM = 0
+        self.addCleanup(setattr, intake.sp, "CONFIRM", old)
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual(dv["sent"], [])
 
     def test_send_line_receipt_classes(self):
         def receipt(accepted=True, stages=("input_accepted",), obs="timed_out"):
@@ -465,6 +531,7 @@ class DeliverTest(Base):
     def test_unconfirmed_main_notice_is_not_retried(self):
         self.terms()
         self.mode(f"send.mode.{MAIN_H}", "unsubmitted")
+        self.screen(MAIN_H, self.DRAFT)
         _, dv = self.go(msg("ui: a", 1))
         self.assertEqual(dv["notified"], ["C0001"])
         intake.deliver(self.conf, NOW)
@@ -559,6 +626,7 @@ class DeliverTest(Base):
         self.terms(self.hub_term(), {**self.hub_term(handle="term_eeeeeeee-0000-4000-8000-000000000005", worktreePath="/main/checkout"), "title": "MAIN-HANDOFF.md 메인"})
         self.mode(f"show.mode.{MAIN_H}", "gone")
         self.mode(f"send.mode.{HUB_H}", "unsubmitted")
+        self.screen(HUB_H, self.DRAFT)
         _, dv = self.go(msg("ui: a", 1))
         self.assertEqual(dv["notified"], ["C0001"])
         self.assertEqual([h for h, _ in self.sends()], [HUB_H, "term_eeeeeeee-0000-4000-8000-000000000005"])

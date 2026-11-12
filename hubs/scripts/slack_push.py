@@ -573,8 +573,9 @@ def screen_check(handle):
     return box_state(pv)
 
 
-def confirm_screen(handle):
+def confirm_screen(handle, check=None):
     """turn_started 없는 접수 영수증의 보강 확인: (판정, 사유 코드, 로그 정보). 판정 'sent' | 'unsubmitted' | 'unknown'.
+    check(handle) -> (판정, 표식)은 화면 1회 관찰 함수. 기본은 메인용 screen_check, 접수기(intake.py)는 허브·메인용 관찰 함수를 넘겨 같은 확인 규칙을 씀.
     CONFIRM 초 동안 CONFIRM_TICK 마다 화면을 다시 읽어 제출 판정이 연속 CONFIRM_STREAK 회면 전달 완료.
     재전송하지 않음(입력 칸에 글이 남아 있으면 중복됨). 확정 전에는 최소 CONFIRM_STREAK 회 읽음"""
     end = time.time() + CONFIRM
@@ -582,7 +583,7 @@ def confirm_screen(handle):
     first_ok = 0.0
     last = ("unknown", "none")
     while True:
-        res, kind = screen_check(handle)
+        res, kind = (check or screen_check)(handle)
         reads += 1
         if res == "changed":
             return "unknown", "target_changed", {"confirm": "changed", "screen": kind, "reads": reads}
