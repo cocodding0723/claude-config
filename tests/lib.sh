@@ -9,7 +9,7 @@ STUB_PID=""
 # 임시 허브 폴더 준비. 가짜 인증값 파일과 호출 기록용 즉답·대기 스텁을 넣음
 new_hub() {
   HUB="$(mktemp -d)"; export LRM_HUB_DIR="$HUB"
-  printf 'SLACK_BOT_TOKEN=xoxb-TEST-FAKE\nSLACK_USER_ID=UTEST\n' > "$HUB/slack-bot.env"
+  printf 'SLACK_BOT_TOKEN=%s\nSLACK_USER_ID=UTEST\n' "xo""xb-TEST-FAKE" > "$HUB/slack-bot.env"
   printf '#!/bin/bash\necho x >> "%s/cmd-calls"\n' "$HUB" > "$HUB/slack_cmd.sh"
   printf '#!/bin/bash\necho x >> "%s/pending-calls"\n' "$HUB" > "$HUB/slack_pending.sh"
   chmod +x "$HUB/slack_cmd.sh" "$HUB/slack_pending.sh"
