@@ -604,6 +604,8 @@ if [ -n "$QUOTE" ]; then
     add_ref_line "원본: 링크 없음"; echo "경고: --quote 링크 조회 실패 — '링크 없음' 표시로 전송" >&2
   fi
 fi
+# 본문에 Slack 메시지 링크가 직접 든 호출(진행 목록 DM 등)도 미리보기를 펼침
+case "$MSG" in *.slack.com/archives/*) UNFURL=1 ;; esac
 
 # 응답 JSON 을 받아 ok/에러 출력 + 성공 시 sent 기록. ts 는 postMessage 만 제공, 파일 업로드는 file_id 로 남김.
 # form_kind(--kind 지정 시), unchecked(--no-check 시), 카드 필드(decision_id·options·recommended·reversible·seq 또는 todo_id)는

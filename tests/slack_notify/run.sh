@@ -761,5 +761,7 @@ run_n --kind done --quote bogus "완료"
 run_n --kind done "링크 없는 일반 전송"
 [ "$(payload '.unfurl_links // "none"')" = none ] && ok "N 링크 없는 메시지는 unfurl 인자 없음(기존 동작 유지)" || ko "N 기존 payload" ""
 
+run_n --kind progress $'진행 목록\n\n- 항목 <https://example.slack.com/archives/Dfake/p1700000000000100|원본>'
+[ "$(payload '.unfurl_links')" = true ] && ok "N 본문에 직접 든 Slack 메시지 링크도 unfurl_links=true" || ko "N 본문 링크 unfurl" "$(cat "$LOG/post.json")"
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
