@@ -191,6 +191,23 @@ def set_state(path: str, rid: str, state: str, evidence, note, now: float, dry: 
     return row
 
 
+def set_owner(path: str, rid: str, owner: str, now: float, dry: bool) -> dict:
+    """담당만 바꿈(허브 분할·병합 이관). 상태·진행은 유지"""
+    owner = clean(owner)
+    if not owner:
+        raise LedgerError("--to 는 비울 수 없음 — 새 담당 지정")
+    with locked(path):
+        rows = read_rows(path)
+        row = next((r for r in rows if r["id"] == rid), None)
+        if row is None:
+            raise LedgerError(f"id 없음: {rid} — list 로 id 확인", EXIT_MISSING)
+        row["owner"] = owner
+        row["updated"] = time.strftime(STAMP, time.localtime(now))
+        if not dry:
+            write_atomic(path, render(rows))
+    return row
+
+
 def public(row: dict) -> dict:
     return {"id": row["id"], "received": row["received"], "request": row["request"], "state": row["state"],
             "owner": row["owner"], "note": row["note"], "evidence": row["evidence"], "updated": row["updated"]}
@@ -210,6 +227,7 @@ def build_parser() -> argparse.ArgumentParser:
                "  ledger.py add --id F19 --req '알림이 늦게 옴' --owner 개인설정\n"
                "  ledger.py set F19 --state 진행 --note '원인 분석 중'\n"
                "  ledger.py set F19 --state 완료 --evidence 3f2a9c1\n"
+               "  ledger.py owner F19 --to ui-popup\n"
                "  ledger.py list --open --json\n"
                "종료 코드: 0 성공, 1 파일 읽기·쓰기 실패, 2 인자·입력 오류(증거 없는 완료 포함), 3 대상 없음·id 중복")
     sub = p.add_subparsers(dest="cmd", required=True, parser_class=Parser)
@@ -224,6 +242,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--evidence", help="증거(경로·커밋 해시). 완료 때 필수")
     s.add_argument("--note", help="진행 설명(생략하면 기존 유지)")
     s.add_argument("--dry-run", action="store_true", help="쓰지 않고 바뀔 항목만 출력")
+    o = sub.add_parser("owner", help="담당 변경", description="담당 칸만 바꿈. 상태·진행은 그대로(허브 이관용).")
+    o.add_argument("id", help="항목 번호")
+    o.add_argument("--to", required=True, help="새 담당(허브 slug)")
+    o.add_argument("--dry-run", action="store_true", help="쓰지 않고 바뀔 항목만 출력")
     ls = sub.add_parser("list", help="항목 목록", description="항목 목록. --open 은 완료 제외.")
     ls.add_argument("--open", action="store_true", help="완료가 아닌 항목만")
     ls.add_argument("--json", action="store_true", help="JSON 배열로 출력")
@@ -240,6 +262,9 @@ def main(argv=None) -> int:
         elif args.cmd == "set":
             row = set_state(path, args.id, args.state, args.evidence, args.note, time.time(), args.dry_run)
             print(("[dry-run] " if args.dry_run else "") + f"변경: {row['id']} → {row['state']} ({row['updated']})")
+        elif args.cmd == "owner":
+            row = set_owner(path, args.id, args.to, time.time(), args.dry_run)
+            print(("[dry-run] " if args.dry_run else "") + f"담당: {row['id']} → {row['owner']} ({row['updated']})")
         else:
             rows = [r for r in read_rows(path) if not (args.open and r["state"] == DONE)]
             if args.json:

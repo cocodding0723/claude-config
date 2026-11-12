@@ -3,4 +3,4 @@
 # 사용: tests/hub_split/run.sh [unittest 인자]   종료 코드: 0 전부 통과, 1 실패
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd -P)
-cd "$HERE" && exec python3 -m unittest discover -v -s . -p 'test_*.py' "$@"
+cd "$HERE" && exec python3 -W ignore::ResourceWarning -m unittest discover -v -s . -p 'test_*.py' "$@"

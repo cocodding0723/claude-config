@@ -52,6 +52,14 @@ class LedgerTest(unittest.TestCase):
         self.assertRegex(row["updated"], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
         self.assertTrue(self.text().startswith(SEED))  # 기존 행 그대로
 
+    def test_owner_changes_only_owner(self):
+        rc, out, _ = run("owner", "F1", "--to", "ui-popup")
+        self.assertEqual(rc, 0)
+        row = ledger.read_rows(self.path)[0]
+        self.assertEqual((row["owner"], row["state"], row["note"]), ("ui-popup", "진행", "원인 분석 중"))
+        self.assertEqual(run("owner", "F9", "--to", "x")[0], 3)
+        self.assertEqual(run("owner", "F1", "--to", " ")[0], 2)
+
     def test_add_duplicate_id_exit_3(self):
         rc, _, err = run("add", "--id", "F1", "--req", "x", "--owner", "y")
         self.assertEqual(rc, 3)

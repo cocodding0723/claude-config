@@ -7,7 +7,7 @@
 
 환경: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs) · LRM_HUBS_TSV 허브 목록 표 · LRM_INTAKE_ROUTES 접수 경로 표
       LRM_HUB_SPLIT_STATE 연속 판정·냉각 기록 · LRM_WS_ROOT 허브 기본 위치 · LRM_WS_GC 작업 공간 정리기 · LRM_ORCA orca 경로
-종료 코드: 0 성공, 1 파일 읽기·쓰기 실패, 2 인자 오류, 3 환경 오류(orca 응답 없음 등 판정 불가)
+종료 코드: 0 성공, 1 파일 읽기·쓰기 실패, 2 인자 오류, 3 환경 오류(orca 응답 없음 등 판정 불가), 4 안전 조건 미충족
 """
 import argparse
 import contextlib
@@ -415,6 +415,337 @@ def cmd_propose(a, run) -> int:
     return 0
 
 
+# ── 실행기 ──────────────────────────────────────────────────────────────────────────────
+EXIT_REFUSED = 4  # 안전 조건 미충족(진행 워커 남음·하위 허브 기동 실패 등). 아무것도 더 진행하지 않음
+NOTE_PARENT = ("[메인→허브] 허브 {kind}: {moved} 작업은 {child} 로 넘어감. 작업 목록에서 빼고 "
+               "hub_status.py write 로 상태 파일을 다시 기록해 주세요. 진행 중 워커는 그대로 이 허브에서 마무리")
+
+
+def run_dir(did: str) -> str:
+    return os.path.join(hub_dir(), "hub-split-runs", did)
+
+
+def write_text(path: str, text: str) -> None:
+    tmp = f"{path}.tmp-{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def intake_text(rid: str) -> str:
+    """접수 기록의 원문. 재하달은 원문 그대로 보냄"""
+    try:
+        with open(routes_log(), encoding="utf-8") as f:
+            for ln in f:
+                try:
+                    d = json.loads(ln)
+                except ValueError:
+                    continue
+                if isinstance(d, dict) and d.get("id") == rid:
+                    return str(d.get("text") or "")
+    except OSError:
+        pass
+    raise SplitError(f"접수 기록에 {rid} 없음 — 부모 허브가 보고한 미착수 작업 번호(C0012 형식)인지 확인", EXIT_USAGE)
+
+
+def py_tool(var: str, name: str, *args) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, tool(var, name), *args], capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+
+
+class Runner:
+    """단계 목록을 순서대로 실행. apply 가 아니면 할 일만 적음. 끝난 단계 번호를 기록해 다음 실행이 이어서 함"""
+
+    def __init__(self, pl: Plan, did: str, apply: bool, run, moves: list, files: list, role_file: str):
+        self.pl, self.did, self.apply, self.run = pl, did, apply, run
+        self.moves, self.files, self.role_file = moves, files, role_file
+        self.hubs = {h.slug: h for h in read_hubs()}
+        self.log = []
+
+    # 공용
+    def hub(self, slug: str) -> Hub:
+        if slug in self.hubs:
+            return self.hubs[slug]
+        par = self.hubs[self.pl.parent]
+        return Hub(slug, self.pl.child_name, self.role_file, par.ws_root, par.repo, self.pl.parent)
+
+    def terminal(self, slug: str) -> str:
+        import intake  # 슬랙 전송 모듈을 끌어오므로 실제 하달 단계에서만 불러옴
+        h, why = intake.find_hub_terminal(self.run, self.hub(slug).path)
+        if not h:
+            raise SplitError(f"{slug} 허브 터미널 확인 실패({why}) — 허브 상태 확인 뒤 같은 명령으로 다시 실행(끝난 단계는 건너뜀)", EXIT_REFUSED)
+        return h
+
+    def send(self, slug: str, text: str) -> str:
+        import intake
+        res = intake.send_confirmed(self.run, self.terminal(slug), text, intake.hub_target)
+        if res != "sent":
+            raise SplitError(f"{slug} 허브로 보내기 결과 {res} — 허브 화면 확인 뒤 다시 실행", EXIT_REFUSED)
+        return res
+
+    def report(self, when: str) -> str:
+        verb = {"split": "분할", "merge": "병합"}[self.pl.kind]
+        mode = "" if self.apply else "(시험) "
+        text = f"{mode}허브 {verb} {when}: {self.pl.parent} ↔ {self.pl.child} ({self.did})"
+        args = ["--kind", "info", "--text", text] + [x for f in self.files for x in ("--file", f)]
+        hub_report(args, dry=not self.apply)
+        return text
+
+    # 단계: 각 함수는 설명 문자열을 돌려줌. apply 가 아니면 아무것도 바꾸지 않음
+    def backup(self):
+        d = os.path.join(run_dir(self.did), "backup")
+        if self.apply:
+            os.makedirs(d, exist_ok=True)
+            for src in (hubs_tsv(), routes_tsv()):
+                dst = os.path.join(d, os.path.basename(src))
+                if not os.path.exists(dst):  # 재실행 때 첫 백업을 덮지 않음
+                    with open(src, "rb") as a, open(dst, "wb") as b:
+                        b.write(a.read())
+            if len(os.listdir(d)) < 2:
+                raise SplitError(f"백업 2개 확인 실패: {d}", EXIT_IO)
+        return f"허브 목록 표·접수 경로 표 백업 → {d}"
+
+    def report_before(self):
+        return "보고: " + self.report("시작")
+
+    def report_after(self):
+        return "보고: " + self.report("완료")
+
+    def create_child(self):
+        pl, par = self.pl, self.hubs[self.pl.parent]
+        role = self.role_file
+        row = "\t".join([pl.child, pl.child_name, role, par.ws_root or "-", par.repo or "-", pl.parent])
+        if not self.apply:
+            return f"허브 목록 표에 행 추가({row.replace(chr(9), ' | ')}) → create_hub.sh 로 하위 허브 기동 → 터미널 확인"
+        if not os.path.exists(expand(role)):
+            raise SplitError(f"역할 파일 없음: {role} — 하위 허브 역할 파일을 먼저 만들고 다시 실행", EXIT_REFUSED)
+        with open(hubs_tsv(), encoding="utf-8") as f:
+            text = f.read()
+        if not any(ln.split("\t")[0] == pl.child for ln in text.splitlines()):
+            write_text(hubs_tsv(), text + ("" if text.endswith("\n") else "\n") + row + "\n")
+        env = dict(os.environ)
+        if par.ws_root not in ("", "-"):
+            env["WS_ROOT"] = expand(par.ws_root)
+        if par.repo not in ("", "-"):
+            env["REPO"] = expand(par.repo)
+        create = os.path.expanduser(os.environ.get("LRM_CREATE_HUB") or "~/.claude/skills/orca-hub-create/scripts/create_hub.sh")
+        p = subprocess.run(["bash", create, "--slug", pl.child, "--name", pl.child_name, "--role-file", expand(role)],
+                           capture_output=True, text=True, timeout=600, env=env, stdin=subprocess.DEVNULL)
+        if p.returncode not in (0, 3):  # 3 = 이미 살아 있음(재실행)
+            raise SplitError(f"하위 허브 생성 실패(rc={p.returncode}): {p.stderr.strip()[-200:]} — 허브 목록 표는 {run_dir(self.did)}/backup 으로 되돌림", EXIT_REFUSED)
+        self.hubs = {h.slug: h for h in read_hubs()}
+        return f"하위 허브 기동, 터미널 {self.terminal(pl.child)}"
+
+    def pending(self):
+        texts = {rid: intake_text(rid) for rid in self.moves}
+        return f"미착수 {len(texts)}건: {', '.join(texts) or '없음'}"
+
+    def redeliver(self):
+        for rid in self.moves:
+            text = intake_text(rid)
+            if self.apply:
+                self.send(self.pl.child, f"[{rid}] {text}")
+        return f"하위 허브로 원문 재하달 {len(self.moves)}건"
+
+    def ledger_owner(self):
+        src, dst = (self.pl.parent, self.pl.child) if self.pl.kind == "split" else (self.pl.child, self.pl.parent)
+        ids = list(self.moves)
+        if self.pl.kind == "merge":
+            p = py_tool("LRM_LEDGER_PY", "ledger.py", "list", "--open", "--json")
+            if p.returncode != 0:
+                raise SplitError(f"장부 읽기 실패: {p.stderr.strip()}", EXIT_IO)
+            names = {src, self.hub(src).intake_name}
+            ids = [r["id"] for r in json.loads(p.stdout or "[]") if r.get("owner") in names]
+        for rid in ids:
+            p = py_tool("LRM_LEDGER_PY", "ledger.py", "owner", rid, "--to", dst, *([] if self.apply else ["--dry-run"]))
+            if p.returncode != 0:
+                raise SplitError(f"장부 담당 변경 실패({rid}): {p.stderr.strip()} — 담당 칸은 {src} 로 되돌림", EXIT_IO)
+        return f"장부 담당 {src} → {dst}: {', '.join(ids) or '없음'}"
+
+    def in_progress(self):
+        return "진행 중 작업·작업 공간은 부모에 둠(완료 보고 경로 유지). PR 닫힌 뒤 relink 로 재연결"
+
+    def routes(self):
+        rows = read_rows_raw(routes_tsv())
+        child_in, par_in = self.hub(self.pl.child).intake_name, self.hub(self.pl.parent).intake_name
+        if self.pl.kind == "split":
+            new = f"{self.pl.prefix}\t{child_in}"
+            if any(ln.split("\t")[0] == self.pl.prefix for ln in rows):
+                return f"접수 경로: 머리말 {self.pl.prefix} 이미 있음(재실행)"
+            idx = next((i for i, ln in enumerate(rows) if ln.startswith("*\t")), len(rows))  # 기본 행('*') 앞에 둠
+            rows.insert(idx, new)
+            desc = f"접수 경로 추가: {self.pl.prefix} → {child_in}"
+        else:
+            hit = [i for i, ln in enumerate(rows) if not ln.startswith("#") and ln.split("\t")[1:2] == [child_in]]
+            for i in hit:
+                rows[i] = rows[i].split("\t")[0] + "\t" + par_in
+            desc = f"접수 경로 {len(hit)}줄: {child_in} → {par_in}"
+        if self.apply:
+            write_text(routes_tsv(), "\n".join(rows) + "\n")
+        return desc
+
+    def idle_check(self):
+        import hub_status
+        data, path, err = hub_status.load(self.pl.child)
+        if err or data is None:
+            raise SplitError(f"{self.pl.child} 상태 파일 없음·손상({path}) — 진행 워커 0 을 확인할 수 없어 병합 안 함", EXIT_REFUSED)
+        if data.get("workers"):
+            raise SplitError(f"{self.pl.child} 진행 워커 {len(data['workers'])}명 — 끝난 뒤 다시 실행", EXIT_REFUSED)
+        return f"{self.pl.child} 진행 워커 0(상태 파일 {data.get('updatedAt')})"
+
+    def relink_all(self):
+        kids = worktree_kids(self.run).get(self.hub(self.pl.child).path, [])
+        to = self.hub(self.pl.parent).path
+        for k in kids:
+            if self.apply:
+                rc, _ = self.run(["worktree", "set", "--worktree", f"path:{k}", "--parent-worktree", f"path:{to}", "--json"], 30)
+                if rc != 0:
+                    raise SplitError(f"작업 공간 부모 변경 실패: {k} — Orca 확인 뒤 다시 실행", EXIT_ENV)
+        if self.apply:
+            left = worktree_kids(self.run).get(self.hub(self.pl.child).path, [])
+            if left:
+                raise SplitError(f"재연결 뒤에도 하위 허브 아래 {len(left)}곳 남음 — orca worktree show 로 확인", EXIT_ENV)
+        return f"하위 허브 작업 공간 {len(kids)}곳(열린 PR 포함) → 부모 허브 아래로 재연결"
+
+    def remove_row(self):
+        rows = read_rows_raw(hubs_tsv())
+        keep = [ln for ln in rows if ln.split("\t")[0] != self.pl.child]
+        if self.apply:
+            write_text(hubs_tsv(), "\n".join(keep) + "\n")
+        return f"허브 목록 표에서 {self.pl.child} 행 삭제({len(rows) - len(keep)}줄)"
+
+    def close_child(self):
+        if not self.apply:
+            return f"{self.pl.child} 코디네이터 터미널 종료(작업 공간 폴더는 지우지 않음)"
+        import intake
+        h, _ = intake.find_hub_terminal(self.run, self.hub(self.pl.child).path)
+        if h:
+            self.run(["terminal", "close", "--terminal", h], 30)
+        return f"{self.pl.child} 터미널 종료({h or '이미 없음'})"
+
+    def parent_status(self):
+        moved = ", ".join(self.moves) if self.pl.kind == "split" else "하위 허브의"
+        text = NOTE_PARENT.format(kind={"split": "분할", "merge": "병합"}[self.pl.kind], moved=moved or "없음", child=self.pl.child if self.pl.kind == "split" else self.pl.parent)
+        if self.apply:
+            self.send(self.pl.parent, text)
+        return f"부모 허브에 상태 파일 재기록 요청: {text[:60]}…"
+
+    def steps(self):
+        if self.pl.kind == "split":
+            names = ["backup", "report_before", "create_child", "pending", "redeliver", "ledger_owner", "in_progress", "routes", "parent_status", "report_after"]
+        else:
+            names = ["backup", "report_before", "idle_check", "ledger_owner", "routes", "relink_all", "remove_row", "close_child", "parent_status", "report_after"]
+        return names
+
+    def go(self) -> dict:
+        prog_path = os.path.join(run_dir(self.did), "progress.json")
+        done = []
+        if os.path.exists(prog_path):
+            with open(prog_path, encoding="utf-8") as f:
+                done = json.load(f).get("done", [])
+        for i, name in enumerate(self.steps(), 1):
+            if name in done:
+                self.log.append({"step": i, "name": name, "status": "skip", "detail": "이전 실행에서 끝남"})
+                continue
+            try:
+                detail = getattr(self, name)()
+            except SplitError as e:
+                self.log.append({"step": i, "name": name, "status": "failed", "detail": str(e)})
+                raise
+            self.log.append({"step": i, "name": name, "status": "done" if self.apply else "plan", "detail": detail})
+            if self.apply:
+                done.append(name)
+                os.makedirs(run_dir(self.did), exist_ok=True)
+                write_text(prog_path, json.dumps({"decision_id": self.did, "plan": asdict(self.pl), "done": done}, ensure_ascii=False, indent=2))
+        if self.apply:
+            with locked(state_path()):
+                st = load_state()
+                for slug in (self.pl.parent, self.pl.child):
+                    st.setdefault("events", {}).setdefault(slug, {})[f"{self.pl.kind}_at"] = int(time.time())
+                st.get("streaks", {}).pop(self.pl.child if self.pl.kind == "merge" else self.pl.parent, None)
+                save_state(st)
+        return {"mode": "apply" if self.apply else "dry-run", "decision_id": self.did, "plan": asdict(self.pl), "steps": self.log}
+
+
+def read_rows_raw(path: str) -> list:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read().splitlines()
+    except OSError as e:
+        raise SplitError(f"표 읽기 실패({path}: {e.strerror})", EXIT_IO)
+
+
+def plan_from(a) -> Plan:
+    st = load_state()
+    prop = st.get("proposals", {}).get(a.decision_id)
+    if prop:
+        pl = Plan(prop["kind"], prop["parent"], prop["child"], prop.get("child_name", ""), prop.get("prefix", ""))
+    elif a.apply:
+        raise SplitError(f"기록된 제안 없음: {a.decision_id} — propose --record 로 카드를 남기고 사용자 승인 뒤 실행", EXIT_REFUSED)
+    elif not a.kind or not a.child:
+        raise SplitError("시험 실행은 기록된 제안의 --decision-id 또는 --kind·--hub·--child(·--child-name·--prefix) 필요")
+    else:
+        pl = Plan(a.kind, a.hub, a.child, a.child_name, a.prefix)
+    if pl.kind == "split" and pl.child in {h.slug for h in read_hubs()} and os.path.exists(os.path.join(run_dir(a.decision_id), "progress.json")):
+        return pl  # 재실행: 하위 허브가 이미 표에 있음
+    check_plan(pl, read_hubs())
+    return pl
+
+
+def cmd_run(a, run) -> int:
+    pl = plan_from(a)
+    role = a.role_file or f"~/.config/lrm-hubs/roles/role-{pl.child}.txt"
+    r = Runner(pl, a.decision_id, a.apply, run, a.move, a.file, role)
+    try:
+        out = r.go()
+    except SplitError as e:
+        out = {"mode": "apply" if a.apply else "dry-run", "decision_id": a.decision_id, "plan": asdict(pl), "steps": r.log, "error": str(e)}
+        print(json.dumps(out, ensure_ascii=False, indent=2) if a.json else render_steps(out), file=sys.stdout)
+        raise
+    print(json.dumps(out, ensure_ascii=False, indent=2) if a.json else render_steps(out))
+    return 0
+
+
+def render_steps(out: dict) -> str:
+    mark = {"plan": "·", "done": "✅", "skip": "↷", "failed": "❌"}
+    lines = [f"[{'실행' if out['mode'] == 'apply' else '시험: 바꾸지 않음'}] {out['plan']['kind']} {out['plan']['parent']} ↔ {out['plan']['child']} ({out['decision_id']})"]
+    lines += [f"{mark[s['status']]} {s['step']:>2}. {s['name']}: {s['detail']}" for s in out["steps"]]
+    return "\n".join(lines)
+
+
+def cmd_relink(a, run) -> int:
+    """분할 후속: PR 이 닫힌 작업 공간만 하위 허브 아래로 재연결. 열린 PR 은 부모에 둠(CI 실패 담당이 부모 기준)"""
+    st = load_state()
+    prop = st.get("proposals", {}).get(a.decision_id)
+    if not prop or prop["kind"] != "split":
+        raise SplitError(f"분할 제안 기록 없음: {a.decision_id} — 분할 실행 뒤에만 재연결", EXIT_REFUSED)
+    hubs = {h.slug: h for h in read_hubs()}
+    if prop["child"] not in hubs:
+        raise SplitError(f"하위 허브 {prop['child']} 가 허브 목록 표에 없음 — 분할 실행이 끝났는지 확인", EXIT_REFUSED)
+    par, child = hubs[prop["parent"]].path, hubs[prop["child"]].path
+    kids = worktree_kids(run).get(par, [])
+    rows = []
+    for ws in a.ws:
+        if ws not in kids:
+            rows.append({"ws": ws, "action": "skip", "why": "부모 허브 아래 작업 공간 아님"})
+            continue
+        br = subprocess.run(["git", "-C", ws, "branch", "--show-current"], capture_output=True, text=True).stdout.strip()
+        p = subprocess.run(["gh", "pr", "list", "--head", br, "--state", "open", "--json", "number"], cwd=ws, capture_output=True, text=True) if br else None
+        if p is None or p.returncode != 0:
+            rows.append({"ws": ws, "action": "skip", "why": "브랜치·PR 조회 실패 — 판정 불가라 부모에 둠"})
+            continue
+        if json.loads(p.stdout or "[]"):
+            rows.append({"ws": ws, "action": "keep", "why": "열린 PR 있음 — 닫힌 뒤 다시 실행"})
+            continue
+        if a.apply:
+            rc, _ = run(["worktree", "set", "--worktree", f"path:{ws}", "--parent-worktree", f"path:{child}", "--json"], 30)
+            ok = rc == 0 and ws in worktree_kids(run).get(child, [])
+            rows.append({"ws": ws, "action": "moved" if ok else "failed", "why": "" if ok else "부모 경로 대조 실패"})
+        else:
+            rows.append({"ws": ws, "action": "would_move", "why": "PR 없음·닫힘"})
+    print(json.dumps({"mode": "apply" if a.apply else "dry-run", "to": child, "items": rows}, ensure_ascii=False, indent=2))
+    return EXIT_IO if any(r["action"] == "failed" for r in rows) else 0
+
+
 # ── 명령줄 ──────────────────────────────────────────────────────────────────────────────
 EPILOG = """예:
   hub_split.py measure                           # 읽기 전용 판정(정리기 시험 실행 포함)
@@ -422,7 +753,10 @@ EPILOG = """예:
   hub_split.py measure --record                  # 주기 점검: 연속 횟수 기록
   hub_split.py propose --kind split --hub ui-layer --child ui-popup --child-name 'UI 팝업' --prefix ui팝업 \\
       --decision-id D-SPLIT2 --reason '작업 공간 11개' --file docs/split.html --record
-종료 코드: 0 성공, 1 파일 읽기·쓰기 실패, 2 인자 오류, 3 환경 오류(orca 응답 없음 등)
+  hub_split.py run --decision-id D-SPLIT2 --move C0012 --move C0015    # 시험(기본): 단계만 출력
+  hub_split.py run --decision-id D-SPLIT2 --move C0012 --apply          # 승인 뒤 실행
+  hub_split.py relink --decision-id D-SPLIT2 --ws ~/orca/workspaces/X/LRM-1 --apply
+종료 코드: 0 성공, 1 파일 읽기·쓰기 실패, 2 인자 오류, 3 환경 오류(orca 응답 없음 등), 4 안전 조건 미충족(진행 워커·제안 기록 없음 등)
 """
 
 
@@ -459,6 +793,28 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--record", action="store_true", help="outbox 에 실제 기록하고 제안을 기록 파일에 남김")
     pr.add_argument("--json", action="store_true")
     pr.set_defaults(fn=cmd_propose)
+    r = sub.add_parser("run", help="분할·병합 실행(기본 --dry-run)", epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter,
+                       description="문서의 이관 순서대로 실행. 기본은 할 일만 출력. --apply 는 propose --record 로 남긴 결정 번호만 받음. "
+                                   "끝난 단계를 hub-split-runs/<결정 번호>/progress.json 에 남겨 중간에 멈춰도 다시 실행하면 이어서 함.")
+    r.add_argument("--decision-id", required=True, help="승인받은 결정 번호")
+    r.add_argument("--move", action="append", default=[], metavar="ID", help="(split) 부모 허브가 보고한 미착수 작업 번호(반복)")
+    r.add_argument("--file", action="append", default=[], help="전후 보고에 붙일 문서(반복)")
+    r.add_argument("--role-file", default="", help="(split) 하위 허브 역할 파일(기본 ~/.config/lrm-hubs/roles/role-<child>.txt)")
+    r.add_argument("--kind", choices=("split", "merge"), help="(시험, 제안 기록 없을 때) 종류")
+    r.add_argument("--hub", default="", help="(시험) 부모 허브")
+    r.add_argument("--child", default="", help="(시험) 하위 허브")
+    r.add_argument("--child-name", default="")
+    r.add_argument("--prefix", default="")
+    mode = r.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="(기본) 바꾸지 않고 단계만 출력")
+    mode.add_argument("--apply", action="store_true", help="실제 실행")
+    r.add_argument("--json", action="store_true")
+    r.set_defaults(fn=cmd_run)
+    rl = sub.add_parser("relink", help="분할 후속: PR 닫힌 작업 공간을 하위 허브 아래로", epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    rl.add_argument("--decision-id", required=True)
+    rl.add_argument("--ws", action="append", default=[], required=True, help="옮길 작업 공간 경로(반복)")
+    rl.add_argument("--apply", action="store_true", help="실제 재연결(기본 시험)")
+    rl.set_defaults(fn=cmd_relink)
     return p
 
 
