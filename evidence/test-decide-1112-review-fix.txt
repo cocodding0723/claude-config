@@ -1,0 +1,7 @@
+# 리뷰 수정 2건 후 재실행 (2026-11-12)
+$ bash tests/slack_poll/reply.sh   — 결과: PASS 44, FAIL 0
+$ bash tests/slack_poll/decide.sh  — 결과: PASS 72, FAIL 0
+$ bash tests/slack_poll/react.sh   — 결과: PASS 80, FAIL 0
+$ bash tests/slack_poll/push.sh    — 184 PASS, 0 FAIL (이전 증거 파일의 91은 오기)
+$ bash tests/slack_poll/ack.sh     — 결과: PASS 91, FAIL 0
+# 회귀 시험(reply.sh C 구역): 스레드 글+반응·글끼리·앞 회차 글+반응·글+추천 충돌, 글 답 대기 종료, 자유 글 대기 유지

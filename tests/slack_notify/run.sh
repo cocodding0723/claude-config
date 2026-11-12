@@ -21,6 +21,7 @@ chmod 755 "$BIN/python3"
 API=http://127.0.0.1:9
 FAKE_TOKEN="fake-token-0123456789-abcdefghij"
 unset LRM_FORMAT
+export LRM_BTN_WARN=off  # 버튼 없음 경고는 J 에서만 확인(기존 시험이 stderr 0줄을 봄)
 
 HOME_DIR="" CFG=""
 newhome() { # 이름: 설정 파일만 있는 새 HOME(로그·sent 기록 분리용)
@@ -31,7 +32,7 @@ newhome() { # 이름: 설정 파일만 있는 새 HOME(로그·sent 기록 분�
 newhome main
 
 run_n() { # 인자를 slack_notify.sh 에 그대로 전달. 결과: RC, $SB/out, $SB/err, $LOG/post.json
-  : > "$LOG/calls.log"; : > "$LOG/post.json"
+  : > "$LOG/calls.log"; : > "$LOG/post.json"; : > "$LOG/posts.log"
   HOME="$HOME_DIR" PATH="$BIN:$PATH" SLACK_API_BASE="$API" FAKE_CURL_LOG="$LOG" bash "$NOTIFY" "$@" > "$SB/out" 2> "$SB/err"
   RC=$?
 }
@@ -478,7 +479,8 @@ grep -q '^경고: 본문 줄 머리에 선택지 이모지' "$SB/err" && ok "H �
 LRM_FORMAT=strict run_n --kind decide --options "$OK3" --recommend 3 --decision-id D-0011 "$CBODY"
 [ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "H strict: 답 줄을 도구가 채우므로 통과" || ko "H strict" "rc=$RC $(cat "$SB/err")"
 run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0012 "$CBODY" "$SB/f.txt"
-[ "$RC" = 0 ] && text | grep -qxF ':one: 오전 9시' && [ "$(lastrec | jq -r '[.kind,.decision_id] | join(",")')" = "file,D-0012" ] && ok "H 파일 첨부 설명글에도 카드 줄, sent 기록에 decision_id" || ko "H 첨부" "$(text) / $(lastrec)"
+[ "$RC" = 0 ] && sed -n 1p "$LOG/posts.log" | jq -r '.attachments[0].blocks[0].text.text' | grep -qxF ':one: 오전 9시' && [ "$(tail -n 2 "$CFG/slack-sent.jsonl" | head -n 1 | jq -r '[.kind,.decision_id] | join(",")')" = "text,D-0012" ] \
+  && ok "H 파일 첨부 카드: 선택지 줄은 버튼 카드 메시지에, sent 기록에 decision_id(순서는 J)" || ko "H 첨부" "$(cat "$LOG/posts.log") / $(lastrec)"
 run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0013 "$(printf '주제\n\n• 왜: ✅ 와 ❌')"
 text | grep -qxF '• 왜: :비서-추천대로: 와 :비서-보류:' && text | grep -qF ':white_check_mark: 추천대로 · :x: 보류' && ok "H 본문 ✅❌ 는 기존 치환, 답 줄은 표준 :white_check_mark:·:x:(치환 안 됨)" || ko "H 치환 경계" "$(text)"
 # 거부(종료 코드 2, API 호출 0회): 인자 값·조합
@@ -631,6 +633,24 @@ printf 'raise SystemExit(1)\n' > "$SB/alive.sh"
 run_n --kind progress --alive "점검$ANS"
 [ "$RC" = 0 ] && [ "$(text | sed -n 2p)" = "" ] && ok "Y 생존 조회 실패 → 줄 없이 전송" || ko "Y 조회 실패" "rc=$RC"
 unset LRM_BOT_ALIVE
+
+# ---- J. 첨부 + 번호 카드: 버튼 카드를 먼저, 파일은 카드 스레드에 / 버튼 없는 결정 카드 경고 -------------------
+newhome j; : > "$LOG/posts.log"
+printf 'x' > "$SB/clip.mp4"
+run_n --kind decide --options '1=A 안,2=B 안' --recommend 2 --decision-id D-0J01 "주제" "$SB/clip.mp4"
+c1=$(sed -n 1p "$LOG/posts.log"); c2=$(sed -n 2p "$LOG/posts.log")
+[ "$RC" = 0 ] && [ "$(printf '%s' "$c1" | jq -r '.attachments[0].blocks[1].elements | map(.value) | join(",")')" = 'D-0J01|1,D-0J01|2,D-0J01|custom' ] \
+  && ok "J 첨부+--options: 첫 호출이 버튼 달린 카드(chat.postMessage)" || ko "J 카드 먼저" "rc=$RC $c1"
+[ "$(printf '%s' "$c2" | jq -r '.thread_ts')" = 1700000000.000100 ] && [ "$(printf '%s' "$c2" | jq -r '.files[0].title')" = clip.mp4 ] \
+  && ok "J 파일은 카드 ts 의 스레드로 업로드" || ko "J 파일 스레드" "$c2"
+[ "$(wc -l < "$CFG/slack-sent.jsonl" | tr -d ' ')" = 2 ] && [ "$(sed -n 1p "$CFG/slack-sent.jsonl" | jq -r '[.ts,.decision_id,.kind]|join(",")')" = '1700000000.000100,D-0J01,text' ] \
+  && [ "$(sed -n 2p "$CFG/slack-sent.jsonl" | jq 'has("decision_id")')" = false ] && ok "J 보낸 기록: 카드(ts·decision_id) 1줄 + 파일 1줄(카드 필드 없음)" || ko "J 보낸 기록" "$(cat "$CFG/slack-sent.jsonl")"
+run_n --kind decide --options '1=A 안,2=B 안' --recommend 2 --decision-id D-0J02 "주제" "$SB/none.mp4"
+[ "$RC" = 2 ] && nocall && ok "J 첨부 파일이 없으면 카드도 보내지 않음(종료 코드 2)" || ko "J 파일 없음" "rc=$RC"
+LRM_BTN_WARN=on run_n --kind decide --choices 2 "주제"
+[ "$RC" = 0 ] && grep -q '선택지 버튼 없음' "$SB/err" && ok "J --options 없는 결정 카드 → 버튼 없음 경고(전송은 함)" || ko "J 버튼 없음 경고" "rc=$RC $(cat "$SB/err")"
+LRM_BTN_WARN=on run_n --kind decide --options '1=A 안,2=B 안' --recommend 2 --decision-id D-0J03 "주제"
+! grep -q '선택지 버튼 없음' "$SB/err" && ok "J --options 카드는 경고 없음" || ko "J 정상 카드 경고" "$(cat "$SB/err")"
 
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

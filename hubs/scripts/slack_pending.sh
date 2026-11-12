@@ -126,6 +126,8 @@ def main():
         if d.get("type") == "reaction":
             reacted[d.get("parent_ts")] = d  # 같은 메시지에 여러 반응이면 마지막 것
             by_msg.setdefault(d.get("parent_ts"), []).append(d)
+        elif d.get("type") == "thread_reply" and d.get("kind") == "decide" and d.get("action") in ANSWER_ACTIONS:
+            by_msg.setdefault(d.get("parent_ts"), []).append(d)  # 스레드 글 선택·추천도 결정 답(반응과 같은 입력). 자유 글은 답이 아님
     # 번호 카드는 어떤 반응이든 닫지 않고 card_state 가 닫힘으로 본 것만 닫음. 옛 카드는 기존대로 반응이 있으면 닫음
     # 결정 번호 형식이 틀린 기록(손상·위조)은 번호 카드로 안 보고 옛 경로로 보냄: 줄에 번호를 그대로 넣지 않고, 상태가 없어 영원히 대기로 남는 일도 막음
     cards = {s["ts"]: card_state(s, by_msg.get(s["ts"], [])) for s in sent

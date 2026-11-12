@@ -322,6 +322,17 @@ def answer_text(it):
     return f"결정 {did} = 추천대로(선택 {n})" if act == "approve" else None
 
 
+def reply_text(it):
+    """결정 카드 스레드 글의 해석 문장. 선택·추천은 '결정 D-0001 = 선택 2(문구) (스레드 글)', 해석 못 한 글은 '결정 D-0001 답(자유 글)'. 카드 글이 아니면 None"""
+    did = it.get("decision_id")
+    if it.get("type") != "thread_reply" or it.get("kind") != "decide" or not isinstance(did, str) or not DECISION_ID_RE.fullmatch(did):
+        return None
+    if it.get("action") == "free":
+        return f"결정 {did} 답(자유 글)"
+    said = answer_text(it)
+    return f"{said} (스레드 글)" if said else None
+
+
 def react_line(ln, it):
     """반응 1건 = 한 줄: 이모지 이름·해석(번호 카드·할 일은 해석 문장, 그 밖은 action)·종류·대상 메시지 제목(tag)"""
     tag = one_line(it.get("tag") or "", 30)
@@ -342,7 +353,8 @@ def render(items, batch_path, react):
         cut = len(body) > min(MSG_CHARS, room)
         body = body[:min(MSG_CHARS, room)]
         used += len(body)
-        out.append(f"- #{ln} [{label(it)}] ts={ts_text(it)}{kind_text(it)}")
+        said = reply_text(it)
+        out.append(f"- #{ln} [{label(it)}] ts={ts_text(it)}{kind_text(it)}" + (f" → {said}" if said else ""))
         out += quote(body) if body else []
         if cut:
             out.append("> " + CUT_NOTE)
@@ -561,8 +573,9 @@ def screen_check(handle):
     return box_state(pv)
 
 
-def confirm_screen(handle):
+def confirm_screen(handle, check=None):
     """turn_started 없는 접수 영수증의 보강 확인: (판정, 사유 코드, 로그 정보). 판정 'sent' | 'unsubmitted' | 'unknown'.
+    check(handle) -> (판정, 표식)은 화면 1회 관찰 함수. 기본은 메인용 screen_check, 접수기(intake.py)는 허브·메인용 관찰 함수를 넘겨 같은 확인 규칙을 씀.
     CONFIRM 초 동안 CONFIRM_TICK 마다 화면을 다시 읽어 제출 판정이 연속 CONFIRM_STREAK 회면 전달 완료.
     재전송하지 않음(입력 칸에 글이 남아 있으면 중복됨). 확정 전에는 최소 CONFIRM_STREAK 회 읽음"""
     end = time.time() + CONFIRM
@@ -570,7 +583,7 @@ def confirm_screen(handle):
     first_ok = 0.0
     last = ("unknown", "none")
     while True:
-        res, kind = screen_check(handle)
+        res, kind = (check or screen_check)(handle)
         reads += 1
         if res == "changed":
             return "unknown", "target_changed", {"confirm": "changed", "screen": kind, "reads": reads}

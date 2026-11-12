@@ -33,8 +33,10 @@ from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
 
-sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # 링크로 설치돼도 원본 폴더의 공용 모듈을 찾음
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # 링크·-I 실행에서도 같은 폴더의 공용 모듈(card_actions·main_terminal·ledger_sync)을 찾음
 import card_actions as actions  # noqa: E402
+import ledger  # noqa: E402
+import ledger_sync  # noqa: E402
 import main_terminal as mt  # noqa: E402
 
 DIR = os.environ.get("LRM_HUB_DIR", os.path.expanduser("~/.config/lrm-hubs"))
@@ -140,6 +142,15 @@ def warn_slack(thread: str, text: str) -> None:
     note_thread("warn", thread, text)
 
 
+def said_text(did: str, extra: dict, label: str) -> str:
+    """메인 전달 문장. slack_push.py 의 스레드 글·반응 해석과 같은 머리: '결정 D-0001 = 선택 2(문구) (버튼)', 직접 입력은 '결정 D-0001 답(자유 글): 원문'"""
+    if extra.get("action") == "custom":
+        return f"결정 {did} 답(자유 글): {extra.get('text', '')}"
+    pick = extra.get("pick")
+    name = re.sub(r"^\d+\.\s*", "", label)
+    return f"결정 {did} = " + (f"선택 {pick}({name})" if isinstance(pick, int) else name) + " (버튼)"
+
+
 class Decide:
     """결정 카드 버튼·직접 입력 처리. 수신 값은 데이터로만 씀(실행 안 함)"""
 
@@ -202,20 +213,20 @@ class Decide:
         status, entry = actions.try_take(did)  # 비차단: 다른 프로세스가 등록부 잠금을 쥐어도 수신 스레드는 멈추지 않음
         if status == "busy":  # 등록 여부 불명(처리 중). 일반 카드로 오인하지 않고 별도 스레드가 잠금을 기다려 이어서 처리
             log(f"결정 {did} 등록부 잠금 사용 중 — 백그라운드에서 이어서 처리")
-            threading.Thread(target=self.settle, args=(did, ts, title, label, extra.get("pick")), daemon=True).start()
+            threading.Thread(target=self.settle, args=(did, ts, title, label, extra), daemon=True).start()
             return
-        self.route(entry, did, ts, title, label, extra.get("pick"))
+        self.route(entry, did, ts, title, label, extra)
 
-    def settle(self, did: str, ts: str, title: str, label: str, pick) -> None:
+    def settle(self, did: str, ts: str, title: str, label: str, extra: dict) -> None:
         """잠금을 기다려 take 한 뒤 route. 답은 inbox 에 이미 기록돼 있어 프로세스가 죽어도 사라지지 않음"""
-        self.route(actions.take(did), did, ts, title, label, pick)
+        self.route(actions.take(did), did, ts, title, label, extra)
 
-    def route(self, entry, did: str, ts: str, title: str, label: str, pick) -> None:
-        """감시기가 건 카드(entry 있음)는 후속 동작만 실행하고 메인에는 전달하지 않음(메인이 같은 일을 또 하지 않게). 일반 카드는 메인 전달"""
+    def route(self, entry, did: str, ts: str, title: str, label: str, extra: dict) -> None:
+        """감시기가 건 카드(entry 있음)는 후속 동작만 실행하고 메인에는 전달하지 않음(메인이 같은 일을 또 하지 않게). 일반 카드는 메인 전달(결정 번호 머리줄)"""
         if entry is not None:
-            threading.Thread(target=self.run_action, args=(entry, did, ts, pick), daemon=True).start()
+            threading.Thread(target=self.run_action, args=(entry, did, ts, extra.get("pick")), daemon=True).start()
             return
-        ok = send_main(f"[Slack→메인] 결정: {title or did} = {label} ({ts})")
+        ok = send_main(f"[Slack→메인] {said_text(did, extra, label)} ({ts})")
         if not ok:
             warn_slack(ts, f"메인 전달 실패: {title or did} = {label}\n\n• 무엇: 버튼 답은 기록했지만 메인 터미널로 못 보냄\n• 결과: 메인에 직접 알려 주세요")
         log(f"결정 {did} 버튼 답 기록 · 메인 전달 {'성공' if ok else '실패'}")
@@ -327,6 +338,43 @@ class Trigger:
             log(f"{reason} → 수집 실패 {type(err).__name__}")
 
 
+class LedgerTick:
+    """피드백 장부 → Slack 진행 스레드 동기화를 감시 회차마다 호출.
+    장부는 파일이라 Slack 이벤트가 없음. 이미 토큰을 가진 이 프로세스의 감시 루프(30초)가 해시만 비교하고,
+    바뀐 회차에만 Slack 을 부름(ledger_sync.sync). 429 대기가 감시 루프를 막지 않게 스레드로 돌리고 동시 실행은 1개로 제한"""
+
+    def __init__(self, web, me: str) -> None:
+        self.api, self.me = ledger_sync.SlackApi(web), me
+        self._busy = threading.Lock()
+        self._last_error = ""
+
+    def tick(self) -> None:
+        conf = ledger_sync.Conf()
+        if not os.path.exists(conf.ledger) or not self._busy.acquire(blocking=False):
+            return  # 장부 없음(빈 부모 방지)·이전 회차 진행 중
+        try:
+            threading.Thread(target=self._run, args=(conf,), daemon=True).start()
+        except Exception:  # 스레드 생성 실패(자원 부족)면 잠금을 돌려 다음 회차가 이어가게 하고 감시 루프는 살림
+            self._busy.release()
+            log("장부 동기화 스레드 시작 실패")
+
+    def _run(self, conf) -> None:
+        try:
+            conf.user_id = self.me
+            res = ledger_sync.sync(conf, self.api)
+            self._last_error = ""
+            if res["status"] not in ("unchanged", "busy"):  # busy = CLI 등 다른 프로세스가 동기화 중
+                log(f"장부 동기화 {res['status']} 호출={res['calls']} 답글={res['replies']} {res.get('error', '')}".rstrip())
+        except ledger.LedgerError as err:  # 장부 내용 오류는 원인·조치 문장이라 그대로 남김. 같은 문장은 한 번만
+            if str(err) != self._last_error:
+                self._last_error = str(err)
+                log(f"장부 동기화 중단: {err}")
+        except Exception as err:  # 장부 쪽 오류가 수신기를 죽이지 않게 한 줄만 남김
+            log(f"장부 동기화 실패 {type(err).__name__}")
+        finally:
+            self._busy.release()
+
+
 class Pulse:
     """수신·재연결 기록. 마지막 이벤트가 없어도 정상(사용자가 안 쓰는 동안)이라 끊김 판정에는 쓰지 않음"""
 
@@ -404,13 +452,15 @@ def swap(old, make):
     return fresh
 
 
-def watch(client, make, trigger: Trigger, pulse: Pulse, timing: Timing) -> int:
+def watch(client, make, trigger: Trigger, pulse: Pulse, timing: Timing, ledgers: LedgerTick | None = None) -> int:
     start = time.monotonic()
     last_alive = last_refresh = last_watch = start
     down_since: float | None = None
     fails = 0
     while True:
         time.sleep(timing.check_s)
+        if ledgers is not None:
+            ledgers.tick()
         now = time.monotonic()
         up = is_up(client)
         if up:
@@ -466,7 +516,9 @@ def main() -> int:
     timing = Timing.from_env()
     trigger = Trigger(timing.debounce_s)
     pulse = Pulse()
-    decide = Decide(WebClient(token=bot_token), me)
+    web = WebClient(token=bot_token)
+    decide = Decide(web, me)
+    ledgers = LedgerTick(web, me)
 
     def on_request(c: SocketModeClient, req: SocketModeRequest) -> None:
         pulse.touch()
@@ -503,7 +555,7 @@ def main() -> int:
         return 2
     log("연결됨")
     trigger.fire("시작")  # 끊긴 동안 쌓인 것 한 번 수집
-    return watch(client, make, trigger, pulse, timing)
+    return watch(client, make, trigger, pulse, timing, ledgers)
 
 
 if __name__ == "__main__":

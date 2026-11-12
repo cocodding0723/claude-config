@@ -1,0 +1,82 @@
+$ bash tests/ledger/run.sh
+test_install_copies_every_local_module_the_receiver_imports (test_install.InstalledReceiverTest.test_install_copies_every_local_module_the_receiver_imports) ... ok
+test_installed_receiver_starts_without_import_error (test_install.InstalledReceiverTest.test_installed_receiver_starts_without_import_error)
+토큰 없는 빈 설정 파일로 시작 → import 를 통과해 설정 오류(종료 2)로 끝나야 함. ModuleNotFoundError 면 종료 1 ... ok
+test_add_appends_row_in_intake_state (test_ledger.LedgerTest.test_add_appends_row_in_intake_state) ... ok
+test_add_duplicate_id_exit_3 (test_ledger.LedgerTest.test_add_duplicate_id_exit_3) ... ok
+test_atomic_write_failure_keeps_original_and_leaves_no_temp (test_ledger.LedgerTest.test_atomic_write_failure_keeps_original_and_leaves_no_temp) ... ok
+test_cell_with_quote_char_round_trips (test_ledger.LedgerTest.test_cell_with_quote_char_round_trips) ... ok
+test_check_rows_rejects_hand_edited_done_without_evidence (test_ledger.LedgerTest.test_check_rows_rejects_hand_edited_done_without_evidence)
+리뷰 재현: 장부를 직접 고쳐 증거 없이 완료로 바꾸면 set 의 거부를 우회함 ... ok
+test_check_rows_rejects_unknown_state_empty_and_duplicate_id (test_ledger.LedgerTest.test_check_rows_rejects_unknown_state_empty_and_duplicate_id) ... ok
+test_concurrent_adds_lose_nothing (test_ledger.LedgerTest.test_concurrent_adds_lose_nothing) ... ok
+test_done_with_blank_evidence_rejected (test_ledger.LedgerTest.test_done_with_blank_evidence_rejected) ... ok
+test_done_with_evidence_records_it (test_ledger.LedgerTest.test_done_with_evidence_records_it) ... ok
+test_done_without_evidence_rejected_and_file_untouched (test_ledger.LedgerTest.test_done_without_evidence_rejected_and_file_untouched) ... ok
+test_dry_run_does_not_write (test_ledger.LedgerTest.test_dry_run_does_not_write) ... ok
+test_help_lists_commands_and_exit_codes (test_ledger.LedgerTest.test_help_lists_commands_and_exit_codes) ... ok
+test_list_open_excludes_done_and_json_shape (test_ledger.LedgerTest.test_list_open_excludes_done_and_json_shape) ... ok
+test_quoted_tab_and_newline_stay_in_one_cell_and_survive_set (test_ledger.LedgerTest.test_quoted_tab_and_newline_stay_in_one_cell_and_survive_set)
+리뷰 재현: 요청 칸의 인용된 탭·줄바꿈이 항목을 둘로 쪼개고 set 이 잘린 장부를 덮어쓰던 결함 ... ok
+test_quotes_survive_roundtrip (test_ledger.LedgerTest.test_quotes_survive_roundtrip) ... ok
+test_row_wider_than_seven_columns_is_rejected_before_any_write (test_ledger.LedgerTest.test_row_wider_than_seven_columns_is_rejected_before_any_write) ... ok
+test_set_state_updates_time_and_note (test_ledger.LedgerTest.test_set_state_updates_time_and_note) ... ok
+test_set_unknown_id_exit_3_and_bad_state_exit_2 (test_ledger.LedgerTest.test_set_unknown_id_exit_3_and_bad_state_exit_2) ... ok
+test_tabs_and_newlines_in_values_flattened (test_ledger.LedgerTest.test_tabs_and_newlines_in_values_flattened) ... ok
+test_unclosed_quote_is_rejected (test_ledger.LedgerTest.test_unclosed_quote_is_rejected) ... ok
+test_write_goes_through_temp_then_replace (test_ledger.LedgerTest.test_write_goes_through_temp_then_replace) ... ok
+test_api_error_keeps_state_so_next_round_retries (test_sync.SyncTest.test_api_error_keeps_state_so_next_round_retries) ... ok
+test_creates_parent_when_missing_and_saves_ts_with_mode_600 (test_sync.SyncTest.test_creates_parent_when_missing_and_saves_ts_with_mode_600) ... ok
+test_day_change_refreshes_parent_without_replies (test_sync.SyncTest.test_day_change_refreshes_parent_without_replies) ... ok
+test_deleted_parent_is_recreated (test_sync.SyncTest.test_deleted_parent_is_recreated) ... ok
+test_dry_run_also_rejects_done_without_evidence (test_sync.SyncTest.test_dry_run_also_rejects_done_without_evidence) ... ok
+test_dry_run_ignores_lock_and_never_writes_lock_file (test_sync.SyncTest.test_dry_run_ignores_lock_and_never_writes_lock_file) ... ok
+test_dry_run_prints_payload_without_writing_state (test_sync.SyncTest.test_dry_run_prints_payload_without_writing_state) ... ok
+test_find_parent_scans_history_pages_for_bot_parent_only (test_sync.SyncTest.test_find_parent_scans_history_pages_for_bot_parent_only) ... ok
+test_hand_edited_done_without_evidence_is_rejected_before_any_slack_call (test_sync.SyncTest.test_hand_edited_done_without_evidence_is_rejected_before_any_slack_call) ... ok
+test_lock_held_by_another_process_makes_sync_busy (test_sync.SyncTest.test_lock_held_by_another_process_makes_sync_busy) ... /Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/unittest/case.py:606: ResourceWarning: unclosed file <_io.TextIOWrapper name=3 encoding='UTF-8'>
+  if method() is not None:
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ok
+test_long_retry_after_defers_and_skips_until_time_passes (test_sync.SyncTest.test_long_retry_after_defers_and_skips_until_time_passes) ... ok
+test_lost_or_corrupt_state_adopts_existing_parent_without_reply_flood (test_sync.SyncTest.test_lost_or_corrupt_state_adopts_existing_parent_without_reply_flood) ... ok
+test_many_changes_bundled_into_at_most_n_replies (test_sync.SyncTest.test_many_changes_bundled_into_at_most_n_replies) ... ok
+test_missing_ledger_is_empty_not_crash (test_sync.SyncTest.test_missing_ledger_is_empty_not_crash) ... ok
+test_new_item_reply_and_summary_shape (test_sync.SyncTest.test_new_item_reply_and_summary_shape) ... ok
+test_old_state_snapshot_without_request_owner_is_not_treated_as_change (test_sync.SyncTest.test_old_state_snapshot_without_request_owner_is_not_treated_as_change) ... ok
+test_only_changed_items_get_replies_and_parent_updated (test_sync.SyncTest.test_only_changed_items_get_replies_and_parent_updated) ... ok
+test_parent_post_with_unknown_result_is_found_next_round (test_sync.SyncTest.test_parent_post_with_unknown_result_is_found_next_round) ... ok
+test_partial_reply_failure_does_not_repeat_sent_replies (test_sync.SyncTest.test_partial_reply_failure_does_not_repeat_sent_replies) ... ok
+test_request_or_owner_change_alone_gets_a_reply (test_sync.SyncTest.test_request_or_owner_change_alone_gets_a_reply) ... ok
+test_retries_exhausted_defers (test_sync.SyncTest.test_retries_exhausted_defers) ... ok
+test_retry_after_honored_on_429_then_succeeds (test_sync.SyncTest.test_retry_after_honored_on_429_then_succeeds) ... ok
+test_same_hash_makes_zero_calls (test_sync.SyncTest.test_same_hash_makes_zero_calls) ... ok
+test_second_sync_while_first_is_posting_is_busy_and_makes_one_parent (test_sync.SyncTest.test_second_sync_while_first_is_posting_is_busy_and_makes_one_parent) ... ok
+test_slack_text_hides_internal_ids_prefixes_branches_hashes_and_arrows (test_sync.SyncTest.test_slack_text_hides_internal_ids_prefixes_branches_hashes_and_arrows) ... ok
+test_state_and_owner_change_in_one_line (test_sync.SyncTest.test_state_and_owner_change_in_one_line) ... ok
+test_state_save_failure_after_parent_post_does_not_make_second_parent (test_sync.SyncTest.test_state_save_failure_after_parent_post_does_not_make_second_parent) ... ok
+test_summary_shows_only_todays_done (test_sync.SyncTest.test_summary_shows_only_todays_done) ... ok
+test_unwritable_state_stops_before_any_parent_is_posted (test_sync.SyncTest.test_unwritable_state_stops_before_any_parent_is_posted) ... ok
+test_url_evidence_becomes_a_readable_link_in_reply_and_parent (test_sync.SyncTest.test_url_evidence_becomes_a_readable_link_in_reply_and_parent) ... ok
+test_ledger_error_logs_cause_once_until_it_clears (test_tick.TickTest.test_ledger_error_logs_cause_once_until_it_clears) ... ok
+test_ledger_present_runs_sync_with_user_id (test_tick.TickTest.test_ledger_present_runs_sync_with_user_id) ... ok
+test_no_ledger_no_sync (test_tick.TickTest.test_no_ledger_no_sync) ... ok
+test_overlapping_tick_skipped_and_error_does_not_raise (test_tick.TickTest.test_overlapping_tick_skipped_and_error_does_not_raise) ... 11-12 13:46:47 [socket] 장부 동기화 실패 TypeError
+ok
+test_thread_start_failure_releases_lock_and_does_not_raise (test_tick.TickTest.test_thread_start_failure_releases_lock_and_does_not_raise)
+리뷰 지적: Thread.start 실패가 감시 루프로 번지고 잠금이 남아 이후 회차가 전부 건너뛰어짐 ... 11-12 13:46:47 [socket] 장부 동기화 스레드 시작 실패
+ok
+
+----------------------------------------------------------------------
+Ran 58 tests in 2.737s
+
+OK
+
+$ LRM_LEDGER=/nonexistent/none.tsv bash tests/slack_socket/run.sh | tail -3
+PASS  모든 시나리오 로그·표준출력에 토큰·사용자 ID·예외 본문 0건
+
+결과: PASS 46, FAIL 0
+
+$ bash tests/install/run.sh | tail -2
+
+결과: PASS 96, FAIL 0
