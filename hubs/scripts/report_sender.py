@@ -10,7 +10,13 @@ kind=decide 는 스레드 답글이 아니라 slack_notify.sh --kind decide --op
 상태 bad 에 보고 id 를 기록해 재시도 대상에서 빼고, 원래 주제 스레드(없으면 DM)에 원인·조치 경고를 1건만 보냄.
 동시 실행은 상태 파일 옆 .lock 비차단 flock 으로 1개. 다른 회차가 진행 중이면 busy 로 건너뜀.
 
-환경: LRM_HUB_DIR 작업 폴더 · LRM_REPORT_OUTBOX outbox · LRM_REPORT_STATE 상태 파일 · LRM_REPORT_NOTIFY 전송 스크립트(기본 같은 폴더 slack_notify.sh)
+첨부: 보고의 files(--file)는 본문 뒤에 Slack 파일로 올림. 올리는 곳은 일반 보고 = 주제 스레드, 지정 스레드 보고 = 그 스레드,
+결정 카드 = 카드 스레드(카드를 먼저 올림. 파일 업로드 메시지에는 버튼을 달 수 없음). 파일마다 알림 스크립트를 1회 호출(업로드 방식은 거기에 있음).
+없는 파일·폴더·크기 초과는 입력 문제라 재시도 없이 스레드에 '첨부 실패: 이유' 한 줄만 남기고 보고는 계속함. 네트워크 등 일시 실패는 보고 재시도 규칙(BACKOFF)을 따르고 올린 파일은 다시 올리지 않음.
+HTML 은 html_preview.sh 로 390폭 미리보기 PNG 를 만들어 이어서 올림. 미리보기를 못 만들면 생략하고 계속함.
+본문에 로컬 경로만 있고 첨부가 없으면 로그에 경고(접수 경고와 같은 판정 hub_report.unattached_paths).
+
+환경: LRM_HUB_DIR 작업 폴더 · LRM_REPORT_OUTBOX outbox · LRM_REPORT_STATE 상태 파일 · LRM_REPORT_NOTIFY 전송 스크립트(기본 같은 폴더 slack_notify.sh) · LRM_REPORT_PREVIEW HTML 미리보기 스크립트(기본 같은 폴더 html_preview.sh)
       LRM_LEDGER 장부(주제 제목용) · LRM_LEDGER_STATE ledger_sync 상태(진행 스레드 부모 ts) · LRM_REPORT_SENT 전송 기록(채널 조회) · LRM_REPORT_BUDGET_S 회차 시간 예산
 종료 코드: 0 성공(처리할 것 없음·busy 포함), 1 일부 전송 실패(재시도 대상), 2 설정·입력 오류·상태 파일 손상(전송 중단, 복구 안내 출력)
 """
@@ -38,6 +44,10 @@ PERMANENT_RC = 2  # 알림 스크립트 종료 코드: 설정·인자·양식 �
 # 종료 코드 2 지만 사용자가 파일을 만들면 풀리는 환경 문제 = 일시. stderr 전체가 이 줄과 같을 때만 인정(입력값이 섞인 메시지를 부분 일치로 분류하지 않음)
 USER_FIX_LINES = ("slack-bot.env 없음 — 사용자 설정 필요",)
 NOTIFY_TIMEOUT_S = 30
+UPLOAD_TIMEOUT_S = 120  # 파일 업로드는 본문 전송보다 오래 걸릴 수 있음
+PREVIEW_TIMEOUT_S = 30
+PREVIEW_SUFFIX = "#preview"  # 미리보기 단계 키(att_done 에 소스 경로 + 이 접미사)
+HTML_EXTS = (".html", ".htm")
 DEFAULT_BUDGET_S = 40.0  # 회차 시간 예산. 넘기면 새 전송을 시작하지 않고 다음 회차로 넘김
 MAX_PER_RUN = 10
 LINE_MAX = 60
@@ -50,6 +60,7 @@ class Conf:
     outbox: str = ""
     state: str = ""
     notify: str = ""
+    preview: str = ""
     ledger: str = ""
     sync_state: str = ""
     sent: str = ""
@@ -65,6 +76,7 @@ class Conf:
         self.outbox = self.outbox or hub_report.outbox_path()
         self.state = self.state or env("LRM_REPORT_STATE") or join("report-sender.state.json")
         self.notify = self.notify or env("LRM_REPORT_NOTIFY") or os.path.join(os.path.dirname(os.path.realpath(__file__)), "slack_notify.sh")
+        self.preview = self.preview or env("LRM_REPORT_PREVIEW") or os.path.join(os.path.dirname(os.path.realpath(__file__)), "html_preview.sh")
         self.ledger = self.ledger or env("LRM_LEDGER") or join("feedback-ledger.tsv")  # intake.py 와 같은 기본 경로
         self.sync_state = self.sync_state or env("LRM_LEDGER_STATE") or join("ledger-sync.state.json")
         self.sent = self.sent or env("LRM_REPORT_SENT") or join("slack-sent.jsonl")
@@ -83,13 +95,14 @@ class NotifyError(Exception):
         self.permanent, self.counts = permanent, counts
 
 
-def run_notify(conf: Conf, args: list, deadline: float) -> str:
-    """전송 스크립트 1회 호출 → 새 메시지 ts. 실패는 NotifyError(사유 한 줄, 비밀 값 가림)"""
+def run_notify(conf: Conf, args: list, deadline: float, upload: bool = False) -> str:
+    """전송 스크립트 1회 호출 → 새 메시지 ts. 실패는 NotifyError(사유 한 줄, 비밀 값 가림).
+    upload=True 는 파일 업로드 호출: 알림 스크립트가 ts 없이 'ok' 만 출력하므로 그것도 성공으로 보고 빈 문자열을 돌려줌"""
     left = deadline - time.monotonic()
     if left <= 0:
         raise NotifyError("회차 시간 예산 초과", counts=False)
     try:
-        p = subprocess.run([conf.notify, *args], capture_output=True, text=True, timeout=min(NOTIFY_TIMEOUT_S, left))
+        p = subprocess.run([conf.notify, *args], capture_output=True, text=True, timeout=min(UPLOAD_TIMEOUT_S if upload else NOTIFY_TIMEOUT_S, left))
     except subprocess.TimeoutExpired:
         raise NotifyError("전송 시간 초과")
     except OSError as err:
@@ -97,6 +110,8 @@ def run_notify(conf: Conf, args: list, deadline: float) -> str:
     last = (p.stdout.strip().splitlines() or [""])[-1]
     if p.returncode == 0 and last.startswith("ok ") and last[3:].strip():
         return last[3:].strip()
+    if upload and p.returncode == 0 and last == "ok":
+        return ""
     why = " ".join((p.stderr.strip() or p.stdout.strip() or f"종료 코드 {p.returncode}").split())[:ERR_MAX]
     perm = p.returncode == PERMANENT_RC and p.stderr.strip() not in USER_FIX_LINES
     raise NotifyError("비밀 값 포함 오류 숨김" if hub_status.SECRET_RE.search(why) else why, permanent=perm)
@@ -260,8 +275,6 @@ def body_text(rep: dict) -> str:
         out = [lines[0]] + ([""] + [f"• {ln}" for ln in lines[1:]] if lines[1:] else [])
     else:
         out = [f"{label} · {rep['hub']}", ""] + [f"• {ln}" for ln in lines]
-    if rep["files"]:
-        out += ["", "참고: " + ", ".join(rep["files"])]
     return "\n".join(out)
 
 
@@ -278,6 +291,62 @@ def decide_args(rep: dict) -> list:
     return a + (["--reversible", rep["reversible"]] if rep.get("reversible") else [])
 
 
+def make_preview(conf: Conf, path: str, tmp: str, deadline: float) -> str:
+    """HTML → 390폭 미리보기 PNG 경로. 스크립트·Chrome 이 없거나 실패하면 빈 문자열(첨부는 계속)"""
+    left = deadline - time.monotonic()
+    if not (os.access(conf.preview, os.X_OK) and left > 0):
+        return ""
+    out = os.path.join(tmp, os.path.splitext(os.path.basename(path))[0] + "-preview.png")
+    try:
+        p = subprocess.run([conf.preview, os.path.abspath(os.path.expanduser(path)), out], capture_output=True, text=True, timeout=min(PREVIEW_TIMEOUT_S, left))
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+    return out if p.returncode == 0 and os.path.isfile(out) else ""
+
+
+def attach_failed(conf: Conf, rep: dict, target: str, name: str, why: str, deadline: float) -> None:
+    """스레드에 '첨부 실패: 이유' 한 줄. 이 줄 전송이 실패해도 보고는 계속함(원인은 로그에 남음)"""
+    line = f"첨부 실패: {name} — {why}"
+    log(conf, f"{rep['id']} {line}")
+    with contextlib.suppress(NotifyError):
+        run_notify(conf, ["--tag", rep["hub"], "--thread", target, line], deadline)
+
+
+def send_files(conf: Conf, rep: dict, rs: dict, st: dict, target: str, deadline: float) -> None:
+    """첨부 파일을 target 스레드에 올림. 올린 파일은 att_done 에 바로 저장해 재시도 때 다시 올리지 않음.
+    입력 문제(파일 없음·크기 초과·알림 스크립트의 영구 오류)는 한 줄 알리고 넘어가고, 일시 실패는 NotifyError 로 올려 보고 재시도 규칙을 탐"""
+    done = rs.setdefault("att_done", [])
+    with tempfile.TemporaryDirectory(prefix="report-preview-") as tmp:
+        for path in rep["files"]:
+            name = os.path.basename(path) or path
+            jobs = [(path, name)]
+            if path.lower().endswith(HTML_EXTS) and path + PREVIEW_SUFFIX not in done:
+                jobs.append((path + PREVIEW_SUFFIX, ""))
+            for key, label in jobs:
+                if key in done:
+                    continue
+                src = path
+                if key.endswith(PREVIEW_SUFFIX):  # 미리보기는 업로드 직전에 만듦. 못 만들면 생략으로 기록
+                    src = make_preview(conf, path, tmp, deadline)
+                    label = os.path.basename(src)
+                    if not src:
+                        log(conf, f"{rep['id']} 미리보기 생략: {name}")
+                        done.append(key)
+                        save_state(conf.state, st)
+                        continue
+                why = hub_report.file_problem(src)
+                try:
+                    if why:
+                        raise NotifyError(why, permanent=True)
+                    run_notify(conf, ["--tag", rep["hub"], "--thread", target, f"첨부: {label}", src], deadline, upload=True)
+                except NotifyError as err:
+                    if not err.permanent:
+                        raise NotifyError(f"첨부 실패: {label} — {err}", counts=err.counts)
+                    attach_failed(conf, rep, target, label, str(err), deadline)
+                done.append(key)
+                save_state(conf.state, st)
+
+
 def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
     """보고 1건 전송. 단계(topic·body·line)마다 상태를 저장하고, 끝나면 결과 요약을 돌려줌. 실패는 NotifyError"""
     rs = st["reports"].setdefault(rep["id"], {})
@@ -286,8 +355,10 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
     if rep.get("thread"):  # 지정 스레드 답글. 진행 스레드 한 줄은 올리지 않음
         if "body_ts" not in rs:
             _, _, kind = hub_report.KINDS[rep["kind"]]
+            warn_unattached(conf, rep)
             rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind, "--thread", rep["thread"], body_text(rep)], deadline)
             save_state(conf.state, st)
+        send_files(conf, rep, rs, st, rep["thread"], deadline)
         rs["line_ts"] = ""
         rs["sent"] = int(time.time())
         save_state(conf.state, st)
@@ -298,12 +369,14 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
         save_state(conf.state, st)
     topic = st["topics"].get(key, {})
     if "body_ts" not in rs:
+        warn_unattached(conf, rep)
         if decide:
             rs["body_ts"] = run_notify(conf, decide_args(rep) + [body_text(rep)], deadline)
         else:
             _, _, kind = hub_report.KINDS[rep["kind"]]
             rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind, "--thread", topic["ts"], body_text(rep)], deadline)
         save_state(conf.state, st)
+    send_files(conf, rep, rs, st, rs["body_ts"] if decide else topic["ts"], deadline)
     if "line_ts" not in rs:
         parent = read_json_file(conf.sync_state).get("ts", "")
         if parent:
@@ -316,6 +389,12 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
     rs["sent"] = int(time.time())
     save_state(conf.state, st)
     return {"topic_ts": topic.get("ts", ""), "body_ts": rs["body_ts"], "line_ts": rs["line_ts"]}
+
+
+def warn_unattached(conf: Conf, rep: dict) -> None:
+    """본문에 로컬 경로만 있고 첨부가 없는 보고를 로그로 경고(접수 시점 경고와 같은 판정). 본문 첫 전송 때 1번"""
+    if found := hub_report.unattached_paths(rep["text"], rep["files"]):
+        log(conf, f"경고: 보고 {rep['id']} 본문에 로컬 경로({', '.join(found[:3])})만 있고 첨부 없음 — hub_report.py --file 로 첨부")
 
 
 def warn_stop(conf: Conf, rep: dict, st: dict, why: str, permanent: "bool | None", deadline: float) -> None:

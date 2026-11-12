@@ -39,6 +39,11 @@ DECISION_ID_ERR = "--decision-id 형식 오류: D-영문·숫자 1~16자 — 예
 TS_RE = re.compile(r"^\d{1,12}\.\d{1,9}$")
 MAX_LINES, MAX_CHARS, MAX_TITLE = 3, 400, 40  # 본문 3줄 이내. decide 첫 줄은 양식 A 제목 상한
 MAX_FILES = 5
+MAX_FILE_BYTES = 50 * 1024 * 1024  # 첨부 1건 크기 상한. 넘으면 전송기가 첨부 실패로 처리
+# 문서·이미지·영상 확장자. 본문 경로 판정(local_paths)과 같은 정의를 접수·전송 양쪽이 씀
+DOC_EXTS = ("html", "htm", "md", "pdf", "txt", "csv", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "png", "jpg", "jpeg", "gif", "webp", "svg", "mp4", "mov", "webm", "mkv")
+# 로컬 경로 후보: 절대(/…)·홈(~/…)·상대(./ ../ 포함, 폴더 구분 있거나 파일명만) + 위 확장자. URL 중간(앞이 : / 글자)은 제외
+LOCAL_PATH_RE = re.compile(r"(?<![\w:/.~-])(?:~/|/|\.{1,2}/)?(?:[\w.\-가-힣]+/)*[\w\-가-힣][\w.\-가-힣]*\.(?:" + "|".join(DOC_EXTS) + r")(?![A-Za-z0-9_/])", re.I)
 EXIT_IO, EXIT_USAGE = 1, 2
 
 
@@ -58,6 +63,36 @@ def check_decision_id(did) -> None:
     """형식이 틀리면 ReportError(종료 코드 2). 비밀 검사 뒤에 호출해 입력 값을 메시지에 되비추지 않음"""
     if not DECISION_ID_RE.fullmatch(did or ""):
         raise ReportError(DECISION_ID_ERR)
+
+
+def local_paths(text: str) -> list:
+    """본문에 적힌 로컬 파일 경로 후보(문서·이미지·영상 확장자). 접수 경고와 전송기 로그 경고가 이 판정 하나를 씀"""
+    return [m.group(0) for m in LOCAL_PATH_RE.finditer(text or "")]
+
+
+def unattached_paths(text: str, files) -> list:
+    """--file 첨부 없이 본문에만 적힌 경로. 첨부가 하나라도 있으면 빈 목록"""
+    return [] if files else local_paths(text)
+
+
+def file_problem(path: str) -> str:
+    """첨부할 수 없는 사유(없음·폴더·크기 초과). 올릴 수 있으면 빈 문자열. 입력 문제라 재시도해도 같은 결과"""
+    p = os.path.expanduser(path)
+    try:
+        st = os.stat(p)
+    except OSError:
+        return "파일 없음"
+    if not os.path.isfile(p):
+        return "파일이 아님"
+    if st.st_size > MAX_FILE_BYTES:
+        return f"크기 초과({st.st_size // (1024 * 1024)}MB > {MAX_FILE_BYTES // (1024 * 1024)}MB)"
+    return ""
+
+
+def resolve_file(path: str) -> str:
+    """접수 시점 경로 정규화. 존재하는 경로만 ~·상대를 절대 경로로(전송기는 다른 작업 폴더에서 돎). 없는 경로는 그대로 둠"""
+    p = os.path.abspath(os.path.expanduser(path))
+    return p if os.path.exists(p) else path
 
 
 def has_secret(*texts: str) -> bool:
@@ -266,7 +301,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--task", required=True, help=f"작업 번호(예 C0012). 없으면 '{NO_TASK}'")
     a.add_argument("--kind", required=True, metavar="|".join(KINDS), help="보고 종류")  # 값 검사는 make_report 가 함(비밀 검사 뒤)
     a.add_argument("--text", required=True, help=f"본문 {MAX_LINES}줄·{MAX_CHARS}자 이내. decide 는 첫 줄이 결정 제목")
-    a.add_argument("--file", action="append", default=[], dest="files", help="증거 경로(반복 가능, 최대 5개)")
+    a.add_argument("--file", action="append", default=[], dest="files", help="Slack 에 첨부할 문서·이미지·영상 경로(반복 가능, 최대 5개). 본문에 경로만 쓰지 않음")
     a.add_argument("--options", help="(decide) '1=문구,2=문구'")
     a.add_argument("--recommend", help="(decide) 추천 번호")
     a.add_argument("--decision-id", help="(decide) 결정 번호 D-영문·숫자")
@@ -287,6 +322,12 @@ def main(argv=None) -> int:
         if args.cmd == "add":
             rep = make_report(args.hub, args.task, args.kind, args.text, args.files,
                               args.options, args.recommend, args.decision_id, args.reversible, args.thread)
+            rep["files"] = [resolve_file(f) for f in rep["files"]]
+            for f in rep["files"]:
+                if why := file_problem(f):
+                    sys.stderr.write(f"경고: --file {f} 첨부 불가({why}) — 기록은 하고 전송기가 '첨부 실패' 한 줄을 남김\n")
+            if found := unattached_paths(rep["text"], rep["files"]):
+                sys.stderr.write(f"경고: 본문에 로컬 경로({', '.join(found[:3])})만 있고 --file 첨부 없음 — 사용자는 경로를 열 수 없음. --file 로 첨부\n")
             rep, fresh = add(path, rep, time.time(), args.dry_run)
             if args.json:
                 print(json.dumps({"id": rep["id"], "added": fresh and not args.dry_run, "duplicate": not fresh}, ensure_ascii=False))

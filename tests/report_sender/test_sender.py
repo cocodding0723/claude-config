@@ -55,15 +55,19 @@ class SenderTest(unittest.TestCase):
             f.write(str(value))
 
     def test_first_report_makes_topic_thread_and_one_progress_line(self):
-        rep = self.report(files=["docs/a.html"])
+        self.conf.preview = self.p("no-preview.sh")  # 미리보기는 test_attach 가 다룸
+        with open(self.p("a.html"), "w") as f:
+            f.write("<p>x</p>")
+        rep = self.report(files=[self.p("a.html")])
         res = report_sender.run(self.conf)
         self.assertEqual((res["status"], res["sent"], res["failed"]), ("done", 1, 0))
-        topic, body, line = self.calls()
+        topic, body, upload, line = self.calls()
         self.assertIn("progress", topic)
         self.assertIn("알림 시각 통일", topic[-1])  # 주제 시작 메시지에 장부 요청 이름
         self.assertEqual(body[body.index("--thread") + 1], "1700000000.000001")  # 본문은 주제 스레드 답글
         self.assertEqual(body[body.index("--kind") + 1], "done")
-        self.assertIn("참고: docs/a.html", body[-1])
+        self.assertNotIn("참고:", body[-1])  # 경로 텍스트 대신 파일 첨부
+        self.assertEqual((upload[upload.index("--thread") + 1], upload[-1]), ("1700000000.000001", self.p("a.html")))
         self.assertEqual(line[line.index("--thread") + 1], PARENT)  # 진행 줄은 진행 스레드 부모의 답글
         self.assertIn("https://slack.com/archives/D1/p1700000000000001", line[-1])
         self.assertEqual(len(line[-1].splitlines()), 1)
