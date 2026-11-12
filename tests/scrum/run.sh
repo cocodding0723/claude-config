@@ -21,8 +21,23 @@ reset; post --date $WK; rc=$?
 post --date $WK; [ "$(sent)" = 1 ] && grep -q "이미 보냄" "$D/err" && ok "같은 날 두 번째 실행은 보내지 않음(날짜 잠금)" || ko "날짜 잠금" "$(sent)"
 post --date $WK --force; [ "$(sent)" = 2 ] && ok "--force 는 잠금 무시" || ko "--force" "$(sent)"
 post --date 2026-11-13; [ "$(sent)" = 3 ] && ok "다른 날짜는 따로 발송" || ko "다른 날" "$(sent)"
-reset; echo x > "$D/scrum.lock"; post --date $WK; [ "$(sent)" = 0 ] && grep -q "진행 중" "$D/err" && ok "실행 중 잠금이 있으면 건너뜀" || ko "실행 잠금" "$(sent)"
-rm -f "$D/scrum.lock"
+# 잠금은 OS 파일 잠금(리뷰 지적 2): 살아 있는 보유자는 파일이 오래돼도 지켜지고, 죽은 실행의 잔재 파일은 막지 않음
+holder() { exec python3 -c 'import fcntl,os,sys,time; fd=os.open(sys.argv[1],os.O_CREAT|os.O_RDWR); fcntl.flock(fd,fcntl.LOCK_EX); print("held",flush=True); time.sleep(30)' "$D/scrum.lock"; }
+reset; holder > "$D/holder.out" & H_PID=$!
+for _ in $(seq 50); do grep -q held "$D/holder.out" 2>/dev/null && break; sleep 0.1; done
+touch -t 202001010000 "$D/scrum.lock"   # 30분 훨씬 넘게 오래된 잠금 파일
+post --date $WK; [ "$(sent)" = 0 ] && [ ! -e "$D/claude.log" ] && grep -q "진행 중" "$D/err" && ok "살아 있는 실행이 잠금을 쥐면 mtime 이 오래돼도 건너뜀" || ko "오래된 잠금 오삭제" "$(sent)"
+kill "$H_PID" 2>/dev/null; wait "$H_PID" 2>/dev/null; sleep 0.2
+post --date $WK; [ "$(sent)" = 1 ] && ok "보유 프로세스가 죽으면 잠금이 풀려 실행(잔재 파일은 무시)" || ko "죽은 잠금" "$(sent)"
+reset; echo x > "$D/scrum.lock"; post --date $WK; [ "$(sent)" = 1 ] && ok "내용만 있고 아무도 안 쥔 잠금 파일은 막지 않음" || ko "잔재 파일" "$(sent)"
+python3 - "$S" "$D" <<'PY' && ok "같은 프로세스의 두 번째 take_lock 은 거부(flock)" || ko "중복 take_lock"
+import os, sys
+sys.path.insert(0, sys.argv[1]); os.environ["LRM_HUB_DIR"] = sys.argv[2]
+import scrum_post as p
+a = p.take_lock(); b = p.take_lock()
+assert a is not None and b is None, (a, b)
+p.release_lock(a); c = p.take_lock(); assert c is not None
+PY
 
 # ---- 주말·공휴일 건너뜀 ----
 reset; post --date 2026-11-14; rc=$?
@@ -73,7 +88,7 @@ rm -f "$D/plan-claude-fable-5-1"; post --date $WK; [ "$(sent)" = 2 ] && grep -q 
 reset; echo 2 > "$D/send-fails"; post --date $WK; rc=$?
 [ $rc = 0 ] && [ "$(cat "$D/send-calls")" = 3 ] && ok "Slack API 실패(코드 1)는 2회 재시도 뒤 성공" || ko "재시도" "rc=$rc calls=$(cat "$D/send-calls")"
 reset; echo 5 > "$D/send-fails"; post --date $WK; rc=$?
-[ $rc = 1 ] && [ "$(cat "$D/send-calls")" = 3 ] && [ -s "$D/osa.log" ] && ls "$D"/draft/2026-11-12.md > /dev/null && [ ! -e "$D/scrum.state.json" ] && [ ! -e "$D/scrum.lock" ] && ok "끝내 실패 → 초안 파일 남김·로컬 알림·잠금 안 남김" || ko "발송 실패" "rc=$rc"
+[ $rc = 1 ] && [ "$(cat "$D/send-calls")" = 3 ] && [ -s "$D/osa.log" ] && ls "$D"/draft/2026-11-12.md > /dev/null && [ ! -e "$D/scrum.state.json" ] && python3 -c 'import fcntl,os,sys; fd=os.open(sys.argv[1],os.O_RDWR); fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)' "$D/scrum.lock" && ok "끝내 실패 → 초안 파일 남김·로컬 알림·잠금 풀림" || ko "발송 실패" "rc=$rc"
 reset; post --date $WK --dry-run; rc=$?
 [ $rc = 0 ] && [ "$(sent)" = 0 ] && [ ! -e "$D/scrum.state.json" ] && grep -q "^# $LRM_SCRUM_NAME\$" "$D/out" && [ -s "$D/draft/2026-11-12.dry.md" ] && ok "--dry-run: 발송·상태 기록 없이 초안만 출력·저장" || ko "dry-run" "rc=$rc"
 reset; post --date $WK; post --date $WK --dry-run; [ "$(sent)" = 1 ] && grep -q "^# $LRM_SCRUM_NAME\$" "$D/out" && ok "--dry-run 은 이미 보낸 날에도 초안 생성" || ko "dry-run 재생성"

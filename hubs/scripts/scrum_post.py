@@ -12,6 +12,7 @@ Confluence·Jira 는 읽기만(초안 작성 claude 에 읽기 도구만 허용)
 """
 import argparse
 import datetime as dt
+import fcntl
 import json
 import os
 import re
@@ -29,7 +30,6 @@ HERE = Path(__file__).resolve().parent
 DIR = collect.DIR
 STATE = DIR / "scrum.state.json"
 LOCK = DIR / "scrum.lock"
-LOCK_STALE_SEC = 1800  # 이보다 오래된 잠금은 죽은 실행의 잔재로 보고 지움
 DRAFT_DIR = Path(os.environ.get("LRM_SCRUM_DRAFT_DIR", Path.home() / "Documents/90_정리기록/scrum-draft"))
 LOG = Path(os.environ.get("LRM_SCRUM_LOG", Path.home() / "orca/archive/scrum_post.log"))
 ENV_FILE = DIR / "scrum.env"  # SCRUM_NAME=<회의록 본인 칸 제목>. 예시는 hubs/scrum.env.example
@@ -106,20 +106,23 @@ def save_state(s):
 
 
 def take_lock():
-    """동시 실행 방지. 잡으면 True"""
+    """동시 실행 방지. OS 파일 잠금(flock)이라 프로세스가 죽으면 커널이 풀어 줌. 잡으면 fd, 못 잡으면 None
+    파일 존재·mtime 으로 판정하지 않음: 살아 있는 장기 실행의 잠금을 시간 경과로 오판해 지우는 경합 방지"""
     LOCK.parent.mkdir(parents=True, exist_ok=True)
-    for _ in range(2):
-        try:
-            os.close(os.open(LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
-            return True
-        except FileExistsError:
-            try:
-                if time.time() - LOCK.stat().st_mtime < LOCK_STALE_SEC:
-                    return False
-                LOCK.unlink()
-            except OSError:
-                return False
-    return False
+    fd = os.open(LOCK, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    os.ftruncate(fd, 0)
+    os.write(fd, ("%d\n" % os.getpid()).encode())
+    return fd
+
+
+def release_lock(fd):
+    """파일은 지우지 않음. 지우면 대기하던 쪽이 지워진 inode 에 잠금을 잡는 경합이 생김"""
+    os.close(fd)
 
 
 def wait_network():
@@ -283,21 +286,21 @@ def main():
     if not a.force and not collect.is_workday(date):
         log("%s 는 주말·공휴일 — 건너뜀" % date)
         return 0
-    state = load_state()
-    if not a.force and not a.dry_run and date.isoformat() in state["sent"]:
-        log("%s 초안은 이미 보냄 — 건너뜀" % date)
-        return 0
-    if not a.dry_run and not take_lock():
-        log("다른 실행이 진행 중 — 건너뜀")
-        return 0
+    fd = None
+    if not a.dry_run:
+        fd = take_lock()
+        if fd is None:
+            log("다른 실행이 진행 중 — 건너뜀")
+            return 0
     try:
+        state = load_state()  # 잠금을 잡은 뒤에 읽음: 앞선 실행의 sent 기록을 놓치지 않음
+        if not a.force and not a.dry_run and date.isoformat() in state["sent"]:
+            log("%s 초안은 이미 보냄 — 건너뜀" % date)
+            return 0
         return run(a, date, state)
     finally:
-        if not a.dry_run:
-            try:
-                LOCK.unlink()
-            except OSError:
-                pass
+        if fd is not None:
+            release_lock(fd)
 
 
 def run(a, date, state):
