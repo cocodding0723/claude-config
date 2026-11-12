@@ -164,6 +164,17 @@ grep -qF "'$SB/.config/lrm-hubs/panel.json'" "$MOD/hooks/register.tsx" && grep -
 [ -d "$MOD" ] && [ ! -L "$MOD" ] && [ ! -e "$SB/.config/lrm-hubs/mods" ] && ok "lrm-board: 전역 mod 위치에 실제 폴더, 옛 mods 위치 미생성" || ko "lrm-board 위치" ""
 SOCKP="$SB/.config/lrm-hubs/ai.lrm.slacksocket.plist"
 grep -q "<string>$SB/.config/lrm-hubs/slack_socket.py</string>" "$SOCKP" && grep -q "<string>$(command -v python3)</string>" "$SOCKP" && ! grep -q '__[A-Z0-9_]*__' "$SOCKP" && plutil -lint "$SOCKP" >/dev/null && cmp -s "$REPO/hubs/scripts/slack_socket.py" "$SB/.config/lrm-hubs/slack_socket.py" && ok "소켓 plist __HOME__·__PYTHON3__ 치환·형식 정상, 수신기 복사" || ko "소켓 plist" "치환·형식 오류"
+# 복사 설치본 import: 설치 폴더 안 파일만으로 접수기가 돌고(-I), 수신기가 import 하는 장부 모듈도 함께 설치됐는지
+LH="$SB/.config/lrm-hubs"
+for m in ledger.py ledger_sync.py intake.py; do [ -f "$LH/$m" ] && [ ! -L "$LH/$m" ] || ko "복사 설치 $m" "실제 파일 없음"; done
+mkdir -p "$SB/intake-hub"
+printf '{"type":"note","ts":"%s","text":"ui: 설치 시험"}\n{"type":"note","ts":"%s","text":"머리말 없음"}\n' "$(date +%s).000001" "$(date +%s).000002" > "$SB/intake-hub/slack-inbox.jsonl"
+out=$(cd "$SB" && LRM_HUB_DIR="$SB/intake-hub" LRM_INTAKE_ROUTES="$LH/intake-routes.tsv" python3 -I "$LH/intake.py" --once --json 2>&1); rc=$?
+echo "$out" | grep -q '"hub": "ui"' && echo "$out" | grep -q '"hub": "main"' && [ "$rc" = 0 ] && [ "$(grep -c . "$SB/intake-hub/feedback-ledger.tsv")" = 3 ] && ok "복사 설치본 intake.py: -I 실행·번호 2개·장부 2행·라우팅(ui, main)" || ko "복사 설치본 intake.py" "rc=$rc $(echo "$out" | head -2 | tr '\n' ' ')"
+out=$(cd "$SB" && LRM_HUB_DIR="$SB/intake-hub" LRM_INTAKE_ROUTES="$LH/intake-routes.tsv" python3 -I "$LH/intake.py" --once --json 2>&1)
+echo "$out" | grep -q '"new": \[\]' && ok "복사 설치본 재실행: 접수 0건(멱등)" || ko "복사 설치본 재실행" "$out"
+PYTHONDONTWRITEBYTECODE=1 python3 -I -c "import sys; sys.path.insert(0,'$LH'); import ledger, ledger_sync, intake" 2>/dev/null && ok "복사 설치본 ledger·ledger_sync·intake import" || ko "복사 설치본 import" "ledger_sync 등 누락"
+[ -f "$LH/intake-routes.tsv" ] && ok "머리말 표 intake-routes.tsv 설치" || ko "머리말 표" "미설치"
 [ "$(git config --global core.hooksPath)" = "~/.config/git/hooks" ] && [ "$(git config --global pull.rebase)" = true ] && [ "$(git config --global merge.ff)" = false ] && ok "git 설정 4개 키" || ko "git 설정" ""
 grep -q 'name = sandbox' "$SB/.gitconfig" && ok "git 사용자 값 보존" || ko "git 사용자 값" "사라짐"
 BK=$(ls -d "$SB/.claude-config-backup"/*/ | head -1); BK=${BK%/}
