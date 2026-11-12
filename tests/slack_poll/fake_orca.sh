@@ -110,6 +110,7 @@ case "$sub" in
     case "$(smode)" in
       ok) deliver; started ;;
       fail) err send_failed; exit 1 ;;
+      gone) err terminal_gone; exit 1 ;;                        # 핸들 무효 거절(입력 전). deliver 하지 않음
       failn)
         left=$(rd failn 0)
         if [ "$left" -gt 0 ]; then echo $((left - 1)) > "$FO/failn"; err send_failed; exit 1; fi

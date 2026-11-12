@@ -87,32 +87,39 @@ def orca_run(args: list, timeout: float):
     return mt.run_orca(ORCA, args, timeout)
 
 
-def send_to(handle: str, text: str) -> bool:
-    try:
-        p = subprocess.run([ORCA, "terminal", "send", "--terminal", handle, "--text", text, "--enter", "--wait-submit", "20", "--json"],
-                           capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
-        return p.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+def send_to(handle: str, text: str) -> str:
+    """전송 결과 분류. 'sent' | 'gone'(핸들 무효 오류 = 입력 전 거절, 아무 터미널에도 안 들어감) | 'unknown'(시간 초과·일반 오류. 입력됐을 수 있음)"""
+    rc, d = mt.run_orca(ORCA, ["terminal", "send", "--terminal", handle, "--text", text, "--enter", "--wait-submit", "20", "--json"], 60)
+    if rc == 0:
+        return "sent"
+    return "gone" if mt.error_code(d) in mt.HANDLE_GONE_CODES else "unknown"
 
 
 def send_main(text: str) -> bool:
-    """메인 터미널로 전달. 핸들이 없거나 전송이 실패했는데 메인 핸들 문제(mt.REDISCOVER)면 재탐색해 main.env 를 고치고 1회 다시 보냄"""
+    """메인 터미널로 전달. 대상을 바꿔 다시 보내는 경우는 옛 대상에 입력되지 않았음이 확실할 때만:
+    ① 보내기 전 확인에서 옛 대상이 메인이 아님(보낸 적 없음) ② 전송이 핸들 무효 오류로 거절됨.
+    시간 초과·일반 오류는 입력됐을 수 있어 재탐색·재전송 없이 실패로 돌려줌(두 터미널에 중복 전달 방지)"""
     handle = main_handle(MAIN_ENV)
-    why = None if handle else "no_main_handle"
     if handle:
-        if send_to(handle, text):
-            return True
-        _, why = mt.check_link(orca_run, SPEC, handle)  # 실패 원인 확인. 조회 실패·화면 상태는 재탐색 대상 아님
-    if why not in mt.REDISCOVER:
-        log("메인 터미널 없음 — main.env 의 MAIN_TERMINAL 확인" if not handle else f"메인 전달 실패 사유={why}")
-        return False
+        _, why = mt.check_link(orca_run, SPEC, handle)
+        if why not in mt.REDISCOVER:  # 정상이거나 일시 오류(조회 실패·쓰기 불가). 설정된 대상으로 보냄
+            res = send_to(handle, text)
+            if res == "sent":
+                return True
+            if res != "gone":
+                log("메인 전달 실패 — 도착 여부 불명이라 대상을 바꾸지 않음")
+                return False
+    else:
+        why = "no_main_handle"
     found = mt.rediscover(orca_run, SPEC, MAIN_ENV)
+    if found.status == "current_ok":  # 다른 쪽이 이미 고침
+        new = main_handle(MAIN_ENV)
+        return bool(new) and new != handle and send_to(new, text) == "sent"
     if found.status != "updated":
-        log(f"메인 재탐색 {found.status} 후보={found.count} (사유={why}) — set_main_terminal.sh 확인")
+        log(f"메인 재탐색 {found.status} 후보={found.count} (사유={why}) — set_main_terminal.sh 확인" if handle else "메인 터미널 없음 — main.env 의 MAIN_TERMINAL 확인")
         return False
     log(f"재탐색으로 갱신 {found.handle[:8]}")
-    return send_to(found.handle, text)
+    return send_to(found.handle, text) == "sent"
 
 
 def warn_slack(thread: str, text: str) -> None:
