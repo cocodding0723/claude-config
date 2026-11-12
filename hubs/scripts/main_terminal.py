@@ -15,6 +15,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -32,6 +33,8 @@ LIST_ARGS = ["terminal", "list", "--limit", "1000", "--json"]
 LIST_TIMEOUT = 20
 LOCK_NAME, LOCK_WAIT = ".main-env.lock", 60  # main.env 옆 잠금 파일. 재탐색은 orca 호출 몇 번을 품으므로 넉넉히 기다림
 EXIT_NONE = 3
+# launchd 기본 PATH(/usr/bin:/bin)에는 orca 가 없음 → PATH 밖 설치 위치도 찾음
+ORCA_CANDIDATES = ("/usr/local/bin/orca", "/Applications/Orca.app/Contents/Resources/bin/orca")
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,12 @@ class Found:
     status: str
     count: int = 0
     handle: str = ""
+
+
+def find_orca(env=None, path=None, candidates=ORCA_CANDIDATES):
+    """orca 실행 파일 경로. LRM_ORCA → PATH(path 로 대체 가능) → candidates 순. 못 찾으면 맨 'orca'"""
+    env = os.environ if env is None else env
+    return env.get("LRM_ORCA") or shutil.which("orca", path=path) or next((p for p in candidates if os.path.exists(p)), "orca")
 
 
 def run_orca(orca, args, timeout):

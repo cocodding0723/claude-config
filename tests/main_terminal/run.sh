@@ -276,5 +276,27 @@ bash "$PUSH" --kick; sleep 5; bash "$PUSH" --kick; sleep 3; bash "$PUSH" --kick;
   && ok "stop+moved_to=현재 핸들 상태에서 현재 핸들도 죽음 → 재탐색 뒤 전달 1·중복 0·미전달 0(3회 kick)" || ko "moved_to 현재 핸들 사망" "sends=$(nsend) env=$(envval) $(jq -c .push_pending "$H/slack-push-state.json")"
 rm -f "$FO/send.hook"
 
+# ---- find_orca: launchd 의 짧은 PATH 에서도 orca 를 찾음(slack_socket 과 같은 후보) ----
+FO_OUT=$(python3 -I - "$SCRIPTS" "$SB" <<'PY'
+import os, sys
+sys.path.insert(0, sys.argv[1])
+import main_terminal as mt
+sb = sys.argv[2]
+cand = os.path.join(sb, "cand", "orca")
+os.makedirs(os.path.dirname(cand), exist_ok=True)
+open(cand, "w").close()
+empty = os.path.join(sb, "emptybin"); os.makedirs(empty, exist_ok=True)
+onpath = os.path.join(sb, "pathbin"); os.makedirs(onpath, exist_ok=True)
+open(os.path.join(onpath, "orca"), "w").close(); os.chmod(os.path.join(onpath, "orca"), 0o755)
+print(mt.find_orca({}, empty, (cand,)) == cand,                                  # PATH 에 없음 → 후보 경로
+      mt.find_orca({"LRM_ORCA": "/x/orca"}, empty, (cand,)) == "/x/orca",        # LRM_ORCA 우선
+      mt.find_orca({}, onpath, (cand,)) == os.path.join(onpath, "orca"),         # PATH 가 후보보다 앞
+      mt.find_orca({}, empty, (os.path.join(sb, "none"),)) == "orca")            # 전부 없음 → 맨 orca
+PY
+)
+[ "$FO_OUT" = "True True True True" ] && ok "find_orca: PATH 밖 후보 탐색·LRM_ORCA 우선·PATH 우선·최후 'orca'" || ko "find_orca" "$FO_OUT"
+RW_ORCA=$(LRM_ORCA=/y/orca LRM_HUB_DIR="$SB" python3 -I -c "import sys;sys.path.insert(0,'$SCRIPTS');import restart_watch as r;print(r.ORCA)")
+[ "$RW_ORCA" = "/y/orca" ] && ok "restart_watch.ORCA 가 find_orca 결과(LRM_ORCA)를 씀" || ko "restart_watch ORCA" "$RW_ORCA"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
