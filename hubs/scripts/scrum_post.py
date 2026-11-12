@@ -74,6 +74,7 @@ RETRY_WAITS = [int(x) for x in os.environ.get("LRM_SCRUM_RETRY_WAITS", "30,90").
 NET_HOST = os.environ.get("LRM_SCRUM_NET_HOST", "api.anthropic.com")
 NET_WAIT_SEC = int(os.environ.get("LRM_SCRUM_NET_WAIT", "120"))  # 깨어난 직후 네트워크가 붙기를 기다리는 최대 시간
 SOURCES = ("prs", "commits", "hub_reports", "handoffs", "instructions")  # scrum_collect.collect 의 출처 키
+LOST_LABEL = {"commits_partial": "commits 일부 워크트리"}  # 경고 줄에 쓸 이름
 REQUIRED_SOURCES = ("prs", "commits")  # 둘 다 못 모이면 초안이 근거 없음
 # Slack 본문·경고·로그에 나가면 안 되는 문자열. 첨부 초안은 비밀만, 본문 주제는 내부 번호도 거름
 SECRET_RE = re.compile(r"(?i)\b(?:token|secret|passw(?:or)?d|api[_-]?key|authorization|credential)s?\b\s*[:=]"
@@ -319,7 +320,8 @@ def summary_message(date, since, draft, model, missed, no_atl, lost=()):
     if no_atl:
         lines.append("• 경고: Jira·Confluence 를 못 읽어 PR·커밋·허브 보고만으로 씀(Atlassian MCP 인증 필요)")
     if lost:
-        lines.append("• 경고: 재료 수집 누락(%s) — 해당 출처 내용이 초안에 빠졌을 수 있음" % ", ".join(lost))
+        names = [LOST_LABEL.get(k, k) for k in lost]
+        lines.append("• 경고: 재료 수집 누락(%s) — 해당 출처 내용이 초안에 빠졌을 수 있음" % ", ".join(names))
     lines += ["", "참고: 모델 %s · 범위 %s 이후" % (model, since.strftime("%m-%d %H:%M"))]
     return "\n".join(lines)
 

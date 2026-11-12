@@ -3,7 +3,7 @@
 Jira·Confluence 는 여기서 안 읽음: 초안을 쓰는 claude 가 Atlassian MCP 로 직접 읽음(인증이 MCP 쪽에 있음).
 사용: scrum_collect.py --date YYYY-MM-DD [--since 'YYYY-MM-DD HH:MM'] [--out 파일]
   --date   초안 날짜(오늘). --since 를 안 주면 직전 평일 10:00 부터 모음(월요일은 금요일부터)
-종료 코드: 0 정상(개별 출처 실패는 JSON 의 errors 에 기록), 2 인자 오류
+종료 코드: 0 정상(개별 출처 실패는 JSON 의 errors 에 기록. 커밋은 워크트리별 실패도 기록: commits=전부 실패, commits_partial=일부 실패), 2 인자 오류
 """
 import argparse
 import datetime as dt
@@ -63,16 +63,19 @@ def collect_prs(since):
 
 
 def collect_commits(since):
+    """(커밋 목록, 실패한 워크트리별 '<폴더>: 사유' 목록, 조사한 워크트리 수). 한 워크트리가 실패해도 나머지는 계속 모음"""
     author = run([GIT, "config", "--global", "user.name"]).strip()
-    seen, rows = set(), []
+    seen, rows, failed, scanned = set(), [], [], 0
     for wt in sorted(WS_ROOT.glob("*")) if WS_ROOT.is_dir() else []:
         if not (wt / ".git").exists():
             continue
+        scanned += 1
         try:
             log = run([GIT, "-C", str(wt), "log", "--since=%s" % since.isoformat(), "--author=%s" % author,
                        "--format=%h\t%cI\t%s"])
             branch = run([GIT, "-C", str(wt), "rev-parse", "--abbrev-ref", "HEAD"]).strip()
-        except (RuntimeError, subprocess.TimeoutExpired):
+        except (RuntimeError, subprocess.TimeoutExpired, OSError) as e:
+            failed.append("%s: %s" % (wt.name, e))
             continue
         for ln in log.splitlines():
             h, at, subj = (ln.split("\t", 2) + ["", ""])[:3]
@@ -80,7 +83,7 @@ def collect_commits(since):
                 seen.add(h)
                 rows.append({"hash": h, "at": at, "subject": subj, "branch": branch})
     rows.sort(key=lambda r: r["at"], reverse=True)
-    return rows[:COMMIT_MAX]
+    return rows[:COMMIT_MAX], failed, scanned
 
 
 def jsonl(path):
@@ -130,7 +133,16 @@ def collect_instructions(now):
 def collect(date, since):
     data = {"date": date.isoformat(), "since": since.isoformat(), "errors": []}
     now = dt.datetime.combine(date, dt.time(CUTOFF_HOUR)).astimezone()
-    for key, fn, arg in (("prs", collect_prs, since), ("commits", collect_commits, since),
+    try:
+        data["commits"], failed, scanned = collect_commits(since)
+        if failed and len(failed) == scanned:  # 전부 실패: 'commits' 출처 자체가 빠짐(필수 출처 판정 대상)
+            data["errors"].append("commits: 워크트리 %d개 전부 git log 실패 — %s" % (scanned, "; ".join(failed)[:300]))
+        elif failed:  # 일부만 실패: 모인 커밋은 쓰되 누락 가능성을 알림
+            data["errors"].append("commits_partial: 워크트리 %d/%d개 git log 실패 — %s" % (len(failed), scanned, "; ".join(failed)[:300]))
+    except (RuntimeError, OSError, ValueError, TypeError, subprocess.TimeoutExpired) as e:
+        data["commits"] = []
+        data["errors"].append("commits: %s" % e)
+    for key, fn, arg in (("prs", collect_prs, since),
                          ("hub_reports", collect_hub_reports, since), ("handoffs", collect_handoffs, since),
                          ("instructions", collect_instructions, now)):
         try:

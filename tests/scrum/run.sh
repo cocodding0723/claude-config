@@ -103,6 +103,32 @@ else
   echo "SKIP  claude 없음 — 격리 회귀 시험 생략"
 fi
 
+# ---- 워크트리별 git log 실패(재검토 지적 2) ----
+W="$D/ws"; mkdir -p "$W/ok1/.git" "$W/ok2/.git" "$W/bad1/.git" "$W/bad2/.git"
+cat > "$D/fake_git.sh" <<'G'
+#!/bin/bash
+[ "$1" = config ] && { echo me; exit 0; }
+wt="$2"; shift 2
+case "$1:$(basename "$wt")" in
+  log:bad*) echo "fatal: bad object" >&2; exit 128 ;;
+  log:*) printf 'h%s\t2026-11-12T11:00:00+09:00\tsubj\n' "$(basename "$wt")" ;;
+  rev-parse:*) echo br ;;
+esac
+G
+printf '#!/bin/bash\necho "[]"\n' > "$D/fake_gh.sh"; chmod +x "$D/fake_git.sh" "$D/fake_gh.sh"
+coll() { LRM_GIT="$D/fake_git.sh" LRM_GH="$D/fake_gh.sh" LRM_SCRUM_WS_ROOT="$W" python3 "$S/scrum_collect.py" --date $WK; }
+coll > "$D/coll.json"; python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); e=d["errors"]
+assert len(d["commits"])==2 and len(e)==1 and e[0].startswith("commits_partial:") and "bad1" in e[0] and "bad2" in e[0] and "2/4" in e[0], d' "$D/coll.json" && ok "일부 워크트리 git log 실패 → 나머지 커밋 수집 + errors 에 commits_partial(실패 폴더 명시)" || ko "부분 실패" "$(cat "$D/coll.json")"
+rm -rf "$W/ok1" "$W/ok2"; coll > "$D/coll.json"; python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); e=d["errors"]
+assert d["commits"]==[] and len(e)==1 and e[0].startswith("commits:") and "2개 전부" in e[0], d' "$D/coll.json" && ok "전부 실패 → errors 에 commits(필수 출처 누락)로 구분" || ko "전체 실패" "$(cat "$D/coll.json")"
+mkdir -p "$W/ok1/.git"; rm -rf "$W/bad1" "$W/bad2"; coll > "$D/coll.json"; python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["errors"]==[] and len(d["commits"])==1, d' "$D/coll.json" && ok "전부 성공하면 errors 비어 있음" || ko "정상 수집"
+mkdir -p "$W/ok2/.git" "$W/bad1/.git"
+reset; LRM_SCRUM_COLLECT="$S/scrum_collect.py" LRM_GIT="$D/fake_git.sh" LRM_GH="$D/fake_gh.sh" LRM_SCRUM_WS_ROOT="$W" post --date $WK; rc=$?
+[ $rc = 0 ] && grep -q -- "--kind doc" "$D/sent.log" && grep -q "경고: 재료 수집 누락(commits 일부 워크트리)" "$D/sent.log" && ! grep -q "bad object" "$D/sent.log" && ok "일부 워크트리 실패 → 초안은 발송하되 본문에 누락 경고(오류 원문은 안 나감)" || ko "발송 경고" "rc=$rc $(cat "$D/sent.log")"
+rm -rf "$W/ok1" "$W/ok2"; mkdir -p "$W/bad2/.git"
+reset; LRM_SCRUM_COLLECT="$S/scrum_collect.py" LRM_GIT="$D/fake_git.sh" LRM_GH="$D/fake_gh.sh" LRM_SCRUM_WS_ROOT="$W" post --date $WK; rc=$?
+[ $rc = 1 ] && grep -q -- "--kind warn" "$D/sent.log" && grep -q "collect_all_empty(commits)" "$D/sent.log" && ok "전부 실패(빈 날과 구분) → 초안 없이 warn" || ko "전체 실패 warn" "rc=$rc"
+
 # ---- 수집 오류 반영(리뷰 지적 5) ----
 reset; echo err-all > "$D/plan-collect"; post --date $WK; rc=$?
 [ $rc = 1 ] && [ ! -e "$D/claude.log" ] && grep -q -- "--kind warn" "$D/sent.log" && grep -q "collect_required_missing" "$D/sent.log" && [ ! -d "$D/draft" ] && ok "prs·commits 수집 둘 다 실패 → 초안 없이 warn(정상 초안으로 확정 안 함)" || ko "수집 전부 실패" "rc=$rc"
