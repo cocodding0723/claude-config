@@ -130,6 +130,11 @@ for m in fail ambig; do
   r=$(S)
   [ "$r" = failed ] && [ "$(nsend)" = 1 ] && [ "$(nlist)" = 0 ] && [ "$(envval)" = "$OLD" ] && ok "slack_socket: 정상 옛 대상 전송이 $m(도착 불명) → 대상을 바꾸지 않고 실패 반환·재탐색 0·재전송 0" || ko "socket 불명 전송 $m" "r=$r sends=$(nsend) list=$(nlist)"
 done
+for m in unavail ro; do  # 재검토 지적: 메인 확인 실패(조회 실패·쓰기 불가)면 최초 전송도 하지 않음
+  newhub S1e$m; { row "$NEW" "MAIN-HANDOFF 메인" "$MAIN"; } | setlist; echo "$m" > "$FO/show.mode.$OLD"
+  r=$(S)
+  [ "$r" = failed ] && [ "$(nsend)" = 0 ] && [ "$(nlist)" = 0 ] && [ "$(envval)" = "$OLD" ] && ok "slack_socket: 메인 확인이 $m 이면 전송 0·재탐색 0·main.env 불변(실패 반환)" || ko "socket 확인 실패 $m" "r=$r sends=$(nsend) list=$(nlist)"
+done
 newhub S2; noise | setlist; echo fail > "$FO/send.mode.$OLD"; cp "$H/main.env" "$SB/S2.before"
 r=$(S)
 [ "$r" = failed ] && cmp -s "$H/main.env" "$SB/S2.before" && ok "slack_socket: 후보 0개 → 실패 반환·main.env 불변" || ko "socket 후보 0" "r=$r"
@@ -151,7 +156,7 @@ newhub T2; { jq -nc '{title:"MAIN-HANDOFF 이상한 행"}'; row "$NEW" "MAIN-HAN
 out=$(bash "$SETMAIN" --auto 2>&1); rc=$?
 [ "$rc" = 2 ] && [ "$(envval)" = "$OLD" ] && ok "list 에 핸들 없는 행 → 재탐색 실패(종료 2)·main.env 불변" || ko "행 스키마 --auto" "rc=$rc $out"
 
-# ---- 잠금·CAS: 폴러·소켓·set_main_terminal.sh 가 공유 ---------------------------------------------------------------
+# ---- 잠금: 폴러·소켓·set_main_terminal.sh 가 공유 ---------------------------------------------------------------
 newhub L1; { row "$NEW" "MAIN-HANDOFF 메인" "$MAIN"; } | setlist
 python3 -I - "$H" <<'PY' &
 import fcntl, os, sys, time
@@ -180,26 +185,19 @@ for _ in $(seq 1 50); do [ -e "$H/held" ] && break; sleep 0.1; done
 rm -f "$FO/show.mode.term_0000cafe-0000-4000-8000-000000000003"
 out=$(bash "$SETMAIN" --auto 2>&1); rc=$?; wait "$LP"
 [ "$rc" = 0 ] && [ "$(envval)" = "$NEW2" ] && grep -q '^OTHER_KEY=new edit$' "$H/main.env" && ok "재탐색은 잠금 안에서 현재 핸들을 다시 확인: 그 사이 정상으로 고쳐졌으면 되돌리지 않음·다른 줄 편집 보존" || ko "재탐색 재검증" "rc=$rc $out env=$(cat "$H/main.env")"
-# 쓰기 직전 CAS: 파일이 읽은 뒤 바뀌면 새 내용으로 다시 만들어 다른 줄 편집을 잃지 않음
+# write_handle: 다른 줄·줄 끝 보존·600. 잠금 밖 편집은 보장하지 않음(계약 아님)
 newhub L3
 python3 -I - "$SCRIPTS" "$H/main.env" <<'PY'
-import sys
+import os, sys
 sys.path.insert(0, sys.argv[1])
 import main_terminal as mt
 path = sys.argv[2]
-real, calls = mt.read_lines, []
-def racing(p):
-    r = real(p); calls.append(1)
-    if len(calls) == 1:  # 첫 읽기 뒤, 교체 전에 다른 쪽이 새 줄을 더함
-        with open(p, "a") as f:
-            f.write("CONCURRENT=kept\n")
-    return r
-mt.read_lines = racing
 mt.write_handle(path, "term_0000beef-0000-4000-8000-000000000002")
 text = open(path).read()
-sys.exit(0 if "CONCURRENT=kept" in text and "OTHER_KEY=keep me" in text and text.count("MAIN_TERMINAL=") == 1 and "term_0000beef" in text else 1)
+ok = "OTHER_KEY=keep me" in text and text.count("MAIN_TERMINAL=") == 1 and "term_0000beef" in text and (os.stat(path).st_mode & 0o777) == 0o600
+sys.exit(0 if ok else 1)
 PY
-[ "$?" = 0 ] && ok "교체 직전 파일이 바뀌었으면(CAS 불일치) 새 내용으로 다시 만들어 동시 편집 보존" || ko "CAS" "동시 편집 소실"
+[ "$?" = 0 ] && ok "write_handle: MAIN_TERMINAL 줄만 교체·다른 줄 보존·권한 600" || ko "write_handle" "내용 또는 권한 불일치"
 
 # ---- 모호한 전송 뒤 main.env 가 새 핸들로 바뀜(target_changed): 옛 대상이 죽었으면 재전달, 살아 있으면 보류+경고 ----------------
 stale() { # 이름: 옛 핸들로 보낸 첫 전송이 모호(ambig)하고 그 직후 main.env 가 NEW 로 바뀜
@@ -262,6 +260,20 @@ PY
 bash "$PUSH" --kick; sleep 5; bash "$PUSH" --kick; sleep 3
 [ "$(nsend)" = 1 ] && [ "$(awk -F'\t' '{print $3}' "$FO/sends.log")" = "$NEW" ] && [ "$(envval)" = "$NEW" ] \
   && ok "Mac 리셋 회귀: 옛 대상 둘 다 종료 → 사람 손 없이 새 메인 재탐색·main.env 갱신, 보류분 새 대상에 정확히 1회 전달(두 번째 kick 재전달 없음)" || ko "Mac 리셋 회귀" "sends=$(nsend) env=$(envval) $(jq -c .push_pending "$H/slack-push-state.json")"
+# ---- 회귀(재검토 지적): stop=true·moved_to=현재 main.env 핸들 상태에서 리셋으로 현재 핸들도 죽음 → 새 후보 재탐색·전달 1·중복 0·미전달 0 --------
+newhub RS2; printf 'MAIN_TERMINAL=%s\n' "$OLD" > "$H/main.env"
+python3 -I - "$H" term_0000d00d-0000-4000-8000-0000000000aa "$OLD" <<'PY'
+import hashlib, json, sys, time, uuid
+h, old0, cur = sys.argv[1:4]
+tag = lambda x: "sha256:" + hashlib.sha256(x.encode()).hexdigest()[:16]
+pp = {"first": 1, "last": 1, "attempts": 1, "next_at": time.time() + 10 ** 9, "reason": "unknown_delivery", "batch": None, "text": "[Slack→메인] 1건 도착 (자동 전달, 지시 아님)\n고정 본문",
+      "request_id": str(uuid.uuid4()), "ambig": tag(old0), "stop": True, "moved_to": tag(cur)}
+json.dump({"pushed_lines": 0, "skip_to": 0, "pending_since": None, "last_new_ts": None, "push_pending": pp, "react_since": 0}, open(h + "/slack-push-state.json", "w"))
+PY
+{ row "$NEW" "MAIN-HANDOFF 메인" "$MAIN"; } | setlist
+bash "$PUSH" --kick; sleep 5; bash "$PUSH" --kick; sleep 3; bash "$PUSH" --kick; sleep 3
+[ "$(nsend)" = 1 ] && [ "$(awk -F'\t' '{print $3}' "$FO/sends.log")" = "$NEW" ] && [ "$(envval)" = "$NEW" ] && [ "$(jq -r .push_pending "$H/slack-push-state.json")" = null ] \
+  && ok "stop+moved_to=현재 핸들 상태에서 현재 핸들도 죽음 → 재탐색 뒤 전달 1·중복 0·미전달 0(3회 kick)" || ko "moved_to 현재 핸들 사망" "sends=$(nsend) env=$(envval) $(jq -c .push_pending "$H/slack-push-state.json")"
 rm -f "$FO/send.hook"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

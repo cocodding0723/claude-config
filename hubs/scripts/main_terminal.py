@@ -5,7 +5,7 @@ Orca 재시작으로 터미널 핸들이 바뀌면 main.env 의 MAIN_TERMINAL �
 orca terminal list 에서 메인 후보를 찾고, 정확히 1개면 MAIN_TERMINAL 줄만 원자적으로 교체함. 0개·2개 이상이면 건드리지 않고 후보 수만 돌려줌.
 핸들 값은 출력하지 않음(호출자가 로그에 앞 글자만 남김). Orca 호출은 run(args, timeout) -> (rc, JSON|None) 으로 주입받음.
 후보 = 제목이 TITLE_KEY 로 시작하는 메인 체크아웃의 claude 터미널(워커 제목에 표식이 끼어도 후보가 되지 않게 앞부분 일치).
-main.env 갱신은 파일 잠금 아래에서 재검증하고 읽은 내용이 그대로일 때만 교체함(폴러·소켓·set_main_terminal.sh 공유).
+main.env 갱신은 파일 잠금 아래에서 현재 핸들을 재검증한 뒤 씀(폴러·소켓·set_main_terminal.sh 가 같은 잠금 공유). 잠금 밖 직접 편집은 보호하지 않음.
 
 CLI: main_terminal.py [--dry-run] [--env 경로]   재탐색. 종료 코드 0 갱신(또는 dry-run 에서 1개 발견), 2 오류, 3 후보 0개·2개 이상
      main_terminal.py --set <핸들> [--env 경로]   잠금 아래에서 MAIN_TERMINAL 줄 기록. 종료 코드 0, 2 형식·쓰기 오류
@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 HANDLE_RE = re.compile(r"term_[0-9a-f-]+")  # fullmatch 로만 씀. $ 는 끝 개행을 통과시킴
 MAIN_KEY = "MAIN_TERMINAL="
-TITLE_KEY = "MAIN-HANDOFF"  # 메인 터미널 제목의 시작 표식(예: "MAIN-HANDOFF.md 메인 코디네이터"). 중간에 낀 경우는 후보 아님
+TITLE_KEY = "MAIN-HANDOFF"  # 메인 터미널 제목의 시작 표식(예: "MAIN-HANDOFF.md 메인 코디네이터"). 운영 규약: 이 접두부는 메인 전용, 워커 제목은 이 접두부로 시작 금지(같은 체크아웃 claude 워커가 후보가 되면 재탐색이 오인). 중간에 낀 경우는 후보 아님
 # Orca CLI 가 터미널 핸들 무효로 취급하는 오류 코드(번들 handlers/orchestration/terminal-identity.js). 그 밖(runtime_unavailable·시간 초과 등)은 일시 오류
 HANDLE_GONE_CODES = frozenset({"terminal_handle_stale", "terminal_gone", "terminal_not_found"})
 # main.env 를 사람이 고쳐야 풀리는 사유. 재탐색 대상. not_writable(일시 상태)·show_fail(조회 실패)·화면 상태는 제외
@@ -31,7 +31,6 @@ REDISCOVER = frozenset({"no_main_handle", "handle_gone", "handle_dead", "wrong_w
 LIST_ARGS = ["terminal", "list", "--limit", "1000", "--json"]
 LIST_TIMEOUT = 20
 LOCK_NAME, LOCK_WAIT = ".main-env.lock", 60  # main.env 옆 잠금 파일. 재탐색은 orca 호출 몇 번을 품으므로 넉넉히 기다림
-WRITE_TRIES = 3
 EXIT_NONE = 3
 
 
@@ -200,30 +199,25 @@ def raw_values(lines):
 def write_handle(path, handle):
     """main.env 의 MAIN_TERMINAL 줄만 교체(없으면 추가). 다른 줄은 원형 보존, 권한 600, 임시 파일 뒤 원자적 교체.
     path 가 링크면 링크는 두고 최종 대상을 교체. 호출자가 env_lock 안에서 부름.
-    교체 직전에 파일을 다시 읽어 처음 읽은 내용과 다르면(잠금 밖 편집) 새 내용으로 다시 만듦(WRITE_TRIES 회). 끝내 바뀌면 BlockingIOError"""
+    보장 범위는 공용 잠금을 쓰는 writer(재탐색·--set·set_main_terminal.sh)뿐. 잠금 없이 main.env 를 편집하는 쪽과의 경합은 보호하지 않음"""
     path = os.path.realpath(path)
     d = os.path.dirname(path)
     os.makedirs(d, exist_ok=True)
-    for _ in range(WRITE_TRIES):
-        before = read_lines(path)
-        keep = [ln for ln in before or [] if not ln.startswith(MAIN_KEY)]
-        fd, tmp = tempfile.mkstemp(prefix=".main.env.", dir=d)  # mkstemp 는 600 으로 만듦
+    keep = [ln for ln in read_lines(path) or [] if not ln.startswith(MAIN_KEY)]
+    fd, tmp = tempfile.mkstemp(prefix=".main.env.", dir=d)  # mkstemp 는 600 으로 만듦
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
+            f.writelines(keep)
+            if keep and not keep[-1].endswith("\n"):
+                f.write("\n")
+            f.write(f"{MAIN_KEY}{handle}\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    finally:
         try:
-            with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
-                f.writelines(keep)
-                if keep and not keep[-1].endswith("\n"):
-                    f.write("\n")
-                f.write(f"{MAIN_KEY}{handle}\n")
-            os.chmod(tmp, 0o600)
-            if read_lines(path) == before:
-                os.replace(tmp, path)
-                return
-        finally:
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
-    raise BlockingIOError("main.env 가 계속 바뀜")
+            os.remove(tmp)
+        except OSError:
+            pass
 
 
 def rediscover(run, spec, env_path, dry_run=False):
