@@ -190,8 +190,13 @@ class SenderTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.conf.state))
 
     def test_sender_passes_no_slack_secrets_to_notify(self):
-        self.report()
-        report_sender.run(self.conf)
+        from unittest import mock
+        with mock.patch.dict(os.environ):  # 시험 환경에 SLACK_* 가 있어도(로컬 API 주소·토큰) 결과가 같도록 비밀 변수를 비움
+            for k in ("SLACK_BOT_TOKEN", "SLACK_USER_ID", "SLACK_APP_TOKEN", "SLACK_SIGNING_SECRET"):
+                os.environ.pop(k, None)
+            os.environ["SLACK_API_BASE"] = "http://127.0.0.1:9"
+            self.report()
+            report_sender.run(self.conf)
         with open(self.p("calls.jsonl"), encoding="utf-8") as f:
             self.assertTrue(all(json.loads(ln)["slack_env"] == 0 for ln in f))
 
@@ -350,6 +355,72 @@ class SenderTest(unittest.TestCase):
         with open(self.conf.outbox + ".corrupt", encoding="utf-8") as f:
             self.assertEqual(f.read(), '{"id":"cut\n')
         self.assertTrue(self.state()["reports"][good["id"]]["sent"])
+
+
+    # --- Codex 3차 회귀(2·3) ---
+    def test_repair_lock_wait_respects_budget(self):
+        import fcntl
+        import time
+        self.report()
+        with open(self.conf.outbox, encoding="utf-8") as f:
+            line = f.read().rstrip("\n")
+        with open(self.conf.outbox, "w", encoding="utf-8") as f:
+            f.write(line)  # 끝 개행 없음 → 복구 필요
+        holder = open(self.conf.outbox + ".lock", "a")
+        fcntl.flock(holder, fcntl.LOCK_EX)  # 다른 쪽이 잠금을 쥠
+        self.addCleanup(holder.close)
+        self.conf.budget_s = 0.05
+        t0 = time.monotonic()
+        res = report_sender.run(self.conf)
+        self.assertLess(time.monotonic() - t0, 0.4)  # 800ms 대기 없이 예산 안에서 포기
+        self.assertEqual(res["sent"], 0)  # 개행 없는 끝줄은 복구 전이라 읽지 않음(유실 아님)
+        fcntl.flock(holder, fcntl.LOCK_UN)
+        self.conf.budget_s = 40
+        self.assertEqual(report_sender.run(self.conf)["sent"], 1)  # 다음 회차에 복구되고 전송
+
+    def test_unreleased_repair_lock_never_blocks_now_run_forever(self):
+        import fcntl
+        import time
+        self.report()
+        with open(self.conf.outbox, encoding="utf-8") as f:
+            line = f.read().rstrip("\n")
+        with open(self.conf.outbox, "w", encoding="utf-8") as f:
+            f.write(line)
+        holder = open(self.conf.outbox + ".lock", "a")
+        fcntl.flock(holder, fcntl.LOCK_EX)
+        self.addCleanup(holder.close)
+        self.conf.budget_s = 0.3
+        t0 = time.monotonic()
+        report_sender.run(self.conf)
+        self.assertLess(time.monotonic() - t0, 1.0)
+
+    def test_empty_body_ts_state_halts_instead_of_silent_sent(self):
+        rep = self.report()
+        report_sender.run(self.conf)
+        for bad in ({"body_ts": ""}, {"body_ts": "abc"}, {"sent": 1}, {"sent": 1, "body_ts": "1700000000.000002"},
+                    {"body_ts": "1700000000.000002", "line_ts": "x"}):
+            with open(self.conf.state, "w", encoding="utf-8") as f:
+                json.dump({"topics": {"C0012": {"ts": "1700000000.000001"}}, "reports": {rep["id"]: bad}, "warned": {}}, f)
+            n = len(self.calls())
+            res = report_sender.run(self.conf)
+            self.assertEqual(res["status"], "halted", bad)
+            self.assertEqual(res["sent"], 0)
+            self.assertFalse(any("--thread" in c and "수정 완료" in c[-1] for c in self.calls()[n:]), bad)
+
+    def test_empty_topic_ts_or_missing_topic_halts(self):
+        rep = self.report()
+        report_sender.run(self.conf)
+        good = json.load(open(self.conf.state, encoding="utf-8"))
+        for mutate in (lambda st: st["topics"]["C0012"].update(ts=""), lambda st: st["topics"].pop("C0012")):
+            st = json.loads(json.dumps(good))
+            mutate(st)
+            with open(self.conf.state, "w", encoding="utf-8") as f:
+                json.dump(st, f)
+            self.assertEqual(report_sender.run(self.conf)["status"], "halted")
+        with open(self.conf.state, "w", encoding="utf-8") as f:
+            json.dump(good, f)
+        self.assertEqual(report_sender.run(self.conf)["status"], "idle")  # 정상 상태는 그대로 통과
+        self.assertTrue(self.state()["reports"][rep["id"]]["sent"])
 
 
 if __name__ == "__main__":

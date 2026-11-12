@@ -111,12 +111,40 @@ def load_state(path: str) -> dict:
         raise StateCorrupt("JSON 손상")
     if not isinstance(st, dict) or any(not isinstance(st.get(k), dict) for k in REQUIRED_KEYS) or not isinstance(st.get("bad", {}), dict):
         raise StateCorrupt("필수 항목(topics·reports·warned) 없음 또는 모양 오류")  # {} 로 비워진 파일을 새 상태로 보면 보고를 다시 올림
-    if (any(not isinstance(v, dict) or not isinstance(v.get("ts"), str) for v in st["topics"].values())
-            or any(not isinstance(v, dict) or not isinstance(v.get("sent", 0), (int, float)) or not isinstance(v.get("fails", 0), int)
-                   or any(k in v and not isinstance(v[k], str) for k in ("body_ts", "line_ts", "error")) for v in st["reports"].values())
-            or any(not isinstance(v, (int, float)) for v in st["warned"].values())):
+    if (any(not isinstance(v, dict) or not is_ts(v.get("ts")) for v in st["topics"].values())
+            or any(not report_state_ok(v) for v in st["reports"].values())
+            or any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in st["warned"].values())):
         raise StateCorrupt("항목 내용 모양 오류")
     return {k: st.get(k, {}) for k in STATE_KEYS}
+
+
+def is_ts(v) -> bool:
+    """비어 있지 않은 Slack ts(숫자.숫자)인가"""
+    return isinstance(v, str) and bool(hub_report.TS_RE.match(v))
+
+
+def report_state_ok(v) -> bool:
+    """보고 1건의 전송 단계 기록이 일관된가. body_ts 는 있으면 ts 형식, line_ts 는 ts 형식이거나 빈 문자열(진행 줄 생략),
+    전송됨(sent)이면 body_ts·line_ts 가 모두 있어야 함. 아니면 손상(빈 body_ts 로 본문을 건너뛴 채 전송됨 처리되는 것을 막음)"""
+    if not isinstance(v, dict):
+        return False
+    sent, fails = v.get("sent", 0), v.get("fails", 0)
+    if isinstance(sent, bool) or not isinstance(sent, (int, float)) or isinstance(fails, bool) or not isinstance(fails, int):
+        return False
+    if "error" in v and not isinstance(v["error"], str):
+        return False
+    if "body_ts" in v and not is_ts(v["body_ts"]):
+        return False
+    if "line_ts" in v and not (v["line_ts"] == "" or is_ts(v["line_ts"])):
+        return False
+    return not sent or ("body_ts" in v and "line_ts" in v)
+
+
+def check_consistency(st: dict, reports: list) -> None:
+    """상태와 outbox 의 교차 검증: 전송됨인 주제 보고는 그 주제의 ts 가 상태에 있어야 함(없으면 상태가 잘렸거나 손으로 고쳐진 것)"""
+    for r in reports:
+        if st["reports"].get(r["id"], {}).get("sent") and r["kind"] != "decide" and not r.get("thread") and topic_key(r) not in st["topics"]:
+            raise StateCorrupt(f"전송됨 보고 {r['id']} 의 주제 스레드 기록 없음")
 
 
 def state_signature(path: str) -> str:
@@ -345,24 +373,58 @@ def quarantine(conf: Conf, bad: list, st: dict, dry: bool) -> int:
     return len(bad)
 
 
-def repair_outbox(conf: Conf) -> None:
-    """읽기 전에 잠금 아래에서 끝줄 개행 복구(정상 JSON 끝 개행 누락·잘린 줄 격리). 복구 실패는 읽기를 막지 않음(개행 없는 끝줄은 읽지 않음)"""
+LOCK_POLL_S = 0.02
+
+
+@contextlib.contextmanager
+def try_lock(path: str, deadline: float):
+    """배타 잠금을 deadline 안에서만 비차단으로 시도. 잡으면 True, 못 잡으면 False(대기 무기한 금지)"""
+    lock = None
+    try:
+        lock = open(path + ".lock", "a")
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() + LOCK_POLL_S >= deadline:
+                    yield False
+                    return
+                time.sleep(LOCK_POLL_S)
+        yield True
+    except OSError:
+        yield False
+    finally:
+        if lock is not None:
+            lock.close()
+
+
+def repair_outbox(conf: Conf, deadline: float) -> None:
+    """읽기 전에 잠금 아래에서 끝줄 개행 복구(정상 JSON 끝 개행 누락·잘린 줄 격리). 남은 예산 안에서 잠금을 못 잡거나 복구가 실패하면
+    다음 회차로 미룸(개행 없는 끝줄은 읽지 않으므로 보고가 사라지지 않음)"""
     if not os.path.exists(conf.outbox):
         return
-    try:
-        with hub_report.locked(conf.outbox):
+    with try_lock(conf.outbox, deadline) as got:
+        if not got:
+            log(conf, "outbox 끝줄 복구 보류: 잠금 대기 예산 초과")
+            return
+        try:
             hub_report.repair_tail(conf.outbox)
-    except hub_report.ReportError as err:
-        log(conf, f"outbox 끝줄 복구 실패: {err}")
+        except hub_report.ReportError as err:
+            log(conf, f"outbox 끝줄 복구 실패: {err}")
 
 
 def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
     if not dry:
-        repair_outbox(conf)
+        repair_outbox(conf, deadline)
     bad = []
     reports = hub_report.read_outbox(conf.outbox, bad)
     try:
         st = load_state(conf.state)
+    except StateCorrupt as err:
+        return halt(conf, err, out, dry, deadline)
+    try:
+        check_consistency(st, reports)
     except StateCorrupt as err:
         return halt(conf, err, out, dry, deadline)
     out["bad"] = quarantine(conf, bad, st, dry)
