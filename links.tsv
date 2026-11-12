@@ -133,3 +133,6 @@ hubs/mods/lrm-board/hooks/hooks.json	.claude/dev-mods/ab8a5233-c566-4f47-b3ee-4b
 hubs/mods/lrm-board/hooks/register.tsx	.claude/dev-mods/ab8a5233-c566-4f47-b3ee-4b573b330e22/lrm-board/hooks/register.tsx	render
 hubs/mods/lrm-board/hooks/board.ts	.claude/dev-mods/ab8a5233-c566-4f47-b3ee-4b573b330e22/lrm-board/hooks/board.ts	copy
 hubs/mods/lrm-board/types/index.d.ts	.claude/dev-mods/ab8a5233-c566-4f47-b3ee-4b573b330e22/lrm-board/types/index.d.ts	copy
+hubs/scripts/session_gc.py	.config/lrm-hubs/session_gc.py	link
+hubs/docs/session-gc.md	.config/lrm-hubs/docs/session-gc.md	link
+hubs/launchd/ai.lrm.sessiongc.plist	Library/LaunchAgents/ai.lrm.sessiongc.plist	copy
