@@ -48,6 +48,15 @@ class ReportTest(unittest.TestCase):
         self.add(text="다른 내용")
         self.assertEqual(len(self.rows()), 2)
 
+    def test_malformed_decision_id_rejected_at_intake(self):
+        for did in ("D-bad id", "x-1", "D-", "D-" + "a" * 17, "D-한글"):
+            r = self.add(text="제목\n배경", kind="decide", extra=["--options", "1=a,2=b", "--recommend", "1", "--decision-id", did])
+            self.assertEqual(r.returncode, 2, did)
+            self.assertIn("형식 오류: D-영문·숫자 1~16자", r.stderr)
+        self.assertEqual(self.rows(), [])
+        r = self.add(text="제목\n배경", kind="decide", extra=["--options", "1=a,2=b", "--recommend", "1", "--decision-id", "D-" + "a" * 16])
+        self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_secret_values_rejected_with_exit_2(self):
         for bad in ("토큰 " + "xox" + "b-1234567890-abcdef", "pass" + "word=hunter22secret", "gh" + "p_" + "a" * 24):
             r = self.add(text=bad)

@@ -34,6 +34,8 @@ KINDS = {
     "warn": ("⚠️", "경고", "warn"),
 }
 THREAD_KINDS = ("warn", "done")  # 기존 스레드에 답글로 올릴 수 있는 종류. decide 버튼 카드는 스레드 답글이 안 됨
+DECISION_ID_RE = re.compile(r"D-[0-9A-Za-z]{1,16}", re.A)  # slack_notify.sh 의 decision_id 규칙과 같은 정의. 접수·전송 양쪽이 이걸 씀
+DECISION_ID_ERR = "--decision-id 형식 오류: D-영문·숫자 1~16자 — 예 D-0001"
 TS_RE = re.compile(r"^\d{1,12}\.\d{1,9}$")
 MAX_LINES, MAX_CHARS, MAX_TITLE = 3, 400, 40  # 본문 3줄 이내. decide 첫 줄은 양식 A 제목 상한
 MAX_FILES = 5
@@ -50,6 +52,12 @@ class ReportError(Exception):
 
 def outbox_path() -> str:
     return os.environ.get("LRM_REPORT_OUTBOX") or os.path.join(HUB_DIR, OUTBOX_NAME)
+
+
+def check_decision_id(did) -> None:
+    """형식이 틀리면 ReportError(종료 코드 2). 비밀 검사 뒤에 호출해 입력 값을 메시지에 되비추지 않음"""
+    if not DECISION_ID_RE.fullmatch(did or ""):
+        raise ReportError(DECISION_ID_ERR)
 
 
 def has_secret(*texts: str) -> bool:
@@ -83,6 +91,7 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
             raise ReportError("decide 는 --options '1=문구,2=문구' --recommend N --decision-id D-xxxx 필요 — 버튼 결정 카드 양식")
         if len(lines[0]) > MAX_TITLE:
             raise ReportError(f"decide 첫 줄(결정 제목)이 {len(lines[0])}자 — {MAX_TITLE}자 이내로, 배경은 둘째 줄부터")
+        check_decision_id(decision_id)
         rep.update({"options": options, "recommend": recommend, "decision_id": decision_id})
         if reversible:
             rep["reversible"] = reversible

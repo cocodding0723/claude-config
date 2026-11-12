@@ -1,0 +1,90 @@
+# 병합 뒤 시험 2026-11-12 17:24:35
+test_external_api_base_is_refused_before_any_request (test_poll_budget.PollBudgetTest.test_external_api_base_is_refused_before_any_request) ... ok
+test_poll_passes_remaining_budget_as_sender_cap (test_poll_budget.PollBudgetTest.test_poll_passes_remaining_budget_as_sender_cap) ... ok
+test_poll_skips_sender_when_budget_spent (test_poll_budget.PollBudgetTest.test_poll_skips_sender_when_budget_spent) ... ok
+test_add_writes_one_line_without_slack (test_report.ReportTest.test_add_writes_one_line_without_slack) ... ok
+test_bad_hub_task_kind (test_report.ReportTest.test_bad_hub_task_kind) ... ok
+test_concurrent_adds_keep_every_line_intact (test_report.ReportTest.test_concurrent_adds_keep_every_line_intact) ... ok
+test_decide_requires_card_fields (test_report.ReportTest.test_decide_requires_card_fields) ... ok
+test_dry_run_writes_nothing (test_report.ReportTest.test_dry_run_writes_nothing) ... ok
+test_help_and_usage_error_exit_codes (test_report.ReportTest.test_help_and_usage_error_exit_codes) ... ok
+test_invalid_records_are_isolated_not_fatal (test_report.ReportTest.test_invalid_records_are_isolated_not_fatal) ... ok
+test_json_output_and_list (test_report.ReportTest.test_json_output_and_list) ... ok
+test_malformed_decision_id_rejected_at_intake (test_report.ReportTest.test_malformed_decision_id_rejected_at_intake) ... ok
+test_record_without_files_key_is_invalid (test_report.ReportTest.test_record_without_files_key_is_invalid) ... ok
+test_same_content_is_duplicate_and_ignored (test_report.ReportTest.test_same_content_is_duplicate_and_ignored) ... ok
+test_secret_in_decide_fields_rejected (test_report.ReportTest.test_secret_in_decide_fields_rejected) ... ok
+test_secret_in_hub_task_kind_rejected_without_echo (test_report.ReportTest.test_secret_in_hub_task_kind_rejected_without_echo) ... ok
+test_secret_values_rejected_with_exit_2 (test_report.ReportTest.test_secret_values_rejected_with_exit_2) ... ok
+test_text_over_three_lines_rejected (test_report.ReportTest.test_text_over_three_lines_rejected) ... ok
+test_truncated_tail_is_quarantined_and_new_report_readable (test_report.ReportTest.test_truncated_tail_is_quarantined_and_new_report_readable) ... ok
+test_unrecoverable_tail_fails_with_nonzero_exit_and_no_write (test_report.ReportTest.test_unrecoverable_tail_fails_with_nonzero_exit_and_no_write) ... ok
+test_whole_json_tail_without_newline_keeps_record (test_report.ReportTest.test_whole_json_tail_without_newline_keeps_record) ... ok
+test_attempt_cap_counts_real_attempts (test_sender.SenderTest.test_attempt_cap_counts_real_attempts) ... ok
+test_cli_once_prints_one_processing_line_per_report (test_sender.SenderTest.test_cli_once_prints_one_processing_line_per_report) ... ok
+test_concurrent_runs_only_one_proceeds (test_sender.SenderTest.test_concurrent_runs_only_one_proceeds) ... ok
+test_corrupt_state_halts_without_reposting_and_warns_once (test_sender.SenderTest.test_corrupt_state_halts_without_reposting_and_warns_once) ... ok
+test_decide_uses_button_card_form_without_thread (test_sender.SenderTest.test_decide_uses_button_card_form_without_thread) ... ok
+test_dry_run_sends_nothing_and_writes_no_state (test_sender.SenderTest.test_dry_run_sends_nothing_and_writes_no_state) ... ok
+test_emptied_or_malformed_state_halts_instead_of_reposting (test_sender.SenderTest.test_emptied_or_malformed_state_halts_instead_of_reposting) ... /Users/gangchanhyeong/orca/workspaces/claude-config/fix-report-sender-permanent/tests/report_sender/test_sender.py:423: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/mb/130tt8qx31112yx1j11l965h0000gn/T/tmpxrksrthn/state.json' mode='r' encoding='utf-8'>
+  good = open(self.conf.state, encoding="utf-8").read()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ok
+test_empty_body_ts_state_halts_instead_of_silent_sent (test_sender.SenderTest.test_empty_body_ts_state_halts_instead_of_silent_sent) ... ok
+test_empty_topic_ts_or_missing_topic_halts (test_sender.SenderTest.test_empty_topic_ts_or_missing_topic_halts) ... /Users/gangchanhyeong/orca/workspaces/claude-config/fix-report-sender-permanent/tests/report_sender/test_sender.py:525: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/mb/130tt8qx31112yx1j11l965h0000gn/T/tmpzi6tymvf/state.json' mode='r' encoding='utf-8'>
+  good = json.load(open(self.conf.state, encoding="utf-8"))
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ok
+test_env_missing_classification_uses_whole_line_with_real_notify_script (test_sender.SenderTest.test_env_missing_classification_uses_whole_line_with_real_notify_script)
+실제 slack_notify.sh 를 빈 HOME 으로 실행: 환경 누락 줄 전체만 일시, 입력값에 그 문구가 섞인 양식 오류는 영구 ... ok
+test_exit_code_2_is_permanent_one_attempt_one_warning (test_sender.SenderTest.test_exit_code_2_is_permanent_one_attempt_one_warning) ... ok
+test_failed_topic_blocks_later_reports_of_same_topic_only (test_sender.SenderTest.test_failed_topic_blocks_later_reports_of_same_topic_only) ... ok
+test_failing_topic_does_not_starve_healthy_topic (test_sender.SenderTest.test_failing_topic_does_not_starve_healthy_topic) ... ok
+test_failure_keeps_unsent_and_retries_next_round (test_sender.SenderTest.test_failure_keeps_unsent_and_retries_next_round) ... ok
+test_first_report_makes_topic_thread_and_one_progress_line (test_sender.SenderTest.test_first_report_makes_topic_thread_and_one_progress_line) ... ok
+test_halt_warning_respects_round_deadline (test_sender.SenderTest.test_halt_warning_respects_round_deadline) ... ok
+test_invalid_record_isolated_and_later_reports_still_sent (test_sender.SenderTest.test_invalid_record_isolated_and_later_reports_still_sent) ... ok
+test_missing_env_exit_2_is_transient (test_sender.SenderTest.test_missing_env_exit_2_is_transient) ... ok
+test_missing_progress_parent_skips_line_but_marks_sent (test_sender.SenderTest.test_missing_progress_parent_skips_line_but_marks_sent) ... ok
+test_missing_state_file_is_initial_state (test_sender.SenderTest.test_missing_state_file_is_initial_state) ... ok
+test_other_task_gets_its_own_topic_thread (test_sender.SenderTest.test_other_task_gets_its_own_topic_thread) ... ok
+test_progress_line_failure_retry_does_not_repost_body (test_sender.SenderTest.test_progress_line_failure_retry_does_not_repost_body) ... ok
+test_queued_invalid_decision_ids_are_stopped_without_resend (test_sender.SenderTest.test_queued_invalid_decision_ids_are_stopped_without_resend)
+설치 전 접수돼 큐·상태에 이미 걸린 형식 오류 결정 카드(62회 재시도 중이던 것)가 다음 회차에 영구 실패로 처리됨 ... ok
+test_record_without_files_key_does_not_stop_later_reports (test_sender.SenderTest.test_record_without_files_key_does_not_stop_later_reports) ... ok
+test_repair_lock_wait_respects_budget (test_sender.SenderTest.test_repair_lock_wait_respects_budget) ... ok
+test_retry_cap_stops_with_one_warning_in_topic_thread (test_sender.SenderTest.test_retry_cap_stops_with_one_warning_in_topic_thread) ... ok
+test_second_report_same_task_replies_in_same_thread (test_sender.SenderTest.test_second_report_same_task_replies_in_same_thread) ... ok
+test_secret_in_legacy_record_never_reaches_slack_or_log (test_sender.SenderTest.test_secret_in_legacy_record_never_reaches_slack_or_log) ... /Users/gangchanhyeong/orca/workspaces/claude-config/fix-report-sender-permanent/tests/report_sender/test_sender.py:407: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/mb/130tt8qx31112yx1j11l965h0000gn/T/tmp30ik1dik/log.txt' mode='r' encoding='utf-8'>
+  self.assertNotIn(bad, open(self.conf.log, encoding="utf-8").read() if os.path.exists(self.conf.log) else "")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ok
+test_sender_passes_no_slack_secrets_to_notify (test_sender.SenderTest.test_sender_passes_no_slack_secrets_to_notify) ... ok
+test_sender_quarantines_truncated_tail_and_continues (test_sender.SenderTest.test_sender_quarantines_truncated_tail_and_continues) ... 경고: outbox 끝의 잘린 줄 10바이트를 /var/folders/mb/130tt8qx31112yx1j11l965h0000gn/T/tmpjv_g2pnm/box.jsonl.corrupt 로 옮김
+ok
+test_sender_repairs_missing_trailing_newline_of_whole_record (test_sender.SenderTest.test_sender_repairs_missing_trailing_newline_of_whole_record) ... ok
+test_sent_report_not_resent (test_sender.SenderTest.test_sent_report_not_resent) ... ok
+test_stop_warning_retry_keeps_transient_cause (test_sender.SenderTest.test_stop_warning_retry_keeps_transient_cause) ... ok
+test_stop_without_saved_cause_warns_neutral_not_input_error (test_sender.SenderTest.test_stop_without_saved_cause_warns_neutral_not_input_error) ... ok
+test_transient_failures_back_off (test_sender.SenderTest.test_transient_failures_back_off) ... ok
+test_unreadable_state_halts_and_wrong_shape_halts (test_sender.SenderTest.test_unreadable_state_halts_and_wrong_shape_halts) ... ok
+test_unreleased_repair_lock_never_blocks_now_run_forever (test_sender.SenderTest.test_unreleased_repair_lock_never_blocks_now_run_forever) ... ok
+test_bad_ts_rejected (test_thread.ThreadTest.test_bad_ts_rejected) ... ok
+test_channel_option_is_not_supported (test_thread.ThreadTest.test_channel_option_is_not_supported) ... ok
+test_done_follow_up_goes_to_same_thread (test_thread.ThreadTest.test_done_follow_up_goes_to_same_thread) ... ok
+test_now_send_failure_keeps_record_and_exit_zero (test_thread.ThreadTest.test_now_send_failure_keeps_record_and_exit_zero) ... ok
+test_now_sends_right_after_recording (test_thread.ThreadTest.test_now_sends_right_after_recording) ... ok
+test_now_when_sender_busy_leaves_report_for_next_round (test_thread.ThreadTest.test_now_when_sender_busy_leaves_report_for_next_round) ... ok
+test_now_with_dry_run_does_not_send (test_thread.ThreadTest.test_now_with_dry_run_does_not_send) ... ok
+test_same_thread_report_is_deduplicated_but_other_thread_is_not (test_thread.ThreadTest.test_same_thread_report_is_deduplicated_but_other_thread_is_not) ... ok
+test_secret_in_thread_rejected (test_thread.ThreadTest.test_secret_in_thread_rejected) ... ok
+test_sender_isolates_legacy_record_with_channel_and_continues (test_thread.ThreadTest.test_sender_isolates_legacy_record_with_channel_and_continues) ... ok
+test_thread_only_for_warn_and_done (test_thread.ThreadTest.test_thread_only_for_warn_and_done) ... ok
+test_thread_report_replies_in_given_thread_without_progress_line (test_thread.ThreadTest.test_thread_report_replies_in_given_thread_without_progress_line) ... ok
+
+----------------------------------------------------------------------
+Ran 70 tests in 7.937s
+
+OK
+
+처리 로그: 전송 857cfbfb550f ui-layer done → 주제 C0012 스레드 1700000000.000001 답글 1700000000.000002 · 진행 줄 1700000000.000003
