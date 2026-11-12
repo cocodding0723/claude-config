@@ -180,5 +180,21 @@ chk "동시 check 2개: 카드 1장만 전송" '[ "$(cards)" = "$((C0 + 1))" ]' 
 chk "잠금을 못 잡은 쪽은 busy 로 건너뜀(대기 없이 1초 안에 반환)" 'grep -q busy "$SB/p2" && grep -q "\"carded\"" "$SB/p1" && awk -v a="$t0" -v b="$t1" "BEGIN{exit !(b-a<1.0)}"'
 sw --json > "$SB/p3"; chk "잠금 해제 뒤: 같은 dispatch 6시간 중복 방지 유지(카드 추가 없음)" '[ "$(cards)" = "$((C0 + 1))" ] && grep -q none "$SB/p3"'
 
+# ---- 8. 화면 요약 비밀 가림: JSON·key=value·Bearer·xox 토큰 ------------------------------------------------
+addappr 6 ctx_w9 T10 alpha
+python3 - <<'PY'
+import json, os
+xox = "xox" + "b-111122223333-zzzzYYYYxxxx"
+lines = ['{"password": "example123!", "user": "kim"}', "api_key=plainvalue99 next", "Authorization: Bearer abcdefgh12345678", "export SLACK=" + xox, "Do you want to proceed?"]
+json.dump(lines, open(os.path.join(os.environ["FAKE_DIR"], "read_ctx_w9.json"), "w"), ensure_ascii=False)
+PY
+sw --json > "$SB/o"
+CARD=$(python3 -c "import sys;print([c for c in open(sys.argv[1],encoding='utf-8').read().split('---\n') if c.strip()][-1])" "$FAKE_NOTIFY_LOG")
+chk "비밀 가림 시험용 카드 전송됨(화면 줄 포함)" 'printf "%s" "$CARD" | grep -q "화면: .*Do you want to proceed?"'
+chk "JSON 비밀 필드: password 값 전체 가림(키·다른 필드는 유지)" '! printf "%s" "$CARD" | grep -q "example123" && printf "%s" "$CARD" | grep -q "password.*\[가림\]" && printf "%s" "$CARD" | grep -q "user"'
+chk "key=value: api_key 값 가림" '! printf "%s" "$CARD" | grep -q "plainvalue99" && printf "%s" "$CARD" | grep -q "api_key=\[가림\]"'
+chk "Authorization Bearer 값 가림" '! printf "%s" "$CARD" | grep -q "abcdefgh12345678"'
+chk "xox 토큰 가림" '! printf "%s" "$CARD" | grep -q "111122223333" && ! printf "%s" "$CARD" | grep -q "zzzzYYYY"'
+
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

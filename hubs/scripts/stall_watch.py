@@ -64,6 +64,11 @@ SUMMARY_LINES = 6  # 카드에 싣는 화면 마지막 줄 수
 SUMMARY_MAX = 240  # 화면 요약 글자 상한
 MASK = "[가림]"
 EXTRA_SECRET_RE = re.compile(r"(?i)(?:bearer\s+\S{8,}|[A-Za-z0-9_-]{32,}|--?(?:token|password|secret|key)[= ]\S+)")
+# 키 이름에 비밀 단어가 든 key: value / key=value / "key": "value" 형태. 값 전체(따옴표 값은 따옴표째, 그 밖은 줄 끝까지)를 가림
+KV_SECRET_RE = re.compile(
+    r"""(?i)(["']?[\w.-]*(?:pass(?:word|wd)?|pwd|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|authorization|auth|credential)[\w.-]*["']?\s*[:=]\s*)"""
+    r"""("(?:[^"\\]|\\.)*"?|'[^']*'?|.*)""")
+TOKEN_RE = re.compile(r"xox[abprs]-[\w-]+|xapp-[\w-]+|sk-[\w-]{16,}|gh[pousr]_\w{20,}|AKIA[0-9A-Z]{12,}")  # 알려진 토큰 형식은 접두부가 아니라 전체를 가림
 RULE_RE = re.compile(r"^[\s─━—\-=_│|]*$")  # 구분선·빈 줄
 
 EPILOG = """종료 코드: 0 정상(감지 없음·기준선 기록 포함), 1 카드 전송 실패·조회 실패, 2 인자 오류
@@ -128,16 +133,21 @@ def approval_waiting(active: list, limits: Limits, now: float) -> list:
     return out
 
 
+def mask_secrets(line: str) -> str:
+    """비밀 값 가림. 자르기·정리 전에 원문 줄에 적용(자른 뒤에는 키와 값이 갈라져 못 알아봄)"""
+    line = KV_SECRET_RE.sub(lambda m: m.group(1) + MASK, line)
+    return hub_status.SECRET_RE.sub(MASK, TOKEN_RE.sub(MASK, EXTRA_SECRET_RE.sub(MASK, line)))
+
+
 def screen_summary(dispatch: str) -> str:
     """워커 화면 마지막 줄 요약(질문·명령 위주). 비밀 값은 가림. 조회 실패는 안내 문구"""
     res = orca_json(["orchestration", "worker-read", "--dispatch", dispatch, "--source", "terminal", "--json", "--limit", "40"])
     tail = ((res or {}).get("terminal") or {}).get("tail")
     if not isinstance(tail, list):
         return "화면 요약 불가(worker-read 실패)"
-    lines = [rw.clean(pc.ANSI_RE.sub("", str(x)) if pc else str(x)) for x in tail]
+    lines = [rw.clean(mask_secrets(pc.ANSI_RE.sub("", str(x)) if pc else str(x))) for x in tail]
     lines = [ln for ln in lines if ln and not RULE_RE.match(ln)][-SUMMARY_LINES:]
     text = " / ".join(ln[:80] for ln in lines)
-    text = hub_status.SECRET_RE.sub(MASK, EXTRA_SECRET_RE.sub(MASK, text))
     return text[:SUMMARY_MAX] or "화면 요약 불가(빈 화면)"
 
 
