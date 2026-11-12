@@ -61,4 +61,6 @@ PASS  접수 경로도 허브 저장소 소속 검증
 PASS  접수 경로(별칭 ui → ui-layer)도 티켓 근거
 PASS  근거 없는 티켓 → 미배정
 PASS  작업 공간 허브가 티켓보다 우선
-통과 62 / 실패 0
+PASS  재확인: 구형 cause 보수 비교·해시 문맥·저장소 owner 검증
+PASS  감시 대상이 claude-config 여도 게임 허브(ui-layer)로 배정 안 함
+통과 64 / 실패 0

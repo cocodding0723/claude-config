@@ -245,4 +245,39 @@ rm -f "$D/intake-routes.jsonl"
 fresh; log "not ok 3 - eye"; prs "$(pj 721 feat/mine 7a7a7a7a7a7a7a7a)"; wt feat/mine; cycle 721
 grep -q "근거: PR 브랜치의 작업 공간 허브" "$D/orca.log" && ok "작업 공간 허브가 티켓보다 우선" || ko "우선순위" "$(cat "$D/orca.log")"
 
+# ---- Codex 재확인 4건 ----
+python3 -c '
+import sys;sys.path.insert(0,sys.argv[1]);import ci_review as r
+L=lambda c:{"head":"h","fails":[{"key":"U","cause":c}],"hub":""}
+# 1) 판별 불명 구형 값: 콜론 뒤 공통부로 합치지 않음. xml 시험명 꼴 접두만 뗌
+m={"1":L("Shader error in Foo: undeclared identifier"),"2":L("Shader error in Bar: undeclared identifier"),"3":L("Error: boom"),"4":L("Failed: boom"),
+   "5":L("StageTest: boom"),"6":L("OtherTest: boom"),"7":L("Shader error in Foo: undeclared identifier")}
+assert r.common_cause(m,"1")==["7"] and r.common_cause(m,"2")==[], "Foo/Bar 는 다른 원인, 같은 전체 문자열만 공통"
+assert r.common_cause(m,"3")==[] and r.common_cause(m,"4")==[], "로그 머리말(Error/Failed)은 시험명 아님"
+assert r.common_cause(m,"5")==["6"], "시험명 꼴 접두는 뗌"
+# 3) 짧은 e 표기 숫자는 해시 아님, 해시 필드·GUID·긴 해시는 치환
+s=r.signature
+assert s("expected 1e00000")!=s("expected 2e00000"), "1e00000/2e00000 구분"
+assert s("commit abcdef1234567 x")==s("commit 7654321fedcba x") and s("sha: 1e00000 x")==s("sha: 2e00000 x"), "해시 필드 값 치환"
+assert s("guid 0f8fad5b-d9cb-469f-a165-70867728950e")==s("guid 1a8fad5b-d9cb-469f-a165-70867728950f") and s("f "+"a1"*8)==s("f "+"b2"*8), "GUID·긴 해시 치환"
+# 4) 저장소는 owner/name 전체, 경로 basename 만 알면 미확인
+import json,os,tempfile,datetime
+d=tempfile.mkdtemp();os.makedirs(d+"/hs")
+now=datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+def st(slug): open(d+"/hs/%s.json"%slug,"w").write(json.dumps({"slug":slug,"updatedAt":now,"tasks":["LRM-1"]}))
+open(d+"/hubs.tsv","w").write("ui-layer\tUI\t~/r/role-ui.txt\t-\t-\nown\tOWN\t~/r/role-own.txt\t-\tAcme/Game\ncfg\tCFG\t~/r/role-cfg.txt\t~/w\t~/orca/claude-config\n")
+for x in ("ui-layer","own","cfg"): st(x)
+t=lambda repo,home:r.ticket_hubs(d+"/hs",d+"/n.jsonl",d+"/hubs.tsv",repo,home).get("1",set())
+assert t("Basakansoft/Game","Basakansoft/Game")=={"UI"}, "기본 게임 저장소 허브만"
+assert t("Other/Game","Basakansoft/Game")==set(), "owner 가 다르면 같은 이름이어도 제외"
+assert t("Acme/Game","Basakansoft/Game")=={"OWN"}, "owner/name 명시 허브"
+assert t("Basakansoft/claude-config","Basakansoft/LoveRevolutionMaker")==set(), "감시 대상 ≠ 기본 게임 저장소면 게임 허브 제외·경로만 있는 허브는 미확인"
+assert t("Basakansoft/Game","")==set(), "기본 게임 저장소를 모르면 \x27-\x27 허브 제외"
+' "$S" && ok "재확인: 구형 cause 보수 비교·해시 문맥·저장소 owner 검증" || ko "재확인 단위"
+mkdir -p "$D/hub-status"; NOW=$(python3 -c 'from datetime import datetime;print(datetime.now().astimezone().isoformat(timespec="seconds"))')
+echo '{"slug":"ui-layer","updatedAt":"'$NOW'","tasks":["LRM-458"]}' > "$D/hub-status/ui-layer.json"
+fresh; log "not ok 3 - eye"; tp 726 "[LRM-458] x" b1b1b1b1b1b1b1b1; wt feat/mine; LRM_CI_REPO=Basakansoft/claude-config cycle 726
+grep -q "담당 허브 미배정(메인 판단)" "$D/orca.log" && ok "감시 대상이 claude-config 여도 게임 허브(ui-layer)로 배정 안 함" || ko "감시 대상 분리" "$(cat "$D/orca.log")"
+rm -rf "$D/hub-status"
+
 echo "통과 $PASS / 실패 $FAIL"; [ "$FAIL" = 0 ]

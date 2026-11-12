@@ -85,14 +85,19 @@ def load_hub_aliases(path):
     return out
 
 
+REPO_ID = re.compile(r"^[\w.-]+/[\w.-]+$")
+UNKNOWN_REPO = "?"  # 경로 basename 만 알아 owner 를 확인할 수 없음
+
+
 def load_hub_repos(path):
-    """hubs.tsv → {slug: 저장소 이름}. 5번째 칸이 '-'·빈 칸이면 기본 게임 저장소(빈 문자열), 아니면 경로의 마지막 폴더 이름"""
+    """hubs.tsv → {slug: 저장소}. 5번째 칸 '-'·빈 칸은 ''(기본 게임 저장소), 'owner/name' 은 그대로, 경로(~/…·/…)는 owner 를 알 수 없어 UNKNOWN_REPO"""
     out = {}
     try:
         for ln in Path(path).read_text(encoding="utf-8").splitlines():
             cols = [c.strip() for c in ln.split("\t")]
             if ln.strip() and not ln.startswith("#") and len(cols) >= 2:
-                out[cols[0]] = os.path.basename(cols[4].rstrip("/")) if len(cols) > 4 and cols[4] not in ("", "-") else ""
+                cell = cols[4] if len(cols) > 4 else "-"
+                out[cols[0]] = "" if cell in ("", "-") else cell if REPO_ID.match(cell) and not cell.startswith((".", "~")) else UNKNOWN_REPO
     except OSError:
         pass
     return out
@@ -108,11 +113,14 @@ def fresh_status(data, now=None):
 def ticket_hubs(status_dir, routes_path, hubs_path, repo="", game_repo=""):
     """티켓 번호 → 그 티켓을 맡은 허브 표시 이름 집합. 근거는 기존 데이터: 허브 상태 파일(tasks·branches 의 LRM-n, 낡은 파일 제외)과
     접수 경로(jsonl 의 text·hub). repo: 대상 PR 저장소('owner/name'), game_repo: hubs.tsv 저장소 칸이 '-' 인 허브의 저장소.
-    PR 저장소와 다른 저장소의 허브는 같은 티켓 번호여도 제외. repo 가 비면 저장소 검사를 하지 않음"""
+    허브 저장소는 owner/name 전체로 비교하며 소속을 확인할 수 없으면(경로만 있음, game_repo 비어 있음) 제외. repo 가 비면 저장소 검사를 하지 않음"""
     names, aliases, repos, out = load_hub_names(hubs_path), load_hub_aliases(hubs_path), load_hub_repos(hubs_path), {}
-    want = repo.split("/")[-1].lower()
-    home = game_repo.split("/")[-1].lower()
-    ok_repo = lambda slug: not want or (repos.get(slug) or home).lower() == want  # noqa: E731
+    want, home = repo.lower(), game_repo.lower()
+
+    def ok_repo(slug):
+        have = repos.get(slug, UNKNOWN_REPO)
+        return not want or (have == "" and home == want) or (have not in ("", UNKNOWN_REPO) and have.lower() == want)
+
     try:
         files = sorted(Path(status_dir).glob("*.json"))
     except OSError:
@@ -216,7 +224,9 @@ def specific(cause):
 SIG_RULES = [(re.compile(p), r) for p, r in (
     (r"\d{4}-\d\d-\d\dT?[\d:.]*Z?|\b\d{1,2}:\d\d(:\d\d)?(\.\d+)?\b", "<t>"),  # 날짜·시각
     (r"(?:[\w.-]*/)+[\w.-]*(?::\d+)?", "<p>"),  # 경로(파일:줄 포함)
-    (r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b", "<h>"),  # 커밋·해시(숫자·a-f 문자 모두 포함)
+    (r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", "<g>"),  # GUID
+    (r"(?i)(\b(?:commit|sha\d*|hash|checksum|md5|rev)\b[\s:=#@`'\"]*)[0-9a-f]{7,64}\b", r"\1<h>"),  # 해시 필드 값
+    (r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{12,64}\b", "<h>"),  # 문맥 없는 긴 해시(12자 이상 문자·숫자 혼합). 1e00000 같은 짧은 값은 의미 있는 값으로 보존
     (r"(?:PR|pr|#)\s?\d+", "<n>"),  # PR 번호
     (r"\b\d+(?:\.\d+)?\s?(?:ms|msec|sec|s|초|분|시간)(?![\w])", "<d>"),  # 소요 시간
 )]
@@ -229,14 +239,21 @@ def signature(text):
     return " ".join(text.split())
 
 
+LEGACY_NAME = re.compile(r"^[\w.+()\[\],/<>-]+$")  # xml 시험 이름 꼴(공백 없는 한 토큰)
+LOG_WORDS = {"error", "fail", "failed", "failure", "warning", "exception", "assert"}  # 로그 줄 머리말은 시험 이름이 아님
+
+
 def fail_sigs(c):
-    """실패 항목의 비교값 집합. 신형(msg 있음)은 메시지만. 구형(msg 없음)은 cause 전체와 '시험명: ' 을 뗀 나머지 둘 다(신구 혼합 상태 비교용)"""
+    """실패 항목의 비교값 집합. 신형(msg 있음)은 메시지만. 구형(msg 없음)은 cause 전체, 그리고 '시험명: 메시지' 로 볼 근거가 있을 때만 시험명을 뗀 나머지.
+    근거 = 접두가 공백 없는 한 토큰이고 로그 머리말(Error 등)이 아님. 'Shader error in Foo: …' 같이 판별이 불명한 값은 전체 문자열로만 비교(보수적)"""
     if c.get("msg"):
         return {signature(c["msg"])} if specific(c["msg"]) else set()
     text = c.get("cause", "")
     if not specific(text):
         return set()
-    return {signature(text)} | ({signature(text.split(": ", 1)[1])} if ": " in text else set())
+    name, sep, rest = text.partition(": ")
+    named = bool(sep) and LEGACY_NAME.match(name) and name.lower() not in LOG_WORDS
+    return {signature(text)} | ({signature(rest)} if named and specific(rest) else set())
 
 
 def common_cause(causes, own):
