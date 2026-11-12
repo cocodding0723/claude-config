@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""진행 목록: 진행 스냅샷(progress.json, progress_collect.py 가 90초마다 갱신)을 읽어 Slack 목록을 갱신하고 DM 한 줄을 보냄.
+"""진행 목록: 진행 스냅샷(progress.json, progress_collect.py 가 90초마다 갱신)을 읽어 Slack 목록을 갱신하고 DM 을 보냄.
 
 스냅샷이 없거나 10분 넘게 낡으면(패널 수집기 멈춤) 그 자리에서 수집해 씀(파일은 쓰지 않음). 장부(feedback-ledger.tsv)가 정본. 이 도구가 만든 행만 상태 파일에 기억해 고치고 완료 처리하며, 손으로 넣은 행은 건드리지 않음.
 직전 전송 내용의 해시가 같으면 아무것도 보내지 않음. 목록 갱신·DM 중 하나라도 실패하면 해시를 저장하지 않아 다음 회차에 재시도함
@@ -112,32 +112,31 @@ def digest_hash(items, groups=None):
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
-def names(items, limit=NAMES_MAX):
-    shown = [one_line(i.title, NAME_MAX) for i in items[:limit]]
+def name_lines(items, limit=NAMES_MAX):
+    """항목마다 '- 이름' 한 줄. limit 초과분은 '- 외 n건' 한 줄"""
+    out = [f"- {one_line(i.title, NAME_MAX)}" for i in items[:limit]]
     extra = len(items) - limit
-    return ", ".join(shown) + (f" 외 {extra}" if extra > 0 else "")
+    return out + ([f"- 외 {extra}건"] if extra > 0 else [])
 
 
-def ws_line(groups):
-    """허브별 '이름 하위 n개(활동 m)', 10개 넘으면 ⚠️. 하위가 없는 허브는 생략"""
+def ws_lines(groups):
+    """허브별 '- 이름 하위 n개(활동 m)' 한 줄씩, 10개 넘으면 ⚠️. 하위가 없는 허브는 생략"""
     rows = [(k, g) for k, g in sorted(groups.items()) if isinstance(g, dict) and g.get("children")]
-    if not rows:
-        return ""
-    shown = [f"{k} 하위 {g['children']}개(활동 {g.get('active', 0)})" + (" ⚠️" if g.get("warn") else "") for k, g in rows[:WS_NAMES_MAX]]
+    out = [f"- {k} 하위 {g['children']}개(활동 {g.get('active', 0)})" + (" ⚠️" if g.get("warn") else "") for k, g in rows[:WS_NAMES_MAX]]
     extra = len(rows) - WS_NAMES_MAX
-    return "🗂️ " + ", ".join(shown) + (f" 외 {extra}" if extra > 0 else "")
+    return out + ([f"- 외 {extra}곳"] if extra > 0 else [])
 
 
 def dm_text(items, list_url, groups=None):
+    """첫 줄은 제목(양식 A), 개수·항목은 한 줄에 하나씩 '- ' 로 이음"""
     by = {b: [i for i in items if i.bucket == b] for b, _, _ in BUCKETS}
-    head = " · ".join(f"{LABEL[b]} {len(by[b])}" for b, _, _ in BUCKETS)
-    lines = [f"{head} — <{list_url}|목록 열기>"]
+    lines = ["진행 목록", ""] + [f"- {LABEL[b]} {len(by[b])}" for b, _, _ in BUCKETS] + [f"<{list_url}|목록 열기>"]
     for b in (WAIT, BLOCK):
         if by[b]:
-            lines.append(f"{ICON[b]} {LABEL[b]}: {names(by[b])}")
-    ws = ws_line(groups or {})
+            lines += ["", f"{ICON[b]} {LABEL[b]}"] + name_lines(by[b])
+    ws = ws_lines(groups or {})
     if ws:
-        lines.append(ws)
+        lines += ["", "🗂️ 허브 하위 작업 공간"] + ws
     return "\n".join(lines)
 
 
@@ -333,7 +332,7 @@ def run(conf, a):
 def parser():
     p = argparse.ArgumentParser(
         prog="progress_digest.py", formatter_class=argparse.RawDescriptionHelpFormatter,
-        description="장부·허브 상태·내 PR 을 '진행 중 / 답 대기 / 막힘' 으로 묶어 Slack 목록을 갱신하고 DM 한 줄을 보냄. 변화가 없으면 아무것도 안 보냄.",
+        description="장부·허브 상태·내 PR 을 '진행 중 / 답 대기 / 막힘' 으로 묶어 Slack 목록을 갱신하고 DM 을 보냄. 변화가 없으면 아무것도 안 보냄.",
         epilog="환경:" + __doc__.split("환경:", 1)[1] + "\n예:\n  progress_digest.py --dry-run          전송 없이 결과만 출력\n  progress_digest.py --force            변화 없어도 다시 전송\n  progress_digest.py --no-pr --json     PR 조회 없이 JSON 출력\n")
     p.add_argument("--dry-run", action="store_true", help="수집·분류·계획만 출력. 전송·상태 파일 쓰기 없음")
     p.add_argument("--json", action="store_true", help="결과를 JSON 으로 출력")

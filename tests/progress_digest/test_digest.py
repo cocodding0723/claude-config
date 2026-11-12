@@ -130,14 +130,21 @@ class DigestTest(unittest.TestCase):
         self.assertTrue(any(m == "slackLists.items.create" and "새 일" in b for m, b in ops))
         self.assertTrue(any(m == "slackLists.items.update" and '"checkbox": true' in b for m, b in ops))
         self.assertEqual(len(self.dms()), 1)
-        self.assertIn("진행 중 1 · 답 대기 1 · 막힘 1", self.dms()[0])
+        lines = self.dms()[0].split("\n")
+        self.assertTrue(lines[0].endswith("진행 목록"))  # 가짜 전송이 인자를 앞에 붙임
+        self.assertEqual(lines[1], "")
+        self.assertEqual(lines[2:5], ["- 진행 중 1", "- 답 대기 1", "- 막힘 1"])  # 항목마다 한 줄
+        self.assertNotIn(" · ", "\n".join(lines[2:5]))
 
     def test_dm_names_capped_at_three(self):
         self.write_ledger([(f"F{i}", "진행", f"일{i}", "답 대기") for i in range(1, 6)])
         self.run_digest()
-        line = [l for l in open(self.dmlog).read().split("\n") if "답 대기:" in l][0]
-        self.assertIn("외 2", line)
-        self.assertNotIn("일4", line)
+        text = open(self.dmlog).read()
+        lines = text.split("\n")
+        at = lines.index("⏳ 답 대기")
+        self.assertEqual(len([l for l in lines[at + 1:at + 5] if l.startswith("- ")]), 4)  # 이름 3줄 + '외 n건' 1줄
+        self.assertIn("- 외 2건", lines)
+        self.assertNotIn("일4", text)
 
     def test_pr_failure_continues_and_keeps_old_pr_rows(self):
         self.write_gh([{"number": 9, "title": "기능", "url": "u", "reviewDecision": "", "mergeable": "MERGEABLE"}])

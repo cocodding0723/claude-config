@@ -337,14 +337,16 @@ def is_worker(t: dict) -> bool:
 
 def find_hub_terminal(run, path: str):
     """(핸들|None, 실패 사유|None). 작업 폴더가 허브 전체 경로와 같고 연결된 쓰기 가능 claude 터미널 중 워커 표시(제목·pane 제목)가 없는 것이 정확히 1개일 때만.
-    같은 워크트리에 붙은 리뷰·작업 워커는 후보가 아님. 워커만 있으면 코디네이터를 확인할 수 없으므로 하달하지 않음"""
+    orphaned(탭 없는 살아 있는 세션)도 후보이며 탭 있는 후보가 있으면 그쪽 우선. 같은 워크트리에 붙은 리뷰·작업 워커는 후보가 아님. 워커만 있으면 코디네이터를 확인할 수 없으므로 하달하지 않음"""
     rows = mt.list_rows(run)
     if rows is None:
         return None, "터미널 목록 조회 실패"
     live = [t for t in rows
             if str(t.get("worktreePath") or "").rstrip("/") == path.rstrip("/") and t.get("agentIdentity") == "claude"
-            and t.get("connected") is True and not t.get("orphaned") and t.get("writable") is True]
-    hit = [t["handle"] for t in live if not is_worker(t)]
+            and t.get("connected") is True and t.get("writable") is True]
+    coord = [t for t in live if not is_worker(t)]
+    # orphaned = 탭은 닫혔지만 세션은 살아 있음(재시작 뒤 복원). 후보로 두되 탭 있는 쪽 우선
+    hit = [t["handle"] for t in coord if not t.get("orphaned")] or [t["handle"] for t in coord]
     name = os.path.basename(path.rstrip("/"))
     if not hit:
         return None, f"{name} 코디네이터 터미널 없음" + ("(워커 터미널만 있어 코디네이터 확인 불가)" if live else "")
@@ -393,7 +395,7 @@ def screen_probe(run, ok_target):
 
 def hub_target(t: dict):
     """허브 터미널 화면 관찰 대상 검증. 경로는 목록 조회로 이미 확인했으므로 같은 핸들이 여전히 살아 있는 claude 인지만 봄"""
-    if t.get("connected") is not True or t.get("orphaned"):
+    if t.get("connected") is not True:
         return "handle_dead"
     if t.get("writable") is not True:
         return "not_writable"
