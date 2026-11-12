@@ -71,6 +71,7 @@ hubs/scripts/orphan_check.sh	.config/lrm-hubs/orphan_check.sh	link
 hubs/scripts/restart_hub.sh	.config/lrm-hubs/restart_hub.sh	link
 hubs/scripts/resume_all.sh	.config/lrm-hubs/resume_all.sh	link
 hubs/scripts/hub_status.py	.config/lrm-hubs/hub_status.py	link
+hubs/hubs.tsv	.config/lrm-hubs/hubs.tsv	link
 hubs/scripts/slack_cmd.sh	.config/lrm-hubs/slack_cmd.sh	link
 hubs/scripts/slack_notify.sh	.config/lrm-hubs/slack_notify.sh	link
 hubs/scripts/slack_pending.sh	.config/lrm-hubs/slack_pending.sh	link
