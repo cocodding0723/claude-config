@@ -1,5 +1,8 @@
 import json
 import os
+import time
+from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 from fixture import Base, FakeOrca, hs
 
@@ -8,134 +11,322 @@ def term(path, handle):
     return {"handle": handle, "worktreePath": path, "agentIdentity": "claude", "connected": True, "writable": True, "title": "hub"}
 
 
-class Run(Base):
+def ok_send(stage="turn_started"):
+    return 0, {"ok": True, "result": {"send": {"accepted": True, "prompt": {"stages": ["input_accepted", stage]}}}}
+
+
+def iso(hours_ago=0):
+    return (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat(timespec="seconds")
+
+
+def rd(p):
+    with open(p, encoding="utf-8") as f:
+        return f.read()
+
+
+def wr(p, text, mode="w"):
+    with open(p, mode, encoding="utf-8") as f:
+        f.write(text)
+
+
+class RunBase(Base):
     def setUp(self):
         super().setUp()
         self.routes = os.path.join(self.d, "intake-routes.tsv")
-        open(self.routes, "w").write("# 머리말\t대상\nui\tui\nvfx\tvfx\n*\tmain\n")
-        with open(os.path.join(self.d, "intake-routes.jsonl"), "w") as f:
-            f.write(json.dumps({"id": "C0012", "hub": "ui", "text": "팝업 닫기 버튼 정렬", "at": 1}) + "\n")
-        open(os.environ["LRM_LEDGER"], "w").write("id\t접수\t요청(원문 요약)\t상태\t담당\t진행·증거\t갱신\n"
-                                                  "C0012\t11-12\t팝업 정렬\t진행\tui\t\t2026-11-12 11:00\n"
-                                                  "C0013\t11-12\t팝업 색\t진행\tui-popup\t\t2026-11-12 11:00\n")
+        wr(self.routes, "# 머리말\t대상\nui\tui\nvfx\tvfx\n*\tmain\n")
+        wr(os.path.join(self.d, "intake-routes.jsonl"), "".join(json.dumps({"id": i, "hub": "ui", "text": t, "at": 1}) + "\n"
+                                                              for i, t in (("C0012", "팝업 닫기 버튼 정렬"), ("C0014", "팝업 그림자"))))
+        self.ledger = os.environ["LRM_LEDGER"]
+        wr(self.ledger, "id\t접수\t요청(원문 요약)\t상태\t담당\t진행·증거\t갱신\n"
+                        "C0012\t11-12\t팝업 정렬\t진행\tui\t\t2026-11-12 11:00\n"
+                        "C0014\t11-12\t팝업 그림자\t진행\tui\t\t2026-11-12 11:00\n"
+                        "C0013\t11-12\t팝업 색\t진행\tui-popup\t\t2026-11-12 11:00\n")
         self.role = os.path.join(self.d, "role-ui-popup.txt")
-        open(self.role, "w").write("팝업 역할")
+        wr(self.role, "팝업 역할")
         self.create = os.path.join(self.d, "create_hub.sh")
-        open(self.create, "w").write('#!/bin/bash\necho "$@" >> "$(dirname "$0")/create.calls"\nexit "${FAKE_CREATE_RC:-0}"\n')
+        wr(self.create, '#!/bin/bash\necho "$@" >> "$(dirname "$0")/create.calls"\nexit "${FAKE_CREATE_RC:-0}"\n')
         os.environ["LRM_CREATE_HUB"] = self.create
         os.environ["LRM_HUB_STATUS_DIR"] = os.path.join(self.d, "status")
-        self.run = FakeOrca(self.root, {"ui-layer": 10, "vfx": 1})
-        self.sent = []
-        hubp = lambda s: os.path.join(self.root, f"coord-{s}-hub")  # noqa: E731
-        self.run.replies["terminal list"] = (0, {"ok": True, "result": {"terminals": [term(hubp("ui-layer"), "term_a1"), term(hubp("ui-popup"), "term_b2")]}})
-
-        def send(args):
-            self.sent.append((args[args.index("--terminal") + 1], args[args.index("--text") + 1]))
-            return 0, {"ok": True, "result": {"send": {"accepted": True, "prompt": {"stages": ["input_accepted", "turn_started"]}}}}
-        self.run.replies["terminal send"] = send
-        self.hubs_before = open(hs.hubs_tsv()).read()
-        self.routes_before = open(self.routes).read()
+        os.makedirs(os.environ["LRM_HUB_STATUS_DIR"])
+        self.sent, self.send_results = [], []
+        self.make_orca({"ui-layer": 10, "vfx": 1})
+        self.hubs_before = rd(hs.hubs_tsv())
+        self.routes_before = rd(self.routes)
 
     def tearDown(self):
         for k in ("LRM_CREATE_HUB", "LRM_HUB_STATUS_DIR", "FAKE_CREATE_RC"):
             os.environ.pop(k, None)
         super().tearDown()
 
-    def propose(self):
+    def make_orca(self, kids):
+        self.run = FakeOrca(self.root, kids)
+        hubp = lambda s: os.path.join(self.root, f"coord-{s}-hub")  # noqa: E731
+        self.run.replies["terminal list"] = (0, {"ok": True, "result": {"terminals": [term(hubp("ui-layer"), "term_a1"), term(hubp("ui-popup"), "term_b2")]}})
+
+        def send(args):
+            self.sent.append((args[args.index("--terminal") + 1], args[args.index("--text") + 1]))
+            return self.send_results.pop(0) if self.send_results else ok_send()
+        self.run.replies["terminal send"] = send
+        self.run.replies["terminal show"] = (1, None)  # 화면 확인 불가 → 불확실로 남김
+
+    def approve(self, did, pick=1, at=None):
+        wr(os.environ["LRM_SLACK_INBOX"], json.dumps({"type": "button", "decision_id": did, "action": "pick", "pick": pick,
+                                                      "received_at": at if at is not None else time.time() + 1}) + "\n", "a")
+
+    def status(self, slug, workers, hours_ago=0, **extra):
+        data = {"slug": slug, "updatedAt": iso(hours_ago), "tasks": [], "branches": [], "blockers": [], "workers": workers, **extra}
+        if workers is None:
+            data.pop("workers")
+        wr(os.path.join(os.environ["LRM_HUB_STATUS_DIR"], f"{slug}.json"), json.dumps(data))
+
+
+class Split(RunBase):
+    MOVES = ["--move", "C0012", "--move", "C0014"]
+
+    def propose(self, approve=True):
         rc, _, err = self.cli(["propose", "--kind", "split", "--hub", "ui-layer", "--child", "ui-popup", "--child-name", "UI 팝업",
                                "--prefix", "ui팝업", "--decision-id", "D-S1", "--no-doc", "--record"], self.run)
         self.assertEqual(rc, 0, err)
+        if approve:
+            self.approve("D-S1")
 
-    def apply(self, *extra):
-        return self.cli(["run", "--decision-id", "D-S1", "--move", "C0012", "--role-file", self.role, "--apply", "--json", *extra], self.run)
+    def go(self, *extra, apply=True, moves=None):
+        args = ["run", "--decision-id", "D-S1", *(self.MOVES if moves is None else moves), "--role-file", self.role, "--json", *extra]
+        return self.cli(args + (["--apply"] if apply else []), self.run)
+
+    def ready(self):
+        self.propose()
+        rc, _, err = self.go(apply=False)
+        self.assertEqual(rc, 0, err)
+        self.sent.clear()
 
     def test_dry_run_default_changes_nothing(self):
         rc, out, err = self.cli(["run", "--decision-id", "D-T1", "--kind", "split", "--hub", "ui-layer", "--child", "ui-popup",
                                  "--child-name", "UI 팝업", "--prefix", "ui팝업", "--move", "C0012", "--json"], self.run)
         self.assertEqual(rc, 0, err)
-        d = json.loads(out)
-        self.assertEqual(d["mode"], "dry-run")
-        self.assertEqual([s["status"] for s in d["steps"]], ["plan"] * 10)
-        self.assertEqual(open(hs.hubs_tsv()).read(), self.hubs_before)
-        self.assertEqual(open(self.routes).read(), self.routes_before)
+        self.assertEqual([s["status"] for s in json.loads(out)["steps"]], ["plan"] * 10)
+        self.assertEqual((rd(hs.hubs_tsv()), rd(self.routes)), (self.hubs_before, self.routes_before))
         self.assertFalse(os.path.exists(os.environ["LRM_REPORT_OUTBOX"]))
-        self.assertFalse(os.path.exists(os.path.join(self.d, "hub-split-runs")))
         self.assertEqual(self.sent, [])
         self.assertFalse(any(c[:2] in (["worktree", "set"], ["terminal", "close"]) for c in self.run.calls))
 
-    def test_apply_requires_recorded_proposal(self):
-        rc, _, err = self.apply()
+    # 1) 승인
+    def test_apply_refused_without_card_approval(self):
+        self.propose(approve=False)
+        self.go(apply=False)
+        for pick in (None, 2):
+            if pick:
+                self.approve("D-S1", pick)
+            rc, _, err = self.go()
+            self.assertEqual(rc, 4, err)
+            self.assertIn("승인 확인 실패", err)
+        self.assertEqual(rd(hs.hubs_tsv()), self.hubs_before)
+
+    def test_answer_before_proposal_ignored(self):
+        self.propose(approve=False)
+        self.approve("D-S1", 1, at=1)
+        self.go(apply=False)
+        self.assertEqual(self.go()[0], 4)
+
+    def test_apply_needs_same_input_dry_run(self):
+        self.propose()
+        rc, _, err = self.go()
         self.assertEqual(rc, 4)
-        self.assertIn("propose --record", err)
-        self.assertEqual(open(hs.hubs_tsv()).read(), self.hubs_before)
+        self.assertIn("시험 실행 기록 없음", err)
+        self.go(apply=False, moves=["--move", "C0012"])
+        rc, _, err = self.go()  # 시험과 --move 가 다름
+        self.assertEqual(rc, 4)
+
+    def test_changed_plan_after_proposal_refused(self):
+        self.ready()
+        st = json.loads(rd(hs.state_path()))
+        st["proposals"]["D-S1"]["prefix"] = "바뀜"
+        wr(hs.state_path(), json.dumps(st))
+        rc, _, err = self.go()
+        self.assertEqual(rc, 4)
+        self.assertIn("해시 불일치", err)
 
     def test_split_apply_full_order(self):
-        self.propose()
-        rc, out, err = self.apply()
+        self.ready()
+        rc, out, err = self.go()
         self.assertEqual(rc, 0, err)
-        d = json.loads(out)
-        self.assertEqual([s["status"] for s in d["steps"]], ["done"] * 10)
-        hubs = {h.slug: h for h in hs.read_hubs()}
-        self.assertEqual(hubs["ui-popup"].parent, "ui-layer")
-        routes = open(self.routes).read().splitlines()
+        self.assertEqual([s["status"] for s in json.loads(out)["steps"]], ["done"] * 10)
+        self.assertEqual({h.slug: h for h in hs.read_hubs()}["ui-popup"].parent, "ui-layer")
+        routes = rd(self.routes).splitlines()
         self.assertLess(routes.index("ui팝업\tui-popup"), routes.index("*\tmain"))
-        self.assertIn("ui\tui", routes)  # 기존 머리말은 부모에 둠
-        self.assertEqual(self.sent[0], ("term_b2", "[C0012] 팝업 닫기 버튼 정렬"))
-        self.assertEqual(self.sent[1][0], "term_a1")
-        ledger = open(os.environ["LRM_LEDGER"]).read()
-        self.assertIn("C0012\t11-12\t팝업 정렬\t진행\tui-popup", ledger)
-        info = [json.loads(x) for x in open(os.environ["LRM_REPORT_OUTBOX"]).read().splitlines() if '"info"' in x]
-        self.assertEqual(len(info), 2)
-        self.assertEqual(len(os.listdir(os.path.join(self.d, "hub-split-runs", "D-S1", "backup"))), 2)
-        st = json.load(open(hs.state_path()))
-        self.assertIn("split_at", st["events"]["ui-popup"])
+        self.assertEqual(self.sent[:2], [("term_b2", "[C0012] 팝업 닫기 버튼 정렬"), ("term_b2", "[C0014] 팝업 그림자")])
+        self.assertIn("C0012\t11-12\t팝업 정렬\t진행\tui-popup", rd(self.ledger))
 
-    def test_failure_records_progress_and_rerun_resumes(self):
-        self.propose()
+    # 4) 보상
+    def test_create_failure_restores_hubs_table(self):
+        self.ready()
         os.environ["FAKE_CREATE_RC"] = "1"
-        rc, out, err = self.apply()
+        rc, out, err = self.go()
         self.assertEqual(rc, 4)
-        self.assertIn("backup 으로 되돌림", err)
-        prog = json.load(open(os.path.join(self.d, "hub-split-runs", "D-S1", "progress.json")))
-        self.assertEqual(prog["done"], ["backup", "report_before"])
+        self.assertIn("hubs: 백업으로 되돌림(대조 일치)", err)
+        self.assertEqual(rd(hs.hubs_tsv()), self.hubs_before)
         os.environ["FAKE_CREATE_RC"] = "0"
-        rc, out, err = self.apply()
-        self.assertEqual(rc, 0, err)
-        steps = json.loads(out)["steps"]
-        self.assertEqual([s["status"] for s in steps[:2]], ["skip", "skip"])
-        self.assertEqual(open(self.routes).read().count("ui팝업"), 1)
-        rows = [ln for ln in open(hs.hubs_tsv()).read().splitlines() if ln.startswith("ui-popup\t")]
-        self.assertEqual(len(rows), 1)
+        self.assertEqual(self.go()[0], 0)
 
-    def test_merge_refuses_with_live_workers_then_reverses(self):
+    def test_ledger_failure_reverts_owner_closes_child_and_restores_table(self):
+        self.ready()
+        real = hs.py_tool
+
+        def flaky(var, name, *args):
+            if args[:2] == ("owner", "C0014") and args[-1] == "ui-popup":
+                return real(var, name, "owner", "NOPE", "--to", "x")
+            return real(var, name, *args)
+        with mock.patch.object(hs, "py_tool", flaky):
+            rc, out, err = self.go()
+        self.assertEqual(rc, 1, err)
+        self.assertIn("장부 담당 1건 되돌림(대조 일치)", err)
+        self.assertIn("C0012\t11-12\t팝업 정렬\t진행\tui\t", rd(self.ledger))
+        self.assertEqual(rd(hs.hubs_tsv()), self.hubs_before)
+        self.assertIn(["terminal", "close", "--terminal", "term_b2"], self.run.calls)
+        prog = json.loads(rd(os.path.join(self.d, "hub-split-runs", "D-S1", "progress.json")))
+        self.assertEqual((prog["done"], prog["ledger"], prog["sent"]), (["backup", "report_before", "pending"], [], {}))
+
+    def test_routes_failure_restores_routes(self):
+        self.ready()
+        orig = hs.Runner.routes
+
+        def broken(self_):
+            orig(self_)
+            raise hs.SplitError("주입 실패", 1)
+        with mock.patch.object(hs.Runner, "routes", broken):
+            rc, _, err = self.go()
+        self.assertEqual(rc, 1)
+        self.assertEqual(rd(self.routes), self.routes_before)
+
+    # 5) 재하달 중복 방지
+    def test_redeliver_records_each_task_and_never_resends(self):
+        self.ready()
+        self.send_results = [ok_send(), ok_send("input_accepted")]  # 둘째는 제출 미확인
+        rc, _, err = self.go()
+        self.assertEqual(rc, 4)
+        self.assertIn("--mark-sent C0014", err)
+        rc, _, err = self.go()  # 불확실 건은 사람 확인 전 멈춤, 첫 건 재전송 없음
+        self.assertEqual(rc, 4)
+        rc, _, err = self.go("--mark-sent", "C0014")
+        self.assertEqual(rc, 0, err)
+        task_sends = [t for _, t in self.sent if t.startswith("[C00")]
+        self.assertEqual(task_sends, ["[C0012] 팝업 닫기 버튼 정렬", "[C0014] 팝업 그림자"])
+
+    def test_resend_after_screen_check(self):
+        self.ready()
+        self.send_results = [ok_send(), ok_send("input_accepted")]
+        self.go()
+        self.assertEqual(self.go("--resend", "C0014")[0], 0)
+        self.assertEqual([t for _, t in self.sent if t.startswith("[C0014]")], ["[C0014] 팝업 그림자"] * 2)
+        self.assertEqual([t for _, t in self.sent if t.startswith("[C0012]")], ["[C0012] 팝업 닫기 버튼 정렬"])
+
+    def test_rerun_with_different_input_refused(self):
+        self.ready()
+        os.environ["FAKE_CREATE_RC"] = "1"
+        self.go()
+        os.environ["FAKE_CREATE_RC"] = "0"
+        rc, _, err = self.go(moves=["--move", "C0012"])
+        self.assertEqual(rc, 4)
+        self.assertIn("첫 실행과 다름", err)
+
+
+class Merge(RunBase):
+    def setUp(self):
+        super().setUp()
         self.write_hubs(self.HUBS + [("ui-popup", "팝업", "~/r/role-ui-popup.txt", "-", "-", "ui-layer")])
-        open(self.routes, "a").write("ui팝업\tui-popup\n")
-        self.run = FakeOrca(self.root, {"ui-layer": 2, "ui-popup": 2})
-        self.run.replies["terminal list"] = (0, {"ok": True, "result": {"terminals": [term(os.path.join(self.root, "coord-ui-layer-hub"), "term_a1"), term(os.path.join(self.root, "coord-ui-popup-hub"), "term_b2")]}})
-        self.run.replies["terminal send"] = (0, {"ok": True, "result": {"send": {"accepted": True, "prompt": {"stages": ["turn_started"]}}}})
-        moved = []
+        wr(self.routes, "ui팝업\tui-popup\n", "a")
+        self.hubs_before = rd(hs.hubs_tsv())
+        self.make_orca({"ui-layer": 2, "ui-popup": 2})
+        self.moved = []
 
         def wset(args):
-            moved.append(args[3][5:])
+            self.moved.append(args[3][5:])
             for w in self.run.worktrees:
                 if w["id"] == "ui-popup":
-                    w["childWorktreeIds"] = [i for i in w["childWorktreeIds"] if os.path.join(self.root, i) not in moved]
+                    w["childWorktreeIds"] = [i for i in w["childWorktreeIds"] if os.path.join(self.root, i) not in self.moved]
             return 0, {"ok": True}
         self.run.replies["worktree set"] = wset
         rc, _, err = self.cli(["propose", "--kind", "merge", "--child", "ui-popup", "--decision-id", "D-M1", "--no-doc", "--record"], self.run)
         self.assertEqual(rc, 0, err)
-        os.makedirs(os.environ["LRM_HUB_STATUS_DIR"])
-        sp = os.path.join(os.environ["LRM_HUB_STATUS_DIR"], "ui-popup.json")
-        json.dump({"slug": "ui-popup", "updatedAt": "2026-11-12T10:00:00+09:00", "workers": ["ctx_1 /ws/a"], "tasks": [], "branches": [], "blockers": []}, open(sp, "w"))
-        rc, _, err = self.cli(["run", "--decision-id", "D-M1", "--apply"], self.run)
+        self.approve("D-M1")
+        self.status("ui-popup", [])
+        self.assertEqual(self.go(apply=False)[0], 0)
+
+    def go(self, apply=True):
+        return self.cli(["run", "--decision-id", "D-M1", "--json"] + (["--apply"] if apply else []), self.run)
+
+    # 2) 진행 워커 판정
+    def test_empty_stale_or_busy_status_refused(self):
+        for kw in ({"workers": None}, {"workers": [], "hours_ago": 30}, {"workers": ["ctx_1 /ws/a"]}):
+            self.status("ui-popup", kw["workers"], kw.get("hours_ago", 0))
+            rc, _, err = self.go()
+            self.assertEqual(rc, 4, err)
+        wr(os.path.join(os.environ["LRM_HUB_STATUS_DIR"], "ui-popup.json"), "{}")
+        self.assertEqual(self.go()[0], 4)
+        self.assertIn("ui-popup", rd(hs.hubs_tsv()))
+
+    def test_idle_rechecked_on_rerun_and_before_close(self):
+        self.run.replies["terminal close"] = (1, None)
+        rc, _, err = self.go()
+        self.assertEqual(rc, 3, err)  # 종료 실패
+        self.status("ui-popup", ["ctx_9 /ws/b"])  # 그사이 워커가 생김
+        rc, out, err = self.go()
         self.assertEqual(rc, 4)
-        self.assertIn("진행 워커 1명", err)
-        self.assertIn("ui-popup", open(hs.hubs_tsv()).read())
-        json.dump({"slug": "ui-popup", "updatedAt": "2026-11-12T10:00:00+09:00", "workers": [], "tasks": [], "branches": [], "blockers": []}, open(sp, "w"))
-        rc, out, err = self.cli(["run", "--decision-id", "D-M1", "--apply", "--json"], self.run)
+        self.assertEqual(json.loads(out)["steps"][2]["status"], "failed")  # 재실행에도 idle_check 다시 함
+
+    # 6) 불변 계획으로 재개
+    def test_resume_after_row_removed_and_close_failed(self):
+        self.run.replies["terminal close"] = (1, None)
+        rc, _, err = self.go()
+        self.assertEqual(rc, 3, err)
+        self.assertNotIn("ui-popup\t", rd(hs.hubs_tsv()))
+        self.run.replies.pop("terminal close")
+        rc, out, err = self.go()
         self.assertEqual(rc, 0, err)
-        self.assertNotIn("ui-popup\t", open(hs.hubs_tsv()).read())
-        self.assertIn("ui팝업\tui", open(self.routes).read())
-        self.assertIn("C0013\t11-12\t팝업 색\t진행\tui-layer", open(os.environ["LRM_LEDGER"]).read())
-        self.assertEqual(len(moved), 2)
-        self.assertIn(["terminal", "close", "--terminal", "term_b2"], self.run.calls)
+        st = {s["name"]: s["status"] for s in json.loads(out)["steps"]}
+        self.assertEqual((st["remove_row"], st["relink_all"], st["close_child"]), ("skip", "skip", "done"))
+        self.assertIn("ui팝업\tui", rd(self.routes))
+        self.assertIn("C0013\t11-12\t팝업 색\t진행\tui-layer", rd(self.ledger))
+        self.assertEqual(len(self.moved), 2)
+
+    def test_remove_row_failure_restores_table(self):
+        orig = hs.Runner.remove_row
+
+        def broken(self_):
+            orig(self_)
+            raise hs.SplitError("주입", 1)
+        with mock.patch.object(hs.Runner, "remove_row", broken):
+            self.assertEqual(self.go()[0], 1)
+        self.assertEqual(rd(hs.hubs_tsv()), self.hubs_before)
+
+
+class Relink(RunBase):
+    # 3) PR 상태와 별개로 진행 작업자 확인
+    def setUp(self):
+        super().setUp()
+        self.write_hubs(self.HUBS + [("ui-popup", "팝업", "~/r/role-ui-popup.txt", "-", "-", "ui-layer")])
+        st = {"proposals": {"D-S1": {"kind": "split", "parent": "ui-layer", "child": "ui-popup", "child_name": "", "prefix": "", "at": 0}}}
+        wr(hs.state_path(), json.dumps(st))
+        self.ws = os.path.join(self.root, "ui-layer-k0")
+
+    def relink(self):
+        rc, out, err = self.cli(["relink", "--decision-id", "D-S1", "--ws", self.ws, "--apply"], self.run)
+        self.assertEqual(rc, 0, err)
+        return json.loads(out)["items"][0]
+
+    def test_live_terminal_keeps_workspace(self):
+        self.run.replies["terminal list"] = (0, {"ok": True, "result": {"terminals": [term(self.ws, "term_w")]}})
+        self.assertEqual(self.relink()["action"], "keep")
+
+    def test_live_dispatch_keeps_workspace(self):
+        self.run.replies["terminal list"] = (0, {"ok": True, "result": {"terminals": []}})
+        self.run.replies["orchestration worker-list"] = (0, {"ok": True, "result": {"workers": [
+            {"terminalState": "running", "resource": {"worktreeId": f"repo::{self.ws}"}}]}})
+        self.assertEqual(self.relink()["action"], "keep")
+
+    def test_lookup_failure_keeps_workspace(self):
+        self.run.replies["terminal list"] = (1, None)
+        r = self.relink()
+        self.assertEqual(r["action"], "keep")
+        self.assertIn("판정 불가", r["why"])
+        self.assertFalse(any(c[:2] == ["worktree", "set"] for c in self.run.calls))

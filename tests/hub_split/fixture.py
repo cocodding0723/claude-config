@@ -11,6 +11,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "hubs", "scripts"))
 import hub_split as hs  # noqa: E402
 
+os.environ["LRM_PUSH_CONFIRM"] = "1"  # 화면 확인 대기 1초(시험 시간 단축)
 NOW = 1_800_000_000.0
 DAY = 86400
 
@@ -50,7 +51,8 @@ class Base(unittest.TestCase):
         self.root = os.path.join(self.d, "ws")
         env = {"LRM_HUB_DIR": self.d, "LRM_WS_ROOT": self.root, "LRM_HUBS_TSV": "", "LRM_INTAKE_ROUTES": "",
                "LRM_INTAKE_LOG": "", "LRM_HUB_SPLIT_STATE": "", "LRM_WS_GC": os.path.join(self.d, "no-gc"),
-               "LRM_LEDGER": os.path.join(self.d, "ledger.tsv"), "LRM_REPORT_OUTBOX": os.path.join(self.d, "outbox.jsonl")}
+               "LRM_LEDGER": os.path.join(self.d, "ledger.tsv"), "LRM_REPORT_OUTBOX": os.path.join(self.d, "outbox.jsonl"),
+               "LRM_SLACK_INBOX": os.path.join(self.d, "slack-inbox.jsonl")}
         self._old = {k: os.environ.get(k) for k in env}
         os.environ.update(env)
         self.write_hubs(self.HUBS)
