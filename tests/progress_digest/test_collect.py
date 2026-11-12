@@ -181,5 +181,19 @@ class WorkspaceCountTest(Base):
         self.assertEqual(d["groups"]["config"]["children"], 4)
 
 
+class OrcaLookupTest(Base):
+    def test_orca_found_with_minimal_path(self):
+        """launchd 같은 짧은 PATH 에서도 후보 경로로 orca 를 찾음(LRM_ORCA 없이)"""
+        code = ("import sys;sys.path.insert(0,%r);import main_terminal as m,progress_collect as p;"
+                "m.find_orca.__defaults__=(None,None,(%r,));print(p.orca_bin())" % (os.path.join(HERE, "..", "..", "hubs", "scripts"), self.gh))
+        r = subprocess.run(["env", "-i", "PATH=/usr/bin:/bin", sys.executable, "-I", "-c", code], capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), self.gh, r.stderr)
+
+    def test_env_override_wins(self):
+        code = ("import sys;sys.path.insert(0,%r);import progress_collect as p;print(p.orca_bin())" % os.path.join(HERE, "..", "..", "hubs", "scripts"))
+        r = subprocess.run(["env", "-i", "PATH=/usr/bin:/bin", "LRM_ORCA=/x/orca", sys.executable, "-I", "-c", code], capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), "/x/orca")
+
+
 if __name__ == "__main__":
     unittest.main()

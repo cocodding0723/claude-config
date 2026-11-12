@@ -8,7 +8,7 @@ PR(gh)은 PR_INTERVAL_S 초에 한 번만 조회하고 그 사이는 직전 값�
 
 환경: LRM_HUB_DIR 작업 폴더 · LRM_PROGRESS 스냅샷 경로 · LRM_LEDGER 장부 · LRM_HUB_STATUS_DIR 허브 상태 폴더
       LRM_DIGEST_GH gh 명령(없으면 PATH → /opt/homebrew/bin·/usr/local/bin) · LRM_DIGEST_REPOS PR 조회 저장소(쉼표, 없으면 현재 저장소) · LRM_HUB_STATUS_STALE_HOURS 낡음 기준(기본 24)
-      LRM_ORCA orca 명령(하위 작업 공간 조회) · LRM_PROGRESS_PR_INTERVAL PR 조회 간격 초(기본 300) · LRM_PROGRESS_PR_BUDGET PR 조회 전체 시간 상한 초(기본 30)
+      LRM_ORCA orca 명령(없으면 PATH → 알려진 설치 위치) · LRM_PROGRESS_PR_INTERVAL PR 조회 간격 초(기본 300) · LRM_PROGRESS_PR_BUDGET PR 조회 전체 시간 상한 초(기본 30)
 종료 코드: 0 성공(원료 일부 실패 포함), 2 설정·입력 오류
 """
 import argparse
@@ -225,7 +225,9 @@ def orca_json(*args):
 
 
 def orca_bin():
-    return os.environ.get("LRM_ORCA") or "orca"
+    """LRM_ORCA → PATH → 알려진 설치 위치 순(launchd 는 PATH 가 짧음). 탐색은 main_terminal.find_orca 한 곳"""
+    import main_terminal  # 지연 가져오기: 쓰는 곳에서만 필요
+    return main_terminal.find_orca()
 
 
 def query_workspaces():
