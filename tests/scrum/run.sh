@@ -12,7 +12,7 @@ export LRM_SCRUM_NAME="시험이름" FAKE_NAME="시험이름" FAKE_DIR="$D" LRM_
 chmod +x "$HERE"/fake_*.sh
 post() { python3 "$S/scrum_post.py" "$@" > "$D/out" 2> "$D/err"; }
 sent() { [ -f "$D/sent.log" ] && grep -c '^===$' "$D/sent.log" || echo 0; }
-reset() { rm -f "$D"/sent.log "$D"/claude.log "$D"/osa.log "$D"/send-* "$D"/plan-* "$D"/scrum.state.json "$D"/scrum.lock; rm -rf "${D:?}/draft"; }
+reset() { rm -f "$D"/sent.log "$D"/claude.log "$D"/claude.args "$D"/osa.log "$D"/send-* "$D"/plan-* "$D"/scrum.state.json "$D"/scrum.lock; rm -rf "${D:?}/draft"; }
 WK=2026-11-12   # 목요일
 
 # ---- 날짜 잠금 ----
@@ -49,6 +49,18 @@ f=$(ls "$D"/draft/*.md | head -1); ! grep -q "타인" "$f" && ! grep -q "머리�
 reset; echo noatl > "$D/plan-claude-fable-5-1"; post --date $WK; f=$(ls "$D"/draft/*.md | head -1)
 grep -q "경고: Jira·Confluence 를 못 읽어" "$D/sent.log" && ! grep -q "atlassian-unavailable\|설명 문장" "$f" && ok "Atlassian 못 읽음 → Slack 경고 1줄, 표시·끝 설명 문장은 초안에서 제거" || ko "Atlassian 경고" "$(cat "$f")"
 reset; post --date $WK; ! grep -q "Jira·Confluence" "$D/sent.log" && ok "Atlassian 읽었으면 경고 없음" || ko "Atlassian 정상"
+
+# ---- 초안 claude 도구 제한(리뷰 지적 1) ----
+reset; post --date $WK
+args=$(sed '/^---$/,$d' "$D/claude.args"); opt() { printf '%s\n' "$args" | grep -A1 -x -- "$1" | tail -1; }
+[ "$(opt --tools)" = "<빈값>" ] && ok "claude -p 에 --tools \"\" 로 내장 도구 전부 끔" || ko "--tools" "$(opt --tools)"
+[ "$(opt --permission-mode)" = dontAsk ] && ok "--permission-mode dontAsk 로 목록 밖 호출 거부" || ko "dontAsk" "$(opt --permission-mode)"
+allowed=$(opt --allowedTools)
+[ -n "$allowed" ] && ! printf '%s' "$allowed" | tr ',' '\n' | grep -qv '^mcp__atlassian__\(get\|search\|atlassianUserInfo\)' && ok "--allowedTools 는 Atlassian 읽기 도구만" || ko "allowedTools" "$allowed"
+denied=$(opt --disallowedTools)
+for t in Bash Read Write Edit WebFetch mcp__atlassian__createJiraIssue mcp__atlassian__editJiraIssue mcp__atlassian__addOrEditJiraIssueComment mcp__atlassian__updateConfluenceContent mcp__atlassian__executeWrite; do
+  printf '%s' "$denied" | tr ',' '\n' | grep -qx "$t" || ko "--disallowedTools" "$t 누락"
+done; ok "--disallowedTools 에 Bash·파일·웹·Atlassian 쓰기 도구 명시"
 
 # ---- 실패 시 warn 1건 ----
 reset; for m in claude-fable-5-1 claude-fable-5-2 claude-opus-5-5; do echo fail > "$D/plan-$m"; done; post --date $WK; rc=$?

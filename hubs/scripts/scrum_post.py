@@ -55,10 +55,17 @@ NOTIFY = os.environ.get("LRM_NOTIFY", str(DIR / "slack_notify.sh"))
 OSA = os.environ.get("LRM_SCRUM_OSA", "osascript")
 COLLECT = os.environ.get("LRM_SCRUM_COLLECT", str(HERE / "scrum_collect.py"))
 PROMPT = Path(os.environ.get("LRM_SCRUM_PROMPT", HERE / "scrum-prompt.md"))
-# 초안 작성 claude 에 허용하는 도구: Atlassian 읽기 전용
-TOOLS = ("mcp__atlassian__getAccessibleAtlassianResources mcp__atlassian__atlassianUserInfo "
-         "mcp__atlassian__searchJiraIssuesUsingJql mcp__atlassian__getJiraIssue "
-         "mcp__atlassian__searchConfluence mcp__atlassian__getConfluenceContent")
+# 초안 작성 claude 도구 제한. --tools "" 로 내장 도구(Bash·Read·Edit·WebFetch 등)를 모두 끄고,
+# --allowedTools 는 자동 승인 목록일 뿐이라 dontAsk 로 목록 밖 호출을 거부하게 함. 기존 설정에 허용된 권한이 남지 않게 함.
+READ_TOOLS = ("mcp__atlassian__getAccessibleAtlassianResources", "mcp__atlassian__atlassianUserInfo",
+              "mcp__atlassian__searchJiraIssuesUsingJql", "mcp__atlassian__getJiraIssue",
+              "mcp__atlassian__searchConfluence", "mcp__atlassian__getConfluenceContent")
+# dontAsk 에 더하는 2중 방어: Atlassian 쓰기·범용 실행 도구 명시 거부
+DENY_TOOLS = ("Bash", "Read", "Write", "Edit", "WebFetch", "WebSearch", "Task",
+              "mcp__atlassian__createJiraIssue", "mcp__atlassian__editJiraIssue",
+              "mcp__atlassian__transitionJiraIssue", "mcp__atlassian__addOrEditJiraIssueComment",
+              "mcp__atlassian__createConfluenceContent", "mcp__atlassian__updateConfluenceContent",
+              "mcp__atlassian__addGraphContext", "mcp__atlassian__executeWrite", "mcp__atlassian__executeDestructive")
 CLAUDE_TIMEOUT = int(os.environ.get("LRM_SCRUM_CLAUDE_TIMEOUT", "900"))
 MAX_LINES = 30  # 칸 길이 상한(11-12 실측 25줄 안팎에 여유)
 RETRY_WAITS = [int(x) for x in os.environ.get("LRM_SCRUM_RETRY_WAITS", "30,90").split(",") if x]  # 발송 API 실패(종료 코드 1)만 재시도
@@ -161,7 +168,9 @@ def validate(raw):
 
 def ask_claude(model, prompt):
     """(출력, 사유). 실패면 출력 None"""
-    cmd = [CLAUDE, "-p", "--model", model, "--allowedTools", TOOLS, "--output-format", "text"]
+    cmd = [CLAUDE, "-p", "--model", model, "--output-format", "text", "--tools", "",
+           "--permission-mode", "dontAsk", "--allowedTools", ",".join(READ_TOOLS),
+           "--disallowedTools", ",".join(DENY_TOOLS)]
     try:
         out = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=CLAUDE_TIMEOUT,
                              cwd=tempfile.gettempdir())
