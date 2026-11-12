@@ -104,7 +104,7 @@ def load_items(use_pr):
 # ---------- 요약 ----------
 
 def digest_hash(items):
-    body = json.dumps(sorted([i.key, i.bucket, i.title] for i in items), ensure_ascii=False)
+    body = json.dumps(sorted([i.key, i.bucket, i.title, i.link] for i in items), ensure_ascii=False)
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
@@ -269,7 +269,8 @@ def run(conf, a):
     digest = digest_hash(items)
     ops = plan_list(items, state)
     text = dm_text(items, conf.list_url)
-    changed = a.force or digest != state["hash"]
+    # 해시가 같아도 못 보낸 목록 작업이 남았으면 동기화(--no-list 로 건너뛴 행, 링크만 바뀐 행)
+    changed = a.force or digest != state["hash"] or (bool(ops) and not a.no_list)
     result = {
         "counts": {b: sum(1 for i in items if i.bucket == b) for b, _, _ in BUCKETS},
         "items": [{"key": i.key, "bucket": i.bucket, "title": i.title} for i in items],
@@ -304,7 +305,7 @@ def run(conf, a):
             if e.code == 2:
                 save_state(conf.state, state)
                 raise
-    if not errors:
+    if not errors and not a.no_list and not a.no_dm:  # 일부 단계를 건너뛴 실행은 완료로 기록하지 않음
         state["hash"] = digest
     save_state(conf.state, state)
     for e in errors:

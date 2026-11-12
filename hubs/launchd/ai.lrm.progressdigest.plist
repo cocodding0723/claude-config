@@ -8,7 +8,7 @@
   <array>
     <string>/bin/bash</string>
     <string>-c</string>
-    <string>set -a; . "$HOME/.config/lrm-hubs/slack-bot.env"; set +a; exec /usr/bin/python3 -I "$HOME/.config/lrm-hubs/progress_digest.py" --quiet</string>
+    <string>set -a; . "$HOME/.config/lrm-hubs/slack-bot.env"; set +a; exec __PYTHON3__ -I "$HOME/.config/lrm-hubs/progress_digest.py" --quiet</string>
   </array>
   <!-- 평일 9~20시 매시 정각. 잠자던 Mac 은 깨어난 뒤 한 번 실행됨 -->
   <key>StartCalendarInterval</key>
@@ -74,6 +74,9 @@
     <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>19</integer><key>Minute</key><integer>0</integer></dict>
     <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>20</integer><key>Minute</key><integer>0</integer></dict>
   </array>
+  <!-- launchd 기본 PATH 는 /usr/bin:/bin 뿐이라 gh 를 못 찾음 -->
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
   <key>ProcessType</key><string>Background</string>
   <key>LowPriorityIO</key><true/>
   <key>Nice</key><integer>10</integer>

@@ -192,6 +192,49 @@ class DigestTest(unittest.TestCase):
         self.assertEqual(len(FakeSlack.calls), n)
         self.assertEqual(len(self.dms()), 1)
 
+    # --- Codex 리뷰 수정 회귀 ---
+    def collect(self, *args):
+        return subprocess.run([sys.executable, "-I", COLLECT, "--once", *args], env=self.env(), capture_output=True, text=True, timeout=60)
+
+    def test_corrupt_hub_does_not_complete_its_rows(self):
+        self.put_hub("ui", tasks=["버튼 구현"])
+        self.collect("--no-pr")
+        self.run_digest("--no-pr")
+        FakeSlack.calls.clear()
+        with open(os.path.join(self.status, "ui.json"), "w") as f:
+            f.write("{broken")
+        self.collect("--no-pr")
+        r = self.run_digest("--no-pr")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertFalse([c for c in FakeSlack.calls if c[1].get("cells") and "checkbox" in json.dumps(c[1])])
+
+    def test_recollect_keeps_unresolved_decision_rows(self):
+        with open(os.path.join(self.hub, "slack-sent.jsonl"), "w") as f:
+            f.write(json.dumps({"ts": "1.1", "title": "결정 알림 시각", "at": 1}) + "\n")
+        self.run_digest("--no-pr")  # 스냅샷 없음 → 직접 수집
+        self.assertTrue(any("결정 알림 시각" in json.dumps(b, ensure_ascii=False) for _, b in FakeSlack.calls))
+        FakeSlack.calls.clear()
+        with open(os.path.join(self.hub, "progress.json"), "w") as f:  # 낡은 스냅샷(결정 원료 없음)
+            json.dump({"version": 1, "updatedAt": 1, "items": [], "sources": {}}, f)
+        self.assertEqual(self.run_digest("--no-pr").returncode, 0)
+        self.assertEqual([c for c in FakeSlack.calls if "checkbox" in json.dumps(c[1])], [])  # 완료 처리 없음
+
+    def test_link_only_change_updates_row(self):
+        self.write_gh([{"number": 5, "title": "기능", "url": "https://x/1", "reviewDecision": "", "mergeable": "MERGEABLE"}])
+        self.run_digest()
+        FakeSlack.calls.clear()
+        self.write_gh([{"number": 5, "title": "기능", "url": "https://x/2", "reviewDecision": "", "mergeable": "MERGEABLE"}])
+        self.run_digest()
+        self.assertEqual([m for m, _ in FakeSlack.calls], ["slackLists.items.update"])
+        self.assertIn("https://x/2", json.dumps(FakeSlack.calls[0][1]))
+
+    def test_rows_skipped_by_no_list_are_created_on_next_normal_run(self):
+        self.assertEqual(self.run_digest("--no-list").returncode, 0)
+        self.assertEqual(FakeSlack.calls, [])
+        self.assertEqual(self.run_digest().returncode, 0)
+        self.assertEqual(len(FakeSlack.calls), 3)  # 장부 3행 생성
+        self.assertEqual(len(self.dms()), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
