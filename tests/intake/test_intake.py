@@ -632,6 +632,24 @@ class DeliverTest(Base):
         self.assertEqual(dv["notified"], ["C0001"])
         self.assertEqual([h for h, _ in self.sends()], [HUB_H, "term_eeeeeeee-0000-4000-8000-000000000005"])
 
+    def deliver_one(self, text, **kw):
+        self.put(msg("ui: " + text, 1, **kw))
+        self.run_intake()
+        intake.deliver(self.conf, NOW)
+        return intake.load_sent(self.conf.sent)["C0001"]
+
+    def test_short_text_no_attachment_not_partial(self):
+        ent = self.deliver_one("짧은 글")
+        self.assertEqual(ent["st"], "sent")
+        self.assertNotIn("partial", ent)
+
+    def test_long_text_marks_partial_and_notes_hub_line(self):
+        self.assertTrue(self.deliver_one("가" * (intake.LINE_MAX + 50))["partial"])
+        self.assertIn(intake.PARTIAL_NOTE.strip(), intake.line_for("C0001", "가" * (intake.LINE_MAX + 50)))
+
+    def test_attachment_marks_partial(self):
+        self.assertTrue(self.deliver_one("사진", files=[{"path": "/x.png"}])["partial"])
+
     def test_cli_reports_delivery(self):
         self.conf.inbox = os.path.join(self.d, "slack-inbox.jsonl")  # 프로세스 실행은 기본 파일명을 읽음
         self.put(msg("ui: a", 1))
@@ -675,17 +693,25 @@ class PushFilterTest(Base):
             setattr(sp, name, val)
             self.addCleanup(setattr, sp, name, old)
 
-    def case(self, st):
-        a, b = msg("ui: a", 1), msg("그냥 메모", 2)
+    def case(self, st, partial=False, **kw):
+        a, b = msg("ui: a", 1, **kw), msg("그냥 메모", 2)
         self.put(a, b, {"type": "thread_reply", "ts": a["ts"], "parent_ts": a["ts"], "text": "답"})
         with open(self.conf.routes_log, "w", encoding="utf-8") as f:
             f.write(json.dumps({"id": "C0001", "ts": a["ts"], "hub": "ui-layer", "text": "a"}) + "\n")
         with open(intake.sp.INTAKE_SENT, "w", encoding="utf-8") as f:
-            json.dump({"C0001": {"st": st}}, f)
+            json.dump({"C0001": {"st": st, **({"partial": True} if partial else {})}}, f)
         return [x is not None for x in intake.sp.read_inbox()]
 
     def test_sent_line_skipped_others_kept(self):
         self.assertEqual(self.case("sent"), [False, True, True])  # 같은 ts 의 스레드 답은 유지
+
+    def test_partial_sent_kept(self):
+        self.assertEqual(self.case("sent", partial=True), [True, True, True])
+
+    def test_attachment_in_record_kept_even_without_partial_mark(self):
+        self.assertEqual(self.case("sent", files=[{"path": "/x.png"}]), [True, True, True])
+        os.remove(self.conf.inbox)
+        self.assertEqual(self.case("sent", files_failed=[{"why": "size"}]), [True, True, True])
 
     def test_failed_notified_sending_kept(self):
         for st in ("failed", "notified", "sending", "legacy"):

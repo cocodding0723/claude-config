@@ -293,7 +293,7 @@ def intake(conf: Conf, now: float, dry: bool = False) -> dict:
                         continue
                 if rid not in logged:
                     with open(conf.routes_log, "a", encoding="utf-8") as f:
-                        f.write(json.dumps({"id": rid, "ts": ts, "line": line, "hub": hub, "text": body, "at": int(now)}, ensure_ascii=False) + "\n")
+                        f.write(json.dumps({"id": rid, "ts": ts, "line": line, "hub": hub, "text": body, "at": int(now), **({"files": True} if it.get("files") or it.get("files_failed") else {})}, ensure_ascii=False) + "\n")
                     logged[rid] = ts
                 break
             st["pending"].pop(ts, None)
@@ -449,9 +449,18 @@ def save_sent(path: str, st: dict) -> None:
     save_state(path, st)  # 같은 원자적 쓰기(임시 파일 → replace)
 
 
-def line_for(rid: str, text: str) -> str:
+PARTIAL_NOTE = " (원문·첨부는 메인 전달분 참고)"
+
+
+def is_partial(text: str, attached: bool) -> bool:
+    """허브 하달문에 원문 전체가 실리지 않는가: 본문이 잘리거나 첨부가 있음(첨부는 하달문에 싣지 않음)"""
+    return attached or len(ledger.clean(text)) > LINE_MAX
+
+
+def line_for(rid: str, text: str, attached: bool = False) -> str:
     one = ledger.clean(text)
-    return f"[접수 #{rid}] " + (one if len(one) <= LINE_MAX else one[: LINE_MAX - 1] + "…")
+    line = f"[접수 #{rid}] " + (one if len(one) <= LINE_MAX else one[: LINE_MAX - 1] + "…")
+    return line + PARTIAL_NOTE if is_partial(text, attached) else line
 
 
 def mark_failed(conf: Conf, rid: str, hub: str, why: str, now: float) -> None:
@@ -506,9 +515,10 @@ def deliver(conf: Conf, now: float, run=None, dry: bool = False) -> dict:
                         st[rid] = {"st": ST_SENDING, "hub": hub, "at": int(now)}
                         if not dry:
                             save_sent(conf.sent, st)  # 전송 직전 저장: 이 뒤에 죽으면 재전송 없이 도착 불명 처리
-                        res = send_confirmed(run, handle, line_for(rid, e.get("text") or ""), hub_target)
+                        attached = bool(e.get("files"))
+                        res = send_confirmed(run, handle, line_for(rid, e.get("text") or "", attached), hub_target)
                         if res == "sent":
-                            st[rid] = {"st": ST_SENT, "hub": hub, "at": int(now)}
+                            st[rid] = {"st": ST_SENT, "hub": hub, "at": int(now), **({"partial": True} if is_partial(e.get("text") or "", attached) else {})}
                             out["sent"].append(rid)
                             if not dry:
                                 with contextlib.suppress(ledger.LedgerError):

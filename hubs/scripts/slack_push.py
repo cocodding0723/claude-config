@@ -123,11 +123,12 @@ def log(event, **kv):
 
 # ---- 파일 입출력 ------------------------------------------------------------------------------
 def hub_delivered_ts():
-    """접수기가 허브에 하달 확인(st=sent)한 명령의 Slack ts 집합. 하달 실패·도착 불명·미처리는 포함하지 않아 메인 전달이 유지됨"""
+    """접수기가 허브에 하달 확인(st=sent)한 명령의 Slack ts 집합. 하달 실패·도착 불명·미처리, 원문이 잘리거나 첨부가 있는 하달(partial)은
+    포함하지 않아 메인 전달이 유지됨"""
     try:
         with open(INTAKE_SENT, encoding="utf-8") as f:
             sent = json.load(f)
-        ids = {k for k, v in sent.items() if isinstance(v, dict) and v.get("st") == "sent"} if isinstance(sent, dict) else set()
+        ids = {k for k, v in sent.items() if isinstance(v, dict) and v.get("st") == "sent" and not v.get("partial")} if isinstance(sent, dict) else set()
         if not ids:
             return set()
         with open(INTAKE_ROUTES, encoding="utf-8") as f:
@@ -150,7 +151,8 @@ def read_inbox():
                 except ValueError:
                     d = None
                 d = d if isinstance(d, dict) else None
-                if d is not None and skip and not d.get("parent_ts") and str(d.get("ts")) in skip and d.get("type") in MSG_TYPES:
+                if d is not None and skip and not d.get("parent_ts") and str(d.get("ts")) in skip and d.get("type") in MSG_TYPES \
+                        and not d.get("files") and not d.get("files_failed"):  # 첨부는 하달되지 않으므로 기록 없는 옛 접수도 메인에 보냄
                     d = None
                 out.append(d)
             return out
