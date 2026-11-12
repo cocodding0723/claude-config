@@ -12,19 +12,19 @@ CFG_LOG="${WS_GC_LOG:-$CFG_ARCHIVE/ws_gc.log}"
 CFG_MIN_IDLE_DAYS="${WS_GC_MIN_IDLE_DAYS:-2}"            # 마지막 활동 후 이 일수 이상 지나야 후보
 CFG_HUB_PREFIX="coord-"                                  # 허브 폴더 접두사(항상 제외)
 CFG_PROTECTED_BRANCHES="main master develop dev"         # 이 브랜치(와 release/*)가 붙은 곳은 PR 이력이 있어도 제외
-# Unity 재임포트 부산물: 미커밋 0 으로 치는 경로. .meta 와 TMP 폰트 아틀라스
-CFG_NOISE_RE='(\.meta$)|(^|/)TextMesh Pro/|SDF[^/]*\.asset$'
+# Unity 재임포트 부산물: 미커밋 0 으로 치는 경로. .meta 와 TMP 폰트 아틀라스 파일만(폴더 이름만으로는 부산물이 아님)
+CFG_NOISE_RE='(\.meta$)|(SDF[^/]*\.asset$)'
 # 사운드 라이선스 파일은 줄바꿈 변경뿐일 때만 부산물로 침(role-config 의 LICENSE.txt 예외)
 CFG_LICENSE_RE='^Assets/(.*/)?Sound/.*\.LICENSE\.txt$'
-# 삭제 전 보관할 gitignore 결과물(삭제 뒤 복구 불가라 먼저 복제)
-CFG_ARCHIVE_RE='(^|/)TestResults(/|$)|^docs/out(/|$)|\.html$|\.mp4$'
-# 추적 안 되는 결과물: 이 파일만 미커밋이면 보관 뒤 삭제 대상. 코드 확장자가 우선이고, 어디에도 안 들면 코드로 보고 보존
-CFG_OUTPUT_RE='(\.(md|html|png|jpe?g|gif|mp4|txt|json|log|xml)$)|(^|/)TestResults/'
-# 게임 소스 폴더 아래의 미추적 파일은 새 에셋일 수 있어 확장자와 무관하게 보존(TestResults/ 는 예외)
+# ── 결과물 허용 목록: 추적 안 되는(미추적·gitignore) 파일이 여기에 들 때만 보관 뒤 삭제. 목록 밖은 전부 "미확인"이라 작업 공간을 보존 ──
+CFG_OUTPUT_DIRS_RE='^(docs/out|evidence|TestResults)/|/TestResults/'   # 결과물 폴더(대소문자 구분)
+CFG_OUTPUT_ROOT_RE='^[^/]+\.(html|md|png|jpe?g|gif|mp4|txt|log)$'       # 작업 공간 루트의 결과물 파일(확장자 대소문자 무시)
+# 게임 소스 폴더 아래는 허용 목록과 겹쳐도 항상 보존(새 에셋·코드일 수 있음)
 CFG_SOURCE_DIR_RE='^(Assets|Packages|ProjectSettings)/'
-CFG_CODE_RE='\.(cs|py|sh|ts|tsx|js|jsx|mjs|uxml|uss|prefab|unity|asset|shader|cginc|hlsl|asmdef|asmref|mat|anim|controller|dart|kt|java|swift|cpp|c|h|go|rb|ya?ml|toml|csproj|sln|gradle)$'
+# 다시 만들어지는 gitignore 캐시: 보관 없이 버려도 되는 항목(폴더는 끝에 /)
+CFG_CACHE_RE='^(Library|Temp|obj|Logs|UserSettings|\.vs|\.idea|node_modules)/$|^\.claude/settings\.local\.json$|^\.DS_Store$'
 CFG_INBOX="${WS_GC_INBOX:-$HOME/.config/lrm-hubs/hub-inbox}"  # 허브별 보관 색인(<허브 slug>.tsv). 허브 폴더 coord-<slug>-hub 에서 slug 를 뗌
-CFG_KEEP_CODE_LOG_MAX=5                                  # 코드 변경 근거로 로그·JSON 에 남길 경로 수
+CFG_KEEP_CODE_LOG_MAX=5                                  # 보존 근거로 로그·JSON 에 남길 경로 수
 CFG_RM_DIRTY_RE='modified or untracked|contain(s|ing) submodules|uncommitted|dirty'  # orca rm 거부 문구 중 미커밋 변경 계열만 force 허용(잠금·사용 중 등은 제외)
 # Orca 실측 거부 문구: "Failed to delete worktree at <경로>. M Assets/…" (마침표 뒤 git status 짧은 형식 'XY 경로'). 대소문자 구분(소문자 문장 오인 방지)
 CFG_RM_DIRTY_STATUS_RE='\.[[:space:]]+[ MADRCTU?!]{1,2}[[:space:]]+[^[:space:]]'
@@ -44,13 +44,14 @@ usage() {
 대상에서 빼는 곳: coord-* 허브, 메인 체크아웃, 살아 있는 터미널·워커가 붙은 곳, 하위 워크스페이스가 남은 곳,
   main·master·develop·dev·release/* 브랜치, Orca 에 등록되지 않은 폴더, 지금 이 명령을 실행 중인 폴더.
 지우는 조건(전부 충족):
-  1 브랜치 PR 이 MERGED·CLOSED(OPEN 이 하나라도 있으면 제외), 또는 PR 이 없고 커밋이 전부 origin 에 있음(detached 포함)
+  1 브랜치 PR 이 MERGED·CLOSED(OPEN 이 하나라도 있으면 제외)이고 현재 HEAD 가 origin 에 있음(원격 브랜치가 지워졌으면 병합된 PR 의 마지막 커밋과 같을 때). PR 이 없어도 HEAD 가 origin 에 있어야 함(detached 포함)
   2 미커밋 변경 0. Unity 재임포트 부산물(.meta·TMP 폰트 아틀라스, 줄바꿈만 바뀐 사운드 LICENSE.txt)은 0 으로 치고 목록을 로그에 남김.
-    추적 안 되는 결과물(md·html·png·jpg·gif·mp4·txt·json·log·xml, TestResults/)만 있어도 후보. 추적 파일 수정이나 코드 확장자(.cs .py …)
-    미추적이 하나라도 있으면 보존하고 KEEP_CODE 로 기록(--json 의 keep_code)
+    추적 안 되는 결과물만 있어도 후보: 허용 목록(docs/out·evidence·TestResults 폴더, 루트의 html·md·png·jpg·gif·mp4·txt·log)에 든 것만.
+    추적 파일 수정, 허용 목록 밖 미추적·gitignore 파일, Assets·Packages·ProjectSettings 아래 파일이 하나라도 있으면 보존하고
+    KEEP_CODE 로 기록(--json 의 keep_code)
   3 마지막 활동(Orca 활동 시각·마지막 커밋 중 늦은 것)이 --days 일 이상 전
   4 서브모듈 안에 미커밋·미push 가 없음
-절차(--apply): 결과물(gitignore 의 TestResults·docs/out·*.html·*.mp4 + 미추적 결과물)을 <archive>/<저장소>/<폴더>/ 로 복제 → 파일 수·내용 대조
+절차(--apply): 허용 목록 결과물(미추적·gitignore)을 <archive>/<저장소>/<폴더>/ 로 복제 → byte 단위 대조(불일치·복사 실패면 삭제 안 함)
   → orca worktree rm(브랜치는 지우지 않음) → 허브 색인 한 줄(~/.config/lrm-hubs/hub-inbox/<허브 slug>.tsv: 시각·작업 공간·보관 경로·파일 수)
   → 쉬고 있는 워커 기록 worker-release.
   rm 거부 시 서브모듈이 깨끗하거나 확인된 사운드 LICENSE 줄바꿈만 남은 곳은 보관·변경 재확인 후 --force 로 재시도함.
@@ -78,6 +79,7 @@ EOF
 }
 die() { echo "$1" >&2; exit "${2:-2}"; }
 
+ORIG_ARGS=("$@")
 APPLY=0 DAYS="$CFG_MIN_IDLE_DAYS" ONLY="" ONLYPATH="" PARENT="" ASSUME_IDLE="" SLACK=1 QUIET=0 JSON=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -105,17 +107,25 @@ for c in jq git orca gh; do command -v "$c" >/dev/null 2>&1 || die "$c 없음 �
 MODE=$([ "$APPLY" = 1 ] && echo APPLY || echo DRY)
 mkdir -p "$CFG_ARCHIVE" || die "보관 폴더 생성 실패: $CFG_ARCHIVE — 권한 확인" 3
 mkdir -p "$(dirname "$CFG_LOG")" || die "로그 폴더 생성 실패: $CFG_LOG" 3
-[ -f "$CFG_LOG" ] && [ "$(wc -c < "$CFG_LOG")" -gt "$CFG_LOG_MAX_BYTES" ] && mv -f "$CFG_LOG" "$CFG_LOG.1"
 
-# 동시 실행 방지(launchd 회차가 겹칠 때). 죽은 pid 의 잠금은 치움
-LOCK="$CFG_ARCHIVE/.ws_gc.lock"
-if ! mkdir "$LOCK" 2>/dev/null; then
-  if kill -0 "$(cat "$LOCK/pid" 2>/dev/null)" 2>/dev/null; then echo "이미 실행 중 — 이번 회차 건너뜀"; exit 0; fi
-  rm -rf "${LOCK:?}"; mkdir "$LOCK" 2>/dev/null || die "잠금 실패: $LOCK" 3
+# 동시 실행 방지(launchd 회차·release_ws 가 겹칠 때). 파일 잠금(flock)을 쥔 채 자기 자신을 다시 실행함.
+# 잠금은 프로세스가 죽으면 커널이 풀어 stale 판정·잠금 탈취가 없고, 잠금 파일은 지우지 않음(지우면 두 실행이 서로 다른 파일을 잠금)
+if [ -z "${WS_GC_LOCKED:-}" ]; then
+  command -v python3 >/dev/null 2>&1 || die "python3 없음 — 잠금에 필요. 아무것도 지우지 않음" 3
+  export WS_GC_LOCKED=1
+  exec python3 -c 'import fcntl, os, sys
+fd = os.open(sys.argv[1], os.O_CREAT | os.O_RDWR, 0o644)
+try:
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except OSError:
+    print("이미 실행 중 — 이번 회차 건너뜀")
+    sys.exit(0)
+os.set_inheritable(fd, True)
+os.execv("/bin/bash", ["bash"] + sys.argv[2:])' "$CFG_ARCHIVE/.ws_gc.flock" "$0" "${ORIG_ARGS[@]}"
 fi
-echo $$ > "$LOCK/pid"
+[ -f "$CFG_LOG" ] && [ "$(wc -c < "$CFG_LOG")" -gt "$CFG_LOG_MAX_BYTES" ] && mv -f "$CFG_LOG" "$CFG_LOG.1"
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/ws_gc.XXXXXX") || die "임시 폴더 생성 실패" 3
-trap 'rm -rf "${TMP:?}" "${LOCK:?}"' EXIT
+trap 'rm -rf "${TMP:?}"' EXIT
 
 NOW=$(date +%s)
 log() { # log 판정 메시지
@@ -141,7 +151,7 @@ while :; do
 done
 echo "$TL" | jq -r '.result.terminals[] | select(.connected == true and (.orphaned != true)) | [.handle, .worktreePath] | @tsv' > "$TMP/terms.tsv"
 # 살아 있는 곳 = 연결된 터미널이 붙은 곳 + 쉬는 중(reclaimable)이 아닌 워커가 붙은 곳. 쉬는 워커의 터미널은 제외(정리 뒤 worker-release)
-awk -F'\t' -v AS="$ASSUME_IDLE" 'NR==FNR { if ($2 == "reclaimable" || (AS != "" && $1 == AS)) idle[$3] = 1; else if ($2 != "released") print $4; next } !($1 in idle) { print $2 }' "$TMP/workers.tsv" "$TMP/terms.tsv" | sort -u > "$TMP/live"
+awk -F'\t' -v AS="$ASSUME_IDLE" 'FILENAME == ARGV[1] { if ($2 == "reclaimable" || (AS != "" && $1 == AS)) idle[$3] = 1; else if ($2 != "released") print $4; next } !($1 in idle) { print $2 }' "$TMP/workers.tsv" "$TMP/terms.tsv" | sort -u > "$TMP/live"
 
 echo "$WL" | jq -r --arg root "$CFG_ROOT/" '
   [.result.worktrees[].id] as $ids
@@ -152,20 +162,42 @@ echo "$WL" | jq -r --arg root "$CFG_ROOT/" '
 echo "$WL" | jq -r '.result.worktrees[].path' | sort -u > "$TMP/registered"
 
 # ── 판정 ──────────────────────────────────────────────────────────────────────────────────
-REASON="" DETAIL="" PR_LABEL="" N_NOISE=0 N_LIC=0 N_OUT=0 N_TRACKED=0 N_UNTRACKED=0
-# 미커밋 분류: 코드·추적 파일 변경 → N_REAL(N_TRACKED 추적 수정·N_UNTRACKED 코드 미추적, 근거 $TMP/keep.txt),
-# 결과물만 미추적 → N_OUT($TMP/outputs.txt, 보관 뒤 삭제 가능), 부산물 → $TMP/noise.txt (근거 로그용)
+REASON="" DETAIL="" PR_LABEL="" N_NOISE=0 N_LIC=0 N_OUT=0 N_TRACKED=0 N_UNVERIFIED=0
+# 변경 분류(확신 없으면 보존): 추적 수정·허용 목록 밖 파일(미추적·gitignore) → N_REAL(N_TRACKED·N_UNVERIFIED, 근거 $TMP/keep.txt),
+# 허용 목록의 결과물 → $TMP/outputs.txt(보관 대상, 그중 미추적 파일 수 N_OUT), 확인된 부산물 → $TMP/noise.txt(근거 로그용).
+# 한 줄 = 종류 TAB 경로. 종류: N 부산물·L LICENSE 후보·O 미추적 결과물·G 무시 결과물·C 캐시·U 미확인 미추적·I 미확인 무시·R 추적 수정
+CLASSIFY_AWK='
+  function allowed(q) { return (q ~ ENVIRON["DZ"] || tolower(q) ~ ENVIRON["RZ"]) && q !~ ENVIRON["SZ"] }
+  skip { skip = 0; next }
+  MODE_ == "tracked" {
+    xy = substr($0, 1, 2); q = substr($0, 4); if (xy ~ /^[RC]/ || xy ~ /^.[RC]/) skip = 1
+    if (q ~ ENVIRON["NZ"]) print "N\t" q
+    else if (q ~ ENVIRON["LZ"] && xy ~ /^[ M][ M]$/) print "L\t" q
+    else if (xy == "??") print (allowed(q) ? "O" : "U") "\t" q
+    else print "R\t" q
+    next }
+  { q = $0; if (q == "") next
+    if (q ~ ENVIRON["NZ"]) print "N\t" q
+    else if (q ~ ENVIRON["SZ"]) print "I\t" q
+    else if (q ~ ENVIRON["CZ"]) print "C\t" q
+    else print (allowed(q) ? "G" : "I") "\t" q }'
+# gitignore 파일 목록. git 이 통째로 묶어 보여 주는 폴더(docs/ 처럼 안에 결과물만 든 경우 포함)는 허용·캐시·소스 판정이 서지 않으면 파일 단위로 풀어서 봄
+ignored_entries() {
+  local p="$1" e
+  git -C "$p" ls-files -o -i --exclude-standard --directory -z 2>/dev/null | tr '\0' '\n' | while IFS= read -r e; do
+    case "$e" in
+      */) if printf '%s' "$e" | grep -Eq -e "$DZ" -e "$CZ" -e "$SZ" -e "$NZ"; then printf '%s\n' "$e"; else git -C "$p" ls-files -o -i --exclude-standard -z -- "$e" 2>/dev/null | tr '\0' '\n'; fi ;;
+      *) printf '%s\n' "$e" ;;
+    esac
+  done
+}
 classify_changes() {
   local p="$1" k path
   : > "$TMP/noise.txt"; : > "$TMP/licenses.txt"; : > "$TMP/outputs.txt"; : > "$TMP/keep.txt"
-  N_REAL=0 N_NOISE=0 N_LIC=0 N_OUT=0 N_TRACKED=0 N_UNTRACKED=0
-  if ! git -C "$p" status --porcelain=v1 -z --untracked-files=all --ignore-submodules=all 2>/dev/null | tr '\0' '\n' \
-    | NZ="$CFG_NOISE_RE" LZ="$CFG_LICENSE_RE" OZ="$CFG_OUTPUT_RE" CZ="$CFG_CODE_RE" SZ="$CFG_SOURCE_DIR_RE" awk '
-        skip { skip = 0; next }
-        { xy = substr($0, 1, 2); q = substr($0, 4); if (xy ~ /^[RC]/ || xy ~ /^.[RC]/) skip = 1
-          if (q ~ ENVIRON["NZ"]) print "N\t" q; else if (q ~ ENVIRON["LZ"] && xy ~ /^[ M][ M]$/) print "L\t" q
-          else if (xy == "??") { if (q !~ ENVIRON["CZ"] && q ~ ENVIRON["OZ"] && (q !~ ENVIRON["SZ"] || q ~ /(^|\/)TestResults\//)) print "O\t" q; else print "U\t" q }
-          else print "R\t" q }' > "$TMP/chg.tsv"; then
+  N_REAL=0 N_NOISE=0 N_LIC=0 N_OUT=0 N_TRACKED=0 N_UNVERIFIED=0
+  export NZ="$CFG_NOISE_RE" LZ="$CFG_LICENSE_RE" DZ="$CFG_OUTPUT_DIRS_RE" RZ="$CFG_OUTPUT_ROOT_RE" SZ="$CFG_SOURCE_DIR_RE" CZ="$CFG_CACHE_RE"
+  if ! { git -C "$p" status --porcelain=v1 -z --untracked-files=all --ignore-submodules=all 2>/dev/null | tr '\0' '\n' | awk -v MODE_=tracked "$CLASSIFY_AWK" \
+      && ignored_entries "$p" | awk -v MODE_=ignored "$CLASSIFY_AWK"; } > "$TMP/chg.tsv"; then
     N_REAL=1; return 1
   fi
   while IFS=$'\t' read -r k path; do
@@ -176,10 +208,15 @@ classify_changes() {
            printf '%s\n' "$path" >> "$TMP/licenses.txt"
          else N_REAL=$((N_REAL + 1)); N_TRACKED=$((N_TRACKED + 1)); printf '추적 수정 %s\n' "$path" >> "$TMP/keep.txt"; fi ;;
       O) N_OUT=$((N_OUT + 1)); printf '%s\n' "$path" >> "$TMP/outputs.txt" ;;
-      U) N_REAL=$((N_REAL + 1)); N_UNTRACKED=$((N_UNTRACKED + 1)); printf '코드 미추적 %s\n' "$path" >> "$TMP/keep.txt" ;;
+      G) printf '%s\n' "$path" >> "$TMP/outputs.txt" ;;
+      C) ;;
+      U) N_REAL=$((N_REAL + 1)); N_UNVERIFIED=$((N_UNVERIFIED + 1)); printf '미확인 미추적 %s\n' "$path" >> "$TMP/keep.txt" ;;
+      I) N_REAL=$((N_REAL + 1)); N_UNVERIFIED=$((N_UNVERIFIED + 1)); printf '미확인 무시파일 %s\n' "$path" >> "$TMP/keep.txt" ;;
       *) N_REAL=$((N_REAL + 1)); N_TRACKED=$((N_TRACKED + 1)); printf '추적 수정 %s\n' "$path" >> "$TMP/keep.txt" ;;
     esac
   done < "$TMP/chg.tsv"
+  # 중복·폴더 안에 이미 든 항목 제거(같은 파일을 두 번 세지 않음)
+  LC_ALL=C sort -u "$TMP/outputs.txt" | awk 'last != "" && index($0, last) == 1 { next } /\/$/ { last = $0 } { print }' > "$TMP/outputs.dedup" && mv "$TMP/outputs.dedup" "$TMP/outputs.txt"
 }
 # 서브모듈 안에 미커밋·미push 가 없으면 0. 서브모듈이 없어도 0
 submodules_clean() {
@@ -211,15 +248,20 @@ evaluate() {
   age=$(( (NOW - last) / 86400 ))
   if [ "$age" -lt "$DAYS" ]; then REASON=idle; DETAIL="${age}일 전 활동"; return 1; fi
   classify_changes "$p"
-  if [ "$N_REAL" -gt 0 ]; then REASON=dirty; DETAIL="미커밋 ${N_REAL}건(추적 수정 ${N_TRACKED}·코드 미추적 ${N_UNTRACKED})"; return 1; fi
+  if [ "$N_REAL" -gt 0 ]; then REASON=dirty; DETAIL="미커밋 ${N_REAL}건(추적 수정 ${N_TRACKED}·미확인 ${N_UNVERIFIED})"; return 1; fi
   if [ -n "$br" ]; then
-    prs=$(cd "$p" && gh pr list --head "$br" --state all --json number,state --limit 30 2>/dev/null) && echo "$prs" | jq -e 'type == "array"' >/dev/null 2>&1 \
+    prs=$(cd "$p" && gh pr list --head "$br" --state all --json number,state,headRefOid --limit 30 2>/dev/null) && echo "$prs" | jq -e 'type == "array"' >/dev/null 2>&1 \
       || { REASON=gh_fail; DETAIL="gh pr list 실패(로그인·네트워크 확인)"; return 1; }
     PR_LABEL=$(echo "$prs" | jq -r 'map("#\(.number) \(.state)") | join(",")')
     if echo "$prs" | jq -e 'any(.[]; .state == "OPEN")' >/dev/null; then REASON=pr_open; DETAIL="$PR_LABEL"; return 1; fi
   fi
-  if [ -z "$PR_LABEL" ] && [ "$(git -C "$p" rev-list --count HEAD --not --remotes 2>/dev/null || echo 1)" != 0 ]; then
-    REASON=unmerged; DETAIL="PR 없음, origin 에 없는 커밋 있음"; return 1
+  # PR 상태와 별개로 현재 HEAD 가 원격에 올라가 있어야 함(병합된 PR 뒤에 쌓은 push 안 한 커밋 보호).
+  # 원격 ref 에 없어도 HEAD 가 병합된 PR 의 마지막 커밋과 같으면 원격 브랜치가 지워진 경우라 허용
+  if [ "$(git -C "$p" rev-list --count HEAD --not --remotes 2>/dev/null || echo 1)" != 0 ]; then
+    head_sha=$(git -C "$p" rev-parse HEAD 2>/dev/null)
+    if [ -z "$PR_LABEL" ] || ! echo "$prs" | jq -e --arg h "$head_sha" 'any(.[]; .state == "MERGED" and .headRefOid == $h)' >/dev/null 2>&1; then
+      REASON=unmerged; DETAIL="${PR_LABEL:+PR $PR_LABEL 이후 }origin 에 없는 커밋 있음"; return 1
+    fi
   fi
   submodules_clean "$p" || { REASON=submodule; DETAIL="서브모듈 안 미커밋·미push"; return 1; }
   DETAIL="idle=${age}d branch=${br:-detached} pr=${PR_LABEL:--}"
@@ -228,41 +270,27 @@ evaluate() {
 }
 
 # ── 삭제 절차 ─────────────────────────────────────────────────────────────────────────────
-# 결과물 보관: 복제 → 파일 수 대조. 실패하면 1(삭제하지 않음)
+# 결과물 보관: $TMP/outputs.txt 의 경로를 tar 로 복제한 뒤 항목마다 원본과 byte 단위로 대조(파일 cmp·폴더 diff -r).
+# 복사 실패·내용 불일치·보관본에 남는 파일은 모두 1(삭제하지 않음). 성공하면 ARCHIVED_FILES 에 파일 수
 archive_outputs() {
-  local p="$1" dest="$2" rel src n_src n_dst total=0
-  while IFS= read -r rel; do
-    [ -n "$rel" ] || continue
-    rel="${rel%/}"; src="$p/$rel"; [ -e "$src" ] || continue
-    mkdir -p "$dest/$(dirname "$rel")" || return 1
-    cp -cR "$src" "$dest/$(dirname "$rel")/" 2>/dev/null || cp -R "$src" "$dest/$(dirname "$rel")/" || return 1
-    n_src=$(count_files "$src"); n_dst=$(count_files "$dest/$rel")
-    [ "$n_src" = "$n_dst" ] || { log "ARCHIVE_MISMATCH $rel 원본 $n_src 복제 $n_dst"; return 1; }
-    total=$((total + n_src)); log "ARCHIVE $rel 파일 $n_src → $dest/$rel"
-  done < <(git -C "$p" ls-files -o -i --exclude-standard --directory -z 2>/dev/null | tr '\0' '\n' | ARZ="$CFG_ARCHIVE_RE" awk '$0 ~ ENVIRON["ARZ"]')
-  archive_untracked "$p" "$dest" || return 1
-  ARCHIVED_FILES=$((total + UNTRACKED_ARCHIVED))
+  local p="$1" dest="$2" e src n total=0
+  ARCHIVED_FILES=0
+  [ -s "$TMP/outputs.txt" ] || return 0
+  mkdir -p "$dest" || { log "ARCHIVE_MISMATCH 보관 폴더 생성 실패 → $dest"; return 1; }
+  (cd "$p" && tar -cf - -T "$TMP/outputs.txt") 2>/dev/null | tar -xf - -C "$dest" 2>/dev/null || { log "ARCHIVE_MISMATCH 복제 실패 → $dest"; return 1; }
+  while IFS= read -r e; do
+    e="${e%/}"; src="$p/$e"
+    if [ -L "$src" ]; then [ "$(readlink "$src")" = "$(readlink "$dest/$e" 2>/dev/null)" ] || { log "ARCHIVE_MISMATCH $e 링크가 다름"; return 1; }; n=1
+    elif [ -d "$src" ]; then diff -rq "$src" "$dest/$e" >/dev/null 2>&1 || { log "ARCHIVE_MISMATCH $e 원본 $(count_files "$src")개와 보관본의 내용·파일 수가 다름"; return 1; }; n=$(count_files "$src")
+    elif [ -f "$src" ]; then cmp -s "$src" "$dest/$e" || { log "ARCHIVE_MISMATCH $e 원본과 보관본의 내용이 다름"; return 1; }; n=1
+    else log "ARCHIVE_MISMATCH $e 원본이 사라짐"; return 1; fi
+    total=$((total + n)); log "ARCHIVE $e 파일 $n → $dest/$e"
+  done < "$TMP/outputs.txt"
+  ARCHIVED_FILES=$total
   return 0
 }
-# 추적 안 되는 결과물($TMP/outputs.txt)을 tar 로 복제한 뒤 파일마다 존재·내용 대조. 하나라도 다르면 1
-archive_untracked() {
-  local p="$1" dest="$2" f
-  UNTRACKED_ARCHIVED=0
-  [ -s "$TMP/outputs.txt" ] || return 0
-  mkdir -p "$dest" || return 1
-  (cd "$p" && tar -cf - -T "$TMP/outputs.txt") 2>/dev/null | tar -xf - -C "$dest" 2>/dev/null || { log "ARCHIVE_MISMATCH 미추적 결과물 복제 실패 → $dest"; return 1; }
-  while IFS= read -r f; do
-    if [ -L "$p/$f" ]; then [ -L "$dest/$f" ] || { log "ARCHIVE_MISMATCH $f 링크 누락"; return 1; }
-    else [ -f "$dest/$f" ] && cmp -s "$p/$f" "$dest/$f" || { log "ARCHIVE_MISMATCH $f 원본과 복제본이 다름"; return 1; }; fi
-    UNTRACKED_ARCHIVED=$((UNTRACKED_ARCHIVED + 1))
-  done < "$TMP/outputs.txt"
-  log "ARCHIVE 미추적 결과물 파일 $UNTRACKED_ARCHIVED → $dest"
-}
-# 보관 대상 미리보기(dry-run 용): 개수만
-preview_outputs() {
-  { git -C "$1" ls-files -o -i --exclude-standard --directory -z 2>/dev/null | tr '\0' '\n' | ARZ="$CFG_ARCHIVE_RE" awk '$0 ~ ENVIRON["ARZ"]' | sed 's#/$##'
-    [ "$N_OUT" -gt 0 ] && echo "미추적 결과물 ${N_OUT}개"; } | tr '\n' ',' | sed 's/,$//'
-}
+# 보관 대상 미리보기(dry-run 용)
+preview_outputs() { tr '\n' ',' < "$TMP/outputs.txt" | sed 's/,$//'; }
 # 허브 폴더 coord-<slug>-hub → slug. 부모가 없으면 _none
 hub_slug() { local b; [ -n "$1" ] || { echo _none; return; }; b=$(basename "$1"); b="${b#"$CFG_HUB_PREFIX"}"; echo "${b%-hub}"; }
 # 허브 색인에 한 줄(시각·작업 공간·보관 경로·파일 수). 실패해도 삭제 결과에 영향 없음
@@ -276,6 +304,8 @@ remove_ws() {
   local p="$1" dest="$2" out path
   classify_changes "$p"
   [ "$N_REAL" = 0 ] || return 1
+  # 판정 뒤 새로 생긴 결과물도 지우기 전에 보관·대조(복제는 되풀이해도 같은 결과)
+  archive_outputs "$p" "$dest" || return 1
   while IFS= read -r path; do
     git -C "$p" -c core.autocrlf=false checkout -- "$path" >/dev/null 2>&1 || return 1
   done < "$TMP/licenses.txt"
@@ -331,9 +361,9 @@ while IFS=$'\t' read -r p last_ms kids parent; do
     item skip "$REASON" "$DETAIL"
     [ "$REASON" = dirty ] && [ "$N_NOISE$N_LIC" != 00 ] && log "NOISE $name 부산물 ${N_NOISE}건·줄바꿈만 ${N_LIC}건은 제외하고 셈"
     if [ "$REASON" = dirty ]; then
-      log "KEEP_CODE $name 추적 수정 ${N_TRACKED}·코드 미추적 ${N_UNTRACKED}: $(head -n "$CFG_KEEP_CODE_LOG_MAX" "$TMP/keep.txt" | tr '\n' ',' | sed 's/,$//')"
-      jq -nc --arg n "$name" --argjson t "$N_TRACKED" --argjson u "$N_UNTRACKED" --rawfile f "$TMP/keep.txt" --argjson max "$CFG_KEEP_CODE_LOG_MAX" \
-        '{name:$n, tracked:$t, untracked_code:$u, files:($f | split("\n") | map(select(length > 0)) | .[:$max])}' >> "$TMP/keepcode.jsonl"
+      log "KEEP_CODE $name 추적 수정 ${N_TRACKED}·미확인 ${N_UNVERIFIED}: $(head -n "$CFG_KEEP_CODE_LOG_MAX" "$TMP/keep.txt" | tr '\n' ',' | sed 's/,$//')"
+      jq -nc --arg n "$name" --argjson t "$N_TRACKED" --argjson u "$N_UNVERIFIED" --rawfile f "$TMP/keep.txt" --argjson max "$CFG_KEEP_CODE_LOG_MAX" \
+        '{name:$n, tracked:$t, unverified:$u, files:($f | split("\n") | map(select(length > 0)) | .[:$max])}' >> "$TMP/keepcode.jsonl"
     fi
     continue
   fi

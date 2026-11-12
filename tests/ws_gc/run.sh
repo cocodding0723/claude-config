@@ -19,6 +19,17 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 FAKE="$SB/fake" ROOT="$SB/ws" ARC="$SB/archive" O="$SB/origin" BIN="$SB/bin" W="$ROOT/repoA"
 mkdir -p "$FAKE/pr" "$ROOT" "$ARC" "$O" "$BIN" "$W"
 ln -s "$HERE/fake_orca.sh" "$BIN/orca"; ln -s "$HERE/fake_gh.sh" "$BIN/gh"
+# 가짜 tar: 진짜 tar 로 풀고, FAKE_TAR_CORRUPT=1 이면 푼 파일(FAKE_TAR_CORRUPT_NAME 이름만, 기본 전부)의 첫 byte 를 바꿈(크기 불변 손상 흉내)
+cat > "$BIN/tar" <<'EOS'
+#!/bin/bash
+/usr/bin/tar "$@"; r=$?
+if [ "${FAKE_TAR_CORRUPT:-}" = 1 ]; then
+  case " $* " in *" -xf "*) d=""; prev=""; for a in "$@"; do [ "$prev" = -C ] && d="$a"; prev="$a"; done
+    [ -z "$d" ] || find "$d" -type f -name "${FAKE_TAR_CORRUPT_NAME:-*}" -exec sh -c 'printf Z | dd of="$1" bs=1 count=1 conv=notrunc 2>/dev/null' _ {} \; ;; esac
+fi
+exit $r
+EOS
+chmod +x "$BIN/tar"
 OLD="2026-01-01T00:00:00" OLD_MS=1767225600000 NOW_MS=$(($(date +%s) * 1000))
 : > "$SB/reg.tsv"; : > "$FAKE/terminals.tsv"; : > "$FAKE/workers.tsv"
 
@@ -28,7 +39,7 @@ printf 'sub\n' > "$O/sub.git.work/s.txt"; git -C "$O/sub.git.work" add -A; git -
 git clone -q --bare "$O/sub.git.work" "$O/sub.git"
 SEED="$SB/seed"; git clone -q "$O/repoA.git" "$SEED" 2>/dev/null
 mkdir -p "$SEED/Assets/Sound/s"
-printf 'TestResults/\ndocs/out/\nLibrary/\n*.html\n*.mp4\n' > "$SEED/.gitignore"
+printf 'TestResults/\ndocs/out/\nLibrary/\n*.html\n*.mp4\nsecret/\n' > "$SEED/.gitignore"
 printf 'readme\n' > "$SEED/README.md"; printf 'line1\nline2\n' > "$SEED/Assets/Sound/s/a.LICENSE.txt"
 git -C "$SEED" add -A; GIT_AUTHOR_DATE=$OLD GIT_COMMITTER_DATE=$OLD git -C "$SEED" commit -q -m seed; git -C "$SEED" push -q origin HEAD:main 2>/dev/null
 
@@ -88,14 +99,14 @@ dirs_before=$(cd "$ROOT" && find . -mindepth 2 -maxdepth 2 -type d | sort)
 
 gc() { # 인자를 ws_gc.sh 에 전달. 결과: RC, $SB/out
   : > "$FAKE/orca.calls"; : > "$FAKE/notify.calls"
-  env PATH="$BIN:$PATH" FAKE_DIR="$FAKE" FAKE_ROOT="$ROOT" FAKE_RM_REFUSE="sub_clean sub_noise" FAKE_GH_FAIL="feat/ghf" WS_GC_NOTIFY="$HERE/fake_send.sh" \
+  env PATH="$BIN:$PATH" FAKE_DIR="${GC_FAKE:-$FAKE}" FAKE_ROOT="$ROOT" FAKE_RM_REFUSE="sub_clean sub_noise" FAKE_GH_FAIL="feat/ghf" WS_GC_NOTIFY="$HERE/fake_send.sh" \
     bash "$GC" --root "$ROOT" --archive-dir "$ARC" --log "$ARC/ws_gc.log" "$@" > "$SB/out" 2>&1
   RC=$?
 }
 has() { grep -q -- "$1" "$ARC/ws_gc.log"; }
 rm_calls() { grep -c '^worktree rm' "$FAKE/orca.calls" || true; }
-CAND="merged closed_local noise worker_idle nopr_pushed det_ok sub_clean"       # 삭제 후보(최근·허브 등은 아님)
-SKIPS="dirty:dirty dirty_lic:dirty recent:idle coord-hub:hub live:live worker_active:live pr_open:pr_open nopr_local:unmerged det_local:unmerged prot:protected ghfail:gh_fail sub_dirty:submodule orphan_dir:not_orca"
+CAND="merged noise worker_idle nopr_pushed det_ok sub_clean"       # 삭제 후보(최근·허브 등은 아님)
+SKIPS="closed_local:unmerged dirty:dirty dirty_lic:dirty recent:idle coord-hub:hub live:live worker_active:live pr_open:pr_open nopr_local:unmerged det_local:unmerged prot:protected ghfail:gh_fail sub_dirty:submodule orphan_dir:not_orca"
 
 # ---- 0. 문법·인자 --------------------------------------------------------------------------
 bash -n "$GC" && ok "bash -n 통과" || ko "bash -n" ""
@@ -109,13 +120,13 @@ gc
 chk "dry-run 종료 0" '[ "$RC" = 0 ]' "rc=$RC"
 chk "dry-run: 폴더 목록 불변" '[ "$(cd "$ROOT" && find . -mindepth 2 -maxdepth 2 -type d | sort)" = "$dirs_before" ]'
 chk "dry-run: orca worktree rm 호출 0" '[ "$(rm_calls)" = 0 ]' "calls=$(rm_calls)"
-chk "dry-run: 보관 폴더에 결과물 없음" '[ -z "$(find "$ARC" -type f ! -name ws_gc.log | head -1)" ]'
+chk "dry-run: 보관 폴더에 결과물 없음" '[ -z "$(find "$ARC" -type f ! -name ws_gc.log ! -name .ws_gc.flock | head -1)" ]'
 for n in $CAND; do chk "dry-run 후보: $n" 'has "CANDIDATE repoA/$n "'; done
 for e in $SKIPS; do n="${e%%:*}" r="${e##*:}"; chk "dry-run 건너뜀: $n ($r)" 'has "SKIP $r .*$n"'; done
 chk "dry-run: 메인 체크아웃은 평가 대상 아님" '! has "repoA/mainco"'
 chk "dry-run: 부산물 근거 로그(.meta·줄바꿈만)" 'has "NOISE   부산물 Assets/X/new.cs.meta" && has "NOISE   줄바꿈만 Assets/Sound/s/a.LICENSE.txt"'
 chk "dry-run: 진짜 LICENSE 변경은 dirty" 'has "SKIP dirty repoA/dirty_lic"'
-chk "dry-run: 요약 줄 기록" 'has "END 삭제 후보 7개"'
+chk "dry-run: 요약 줄 기록" 'has "END 삭제 후보 6개"'
 chk "dry-run: Slack progress 1회" '[ "$(wc -l < "$FAKE/notify.calls" | tr -d " ")" = 1 ] && grep -q -- "--kind progress" "$FAKE/notify.calls" && grep -q "시험 점검" "$FAKE/notify.calls"'
 chk "dry-run: Slack 본문에 양식 A 골격" 'grep -q "시험 점검⏎⏎• 결과:" "$FAKE/notify.calls"'
 gc --no-slack; chk "--no-slack 은 전송 안 함" '[ ! -s "$FAKE/notify.calls" ]'
@@ -133,7 +144,7 @@ chk "apply 종료 0" '[ "$RC" = 0 ]' "rc=$RC $(tail -3 "$SB/out")"
 for n in $CAND; do chk "apply 삭제됨: $n" '[ ! -e "$W/$n" ]'; done
 for e in $SKIPS; do n="${e%%:*}"; chk "apply 유지: $n" '[ -e "$W/$n" ]'; done
 chk "apply 유지: 메인 체크아웃" '[ -e "$W/mainco" ]'
-chk "apply: rm 호출 = 후보 수 + 서브모듈 강제 1" '[ "$(rm_calls)" = 8 ]' "calls=$(rm_calls)"
+chk "apply: rm 호출 = 후보 수 + 서브모듈 강제 1" '[ "$(rm_calls)" = 7 ]' "calls=$(rm_calls)"
 chk "apply: 서브모듈 거부 → --force 재시도" 'grep -q "^worktree rm --worktree path:$W/sub_clean --force" "$FAKE/orca.calls" && has "RM_RETRY_FORCE"'
 chk "apply: 서브모듈 거부된 sub_dirty 는 rm 시도 자체 없음" '! grep -q "sub_dirty" "$FAKE/orca.calls"'
 chk "apply: 브랜치 삭제 옵션 없음" '! grep -q -- "--delete-branch" "$FAKE/orca.calls"'
@@ -144,7 +155,7 @@ chk "apply: 보관 로그에 파일 수 대조" 'has "ARCHIVE TestResults 파일
 chk "apply: 쉬는 워커 worker-release" 'grep -q "^orchestration worker-release --dispatch d_idle" "$FAKE/orca.calls"'
 chk "apply: 활동 중 워커는 release 안 함" '! grep -q "d_active" "$FAKE/orca.calls"'
 chk "apply: 삭제 로그에 브랜치 유지 표기" 'has "DELETE repoA/merged .*브랜치는 유지"'
-chk "apply: 요약·Slack(삭제 7개)" 'has "END 삭제 7개" && grep -q "자동 정리 완료" "$FAKE/notify.calls" && grep -q "삭제 7개" "$FAKE/notify.calls"'
+chk "apply: 요약·Slack(삭제 7개)" 'has "END 삭제 6개" && grep -q "자동 정리 완료" "$FAKE/notify.calls" && grep -q "삭제 6개" "$FAKE/notify.calls"'
 chk "apply: 브랜치는 저장소에 그대로" 'git -C "$O/repoA.git" rev-parse --verify -q refs/heads/feat/merged >/dev/null'
 
 # ---- 4. 반복 실행 안전 ------------------------------------------------------------------------
@@ -175,6 +186,7 @@ for n in eol_only eol_other eol_content eol_late eol_arcfail eol_noise_late eol_
   git -C "$W/$n" -c core.autocrlf=false add -- "$LIC"; oldc "$n" mixed
   printf '%s text eol=lf\n' "$LIC" > "$W/$n/.gitattributes"
   git -C "$W/$n" add -- .gitattributes; oldc "$n" attributes
+  git -C "$W/$n" push -q origin "feat/$n" 2>/dev/null
   git -C "$W/$n" -c core.autocrlf=false checkout -- "$LIC"
 done
 echo m > "$W/lic_noise/Assets/Sound/s/new.cs.meta"
@@ -222,47 +234,110 @@ chk "LICENSE 줄바꿈 + 기존 부산물: force 로 삭제" '[ "$RC" = 0 ] && [
 FAKE_RM_CHECK_DIRTY=1 gc --apply --only sub_noise
 chk "서브모듈 + 기존 부산물: 이전처럼 force 삭제" '[ "$RC" = 0 ] && [ ! -e "$W/sub_noise" ] && grep -q -- "--force" "$FAKE/orca.calls"'
 
-# ---- 7. 결과물만 남은 작업 공간: 보관·색인·삭제 / 코드 변경은 보존 ---------------------------------
+# ---- 7. 결과물 허용 목록: 목록 안(미추적·gitignore)만 보관 뒤 삭제, 그 밖은 "미확인"이라 보존 ---------------
 regen() { # reg.tsv → worktrees.json. 허브 하위 연결은 HUB_KIDS="이름 …" 로 coord-q-hub 에 붙임
   jq -R -s '{ok:true,result:{worktrees:(split("\n")|map(select(length>0)|split("\t")|{id:("repo::"+.[0]),path:.[0],branch:.[1],lastActivityAt:(.[2]|tonumber),isMainWorktree:(.[3]=="true"),childWorktreeIds:[]}))}}' "$SB/reg.tsv" \
     | jq --arg h "$W/coord-q-hub" --arg kids "${HUB_KIDS:-}" --arg w "$W" '.result.worktrees |= map(if .path == $h then .childWorktreeIds = ($kids | split(" ") | map(select(length > 0) | "repo::" + $w + "/" + .)) else . end)' > "$FAKE/worktrees.json"
 }
+addtracked() { # 이름 경로 내용: 추적 파일을 옛 커밋으로 만들어 origin 에 올림
+  mkdir -p "$W/$1/$(dirname "$2")"; printf '%s\n' "$3" > "$W/$1/$2"; git -C "$W/$1" add -- "$2"; oldc "$1" "add $2"; git -C "$W/$1" push -q origin "feat/$1" 2>/dev/null
+}
 mk coord-q-hub feat/qhub; pr feat/qhub '[{"number":60,"state":"MERGED"}]'
-for n in out_only out_arcfail code_untracked tracked_png assets_png; do mk "$n" "feat/$n"; pr "feat/$n" '[{"number":61,"state":"MERGED"}]'; done
+NEW="out_only out_arcfail out_json out_subdir code_untracked tracked_png assets_png ignored_code ignored_deep tracked_noise assets_tr root_cs spaces corrupt old_pr_new_commit merged_gone live_nw"
+for n in $NEW; do mk "$n" "feat/$n"; pr "feat/$n" '[{"number":61,"state":"MERGED"}]'; done
 for n in out_only out_arcfail; do
-  mkdir -p "$W/$n/shots" "$W/$n/reports"
-  echo md > "$W/$n/reports/summary.md"; echo png > "$W/$n/shots/a.png"; echo '{}' > "$W/$n/result.json"; echo log > "$W/$n/run.log"
+  mkdir -p "$W/$n/evidence"; echo md > "$W/$n/summary.md"; echo png > "$W/$n/a.png"; echo log > "$W/$n/run.log"; echo r > "$W/$n/evidence/r.png"
 done
+echo '{}' > "$W/out_json/result.json"; echo md > "$W/out_json/summary.md"                  # json 은 허용 목록 밖
+mkdir -p "$W/out_subdir/reports"; echo md > "$W/out_subdir/reports/s.md"                  # 루트·결과물 폴더 밖의 md
 mkdir -p "$W/code_untracked/src"; echo 'class A{}' > "$W/code_untracked/src/Foo.cs"; echo md > "$W/code_untracked/report.md"
 echo edit >> "$W/tracked_png/README.md"; echo png > "$W/tracked_png/a.png"
 mkdir -p "$W/assets_png/Assets/Art"; echo png > "$W/assets_png/Assets/Art/new.png"
+# [1] gitignore 코드 파일(secret/ 는 .gitignore 대상)
+mkdir -p "$W/ignored_code/secret"; echo 'class S{}' > "$W/ignored_code/secret/Foo.cs"
+mkdir -p "$W/ignored_deep/pages"; echo h > "$W/ignored_deep/pages/deep.html"              # *.html 은 ignore 지만 루트가 아님
+# [2] 추적 파일 수정: 폴더 이름이 TextMesh Pro 여도 부산물이 아님
+addtracked tracked_noise "TextMesh Pro/Logic.cs" "class L{}"; echo 'class L{ int x; }' > "$W/tracked_noise/TextMesh Pro/Logic.cs"
+# [7] Assets 아래 TestResults 의 .CS·png / 루트 .CS
+mkdir -p "$W/assets_tr/Assets/TestResults"; echo c > "$W/assets_tr/Assets/TestResults/Foo.CS"; echo p > "$W/assets_tr/Assets/TestResults/texture.png"
+echo c > "$W/root_cs/Foo.CS"
+# 공백·따옴표 경로
+mkdir -p "$W/spaces/evidence/my reports"; echo md > "$W/spaces/evidence/my reports/a'b.md"
+# [3] 보관 손상(크기 불변): 미추적 파일 + gitignore 폴더(docs/out)
+echo md > "$W/corrupt/r.md"
+# [6] PR 병합 뒤 push 안 한 커밋 / 원격 브랜치가 지워졌지만 HEAD 가 병합된 PR 의 마지막 커밋
+echo more > "$W/old_pr_new_commit/g.txt"; git -C "$W/old_pr_new_commit" add -A; oldc old_pr_new_commit unpushed
+git -C "$W/merged_gone" update-ref -d refs/remotes/origin/feat/merged_gone; pr feat/merged_gone "[{\"number\":62,\"state\":\"MERGED\",\"headRefOid\":\"$(git -C "$W/merged_gone" rev-parse HEAD)\"}]"
 HUB_KIDS="out_only out_arcfail"; regen
 mkdir -p "$ARC/repoA"; : > "$ARC/repoA/out_arcfail"          # 보관 폴더 자리에 파일이 있어 복제 불가
 jsonrun() { env PATH="$BIN:$PATH" FAKE_DIR="$FAKE" FAKE_ROOT="$ROOT" bash "$GC" --root "$ROOT" --archive-dir "$ARC" --log "$ARC/ws_gc.log" --json --no-slack "$@" 2>/dev/null; }
+untouched() { for n in "$@"; do [ -e "$W/$n" ] || return 1; done; [ "$(rm_calls)" = 0 ]; }
 
-gc --only out_only; chk "결과물만: dry-run 후보·결과물 수 표시" 'has "CANDIDATE repoA/out_only .*결과물=4" && has "미추적 결과물 4개"'
+gc --only out_only; chk "결과물만: dry-run 후보·결과물 수 표시" 'has "CANDIDATE repoA/out_only .*결과물=4" && has "summary.md"'
 chk "결과물만: dry-run 은 삭제·색인 없음" '[ -e "$W/out_only" ] && [ ! -e "$SB/inbox/q.tsv" ]'
 JS=$(jsonrun --only out_only)
 chk "--json: 결과물만 후보 수·items" 'echo "$JS" | jq -e ".candidates_outputs_only == 1 and (.items | length) == 1 and .items[0].verdict == \"candidate\"" >/dev/null' "$JS"
-gc --only code_untracked --apply; chk "코드 미추적(.cs): 보존·KEEP_CODE 기록" '[ -e "$W/code_untracked" ] && has "SKIP dirty repoA/code_untracked" && has "KEEP_CODE repoA/code_untracked 추적 수정 0·코드 미추적 1: 코드 미추적 src/Foo.cs" && [ "$(rm_calls)" = 0 ]'
+gc --only code_untracked --apply; chk "허용 목록 밖 미추적(src/Foo.cs): 보존·KEEP_CODE 기록" '[ -e "$W/code_untracked" ] && has "SKIP dirty repoA/code_untracked" && has "KEEP_CODE repoA/code_untracked 추적 수정 0·미확인 1: 미확인 미추적 src/Foo.cs" && [ "$(rm_calls)" = 0 ]'
 JS=$(jsonrun --only code_untracked)
-chk "--json: keep_code 에 이름·파일" 'echo "$JS" | jq -e ".keep_code[0].name == \"repoA/code_untracked\" and .keep_code[0].untracked_code == 1 and (.keep_code[0].files[0] | test(\"Foo.cs\"))" >/dev/null' "$JS"
-gc --only tracked_png --apply; chk "추적 파일 수정 + 결과물: 보존" '[ -e "$W/tracked_png" ] && has "KEEP_CODE repoA/tracked_png 추적 수정 1·코드 미추적 0" && [ "$(rm_calls)" = 0 ]'
-gc --only assets_png --apply; chk "Assets 아래 미추적 png(새 에셋 가능): 보존" '[ -e "$W/assets_png" ] && has "SKIP dirty repoA/assets_png" && [ "$(rm_calls)" = 0 ]'
+chk "--json: keep_code 에 이름·파일" 'echo "$JS" | jq -e ".keep_code[0].name == \"repoA/code_untracked\" and .keep_code[0].unverified == 1 and (.keep_code[0].files[0] | test(\"Foo.cs\"))" >/dev/null' "$JS"
+gc --only tracked_png --apply; chk "추적 파일 수정 + 결과물: 보존" '[ -e "$W/tracked_png" ] && has "KEEP_CODE repoA/tracked_png 추적 수정 1·미확인 0" && [ "$(rm_calls)" = 0 ]'
+gc --only assets_png --apply; chk "Assets 아래 미추적 png(새 에셋 가능): 보존" 'untouched assets_png && has "SKIP dirty repoA/assets_png"'
+gc --only out_json --apply; chk "루트 json 은 허용 목록 밖 → 보존" 'untouched out_json && has "미확인 미추적 result.json"'
+gc --only out_subdir --apply; chk "결과물 폴더 밖 하위 폴더의 md → 보존" 'untouched out_subdir && has "미확인 미추적 reports/s.md"'
+
+# [1] gitignore 된 코드 파일
+gc --only ignored_code --apply; chk "[1] gitignore 코드(secret/Foo.cs): 보존·삭제 시도 없음" 'untouched ignored_code && [ -e "$W/ignored_code/secret/Foo.cs" ] && has "미확인 무시파일 secret/Foo.cs" && [ "$RC" = 0 ]'
+gc --only ignored_deep --apply; chk "[1] gitignore *.html 이어도 루트가 아니면 보존" 'untouched ignored_deep && has "미확인 무시파일 pages/deep.html"'
+# [2] 추적 파일 수정
+FAKE_RM_CHECK_DIRTY=1 gc --only tracked_noise --apply
+chk "[2] 추적 파일 수정(TextMesh Pro/Logic.cs): 보존, force 삭제 없음" 'untouched tracked_noise && has "추적 수정 TextMesh Pro/Logic.cs" && ! grep -q -- "--force" "$FAKE/orca.calls"'
+# [7] 대소문자·소스 폴더
+gc --only assets_tr --apply; chk "[7] Assets/TestResults/Foo.CS·png: 소스 폴더라 허용 목록과 겹쳐도 보존" 'untouched assets_tr && has "미확인 무시파일 Assets/TestResults/"'
+gc --only root_cs --apply; chk "[7] 루트 Foo.CS: 허용 확장자가 아니라 보존" 'untouched root_cs && has "미확인 미추적 Foo.CS"'
+# [6] HEAD 가 원격에 있어야 함
+gc --only old_pr_new_commit --apply; chk "[6] PR 병합 뒤 push 안 한 커밋: 보존(unmerged)" 'untouched old_pr_new_commit && has "SKIP unmerged repoA/old_pr_new_commit — PR #61 MERGED 이후 origin 에 없는 커밋 있음"'
+gc --only merged_gone --apply; chk "[6] 원격 브랜치가 지워져도 HEAD 가 병합된 PR 의 마지막 커밋이면 삭제" '[ ! -e "$W/merged_gone" ] && [ "$RC" = 0 ]'
+# 공백·따옴표 경로
+FAKE_RM_CHECK_DIRTY=1 gc --only spaces --apply
+chk "공백·따옴표 경로(evidence/my reports/a'b.md): 보관 대조 뒤 삭제" '[ "$RC" = 0 ] && [ ! -e "$W/spaces" ] && [ "$(cat "$ARC/repoA/spaces/evidence/my reports/a'"'"'b.md")" = md ]'
+# [3] 보관 내용 손상(파일 수·크기 같음)
+FAKE_TAR_CORRUPT=1 FAKE_TAR_CORRUPT_NAME=x.html FAKE_RM_CHECK_DIRTY=1 gc --only corrupt --apply
+chk "[3] gitignore 결과물 폴더(docs/out) 손상(크기 불변): 삭제 중단·종료 1" '[ "$RC" = 1 ] && untouched corrupt && has "ARCHIVE_MISMATCH docs/out" && has "SKIP archive_fail repoA/corrupt" && ! grep -q "corrupt" "$SB/inbox/_none.tsv"'
+FAKE_TAR_CORRUPT=1 FAKE_TAR_CORRUPT_NAME=r.md FAKE_RM_CHECK_DIRTY=1 gc --only corrupt --apply
+chk "[3] 미추적 파일(r.md) 손상(크기 불변): 삭제 중단·종료 1" '[ "$RC" = 1 ] && untouched corrupt && has "ARCHIVE_MISMATCH r.md 원본과 보관본의 내용이 다름"'
+FAKE_RM_CHECK_DIRTY=1 gc --only corrupt --apply
+chk "[3] 정상 복제로 재시도하면 삭제" '[ "$RC" = 0 ] && [ ! -e "$W/corrupt" ] && [ "$(cat "$ARC/repoA/corrupt/r.md")" = md ] && [ -f "$ARC/repoA/corrupt/docs/out/x.html" ]'
+
+# 결과물만: 보관·색인·삭제
 FAKE_RM_CHECK_DIRTY=1 gc --only out_only --apply
 chk "결과물만: 삭제 성공(일반 rm 거부 → 보관 확인 뒤 force)" '[ "$RC" = 0 ] && [ ! -e "$W/out_only" ] && grep -q "^worktree rm --worktree path:$W/out_only --force" "$FAKE/orca.calls" && has "RM_RETRY_FORCE"'
-chk "결과물만: 미추적 결과물 보관(내용 일치)" '[ "$(cat "$ARC/repoA/out_only/reports/summary.md")" = md ] && [ "$(cat "$ARC/repoA/out_only/shots/a.png")" = png ] && [ -f "$ARC/repoA/out_only/result.json" ] && [ -f "$ARC/repoA/out_only/run.log" ]'
-chk "결과물만: gitignore 결과물도 함께 보관" '[ "$(find "$ARC/repoA/out_only/TestResults" -type f | wc -l | tr -d " ")" = 2 ] && has "ARCHIVE 미추적 결과물 파일 4"'
+chk "결과물만: 미추적 결과물 보관(내용 일치)" '[ "$(cat "$ARC/repoA/out_only/summary.md")" = md ] && [ "$(cat "$ARC/repoA/out_only/a.png")" = png ] && [ -f "$ARC/repoA/out_only/run.log" ] && [ -f "$ARC/repoA/out_only/evidence/r.png" ]'
+chk "결과물만: gitignore 결과물도 함께 보관" '[ "$(find "$ARC/repoA/out_only/TestResults" -type f | wc -l | tr -d " ")" = 2 ] && [ -f "$ARC/repoA/out_only/docs/out/x.html" ] && has "ARCHIVE summary.md 파일 1" && [ ! -e "$ARC/repoA/out_only/Library" ]'
 chk "결과물만: 허브 색인 한 줄(시각·이름·보관 경로·파일 수)" '[ "$(wc -l < "$SB/inbox/q.tsv" | tr -d " ")" = 1 ] && awk -F"\t" "NF==4 && \$1 ~ /^20[0-9-]+T/ && \$2 == \"repoA/out_only\" && \$3 == \"$ARC/repoA/out_only\" && \$4 == 7" "$SB/inbox/q.tsv" | grep -q .' "$(cat "$SB/inbox/q.tsv" 2>&1)"
 chk "부모 없는 작업 공간은 _none 색인" 'grep -q "repoA/merged" "$SB/inbox/_none.tsv"'
 chk "결과물만: 요약에 결과물만 개수" 'has "END 삭제 1개(결과물만 1개)"'
 FAKE_RM_CHECK_DIRTY=1 gc --only out_arcfail --apply
-chk "보관 불일치(복제 불가): 삭제 안 함·색인 없음·종료 1" '[ "$RC" = 1 ] && [ -e "$W/out_arcfail" ] && has "ARCHIVE_MISMATCH" && has "SKIP archive_fail repoA/out_arcfail" && [ "$(rm_calls)" = 0 ] && [ "$(wc -l < "$SB/inbox/q.tsv" | tr -d " ")" = 1 ]'
+chk "보관 불일치(복제 불가): 삭제 안 함·색인 없음·종료 1" '[ "$RC" = 1 ] && untouched out_arcfail && has "ARCHIVE_MISMATCH" && has "SKIP archive_fail repoA/out_arcfail" && [ "$(wc -l < "$SB/inbox/q.tsv" | tr -d " ")" = 1 ]'
 chk "실패 Slack: 처음엔 전송" '[ -s "$FAKE/notify.calls" ] && grep -q "삭제 못 한 곳 1곳" "$FAKE/notify.calls"'
 FAKE_RM_CHECK_DIRTY=1 gc --only out_arcfail --apply
 chk "같은 실패 반복: Slack 다시 안 보냄" '[ "$RC" = 1 ] && [ ! -s "$FAKE/notify.calls" ]'
-gc --apply --parent "$W/coord-q-hub" --only out_arcfail --dry-run; chk "--parent: 그 허브 하위만 평가" 'has "parent=$W/coord-q-hub" && has "repoA/out_arcfail" && ! has "repoA/code_untracked .*CANDIDATE"'
+gc --parent "$W/coord-q-hub" --only out_arcfail --dry-run; chk "--parent: 그 허브 하위만 평가" 'has "parent=$W/coord-q-hub" && has "repoA/out_arcfail"'
 JS=$(jsonrun --parent "$W/coord-q-hub"); chk "--parent: 허브 하위 2곳만 items(다른 허브·무소속 제외)" 'echo "$JS" | jq -e "[.items[].name] | sort == [\"repoA/out_arcfail\", \"repoA/out_only\"]" >/dev/null' "$JS"
+
+# [4] 워커 목록이 비어도 연결된 터미널이 있는 곳은 살아 있음
+GC_FAKE="$SB/fake2"; mkdir -p "$GC_FAKE/pr"; cp "$FAKE"/*.json "$GC_FAKE/"; cp "$FAKE/pr"/* "$GC_FAKE/pr/"
+jq -n --arg p "$W/live_nw" '{ok:true,result:{terminals:[{handle:"term_nw",worktreePath:$p,connected:true,orphaned:false}]}}' > "$GC_FAKE/terminals.json"
+jq -n '{ok:true,result:{workers:[],page:{hasMore:false}}}' > "$GC_FAKE/workers.json"
+gc --only live_nw --apply; chk "[4] 워커 목록이 비었고 터미널이 붙은 곳: 보존(live)" '[ -e "$W/live_nw" ] && has "SKIP live repoA/live_nw" && ! grep -q "^worktree rm" "$GC_FAKE/orca.calls"' "$(tail -3 "$ARC/ws_gc.log")"
+unset GC_FAKE
+
+# [5] 잠금: 동시에 4개를 띄우면 하나만 실행(나머지는 건너뜀), 끝난 뒤에는 다시 실행됨
+mkdir -p "$SB/par"
+for i in 1 2 3 4; do (FAKE_SLEEP=2 env PATH="$BIN:$PATH" FAKE_DIR="$FAKE" FAKE_ROOT="$ROOT" WS_GC_NOTIFY="$HERE/fake_send.sh" bash "$GC" --root "$ROOT" --archive-dir "$ARC" --log "$SB/par/log" --dry-run --only nothing_matches > "$SB/par/out$i" 2>&1 &); done
+sleep 5
+chk "[5] 동시 실행 4개: 하나만 실행" '[ "$(grep -c "START" "$SB/par/log")" = 1 ] && [ "$(cat "$SB"/par/out* | grep -c "이미 실행 중")" = 3 ]' "start=$(grep -c START "$SB/par/log") skipped=$(cat "$SB"/par/out* | grep -c "이미 실행 중")"
+gc --only nothing_matches; chk "[5] 끝난 뒤 다시 실행 가능(잠금이 남지 않음)" '[ "$RC" = 0 ] && has "START"'
+chk "[5] 잠금은 pid 파일·잠금 폴더가 아님" '[ ! -d "$ARC/.ws_gc.lock" ] && [ -f "$ARC/.ws_gc.flock" ]'
 
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
