@@ -8,7 +8,8 @@ Confluence·Jira 는 읽기만(초안 작성 claude 에 읽기 도구만 허용)
   --date     초안 날짜(기본 오늘). 시험·재현용
   --force    평일·'오늘 이미 보냄' 검사를 건너뜀(수동 재실행)
   --out      초안 저장 경로 덮어쓰기
-종료 코드: 0 발송·건너뜀·dry-run 성공, 1 초안 작성 또는 발송 실패(warn·로컬 알림 시도함), 2 인자 오류
+  --preflight  발송·초안 작성 없이 gh 인증·claude 로그인·Atlassian MCP 연결·Slack 봇 스크립트 존재만 점검(토큰 값은 출력 안 함)
+종료 코드: 0 발송·건너뜀·dry-run·preflight 성공, 1 초안 작성 또는 발송 실패(warn·로컬 알림 시도함), 2 인자 오류
 """
 import argparse
 import datetime as dt
@@ -83,6 +84,7 @@ SECRET_RE = re.compile(r"(?i)\b(?:token|secret|passw(?:or)?d|api[_-]?key|authori
 INTERNAL_ID_RE = re.compile(r"\b(?:LRM-\d+|D-[A-Za-z0-9]{1,16}|T-[A-Za-z0-9]{1,16}|ctx_[0-9a-f]+|task_[0-9a-f]+|term_[0-9a-f-]+)\b")
 SLACK_TAG = "scrum"
 NO_ATLASSIAN = "@@atlassian-unavailable@@"  # 초안 작성 claude 가 Jira·Confluence 를 못 읽었을 때 맨 끝에 붙이는 표시
+PREFLIGHT_TIMEOUT = int(os.environ.get("LRM_SCRUM_PREFLIGHT_TIMEOUT", "60"))
 NOTIFY_TIMEOUT = int(os.environ.get("LRM_SCRUM_NOTIFY_TIMEOUT", "120"))
 NOTIFY_RC_TIMEOUT = -1  # 시간 초과: 올라갔는지 모름
 NOTIFY_RC_OS = -2  # 실행 불가: 미전송
@@ -336,13 +338,52 @@ def failure_message(date, fails):
                       "참고: 로그 %s" % LOG])
 
 
+def probe(cmd, ok_re=None):
+    """점검용 하위 명령. (성공 여부, 사유 코드). 출력 원문은 버림: 토큰·계정 정보가 화면·로그에 안 남게"""
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=PREFLIGHT_TIMEOUT, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return False, "timeout"
+    except OSError:
+        return False, "command_not_found"
+    if out.returncode != 0:
+        return False, "exit_%d" % out.returncode
+    if ok_re and not re.search(ok_re, out.stdout):
+        return False, "unexpected_output"
+    return True, ""
+
+
+def preflight():
+    """발송 없이 첫 자동 실행 전제만 점검. 종료 코드: 0 전부 통과, 1 하나 이상 실패"""
+    notify = Path(NOTIFY)
+    checks = [
+        ("본인 칸 제목", (True, "") if NAME else (False, "SCRUM_NAME 없음"),
+         "%s 에 SCRUM_NAME 을 쓰거나 LRM_SCRUM_NAME 지정" % ENV_FILE),
+        ("gh 인증", probe([collect.GH, "auth", "status"]), "gh auth login"),
+        ("claude 로그인", probe([CLAUDE, "auth", "status"], r'"loggedIn":\s*true'), "claude auth login"),
+        ("Atlassian MCP 연결", probe([CLAUDE, "mcp", "get", "atlassian"], r"Status:.*Connected"),
+         "대화형 claude 에서 /mcp → atlassian 인증"),
+        ("Slack 봇 스크립트", (notify.is_file() and os.access(notify, os.X_OK), "없음·실행 권한 없음"),
+         "%s 확인(install.sh 재실행)" % notify),
+    ]
+    bad = 0
+    for label, (ok, why), hint in checks:
+        print("%s  %s%s" % ("PASS" if ok else "FAIL", label, "" if ok else " — %s. 조치: %s" % (why, hint)))
+        bad += not ok
+    print("---- preflight %s (발송·상태 기록 없음)" % ("통과" if not bad else "실패 %d건" % bad))
+    return 1 if bad else 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dry-run", action="store_true", help="Slack·상태 없이 초안만 파일·표준 출력")
     ap.add_argument("--date", help="초안 날짜 YYYY-MM-DD(기본 오늘)")
     ap.add_argument("--force", action="store_true", help="평일·오늘 이미 보냄 검사 생략")
     ap.add_argument("--out", help="초안 저장 경로")
+    ap.add_argument("--preflight", action="store_true", help="발송 없이 gh·claude·Atlassian MCP·Slack 봇 스크립트만 점검")
     a = ap.parse_args()
+    if a.preflight:
+        return preflight()
     if not NAME:
         print("본인 칸 제목 없음 — %s 에 SCRUM_NAME=<회의록 본인 칸 제목> 을 쓰거나 LRM_SCRUM_NAME 을 지정" % ENV_FILE, file=sys.stderr)
         return 2

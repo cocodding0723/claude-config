@@ -129,6 +129,30 @@ rm -rf "$W/ok1" "$W/ok2"; mkdir -p "$W/bad2/.git"
 reset; LRM_SCRUM_COLLECT="$S/scrum_collect.py" LRM_GIT="$D/fake_git.sh" LRM_GH="$D/fake_gh.sh" LRM_SCRUM_WS_ROOT="$W" post --date $WK; rc=$?
 [ $rc = 1 ] && grep -q -- "--kind warn" "$D/sent.log" && grep -q "collect_all_empty(commits)" "$D/sent.log" && ok "전부 실패(빈 날과 구분) → 초안 없이 warn" || ko "전체 실패 warn" "rc=$rc"
 
+# ---- --preflight(첫 실행 전 점검) ----
+cat > "$D/pf_gh.sh" <<'G'
+#!/bin/bash
+echo "Token: gho_FAKE_PREFLIGHT_TOKEN"; [ "$(cat "$FAKE_DIR/pf-gh" 2>/dev/null)" = fail ] && exit 1; exit 0
+G
+cat > "$D/pf_claude.sh" <<'G'
+#!/bin/bash
+case "$1 $2" in
+  "auth status") [ "$(cat "$FAKE_DIR/pf-login" 2>/dev/null)" = fail ] && echo '{"loggedIn": false}' || echo '{"loggedIn": true, "email": "secret@example.com"}' ;;
+  "mcp get") [ "$(cat "$FAKE_DIR/pf-mcp" 2>/dev/null)" = fail ] && echo "  Status: ! Needs authentication" || echo "  Status: ✔ Connected" ;;
+esac
+G
+chmod +x "$D/pf_gh.sh" "$D/pf_claude.sh"
+pf() { rm -f "$D"/pf-*; for k in "$@"; do echo fail > "$D/pf-$k"; done; reset; LRM_GH="$D/pf_gh.sh" LRM_CLAUDE="$D/pf_claude.sh" LRM_NOTIFY="$HERE/fake_send.sh" post --preflight; }
+pf; rc=$?; [ $rc = 0 ] && [ "$(grep -c '^PASS' "$D/out")" = 5 ] && [ "$(sent)" = 0 ] && [ ! -e "$D/scrum.state.json" ] && [ ! -e "$D/claude.log" ] && ok "--preflight 전부 통과 → 종료 코드 0, 발송·상태 파일·초안 작성 없음" || ko "preflight 통과" "rc=$rc $(cat "$D/out")"
+! grep -q "FAKE_PREFLIGHT_TOKEN\|secret@example.com" "$D/out" "$D/err" && ok "--preflight 출력에 토큰·계정 값 없음" || ko "preflight 노출"
+pf gh; rc=$?; [ $rc = 1 ] && grep -q "FAIL  gh 인증" "$D/out" && ok "gh 인증 실패 감지(종료 코드 1)" || ko "gh 실패" "rc=$rc"
+pf login; rc=$?; [ $rc = 1 ] && grep -q "FAIL  claude 로그인" "$D/out" && ok "claude 로그아웃 감지" || ko "claude 실패" "rc=$rc"
+pf mcp; rc=$?; [ $rc = 1 ] && grep -q "FAIL  Atlassian MCP 연결" "$D/out" && grep -q "/mcp" "$D/out" && ok "Atlassian MCP 미연결 감지 + 조치 안내" || ko "mcp 실패" "rc=$rc"
+rm -f "$D"/pf-*; reset; LRM_GH="$D/pf_gh.sh" LRM_CLAUDE="$D/pf_claude.sh" LRM_NOTIFY="$D/없는-명령" post --preflight; rc=$?
+[ $rc = 1 ] && grep -q "FAIL  Slack 봇 스크립트" "$D/out" && ok "Slack 봇 스크립트 없음 감지" || ko "slack 스크립트" "rc=$rc"
+reset; (unset LRM_SCRUM_NAME; LRM_GH="$D/pf_gh.sh" LRM_CLAUDE="$D/pf_claude.sh" LRM_NOTIFY="$HERE/fake_send.sh" post --preflight); rc=$?
+[ $rc = 1 ] && grep -q "FAIL  본인 칸 제목" "$D/out" && ok "본인 칸 제목 없음 감지(인자 오류 2 가 아니라 점검 실패 1)" || ko "제목 점검" "rc=$rc"
+
 # ---- 수집 오류 반영(리뷰 지적 5) ----
 reset; echo err-all > "$D/plan-collect"; post --date $WK; rc=$?
 [ $rc = 1 ] && [ ! -e "$D/claude.log" ] && grep -q -- "--kind warn" "$D/sent.log" && grep -q "collect_required_missing" "$D/sent.log" && [ ! -d "$D/draft" ] && ok "prs·commits 수집 둘 다 실패 → 초안 없이 warn(정상 초안으로 확정 안 함)" || ko "수집 전부 실패" "rc=$rc"

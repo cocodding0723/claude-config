@@ -9,11 +9,12 @@ export USER="${USER:-$(id -un)}" LOGNAME="${LOGNAME:-$(id -un)}"
 case "${1:-}" in
   -h|--help)
     cat <<'USAGE'
-사용: scrum_run.sh [--dry-run] [--date YYYY-MM-DD] [--force] [--out 파일]
+사용: scrum_run.sh [--dry-run] [--date YYYY-MM-DD] [--force] [--out 파일] [--preflight]
 평일 스크럼 본인 칸 초안을 claude 로 쓰고 Slack 봇 DM 1건으로 보냄. 인자는 scrum_post.py 로 그대로 전달.
   --dry-run  Slack·상태 파일 없이 초안을 파일(<초안 폴더>/<날짜>.dry.md)과 표준 출력에 냄
   --date     초안 날짜(기본 오늘)
   --force    평일·'오늘 이미 보냄' 검사 생략(수동 재실행)
+  --preflight  발송 없이 gh·claude·Atlassian MCP·Slack 봇 스크립트만 점검(첫 자동 실행 전)
 환경: LRM_SCRUM_MODELS(쉼표, 기본 claude-fable-5-1,claude-fable-5-2,claude-opus-5-5) · LRM_SCRUM_DRAFT_DIR · LRM_SCRUM_LOG · LRM_HUB_DIR
 종료 코드: 0 발송·건너뜀·dry-run 성공, 1 초안 작성 또는 발송 실패, 2 인자 오류, 3 환경 오류(python3 없음)
 예:
