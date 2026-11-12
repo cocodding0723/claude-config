@@ -199,9 +199,21 @@ class Decide:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         with open(DONE, "a", encoding="utf-8") as f:
             f.write(ts + "\n")
-        entry = actions.take(did)
-        if entry is not None:  # 감시기가 건 카드: 후속 동작을 실행하고 메인에는 전달하지 않음(메인이 같은 일을 또 하지 않게)
-            threading.Thread(target=self.run_action, args=(entry, did, ts, extra.get("pick")), daemon=True).start()
+        status, entry = actions.try_take(did)  # 비차단: 다른 프로세스가 등록부 잠금을 쥐어도 수신 스레드는 멈추지 않음
+        if status == "busy":  # 등록 여부 불명(처리 중). 일반 카드로 오인하지 않고 별도 스레드가 잠금을 기다려 이어서 처리
+            log(f"결정 {did} 등록부 잠금 사용 중 — 백그라운드에서 이어서 처리")
+            threading.Thread(target=self.settle, args=(did, ts, title, label, extra.get("pick")), daemon=True).start()
+            return
+        self.route(entry, did, ts, title, label, extra.get("pick"))
+
+    def settle(self, did: str, ts: str, title: str, label: str, pick) -> None:
+        """잠금을 기다려 take 한 뒤 route. 답은 inbox 에 이미 기록돼 있어 프로세스가 죽어도 사라지지 않음"""
+        self.route(actions.take(did), did, ts, title, label, pick)
+
+    def route(self, entry, did: str, ts: str, title: str, label: str, pick) -> None:
+        """감시기가 건 카드(entry 있음)는 후속 동작만 실행하고 메인에는 전달하지 않음(메인이 같은 일을 또 하지 않게). 일반 카드는 메인 전달"""
+        if entry is not None:
+            threading.Thread(target=self.run_action, args=(entry, did, ts, pick), daemon=True).start()
             return
         ok = send_main(f"[Slack→메인] 결정: {title or did} = {label} ({ts})")
         if not ok:

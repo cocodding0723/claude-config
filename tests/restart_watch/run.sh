@@ -27,7 +27,8 @@ printf '#!/bin/sh\necho "$FAKE_LSTART"\n' > "$BIN/ps"
 cat > "$BIN/notify" <<'SH'
 #!/bin/bash
 [ "${FAKE_NOTIFY_FAIL:-}" = 1 ] && exit 1
-[ -n "${FAKE_NOTIFY_SLEEP:-}" ] && sleep "$FAKE_NOTIFY_SLEEP"
+# 게이트: 열리는 파일이 생길 때까지(최대 10초) 전송을 붙잡아 잠금 보유 상태를 시험이 원하는 만큼 유지
+if [ -n "${FAKE_NOTIFY_GATE:-}" ]; then for _ in $(seq 200); do [ -e "$FAKE_NOTIFY_GATE" ] && break; sleep 0.05; done; fi
 { printf '%s\n' "$@"; echo '---'; } >> "$FAKE_NOTIFY_LOG"
 SH
 cat > "$BIN/resume_all.sh" <<'SH'
@@ -148,6 +149,7 @@ import sys; sys.path.insert(0, "$SCRIPTS")
 import card_actions as c
 c.register("D-RSBTN0000001", "resume", {"slugs": ["alpha", "beta"]})
 PY
+  [ -z "${HOLD_S:-}" ] || holdlock "$n-lock" "$HOLD_S" "$d/hub"  # 등록 뒤 지정 시간 동안 등록부 잠금을 다른 프로세스가 쥐게 함
   env LRM_HUB_DIR="$d/hub" FAKE_SCENARIO="$d/scen.json" FAKE_CALLS="$d/calls" LRM_PUSH_MAIN=/fake/main \
     LRM_SOCKET_CHECK_S=0.1 LRM_SOCKET_DOWN_S=0.6 LRM_SOCKET_REFRESH_S=0 LRM_SOCKET_ALIVE_S=600 LRM_SOCKET_DEBOUNCE_S=0.1 "$@" \
     python3 -I "$DRIVER" "$SOCK" > "$d/out" 2>&1 &
@@ -210,15 +212,55 @@ chk "register·take 경합(순서 강제): take(A) 첫 번째 True·두 번째 F
 mkst alpha "$NOW" '["동시 시험 작업"]'
 status 700 rt-L
 C0=$(cards)
-FAKE_NOTIFY_SLEEP=1.5 rw --json > "$SB/p1" 2>&1 &
-sleep 0.4
-t0=$(python3 -c "import time;print(time.time())")
-rw --json > "$SB/p2" 2>&1
-t1=$(python3 -c "import time;print(time.time())")
-wait
+GATE="$SB/gate"; rm -f "$GATE"
+FAKE_NOTIFY_GATE="$GATE" rw --json > "$SB/p1" 2>&1 &
+FAKE_NOTIFY_GATE="$GATE" rw --json > "$SB/p2" 2>&1 &
+# 한쪽이 busy 로 즉시 끝날 때까지 기다린 뒤(= 다른 쪽이 잠금을 쥔 채 전송 게이트에서 대기 중) 게이트를 엶. 어느 쪽이 먼저 잡든 같은 판정
+for _ in $(seq 200); do grep -qs busy "$SB/p1" "$SB/p2" && break; sleep 0.05; done
+BUSY_EARLY=$(grep -ls busy "$SB/p1" "$SB/p2" | wc -l | tr -d ' ')
+: > "$GATE"; wait
 chk "동시 check 2개: 카드 1장만 전송" '[ "$(cards)" = "$((C0 + 1))" ]' "$(( $(cards) - C0 ))장"
-chk "잠금을 못 잡은 쪽은 busy 로 건너뜀(대기 없이 1초 안에 반환)" 'grep -q busy "$SB/p2" && grep -q "\"carded\"" "$SB/p1" && awk -v a="$t0" -v b="$t1" "BEGIN{exit !(b-a<1.0)}"'
+chk "하나는 carded·하나는 busy(순서 무관), busy 는 전송이 끝나기 전에 이미 반환(대기 없음)" '[ "$(cat "$SB/p1" "$SB/p2" | grep -c "\"carded\"")" = 1 ] && [ "$(cat "$SB/p1" "$SB/p2" | grep -c busy)" = 1 ] && [ "$BUSY_EARLY" = 1 ]'
 rw --json > "$SB/p3"; chk "잠금 해제 뒤 정상 실행(같은 재시작 → same, 카드 추가 없음)" 'grep -q "\"same\"" "$SB/p3" && [ "$(cards)" = "$((C0 + 1))" ]'
+
+# ---- 12. 수신 콜백용 비차단 take: 잠금 보유 중에도 즉시 반환·답 유실 없음 -----------------------------------------
+holdlock() { # 이름 초: card-actions 잠금을 그 시간 동안 쥔 프로세스를 띄우고 잡힐 때까지 기다림
+  local rd="$SB/$1.ready"; rm -f "$rd"
+  python3 - "$SCRIPTS" "$2" "$rd" "$3" <<'PY' &
+import os, sys, time
+os.environ["LRM_HUB_DIR"] = sys.argv[4]
+sys.path.insert(0, sys.argv[1])
+import card_actions as c
+with c.flock(c.LOCK) as got:
+    open(sys.argv[3], "w").close()
+    time.sleep(float(sys.argv[2]))
+PY
+  for _ in $(seq 100); do [ -e "$rd" ] && break; sleep 0.05; done
+}
+mkdir -p "$SB/tt"
+TT=$(python3 - "$SCRIPTS" "$SB/tt" <<'PY'
+import os, subprocess, sys, time
+os.environ["LRM_HUB_DIR"] = sys.argv[2]
+sys.path.insert(0, sys.argv[1])
+import card_actions as c
+c.register("D-TT1", "resume", {"slugs": ["a"]})
+holder = subprocess.Popen([sys.executable, "-c", "import os,sys,time;os.environ['LRM_HUB_DIR']=sys.argv[2];sys.path.insert(0,sys.argv[1]);import card_actions as c\nwith c.flock(c.LOCK):\n open(sys.argv[3],'w').close(); time.sleep(1.5)", sys.argv[1], sys.argv[2], sys.argv[2] + "/ready"])
+while not os.path.exists(sys.argv[2] + "/ready"):
+    time.sleep(0.02)
+t0 = time.time(); r1 = c.try_take("D-TT1"); r2 = c.try_take("D-NOPE"); dt = time.time() - t0
+holder.wait()
+print(r1[0], r2[0], "fast" if dt < 0.6 else "slow", c.try_take("D-TT1")[0], c.try_take("D-TT1")[0], c.try_take("D-NOPE")[0])
+PY
+)
+chk "잠금 보유 중 try_take: 즉시 반환(0.6초 미만)·등록/미등록 모두 busy(일반 카드로 오인 안 함)" '[ "${TT%% *}" = busy ] && [ "$(echo $TT | cut -d" " -f2)" = busy ] && [ "$(echo $TT | cut -d" " -f3)" = fast ]' "$TT"
+chk "잠금 해제 뒤: 항목은 그대로 남아 있다가 한 번만 꺼내짐(유실·중복 없음), 미등록은 none" '[ "$(echo $TT | cut -d" " -f4-6)" = "ok none none" ]' "$TT"
+# 소켓: 잠금 보유 중 버튼 → 수신 스레드는 막히지 않고 백그라운드로 이어서 처리, 해제 뒤 resume 1회
+: > "$FAKE_RESUME_LOG"
+HOLD_S=1.5 sockrun k5 "$(act 0.4 b5 D-RSBTN0000001 1 '1. 이어받기')"
+wf k5 out '등록부 잠금 사용 중' && ok "소켓: 잠금 보유 중 버튼 답은 '처리 중'으로 분리(버리지 않음)" || ko "소켓 처리 중 분기" "$(tail -3 "$SB/k5/out")"
+chk "소켓: 잠금 보유 중에는 아직 resume 하지 않음" '[ ! -s "$FAKE_RESUME_LOG" ]'
+if wf k5 out '후속 동작 rc=0' ; then chk "소켓: 잠금 해제 뒤 이어서 처리 → resume_all.sh --only alpha --only beta 1회" '[ "$(cat "$FAKE_RESUME_LOG")" = "--only alpha --only beta" ]' "$(cat "$FAKE_RESUME_LOG")"; else ko "소켓 이어서 처리" "$(tail -3 "$SB/k5/out")"; fi
+kill "$(cat "$SB/k5/pid")" 2>/dev/null
 
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

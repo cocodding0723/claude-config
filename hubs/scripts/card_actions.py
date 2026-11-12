@@ -99,6 +99,27 @@ def take(did: str) -> dict | None:
     return entry if isinstance(entry, dict) else None
 
 
+TRY_TIMES = 4  # 비차단 시도 횟수. 총 대기 상한 ≈ (TRY_TIMES-1) * TRY_GAP_S
+TRY_GAP_S = 0.05
+
+
+def try_take(did: str) -> tuple[str, dict | None]:
+    """수신 콜백용 비차단 take. ('ok', 항목) | ('none', None: 등록 없음 = 일반 카드) | ('busy', None: 다른 프로세스가 잠금 보유 = 처리 중).
+    busy 는 '없음'이 아니므로 호출자가 일반 카드로 오인하지 말고 take() 로 이어서 처리해야 함(항목은 그대로 남아 있음)"""
+    for i in range(TRY_TIMES):
+        with flock(LOCK, wait=False) as got:
+            if got:
+                data = load()
+                entry = data.pop(did, None)
+                if entry is None:
+                    return "none", None
+                save(data)
+                return "ok", entry if isinstance(entry, dict) else None
+        if i < TRY_TIMES - 1:
+            time.sleep(TRY_GAP_S)
+    return "busy", None
+
+
 def run_resume(args: dict) -> tuple[int, str]:
     """대상 허브만 resume_all.sh --only 로 재기동"""
     slugs = [s for s in args.get("slugs", []) if isinstance(s, str) and s]
