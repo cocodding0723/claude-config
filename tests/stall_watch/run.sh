@@ -198,5 +198,19 @@ chk "key=value: api_key 값 가림" '! printf "%s" "$CARD" | grep -q "plainvalue
 chk "Authorization Bearer 값 가림" '! printf "%s" "$CARD" | grep -q "abcdefgh12345678"'
 chk "xox 토큰 가림" '! printf "%s" "$CARD" | grep -q "111122223333" && ! printf "%s" "$CARD" | grep -q "zzzzYYYY"'
 
+# ---- 9. 여러 줄로 나뉜 비밀(키 줄과 값 줄 분리) ----------------------------------------------------------
+addappr 6 ctx_w10 T11 alpha
+python3 - <<'PY'
+import json, os
+lines = ['{"password":', '  "example123!",', '"user": "kim"}', "Authorization:", "", "  Bearer zzzz9999yyyy8888", "token =", "plainsplit77", "Do you want to proceed?"]
+json.dump(lines, open(os.path.join(os.environ["FAKE_DIR"], "read_ctx_w10.json"), "w"), ensure_ascii=False)
+PY
+sw --json > "$SB/o"
+CARD=$(python3 -c "import sys;print([c for c in open(sys.argv[1],encoding='utf-8').read().split('---\n') if c.strip()][-1])" "$FAKE_NOTIFY_LOG")
+chk "여러 줄 시험용 카드 전송됨(화면 줄 포함)" 'printf "%s" "$CARD" | grep -q "화면: .*Do you want to proceed?"'
+chk "여러 줄 JSON: 다음 줄의 password 값 가림" '! printf "%s" "$CARD" | grep -q "example123"'
+chk "빈 줄을 사이에 둔 Authorization: / Bearer 값 가림" '! printf "%s" "$CARD" | grep -q "zzzz9999yyyy8888"'
+chk "token = 다음 줄 값 가림" '! printf "%s" "$CARD" | grep -q "plainsplit77"'
+
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

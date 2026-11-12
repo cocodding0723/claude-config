@@ -68,6 +68,9 @@ EXTRA_SECRET_RE = re.compile(r"(?i)(?:bearer\s+\S{8,}|[A-Za-z0-9_-]{32,}|--?(?:t
 KV_SECRET_RE = re.compile(
     r"""(?i)(["']?[\w.-]*(?:pass(?:word|wd)?|pwd|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|authorization|auth|credential)[\w.-]*["']?\s*[:=]\s*)"""
     r"""("(?:[^"\\]|\\.)*"?|'[^']*'?|.*)""")
+# 값이 다음 줄로 넘어가는 경우: 비밀 키로 끝나는 줄(`{"password":`, `Authorization:`, `"token"`) 뒤 첫 비어 있지 않은 줄을 통째로 가림
+KEY_WORDS = r"(?:pass(?:word|wd)?|pwd|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|authorization|auth|credential)"
+PENDING_RE = re.compile(r"""(?i)[\w.-]*""" + KEY_WORDS + r"""[\w.-]*["']?\s*[:=]?\s*[\[{(,]*\s*$""")
 TOKEN_RE = re.compile(r"xox[abprs]-[\w-]+|xapp-[\w-]+|sk-[\w-]{16,}|gh[pousr]_\w{20,}|AKIA[0-9A-Z]{12,}")  # 알려진 토큰 형식은 접두부가 아니라 전체를 가림
 RULE_RE = re.compile(r"^[\s─━—\-=_│|]*$")  # 구분선·빈 줄
 
@@ -139,13 +142,27 @@ def mask_secrets(line: str) -> str:
     return hub_status.SECRET_RE.sub(MASK, TOKEN_RE.sub(MASK, EXTRA_SECRET_RE.sub(MASK, line)))
 
 
+def mask_lines(lines: list) -> list:
+    """줄 목록 전체에 비밀 가림. 줄 단위 규칙(mask_secrets) + 값이 다음 줄로 넘어간 경우 그 줄 통째로 가림.
+    분리된 JSON 처럼 키와 값이 다른 줄에 있어도 요약이 값을 남기지 않게 보수적으로 가림(질문 문장 한 줄이 같이 가려질 수 있음)"""
+    out, pending = [], False
+    for ln in lines:
+        if pending and ln.strip():
+            ln, pending = MASK, False
+        else:
+            pending = bool(PENDING_RE.search(ln)) if ln.strip() else pending
+            ln = mask_secrets(ln)
+        out.append(ln)
+    return out
+
+
 def screen_summary(dispatch: str) -> str:
     """워커 화면 마지막 줄 요약(질문·명령 위주). 비밀 값은 가림. 조회 실패는 안내 문구"""
     res = orca_json(["orchestration", "worker-read", "--dispatch", dispatch, "--source", "terminal", "--json", "--limit", "40"])
     tail = ((res or {}).get("terminal") or {}).get("tail")
     if not isinstance(tail, list):
         return "화면 요약 불가(worker-read 실패)"
-    lines = [rw.clean(mask_secrets(pc.ANSI_RE.sub("", str(x)) if pc else str(x))) for x in tail]
+    lines = [rw.clean(x) for x in mask_lines([pc.ANSI_RE.sub("", str(x)) if pc else str(x) for x in tail])]
     lines = [ln for ln in lines if ln and not RULE_RE.match(ln)][-SUMMARY_LINES:]
     text = " / ".join(ln[:80] for ln in lines)
     return text[:SUMMARY_MAX] or "화면 요약 불가(빈 화면)"
