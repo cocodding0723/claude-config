@@ -574,9 +574,11 @@ d = json.load(sys.stdin)
 t = ((d.get("messages") or [{}])[0].get("text") or "") if d.get("ok") else ""
 t = " ".join(t.split("\n", 1)[0].split())
 t = "".join(c for c in t if c not in "<>|*`\"")
-if len(t) > 40:
+if h.has_secret(t) or h.local_paths(t):  # 자르기 전 전체 줄로 검사(경계에서 잘려 비밀이 못 알아보게 되는 것 방지)
+    t = ""
+elif len(t) > 40:
     t = t[:39] + "…"
-print("" if h.has_secret(t) or h.local_paths(t) else t, end="")' "$(dirname "$HR")" 2>/dev/null || true
+print(t, end="")' "$(dirname "$HR")" 2>/dev/null || true
 }
 # 본문 끝(마지막 '참고:' 줄 앞, 없으면 끝)에 한 줄을 끼움
 add_ref_line() {

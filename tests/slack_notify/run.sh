@@ -763,5 +763,9 @@ run_n --kind done "링크 없는 일반 전송"
 
 run_n --kind progress $'진행 목록\n\n- 항목 <https://example.slack.com/archives/Dfake/p1700000000000100|원본>'
 [ "$(payload '.unfurl_links')" = true ] && ok "N 본문에 직접 든 Slack 메시지 링크도 unfurl_links=true" || ko "N 본문 링크 unfurl" "$(cat "$LOG/post.json")"
+: > "$LOG/fail.link"
+printf '가나다라마바사아자차카타파하가나다라마바사아자차 %s' "xo$(printf xb)-1234567890-abcdefghij" > "$LOG/history.text"
+run_n --kind done --quote "$Q" $'완료\n\n- 무엇: 끝'
+[ "$RC" = 0 ] && text | grep -qxF "<$URL|원본>" && ! text | grep -q 'xo' && ok "N 비밀 검사는 40자 자르기 전에(경계에서 잘린 비밀 조각도 인용 안 됨)" || ko "N 검사 순서" "$(text)"
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
