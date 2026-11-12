@@ -347,6 +347,7 @@ class LedgerTick:
         self.api, self.me = ledger_sync.SlackApi(web), me
         self._busy = threading.Lock()
         self._last_error = ""
+        self._last_logged: tuple = ()
 
     def tick(self) -> None:
         conf = ledger_sync.Conf()
@@ -363,8 +364,18 @@ class LedgerTick:
             conf.user_id = self.me
             res = ledger_sync.sync(conf, self.api)
             self._last_error = ""
-            if res["status"] not in ("unchanged", "busy"):  # busy = CLI 등 다른 프로세스가 동기화 중
-                log(f"장부 동기화 {res['status']} 호출={res['calls']} 답글={res['replies']} {res.get('error', '')}".rstrip())
+            if res["status"] == "unchanged":
+                self._last_logged = ()  # 정상 복귀 뒤 같은 실패가 다시 나면 새로 남김
+            if res["status"] in ("unchanged", "busy"):  # busy = CLI 등 다른 프로세스가 동기화 중
+                return
+            if res["status"] == "deferred" and not res["calls"]:
+                return  # 대기 중 회차는 호출 없이 건너뜀. 대기를 건 실패·429 회차에서 이미 기록함
+            key = (res["status"], res.get("error", ""), res.get("wait", 0))
+            if key == self._last_logged:
+                return  # 같은 실패 반복은 첫 1회와 대기 변경 때만 남김
+            self._last_logged = key
+            wait = f" 다음 재시도 {res['wait']}초 뒤" if res.get("wait") else ""
+            log(f"장부 동기화 {res['status']} 호출={res['calls']} 답글={res['replies']} {res.get('error', '')}{wait}".rstrip())
         except ledger.LedgerError as err:  # 장부 내용 오류는 원인·조치 문장이라 그대로 남김. 같은 문장은 한 번만
             if str(err) != self._last_error:
                 self._last_error = str(err)

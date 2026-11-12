@@ -78,6 +78,21 @@ class TickTest(unittest.TestCase):
             lines = [c.args[0] for c in log.call_args_list]
         self.assertEqual(lines, ["장부 동기화 중단: 장부 잘못된 행 — F1: 증거 없는 완료"])
 
+    def test_same_failure_logs_once_and_again_when_wait_changes(self):
+        open(self.path, "w").close()
+        fail = lambda wait: {"status": "failed", "calls": 1, "replies": 0, "error": "parent_search_incomplete", "wait": wait}
+        wait = {"status": "deferred", "calls": 0, "replies": 0}
+        results = [fail(30), wait, wait, fail(60), wait, fail(60)]
+        with mock.patch.object(slack_socket, "log") as log:
+            with mock.patch.object(ledger_sync, "sync", side_effect=results):
+                for _ in results:
+                    self.tick.tick()
+                    self.wait()
+            lines = [c.args[0] for c in log.call_args_list]
+        self.assertEqual(len(lines), 2)
+        self.assertIn("30초", lines[0])
+        self.assertIn("60초", lines[1])
+
 
 if __name__ == "__main__":
     unittest.main()

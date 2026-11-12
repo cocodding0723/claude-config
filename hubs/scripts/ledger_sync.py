@@ -39,7 +39,11 @@ MAX_WAIT_S = 120  # 이 시간보다 긴 Retry-After 는 기다리지 않고 not
 LINE_MAX = 70  # 요청 한 줄 글자 상한
 TITLE = "피드백 처리 현황"
 PARENT_PREFIX = f"*{TITLE}*"  # 부모 본문 첫머리. 기존 부모 검색 기준
-SCAN_PAGES = 5  # 기존 부모를 찾을 DM 이력 페이지 수(페이지당 100건)
+SCAN_PAGES = 40  # 기존 부모 검색 상한 페이지 수(페이지당 100건). 상태에 ts 가 없을 때만 돎
+SCAN_DAYS = 30  # 검색 범위(oldest). 부모는 장부 도입 뒤에 생기므로 그보다 오래된 이력은 볼 필요 없음
+FIND_GIVEUP = 6  # 검색이 이만큼 연속 미완료면 새 부모를 만듦(기존 부모 1개 중복 허용 — 30초마다 실패하는 것보다 나음)
+BACKOFF_BASE_S = 30  # 검색 실패 대기 시작값. 실패마다 2배
+BACKOFF_MAX_S = 3600
 OPEN_ORDER = ("진행", "접수", "보류")
 # 사용자 본문에서 지우는 내부 표기: 항목 번호(F1·P8·D-HUD1), 머리말 라우팅(ui:·vfx: 등), 브랜치, 커밋 해시
 INTERNAL = re.compile(r"\bD-[A-Z]+\d+\b|\b[A-Z]\d{1,3}\b|\b(?:ui|vfx|qa|data|config):/?"
@@ -82,10 +86,11 @@ class SlackApi:
         return self._call(self.web.conversations_open, users=user)["channel"]["id"]
 
     def find_parent(self, channel: str) -> str:
-        """DM 이력에서 봇이 올린 가장 최근 부모 ts. 끝까지 보고도 없으면 빈 문자열, SCAN_PAGES 안에 못 끝내면 ApiError"""
+        """DM 이력(최근 SCAN_DAYS 일)에서 봇이 올린 가장 최근 부모 ts. 끝까지 보고도 없으면 빈 문자열, SCAN_PAGES 안에 못 끝내면 ApiError"""
         cursor = ""
+        oldest = f"{time.time() - SCAN_DAYS * 86400:.6f}"
         for _ in range(SCAN_PAGES):
-            kw = {"channel": channel, "limit": 100}
+            kw = {"channel": channel, "limit": 100, "oldest": oldest}
             if cursor:
                 kw["cursor"] = cursor
             page = self._call(self.web.conversations_history, **kw)
@@ -95,7 +100,7 @@ class SlackApi:
             cursor = (page.get("response_metadata") or {}).get("next_cursor") or ""
             if not cursor:
                 return ""
-        raise ApiError("parent_search_incomplete")  # 이력이 더 남았는데 검색을 접음. 없다고 단정하면 부모가 중복되므로 생성 보류
+        raise ApiError("parent_search_incomplete")  # 이력이 더 남았는데 검색을 접음. 호출자가 대기 후 재시도하고 FIND_GIVEUP 회째에 새 부모를 만듦
 
     def post(self, channel: str, text: str, thread_ts: str = "") -> str:
         kw = {"channel": channel, "text": text}
@@ -322,8 +327,19 @@ def _round(conf: Conf, api, now, sleep, dry: bool) -> dict:
             persist()  # 게시 전에 쓰기 가능한지 확인. 못 쓰면 부모를 만들기 전에 중단
         channel, text, ts = st["channel"], summary(rows, today), st.get("ts")
         silent = not ts or "snapshot" not in st  # 부모를 새로 만들거나 이어받으면 기준선만 잡고 답글 없음
-        if not ts:
-            ts = call(api.find_parent, channel)  # 상태 유실·저장 실패·게시 결과 불명 뒤에는 기존 부모부터 찾음
+        if not ts and st.get("find_fails", 0) < FIND_GIVEUP:
+            try:
+                ts = call(api.find_parent, channel)  # 상태 유실·저장 실패·게시 결과 불명 뒤에는 기존 부모부터 찾음
+            except ApiError as err:
+                if err.code != "parent_search_incomplete":
+                    raise
+                fails = st["find_fails"] = st.get("find_fails", 0) + 1
+                wait = min(BACKOFF_BASE_S * 2 ** (fails - 1), BACKOFF_MAX_S)
+                if fails < FIND_GIVEUP:
+                    st["not_before"] = now() + wait
+                    persist()  # 재시작해도 대기·실패 횟수 유지
+                    return {"status": "failed", "calls": calls[0], "replies": 0, "error": err.code, "wait": wait}
+                # FIND_GIVEUP 회째: 아래에서 새 부모를 만들고 ts 를 영속 → 이후 검색 없음
         if ts:
             try:
                 call(api.update, channel, ts, text)
@@ -335,6 +351,7 @@ def _round(conf: Conf, api, now, sleep, dry: bool) -> dict:
             ts = call(api.post, channel, text)
         if ts != st.get("ts"):
             st["ts"], st["snapshot"] = ts, snap(rows)  # ts 가 바뀌었으면 항상 silent
+            st.pop("find_fails", None)
             persist()
         if silent:
             st["snapshot"] = snap(rows)
