@@ -18,6 +18,7 @@ cp "$HERE/fake_orca.py" "$BIN/orca"; chmod +x "$BIN/orca"
 cat > "$BIN/notify" <<'SH'
 #!/bin/bash
 [ "${FAKE_NOTIFY_FAIL:-}" = 1 ] && exit 1
+[ -n "${FAKE_NOTIFY_SLEEP:-}" ] && sleep "$FAKE_NOTIFY_SLEEP"
 { printf '%s\n' "$@"; echo '---'; } >> "$FAKE_NOTIFY_LOG"
 SH
 chmod +x "$BIN/notify"
@@ -158,6 +159,26 @@ DID=$(printf "%s" "$LAST" | grep -Eo "D-ST[0-9a-f]{10}" | head -1)
 : > "$FAKE_DIR/sends.log"; : > "$FAKE_DIR/calls.log"
 python3 -I "$CA" handle --did "$DID" --pick 1 > "$SB/o"
 chk "승인 대기 알리기: 허브 코디네이터에 한 줄만, 확인 창에는 입력하지 않음" '[ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 1 ] && grep -q "^term_a1	.*승인 대기 6분째" "$FAKE_DIR/sends.log" && ! grep -q "term_ctx_w7" "$FAKE_DIR/sends.log"'
+
+# ---- 7. 동시 실행: 프로세스 간 잠금 ---------------------------------------------------------------------
+python3 - <<'PY'
+import json, os
+d = os.environ["FAKE_DIR"]
+def rd(n): return json.load(open(os.path.join(d, n + ".json")))
+def wr(n, v): json.dump(v, open(os.path.join(d, n + ".json"), "w"), ensure_ascii=False)
+r = rd("workers_retained"); r.append({"dispatchId": "ctx_c1", "taskId": "T9", "runId": "run_1", "workerState": "stopped", "terminalState": "retained", "projection": {"evidence": {"lastObservedAt": None}}}); wr("workers_retained", r)
+t = rd("tasks"); t["run_1"].append({"id": "T9", "status": "blocked", "title": "동시 시험 작업", "created_by_process_incarnation": "wt::/x/coord-alpha-hub@@a:b"}); wr("tasks", t)
+PY
+C0=$(cards)
+FAKE_NOTIFY_SLEEP=1.5 sw --json > "$SB/p1" 2>&1 &
+sleep 0.5
+t0=$(python3 -c "import time;print(time.time())")
+sw --json > "$SB/p2" 2>&1
+t1=$(python3 -c "import time;print(time.time())")
+wait
+chk "동시 check 2개: 카드 1장만 전송" '[ "$(cards)" = "$((C0 + 1))" ]' "$(( $(cards) - C0 ))장"
+chk "잠금을 못 잡은 쪽은 busy 로 건너뜀(대기 없이 1초 안에 반환)" 'grep -q busy "$SB/p2" && grep -q "\"carded\"" "$SB/p1" && awk -v a="$t0" -v b="$t1" "BEGIN{exit !(b-a<1.0)}"'
+sw --json > "$SB/p3"; chk "잠금 해제 뒤: 같은 dispatch 6시간 중복 방지 유지(카드 추가 없음)" '[ "$(cards)" = "$((C0 + 1))" ] && grep -q none "$SB/p3"'
 
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

@@ -52,6 +52,7 @@ class Limits:
 
 DIR = card_actions.DIR
 STATE = os.path.join(DIR, "stall-watch.json")
+LOCK = os.path.join(DIR, ".stall-watch.lock")
 ORCA, NOTIFY = rw.ORCA, rw.NOTIFY
 ORCA_TIMEOUT_S = 30
 DID_PREFIX = "D-ST"
@@ -223,6 +224,13 @@ def build(items: list, names: dict, dups: dict) -> tuple:
 
 
 def check(limits: Limits, dry: bool, report_existing: bool, now: float | None = None):
+    """조회·판정·전송·상태 저장 전체를 프로세스 간 잠금으로 직렬화. 겹친 실행은 기다리지 않고 건너뜀(status busy).
+    잠금이 없으면 두 실행이 같은 dispatch 를 각각 새 결정 번호로 보내 6시간 중복 방지가 깨짐"""
+    with card_actions.flock(LOCK, wait=False) as got:
+        return _check(limits, dry, report_existing, now) if got else (0, {"status": "busy"})
+
+
+def _check(limits: Limits, dry: bool, report_existing: bool, now: float | None = None):
     now = time.time() if now is None else now
     items, err = detect(limits, now)
     if err:
