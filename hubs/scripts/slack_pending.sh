@@ -16,8 +16,11 @@ LOCK="$DIR/.slack-pending.lock"
 # 잠금으로 건너뛰면 exit 75. 호출한 쪽(slack_cmd.sh)이 "처리 중" 안내와 실패를 구분하게 함
 mkdir "$LOCK" 2>/dev/null || { echo "이미 실행 중 — 건너뜀"; exit 75; }
 trap 'rmdir "$LOCK"' EXIT
-python3 -I - "$DIR" "$@" <<'PY'
+LRM_PY_DIR="$(cd "$(dirname "$0")" && pwd)" python3 -I - "$DIR" "$@" <<'PY'
 import json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
+sys.path.insert(0, os.environ["LRM_PY_DIR"])  # -I 는 같은 폴더를 import 경로에 넣지 않음
+import tls_ctx
+SSL_CTX = tls_ctx.ssl_context()
 H = sys.argv[1]
 DRY = "--dry-run" in sys.argv[2:]
 TOK = os.environ["SLACK_BOT_TOKEN"]
@@ -48,7 +51,7 @@ def call(method, body=None, **params):
         if data is not None:
             headers["Content-Type"] = "application/json"
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers), timeout=min(15, left)) as r:
+            with urllib.request.urlopen(urllib.request.Request(url, data=data, headers=headers), timeout=min(15, left), context=SSL_CTX) as r:
                 return json.load(r)
         except urllib.error.HTTPError as e:
             # 429 는 Retry-After 만큼 쉬고 재시도. 횟수·시간 예산 소진 시 실패로 올림

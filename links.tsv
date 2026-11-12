@@ -87,6 +87,7 @@ hubs/scripts/panel_collect.sh	.config/lrm-hubs/panel_collect.sh	link
 hubs/scripts/panel_collect.py	.config/lrm-hubs/panel_collect.py	link
 hubs/scripts/progress_collect.py	.config/lrm-hubs/progress_collect.py	link
 hubs/scripts/progress_digest.py	.config/lrm-hubs/progress_digest.py	link
+hubs/scripts/tls_ctx.py	.config/lrm-hubs/tls_ctx.py	link
 hubs/scripts/ws_gc.sh	.config/lrm-hubs/ws_gc.sh	link
 hubs/scripts/release_ws.sh	.config/lrm-hubs/release_ws.sh	link
 hubs/scripts/scrum_run.sh	.config/lrm-hubs/scrum_run.sh	link
