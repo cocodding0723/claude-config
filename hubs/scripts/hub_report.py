@@ -44,7 +44,7 @@ MAX_FILE_BYTES = 50 * 1024 * 1024  # 첨부 1건 크기 상한. 넘으면 전송
 DOC_EXTS = ("html", "htm", "md", "pdf", "txt", "csv", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "png", "jpg", "jpeg", "gif", "webp", "svg", "mp4", "mov", "webm", "mkv")
 STRICT_EXTS = ("html", "htm", "png", "jpg", "jpeg", "gif", "mp4", "pdf")  # 이 확장자의 폴더가 있는 경로가 첨부 없이 본문에 있으면 거부(나머지·파일명만은 경고)
 _EXT = "(?:" + "|".join(DOC_EXTS) + r")(?![A-Za-z0-9_/])"
-# 절대(/…)·홈(~/…)·./ ../ 경로는 공백·괄호 허용('/Users/me/결과 보고서.pdf'), 쉼표에서 끊김. 폴더가 있는 상대 경로는 마지막 이름에만 공백 허용('docs/결과 보고서.pdf').
+# 절대(/…)·홈(~/…)·./ ../ 경로는 공백·괄호 허용('~/결과 보고서.pdf'), 쉼표에서 끊김. 폴더가 있는 상대 경로는 마지막 이름에만 공백 허용('docs/결과 보고서.pdf').
 # 파일명만 있으면 공백 없이. 앞이 / 글자면 시작하지 않고 ':' 는 허용('참고:/tmp/a.pdf'). URL 의 '://' 는 _SKIP_RE 가 먼저 뺌
 LOCAL_PATH_RE = re.compile(
     r"(?<![\w/.~-])(?:~/|/|\.{1,2}/)[\w.\-()가-힣 /]*?\." + _EXT
