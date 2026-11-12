@@ -26,6 +26,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -97,7 +98,7 @@ class NotifyError(Exception):
 
 def run_notify(conf: Conf, args: list, deadline: float, upload: bool = False) -> str:
     """전송 스크립트 1회 호출 → 새 메시지 ts. 실패는 NotifyError(사유 한 줄, 비밀 값 가림).
-    upload=True 는 파일 업로드 호출: 알림 스크립트가 ts 없이 'ok' 만 출력하므로 그것도 성공으로 보고 빈 문자열을 돌려줌"""
+    upload=True 는 파일 업로드 호출: 알림 스크립트가 'ok file_id=<id>'(ts 없음)를 출력하므로 file_id 를 돌려줌"""
     left = deadline - time.monotonic()
     if left <= 0:
         raise NotifyError("회차 시간 예산 초과", counts=False)
@@ -108,10 +109,10 @@ def run_notify(conf: Conf, args: list, deadline: float, upload: bool = False) ->
     except OSError as err:
         raise NotifyError(f"전송 스크립트 실행 실패({err.strerror})")
     last = (p.stdout.strip().splitlines() or [""])[-1]
+    if upload and p.returncode == 0 and (m := re.fullmatch(r"ok(?:\s+file_id=(\S*))?", last)):
+        return m.group(1) or ""
     if p.returncode == 0 and last.startswith("ok ") and last[3:].strip():
         return last[3:].strip()
-    if upload and p.returncode == 0 and last == "ok":
-        return ""
     why = " ".join((p.stderr.strip() or p.stdout.strip() or f"종료 코드 {p.returncode}").split())[:ERR_MAX]
     perm = p.returncode == PERMANENT_RC and p.stderr.strip() not in USER_FIX_LINES
     raise NotifyError("비밀 값 포함 오류 숨김" if hub_status.SECRET_RE.search(why) else why, permanent=perm)
@@ -268,18 +269,13 @@ def topic_text(conf: Conf, rep: dict) -> str:
     return "\n".join(lines)
 
 
-def bullet(line: str) -> str:
-    """항목 한 줄을 '- ' 로 시작하게 함. 이미 '- '·'• ' 로 시작하면 머리만 통일"""
-    return "- " + line.lstrip().removeprefix("- ").removeprefix("• ").lstrip()
-
-
 def body_text(rep: dict) -> str:
     label = hub_report.KINDS[rep["kind"]][1]
     lines = [ln for ln in rep["text"].splitlines() if ln.strip()]
     if rep["kind"] == "decide":  # 첫 줄이 제목, 나머지가 배경. 선택지·답 줄은 slack_notify.sh 가 붙임
-        out = [lines[0]] + ([""] + [bullet(ln) for ln in lines[1:]] if lines[1:] else [])
+        out = hub_report.bullet_body("\n".join(lines)).splitlines()
     else:
-        out = [f"{label} · {rep['hub']}", ""] + [bullet(ln) for ln in lines]
+        out = [f"{label} · {rep['hub']}", ""] + hub_report.bullet_items(lines)
     return "\n".join(out)
 
 
@@ -291,6 +287,11 @@ def progress_line(rep: dict, link: str) -> str:
     if link:
         out.append(f"- <{link}|{'결정 카드' if rep['kind'] == 'decide' else '주제 스레드'}>")
     return "\n".join(out)
+
+
+def attached_args(rep: dict) -> list:
+    """알림 스크립트에 '이 파일들은 같은 보고에서 따로 첨부함'을 알림(본문의 경로 검사용). 본문·진행 줄 호출에 붙임"""
+    return [x for f in rep["files"] for x in ("--attached", f)]
 
 
 def decide_args(rep: dict) -> list:
@@ -319,10 +320,31 @@ def attach_failed(conf: Conf, rep: dict, target: str, name: str, why: str, deadl
         run_notify(conf, ["--tag", rep["hub"], "--thread", target, line], deadline)
 
 
+def uploaded_id(conf: Conf, src: str, target: str, since: int) -> str:
+    """응답이 유실돼 실패로 보였지만 알림 스크립트가 보낸 기록(slack-sent.jsonl, kind=file)에 남은 업로드의 file_id. 없으면 빈 문자열.
+    같은 스레드에 같은 파일을 다른 보고가 올린 기록과 섞이지 않게 이 보고의 첫 업로드 시도 이후(since)만 봄"""
+    try:
+        with open(conf.sent, encoding="utf-8") as f:
+            for ln in reversed(f.read().splitlines()):
+                try:
+                    d = json.loads(ln)
+                except ValueError:
+                    continue
+                if (isinstance(d, dict) and d.get("kind") == "file" and d.get("path") == src and d.get("thread_ts") == target
+                        and isinstance(d.get("at"), (int, float)) and d["at"] >= since and d.get("file_id")):
+                    return d["file_id"]
+    except OSError:
+        pass
+    return ""
+
+
 def send_files(conf: Conf, rep: dict, rs: dict, st: dict, target: str, deadline: float) -> None:
-    """첨부 파일을 target 스레드에 올림. 올린 파일은 att_done 에 바로 저장해 재시도 때 다시 올리지 않음.
-    입력 문제(파일 없음·크기 초과·알림 스크립트의 영구 오류)는 한 줄 알리고 넘어가고, 일시 실패는 NotifyError 로 올려 보고 재시도 규칙을 탐"""
-    done = rs.setdefault("att_done", [])
+    """첨부 파일을 target 스레드에 올림. 업로드 완료(file_id)를 att_done 에 바로 저장해 재시도 때 건너뜀(응답 유실은 sent 기록으로 복구).
+    입력 문제(파일 없음·크기 초과·민감 파일·알림 스크립트의 영구 오류)는 한 줄 알리고 넘어가고, 일시 실패는 NotifyError 로 올려 보고 재시도 규칙을 탐"""
+    if not isinstance(rs.get("att_done"), dict):
+        rs["att_done"] = {}
+    done = rs["att_done"]
+    since = rs.setdefault("att_start", int(time.time()))
     with tempfile.TemporaryDirectory(prefix="report-preview-") as tmp:
         for path in rep["files"]:
             name = os.path.basename(path) or path
@@ -338,19 +360,24 @@ def send_files(conf: Conf, rep: dict, rs: dict, st: dict, target: str, deadline:
                     label = os.path.basename(src)
                     if not src:
                         log(conf, f"{rep['id']} 미리보기 생략: {name}")
-                        done.append(key)
+                        done[key] = ""
                         save_state(conf.state, st)
                         continue
+                if fid := uploaded_id(conf, src, target, since):
+                    done[key] = fid
+                    save_state(conf.state, st)
+                    continue
+                save_state(conf.state, st)  # 첫 시도 시각(att_start)을 업로드 전에 저장
                 why = hub_report.file_problem(src)
                 try:
                     if why:
                         raise NotifyError(why, permanent=True)
-                    run_notify(conf, ["--tag", rep["hub"], "--thread", target, f"첨부: {label}", src], deadline, upload=True)
+                    done[key] = run_notify(conf, ["--tag", rep["hub"], "--thread", target] + attached_args(rep) + [f"첨부: {label}", src], deadline, upload=True) or "uploaded"
                 except NotifyError as err:
                     if not err.permanent:
                         raise NotifyError(f"첨부 실패: {label} — {err}", counts=err.counts)
                     attach_failed(conf, rep, target, label, str(err), deadline)
-                done.append(key)
+                    done[key] = ""
                 save_state(conf.state, st)
 
 
@@ -363,7 +390,7 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
         if "body_ts" not in rs:
             _, _, kind = hub_report.KINDS[rep["kind"]]
             warn_unattached(conf, rep)
-            rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind, "--thread", rep["thread"], body_text(rep)], deadline)
+            rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind, "--thread", rep["thread"]] + attached_args(rep) + [body_text(rep)], deadline)
             save_state(conf.state, st)
         send_files(conf, rep, rs, st, rep["thread"], deadline)
         rs["line_ts"] = ""
@@ -378,10 +405,10 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
     if "body_ts" not in rs:
         warn_unattached(conf, rep)
         if decide:
-            rs["body_ts"] = run_notify(conf, decide_args(rep) + [body_text(rep)], deadline)
+            rs["body_ts"] = run_notify(conf, decide_args(rep) + attached_args(rep) + [body_text(rep)], deadline)
         else:
             _, _, kind = hub_report.KINDS[rep["kind"]]
-            rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind, "--thread", topic["ts"], body_text(rep)], deadline)
+            rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind, "--thread", topic["ts"]] + attached_args(rep) + [body_text(rep)], deadline)
         save_state(conf.state, st)
     send_files(conf, rep, rs, st, rs["body_ts"] if decide else topic["ts"], deadline)
     if "line_ts" not in rs:
@@ -389,7 +416,7 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
         if parent:
             target = rs["body_ts"] if decide else topic["ts"]
             channel = channel_of(conf, target) or topic.get("channel", "")
-            rs["line_ts"] = run_notify(conf, ["--thread", parent, progress_line(rep, permalink(channel, target))], deadline)
+            rs["line_ts"] = run_notify(conf, ["--thread", parent] + attached_args(rep) + [progress_line(rep, permalink(channel, target))], deadline)
         else:
             rs["line_ts"] = ""  # 진행 스레드 부모가 아직 없음. 본문은 이미 올라가 있어 줄만 생략
         save_state(conf.state, st)
@@ -442,7 +469,9 @@ def input_error(rep: dict) -> str:
     """전송 전에 알 수 있는 영구 오류(접수 시점 검사와 같은 규칙). 없으면 빈 문자열"""
     if rep["kind"] == "decide" and not hub_report.DECISION_ID_RE.fullmatch(rep["decision_id"]):
         return hub_report.DECISION_ID_ERR
-    return ""
+    if rep["kind"] == "decide" and not rep["files"] and not rep.get("no_doc"):
+        return hub_report.NO_DOC_ERR  # 접수 규칙 이전에 쌓인 기록
+    return hub_report.path_problem(rep["text"], rep["files"])
 
 
 def log(conf: Conf, line: str) -> None:

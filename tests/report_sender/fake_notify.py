@@ -16,6 +16,17 @@ if rd("sleep"):
 is_upload = len(sys.argv) > 2 and os.path.isfile(sys.argv[-1])
 with open(os.path.join(d, "calls.jsonl"), "a", encoding="utf-8") as f:
     f.write(json.dumps({"args": sys.argv[1:], "upload": is_upload, "slack_env": sum(k in SECRET_ENV for k in os.environ)}, ensure_ascii=False) + "\n")
+def record_upload():  # 실제 알림 스크립트처럼 slack-sent.jsonl 에 파일 기록(kind=file)
+    th = sys.argv[sys.argv.index("--thread") + 1] if "--thread" in sys.argv else ""
+    with open(os.path.join(d, "sent.jsonl"), "a", encoding="utf-8") as f:
+        f.write(json.dumps({"at": int(time.time()), "channel": "D1", "ts": "", "thread_ts": th, "kind": "file", "path": sys.argv[-1], "file_id": "Ffake1"}) + "\n")
+
+
+if is_upload and rd("fail.up.lost"):  # Slack 에는 올라갔는데 응답이 유실된 경우
+    os.remove(os.path.join(d, "fail.up.lost"))
+    record_upload()
+    sys.stderr.write("fake: 응답 유실\n")
+    sys.exit(1)
 up_left = int(rd("fail.up.n") or 0) if is_upload else 0
 if up_left > 0:
     open(os.path.join(d, "fail.up.n"), "w").write(str(up_left - 1))
@@ -29,6 +40,9 @@ if rd("fail.all") or left > 0:
     sys.exit(int(rd("fail.rc") or 1))
 n = len(open(os.path.join(d, "calls.jsonl")).read().splitlines())
 ts = f"1700000000.{n:06d}"
-with open(os.path.join(d, "sent.jsonl"), "a", encoding="utf-8") as f:
-    f.write(json.dumps({"channel": "D1", "ts": ts}) + "\n")
-print("ok" if is_upload else f"ok {ts}")
+if not is_upload:
+    with open(os.path.join(d, "sent.jsonl"), "a", encoding="utf-8") as f:
+        f.write(json.dumps({"channel": "D1", "ts": ts}) + "\n")
+if is_upload:
+    record_upload()
+print("ok file_id=Ffake1" if is_upload else f"ok {ts}")

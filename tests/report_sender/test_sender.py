@@ -258,7 +258,7 @@ class SenderTest(unittest.TestCase):
         self.assertEqual(len(self.warns()), 1)
 
     def test_decide_uses_button_card_form_without_thread(self):
-        self.report(text="알림 시각 정하기\n지금은 시각이 제각각", kind="decide",
+        self.report(text="알림 시각 정하기\n지금은 시각이 제각각", kind="decide", no_doc=True,
                     options="1=오전 9시,2=오전 10시", recommend="1", decision_id="D-0101")
         report_sender.run(self.conf)
         card, line = self.calls()

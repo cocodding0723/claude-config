@@ -82,7 +82,9 @@ class AttachTest(unittest.TestCase):
             self.assertEqual(u[u.index("--thread") + 1], TOPIC_TS)  # 본문과 같은 주제 스레드
         self.assertEqual(calls.index(ups[0]), 2)
         self.assertIn("slack.com/archives", calls[-1][-1])  # 마지막은 진행 줄
-        self.assertEqual(self.state()["reports"][rep["id"]]["att_done"], [self.png, self.html, self.html + "#preview"])
+        done = self.state()["reports"][rep["id"]]["att_done"]
+        self.assertEqual(set(done), {self.png, self.html, self.html + "#preview"})
+        self.assertTrue(all(v.startswith("F") for v in done.values()))  # 업로드 완료 file_id 저장
 
     def test_decide_card_first_then_files_in_card_thread(self):
         self.report(text="알림 시각 정하기\n배경", kind="decide", files=[self.png], options="1=9시,2=10시", recommend="1", decision_id="D-0101")
@@ -90,7 +92,7 @@ class AttachTest(unittest.TestCase):
         self.assertEqual(res["sent"], 1)
         calls = self.calls()
         self.assertEqual(calls[0][calls[0].index("--kind") + 1], "decide")
-        self.assertNotIn(self.png, calls[0])  # 카드에는 파일을 달지 않음(버튼 유지)
+        self.assertFalse(self.records()[0]["upload"])  # 카드 호출은 업로드가 아님(파일은 따로 --attached 로 알리기만)
         up = self.uploads()[0]
         self.assertEqual(up[up.index("--thread") + 1], "1700000000.000001")  # 카드 ts
         self.assertEqual(calls.index(up), 1)
@@ -136,8 +138,7 @@ class AttachTest(unittest.TestCase):
         self.assertEqual((res["sent"], res["failed"]), (1, 0))
         bodies = [c for c in self.calls() if "--kind" in c and c[c.index("--kind") + 1] == "done"]
         self.assertEqual(len(bodies), 1)  # 본문 재전송 없음
-        ok_uploads = self.state()["reports"][rep["id"]]["att_done"]
-        self.assertEqual(ok_uploads, [self.png, self.html, self.html + "#preview"])
+        self.assertEqual(set(self.state()["reports"][rep["id"]]["att_done"]), {self.png, self.html, self.html + "#preview"})
         self.assertEqual(self.lines(), [])  # 일시 실패는 스레드 줄 없이 재시도
 
     def test_script_permanent_rc_posts_one_line_and_continues(self):
@@ -164,10 +165,70 @@ class AttachTest(unittest.TestCase):
         self.assertEqual(report_sender.run(self.conf)["sent"], 1)
         self.assertEqual(len(self.uploads()), 1)
 
-    def test_sender_logs_warning_for_path_only_body(self):
-        self.report(text="결과는 /Users/me/out/report.html 참고")
+    def legacy(self, **kw):
+        """접수 규칙을 거치지 않고 outbox 에 직접 쓴 옛 기록(규칙 강화 이전에 쌓인 것)"""
+        rec = {"id": "leg1", "at": 1, "hub": "ui-layer", "task": "C0012", "kind": "done", "text": "수정 완료", "files": [], **kw}
+        with open(self.conf.outbox, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        return rec
+
+    def test_sender_stops_legacy_record_with_unattached_path_without_calling_notify(self):
+        self.legacy(text="결과는 /Users/me/out/report.html 참고")
+        res = report_sender.run(self.conf)
+        self.assertEqual((res["sent"], res["stopped"]), (0, 1))
+        self.assertEqual([c for c in self.calls() if "본문에 로컬 경로" not in c[-1]], [])  # 중단 경고 1건만 나감
+        self.assertIn("leg1", self.state()["bad"])
+
+    def test_sender_stops_legacy_decide_without_doc(self):
+        self.legacy(kind="decide", text="제목\n배경", options="1=가,2=나", recommend="1", decision_id="D-0301")
+        res = report_sender.run(self.conf)
+        self.assertEqual(res["stopped"], 1)
+        self.assertNotIn("decide", [x for c in self.calls() for x in c if x == "decide" and "--options" in c])
+        self.assertIn("--no-doc", self.warn_text())
+
+    def test_sender_logs_warning_for_bare_filename_only_body(self):
+        self.report(text="결과는 report.html 참고")  # 폴더 없는 파일명은 거부가 아니라 경고
         report_sender.run(self.conf)
-        self.assertIn("본문에 로컬 경로(/Users/me/out/report.html)만 있고 첨부 없음", self.log_text())
+        self.assertIn("본문에 로컬 경로(report.html)만 있고 첨부 없음", self.log_text())
+
+    def warn_text(self):
+        return " ".join(c[-1] for c in self.calls() if "warn" in c)
+
+    def test_secret_file_attachment_rejected_in_sender(self):
+        key = self.make("server.pem", "x")
+        self.legacy(files=[key])
+        res = report_sender.run(self.conf)
+        self.assertEqual(res["sent"], 1)
+        self.assertEqual(self.uploads(), [])
+        self.assertEqual(self.lines(), ["첨부 실패: server.pem — 민감 파일(키·토큰·인증서·.env·민감 폴더)은 첨부하지 않음"])
+
+    def test_lost_upload_response_does_not_reupload(self):
+        """업로드는 Slack 에 갔는데 응답이 유실돼 실패로 보인 경우: 재시도는 보낸 기록(file_id)으로 건너뜀"""
+        rep = self.report(files=[self.png])
+        self.set_fake("fail.up.lost", 1)
+        res = report_sender.run(self.conf)
+        self.assertEqual((res["status"], res["failed"]), ("partial", 1))
+        self.assertEqual(len(self.uploads()), 1)
+        res = report_sender.run(self.conf)
+        self.assertEqual((res["sent"], res["failed"]), (1, 0))
+        self.assertEqual(len(self.uploads()), 1)  # 두 번째 업로드 호출 없음
+        self.assertEqual(self.state()["reports"][rep["id"]]["att_done"][self.png], "Ffake1")
+
+    def test_done_file_ids_survive_retry_and_are_not_reuploaded(self):
+        self.report(files=[self.png, self.make("c.png", "png")])
+        self.set_fake("fail.n", 0)
+        first = report_sender.run(self.conf)
+        self.assertEqual(first["sent"], 1)
+        self.assertEqual(len(self.uploads()), 2)
+
+    def test_outbox_record_with_more_than_five_files_is_isolated(self):
+        files = [self.make(f"f{i}.png", "x") for i in range(6)]
+        self.legacy(files=files)
+        bad = []
+        self.assertEqual(hub_report.read_outbox(self.conf.outbox, bad), [])
+        self.assertEqual(len(bad), 1)
+        self.assertEqual(report_sender.run(self.conf)["sent"], 0)
+        self.assertEqual(self.calls(), [])
 
     def test_sender_no_warning_when_attached(self):
         self.report(text="결과는 docs/a.png 참고", files=[self.png])
@@ -193,10 +254,85 @@ class PathRuleTest(unittest.TestCase):
         self.assertEqual(hub_report.local_paths("https://x.com/a.html 링크, v1.2 수정, 버튼 정렬"), [])
         self.assertEqual(hub_report.local_paths("docs/a.png와 비교"), ["docs/a.png"])
 
-    def test_add_warns_on_path_only_body_with_exit_0(self):
+    def test_add_rejects_path_without_matching_attachment(self):
         r = self.cli("결과 /Users/me/report.html 참고")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("본문에 로컬 경로(/Users/me/report.html)가 있는데 같은 파일이 --file 첨부로 오지 않음", r.stderr)
+        self.assertEqual(hub_report.read_outbox(self.env["LRM_REPORT_OUTBOX"]), [])
+        for ext in ("png", "jpg", "gif", "mp4", "pdf"):
+            self.assertEqual(self.cli(f"결과 ./out/a.{ext} 참고").returncode, 2, ext)
+
+    def test_add_rejects_when_attachment_is_a_different_file(self):
+        pathlib.Path(self.dir.name, "other.html").write_text("x")
+        self.assertEqual(self.cli("결과 /Users/me/report.html", "other.html").returncode, 2)
+
+    def test_add_accepts_path_when_same_file_attached(self):
+        pathlib.Path(self.dir.name, "report.html").write_text("x")
+        r = self.cli(f"결과 {self.dir.name}/report.html 참고", "report.html")
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+
+    def test_add_warns_but_accepts_bare_filename(self):
+        r = self.cli("결과 report.html 참고")
         self.assertEqual(r.returncode, 0)
-        self.assertIn("경고: 본문에 로컬 경로(/Users/me/report.html)만 있고 --file 첨부 없음", r.stderr)
+        self.assertIn("경고: 본문에 로컬 경로(report.html)만 있고 --file 첨부 없음", r.stderr)
+
+    def test_url_and_code_references_are_not_paths(self):
+        for t in ("링크 https://x.com/a/b.html?f=/tmp/c.pdf#d.png 보기", "코드 `docs/a.html` 참조", "```\n/tmp/a.png\n```", "<https://x.co/a.pdf|문서>"):
+            self.assertEqual(hub_report.local_paths(t), [], t)
+            self.assertEqual(self.cli(t).returncode, 0, t)
+
+    def test_paths_with_parentheses_and_spaces_are_detected_exactly(self):
+        self.assertEqual(hub_report.local_paths("/Users/me/결과(최종).pdf 확인"), ["/Users/me/결과(최종).pdf"])
+        self.assertEqual(hub_report.local_paths("/Users/me/결과 보고서.pdf 확인"), ["/Users/me/결과 보고서.pdf"])
+        self.assertEqual(hub_report.local_paths("(참고: ./out/a.mp4)"), ["./out/a.mp4"])
+        self.assertEqual(hub_report.path_problem("결과 보고서.pdf 참고", ["/x/결과 보고서.pdf"]), "")  # 첨부와 같은 이름이면 공백이 있어도 통과
+
+    def test_decide_requires_doc_or_no_doc(self):
+        base = ["--options", "1=가,2=나", "--recommend", "1", "--decision-id", "D-0401"]
+        a = ["add", "--hub", "ui-layer", "--task", "C0012", "--kind", "decide", "--text", "제목\n배경", *base]
+        r = subprocess.run([sys.executable, "-I", CLI, *a], env=self.env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--no-doc", r.stderr)
+        pathlib.Path(self.dir.name, "d.html").write_text("x")
+        ok = subprocess.run([sys.executable, "-I", CLI, *a, "--file", "d.html"], env=self.env, capture_output=True, text=True, cwd=self.dir.name)
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        ok2 = subprocess.run([sys.executable, "-I", CLI, *a[:-1], "D-0402", "--no-doc"], env=self.env, capture_output=True, text=True)
+        self.assertEqual(ok2.returncode, 0, ok2.stderr)
+        self.assertTrue(hub_report.read_outbox(self.env["LRM_REPORT_OUTBOX"])[-1]["no_doc"])
+
+    def test_no_doc_rejected_for_non_decide(self):
+        r = subprocess.run([sys.executable, "-I", CLI, "add", "--hub", "ui", "--task", "C1", "--kind", "done", "--text", "x", "--no-doc"],
+                           env=self.env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 2)
+
+    def test_secret_files_rejected_at_add(self):
+        d = pathlib.Path(self.dir.name)
+        (d / ".ssh").mkdir()
+        (d / ".ssh" / "notes.txt").write_text("x")
+        names = [".env", "prod.env", "a.pem", "b.key", "c.p12", "d.keystore", "id_rsa", "id_ed25519.pub", "token.txt", "credentials.json"]
+        for n in names:
+            (d / n).write_text("x")
+        for n in names + [".ssh/notes.txt"]:
+            r = self.cli("완료", n)
+            self.assertEqual(r.returncode, 2, n)
+            self.assertIn("민감 파일", r.stderr)
+        self.assertEqual(hub_report.read_outbox(self.env["LRM_REPORT_OUTBOX"]), [])
+
+    def test_symlink_to_secret_is_rejected(self):
+        d = pathlib.Path(self.dir.name)
+        (d / "server.pem").write_text("x")
+        (d / "innocent.html").symlink_to(d / "server.pem")
+        r = self.cli("완료", "innocent.html")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("민감 파일", r.stderr)
+
+    def test_report_body_reference_line_stays_at_bottom_without_bullet(self):
+        for kind in ("done", "decide"):
+            rep = {"hub": "ui-layer", "task": "C0012", "kind": kind, "text": "제목\n배경 한 줄\n참고: main 9c972aa", "files": []}
+            body = report_sender.body_text(rep)
+            self.assertEqual(body.splitlines()[-1], "참고: main 9c972aa", kind)
+            self.assertEqual(body.splitlines()[-2], "", kind)
+            self.assertNotIn("- 참고:", body)
 
     def test_add_no_warning_with_file_or_plain_text(self):
         pathlib.Path(self.dir.name, "r.html").write_text("x")

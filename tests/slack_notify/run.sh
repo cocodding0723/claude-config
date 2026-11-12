@@ -438,15 +438,15 @@ run_n "$two_ans"
 # ---- H. 번호 이모지 결정 카드(--options) ·할 일 번호(--todo-id) ------------------------------------
 newhome h
 OK3='1=오전 9시,2=오전 10시,3=지금처럼'
-CBODY=$'알림 시각\n\n• 왜: 제각각'
-CARD=$':비서-선택해주세요: 알림 시각\n\n• 왜: 제각각\n\n:one: 오전 9시\n:two: 오전 10시\n:three: 지금처럼\n:star: 추천: :two: · 되돌리기: 쉬움\n👉 답: :one: :two: :three: 중 하나 · :white_check_mark: 추천대로 · :x: 보류\n\n참고: 결정 D-0001 · 3/9'
+CBODY=$'알림 시각\n\n- 왜: 제각각'
+CARD=$':비서-선택해주세요: 알림 시각\n\n- 왜: 제각각\n\n:one: 오전 9시\n:two: 오전 10시\n:three: 지금처럼\n:star: 추천: :two: · 되돌리기: 쉬움\n👉 답: :one: :two: :three: 중 하나 · :white_check_mark: 추천대로 · :x: 보류\n\n참고: 결정 D-0001 · 3/9'
 run_n --kind decide --options "$OK3" --recommend 2 --reversible 쉬움 --decision-id D-0001 --seq 3/9 "$CBODY"
 [ "$RC" = 0 ] && [ "$(text)" = "$CARD" ] && [ "$(errn)" = 0 ] && ok "H 카드: 선택지·추천·되돌리기·답 줄·결정 번호 줄을 도구가 생성(정확히 일치, 경고 없음)" || ko "H 카드 모양" "rc=$RC $(text) / $(cat "$SB/err")"
 r=$(lastrec)
 [ "$(printf '%s' "$r" | jq -c '[.form_kind,.decision_id,.options,.recommended,.reversible,.seq]')" = '["decide","D-0001",{"1":"오전 9시","2":"오전 10시","3":"지금처럼"},2,"쉬움","3/9"]' ] && [ "$(printf '%s' "$r" | jq -r '.title')" = ":비서-선택해주세요: 알림 시각" ] \
   && ok "H sent 기록: decision_id·options(번호→문구)·recommended(숫자)·reversible·seq" || ko "H sent 기록" "$r"
-run_n --kind decide --options '1=가 안,2=나 안' --recommend 1 --decision-id D-0002 $'주제\n\n• 왜: 배경\n\n참고: 샘플-1'
-[ "$(text)" = $':비서-선택해주세요: 주제\n\n• 왜: 배경\n\n:one: 가 안\n:two: 나 안\n:star: 추천: :one:\n👉 답: :one: :two: 중 하나 · :white_check_mark: 추천대로 · :x: 보류\n\n참고: 샘플-1\n결정 D-0002' ] \
+run_n --kind decide --options '1=가 안,2=나 안' --recommend 1 --decision-id D-0002 $'주제\n\n- 왜: 배경\n\n참고: 샘플-1'
+[ "$(text)" = $':비서-선택해주세요: 주제\n\n- 왜: 배경\n\n:one: 가 안\n:two: 나 안\n:star: 추천: :one:\n👉 답: :one: :two: 중 하나 · :white_check_mark: 추천대로 · :x: 보류\n\n참고: 샘플-1\n결정 D-0002' ] \
   && [ "$(lastrec | jq -c 'has("reversible"), has("seq")' | tr '\n' ,)" = "false,false," ] && ok "H '참고:' 가 있으면 선택지는 그 앞, 결정 번호는 참고 블록 끝. 되돌리기·순번 없으면 줄·필드 없음" || ko "H 참고 앞" "$(text) / $(lastrec)"
 run_n --kind decide --options '1=가,2=나,3=다,4=라' --recommend 4 --decision-id D-0003 "$CBODY"
 [ "$(payload '[.attachments[0].blocks[1].elements[].action_id] | join(",")')" = "pick_1,pick_2,pick_3,pick_4,custom" ] \
@@ -481,8 +481,8 @@ LRM_FORMAT=strict run_n --kind decide --options "$OK3" --recommend 3 --decision-
 run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0012 "$CBODY" "$SB/f.txt"
 [ "$RC" = 0 ] && sed -n 1p "$LOG/posts.log" | jq -r '.attachments[0].blocks[0].text.text' | grep -qxF ':one: 오전 9시' && [ "$(tail -n 2 "$CFG/slack-sent.jsonl" | head -n 1 | jq -r '[.kind,.decision_id] | join(",")')" = "text,D-0012" ] \
   && ok "H 파일 첨부 카드: 선택지 줄은 버튼 카드 메시지에, sent 기록에 decision_id(순서는 J)" || ko "H 첨부" "$(cat "$LOG/posts.log") / $(lastrec)"
-run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0013 "$(printf '주제\n\n• 왜: ✅ 와 ❌')"
-text | grep -qxF '• 왜: :비서-추천대로: 와 :비서-보류:' && text | grep -qF ':white_check_mark: 추천대로 · :x: 보류' && ok "H 본문 ✅❌ 는 기존 치환, 답 줄은 표준 :white_check_mark:·:x:(치환 안 됨)" || ko "H 치환 경계" "$(text)"
+run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0013 "$(printf '주제\n\n- 왜: ✅ 와 ❌')"
+text | grep -qxF -e '- 왜: :비서-추천대로: 와 :비서-보류:' && text | grep -qF ':white_check_mark: 추천대로 · :x: 보류' && ok "H 본문 ✅❌ 는 기존 치환, 답 줄은 표준 :white_check_mark:·:x:(치환 안 됨)" || ko "H 치환 경계" "$(text)"
 # 거부(종료 코드 2, API 호출 0회): 인자 값·조합
 rej() { # 이름 기대 문구 -- 인자...
   local name="$1" want="$2"; shift 3
@@ -577,8 +577,8 @@ printf '{"at":1,"channel":"C","ts":"1.1","thread_ts":"","kind":"text","title":"�
 run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0402 "$CBODY"
 [ "$RC" = 0 ] && [ "$(errn)" = 0 ] && ok "H 7일 지난 기록의 번호는 경고 없음" || ko "H 옛 번호" "rc=$RC $(cat "$SB/err")"
 # '참고:' 줄 뒤에 다른 줄이 더 있으면 결정 번호 줄은 그 뒤(메시지 맨 끝)
-run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0403 $'주제\n\n• 왜: 배경\n\n참고: 샘플-1\n\n추가 설명 줄'
-[ "$RC" = 0 ] && [ "$(text | tail -n 2)" = $'추가 설명 줄\n결정 D-0403' ] && ok "H '참고:' 뒤 추가 줄이 있으면 결정 번호 줄은 메시지 맨 끝(문서 규칙)" || ko "H 참고 뒤 줄" "$(text)"
+run_n --kind decide --options "$OK3" --recommend 1 --decision-id D-0403 $'주제\n\n- 왜: 배경\n\n참고: 샘플-1\n\n추가 설명 줄'
+[ "$RC" = 0 ] && [ "$(text | tail -n 2)" = $'참고: 샘플-1\n결정 D-0403' ] && ok "H 참고 줄은 맨 아래로 모이고 결정 번호 줄은 그 끝(추가 줄은 항목으로 올라감)" || ko "H 참고 뒤 줄" "$(text)"
 
 # ---- I. 색 띠(attachment)·제목 굵게 ------------------------------------------------------------
 newhome i
@@ -668,6 +668,38 @@ run_n --kind done $'완료 · 가 · 나 · 다 · 라\n\n- 무엇: 끝'
 ! grep -q "로 이은 줄" "$SB/err" && ok "K 첫 줄(제목)은 검사 제외" || ko "K 제목" "$(cat "$SB/err")"
 run_n --kind decide "주제$ANS"
 ! grep -q "로 이은 줄" "$SB/err" && ok "K 고정 형식 '👉 답:' 줄은 검사 제외" || ko "K 답 줄" "$(cat "$SB/err")"
+
+# ---- L. 본문 로컬 경로 거부·비밀 첨부 거부·--link-to·직접 호출 카드 양식 ---------------------------------------
+newhome l; : > "$LOG/posts.log"
+printf 'x' > "$SB/doc.html"; printf 'x' > "$SB/server.pem"
+run_n --kind done $'완료\n\n- 무엇: /Users/me/out/report.html 확인'
+[ "$RC" = 2 ] && nocall && grep -q '본문에 로컬 경로(/Users/me/out/report.html)가 있는데 같은 파일이 --file 첨부로 오지 않음' "$SB/err" && ok "L 본문 경로 + 첨부 없음 → 거부(종료 코드 2, API 호출 0회)" || ko "L 경로 거부" "rc=$RC $(cat "$SB/err")"
+run_n --kind done --no-check $'완료\n\n참고: ./out/a.pdf'
+[ "$RC" = 2 ] && nocall && ok "L --no-check 로도 못 풂(참고 줄의 경로도 대상)" || ko "L no-check" "rc=$RC"
+run_n --kind done $'완료\n\n- 무엇: '"$SB/doc.html" "$SB/doc.html"
+[ "$RC" = 0 ] && ok "L 같은 파일을 첨부하면 통과" || ko "L 첨부 통과" "rc=$RC $(cat "$SB/err")"
+run_n --kind done --attached "$SB/doc.html" $'완료\n\n- 무엇: '"$SB/doc.html"
+[ "$RC" = 0 ] && posted && ok "L --attached(따로 첨부하는 파일)로 알리면 통과" || ko "L attached" "rc=$RC $(cat "$SB/err")"
+run_n --kind done $'완료\n\n- 무엇: `docs/a.html` 참조, https://x.co/a.pdf?f=/t/b.png#c.html'
+[ "$RC" = 0 ] && ok "L 백틱 코드·URL 안의 파일명은 대상 아님" || ko "L 코드·URL" "rc=$RC $(cat "$SB/err")"
+run_n --kind done "완료" "$SB/server.pem"
+[ "$RC" = 2 ] && nocall && grep -q '민감 파일' "$SB/err" && ok "L 비밀 파일 첨부 → 거부(종료 코드 2)" || ko "L 비밀 첨부" "rc=$RC $(cat "$SB/err")"
+
+: > "$LOG/fail.link"; : > "$LOG/posts.log"
+run_n --kind decide --options '1=A,2=B' --recommend 1 --decision-id D-0L01 --link-to 1700000000.000100 $'주제\n\n배경 한 줄'
+c=$(sed -n 1p "$LOG/posts.log" | jq -r '.attachments[0].blocks[0].text.text')
+[ "$RC" = 0 ] && printf '%s' "$c" | tail -n 1 | grep -qF '<https://example.slack.com/archives/Dfake/p1700000000000100|결정 카드 열기>' && grep -q 'chat.getPermalink' "$LOG/calls.log" && ok "L --link-to: 조회한 메시지 링크가 본문 끝에" || ko "L link-to" "rc=$RC $c"
+printf 'x' > "$LOG/fail.link"
+run_n --kind done --link-to 1700000000.000100 $'완료\n\n- 무엇: 끝'
+[ "$RC" = 0 ] && ! text | grep -q 'slack.com' && grep -q '링크 조회 실패' "$SB/err" && ok "L 링크 조회 실패 → 링크 없이 전송(경고)" || ko "L link 실패" "rc=$RC $(text) $(cat "$SB/err")"
+: > "$LOG/fail.link"
+run_n --kind done --link-to bogus "완료"
+[ "$RC" = 2 ] && nocall && ok "L --link-to 형식 오류 → 종료 코드 2" || ko "L link 형식" "rc=$RC"
+
+run_n --kind decide --options '1=A,2=B' --recommend 1 --decision-id D-0L02 $'주제\n\n• 왜: 배경\n참고: main 9c972aa'
+c=$(sed -n 1p "$LOG/posts.log" | jq -r '.attachments[0].blocks[0].text.text')
+printf '%s' "$c" | grep -qxF -e '- 왜: 배경' && ! printf '%s' "$c" | grep -q '^- 참고' && printf '%s' "$c" | grep -qx '참고: main 9c972aa' && [ "$(printf '%s' "$c" | tail -n 2 | head -n 1)" = '' -o "$(printf '%s' "$c" | tail -n 1)" = '결정 D-0L02' ] \
+  && ok "L 직접 호출 결정 카드도 전송기와 같은 줄 양식('- ' 항목, 참고 줄은 머리표 없이 맨 아래)" || ko "L 카드 양식" "$c"
 
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
