@@ -730,5 +730,36 @@ c=$(sed -n 1p "$LOG/posts.log" | jq -r '.attachments[0].blocks[0].text.text')
 l=$(printf '%s' "$c" | grep -n '결정 카드 열기' | cut -d: -f1); r=$(printf '%s' "$c" | grep -n '^참고:' | cut -d: -f1)
 [ -n "$l" ] && [ "$l" -lt "$r" ] && [ "$(printf '%s' "$c" | tail -n 1)" = '결정 D-0M05' -o "$(printf '%s' "$c" | tail -n 1)" = '참고: main 9c972aa' ] && ok "M --link-to 링크는 참고 줄 앞" || ko "M 링크 위치" "$c"
 
+# ---- N. --quote·unfurl_links -------------------------------------------------------------------------------
+newhome n
+Q=1700000000.000100; URL='https://example.slack.com/archives/Dfake/p1700000000000100'
+: > "$LOG/fail.link"; printf '허브 분할·병합 구조안 승인\n둘째 줄은 안 나옴' > "$LOG/history.text"
+run_n --kind done --quote "$Q" $'완료\n\n- 무엇: 끝\n참고: main 9c972aa'
+c=$(text)
+printf '%s' "$c" | grep -qxF "\"허브 분할·병합 구조안 승인\" <$URL|원본>" && ! printf '%s' "$c" | grep -q '둘째 줄' && [ "$(printf '%s' "$c" | grep -n '원본>' | cut -d: -f1)" -lt "$(printf '%s' "$c" | grep -n '^참고:' | cut -d: -f1)" ] \
+  && ok "N --quote: 첫 줄만 인용 + 정식 링크가 참고 줄 앞" || ko "N quote" "rc=$RC $c"
+[ "$(payload '.unfurl_links')" = true ] && [ "$(payload '.unfurl_media')" = true ] && ok "N 링크가 든 메시지는 unfurl_links·unfurl_media=true" || ko "N unfurl" "$(cat "$LOG/post.json")"
+grep -q 'chat.getPermalink' "$LOG/calls.log" && ! grep -rqE 'archives/D[A-Za-z0-9]*/p[0-9]+' "$SB/err" && ok "N 링크는 chat.getPermalink 응답만 사용" || ko "N permalink 호출" ""
+printf '%s' "$(printf '가%.0s' $(seq 1 60))" > "$LOG/history.text"
+run_n --kind done --quote "$Q" $'완료\n\n- 무엇: 끝'
+q=$(text | grep -F '원본>' | sed 's/ <.*//')
+[ "${#q}" -le 43 ] && ok "N 인용 길이 제한(40자 + 따옴표·말줄임)" || ko "N 길이" "${#q}: $q"
+printf 'token xoxb-1234567890-abcdefghij 확인' > "$LOG/history.text"
+run_n --kind done --quote "$Q" $'완료\n\n- 무엇: 끝'
+[ "$RC" = 0 ] && text | grep -qxF "<$URL|원본>" && ! text | grep -q 'xoxb' && ok "N 비밀이 든 원본은 인용 없이 링크만" || ko "N 비밀 인용" "$(text)"
+printf '결과는 /Users/me/out/report.html 에' > "$LOG/history.text"
+run_n --kind done --quote "$Q" $'완료\n\n- 무엇: 끝'
+text | grep -qxF "<$URL|원본>" && ok "N 로컬 경로가 든 원본은 인용 없이 링크만" || ko "N 경로 인용" "$(text)"
+: > "$LOG/history.text"
+run_n --kind done --quote "$Q" $'완료\n\n- 무엇: 끝'
+text | grep -qxF "<$URL|원본>" && ok "N 원본 조회 실패 → 링크만" || ko "N 조회 실패" "$(text)"
+printf 'x' > "$LOG/fail.link"
+run_n --kind done --quote "$Q" $'완료\n\n- 무엇: 끝'
+[ "$RC" = 0 ] && text | grep -qxF '원본: 링크 없음' && ! text | grep -q 'slack.com' && [ "$(payload '.unfurl_links // "none"')" = none ] && grep -q '링크 조회 실패' "$SB/err" && ok "N 링크 조회 실패 → '원본: 링크 없음'(손수 주소·unfurl 없음)" || ko "N 링크 없음" "rc=$RC $(text)"
+run_n --kind done --quote bogus "완료"
+[ "$RC" = 2 ] && nocall && ok "N --quote 형식 오류 → 종료 코드 2" || ko "N quote 형식" "rc=$RC"
+run_n --kind done "링크 없는 일반 전송"
+[ "$(payload '.unfurl_links // "none"')" = none ] && ok "N 링크 없는 메시지는 unfurl 인자 없음(기존 동작 유지)" || ko "N 기존 payload" ""
+
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

@@ -28,6 +28,8 @@ usage() {
   --alive      주제(첫 줄) 아래에 봇 생존 줄('봇: 연결됨 · 마지막 수신 N분 전', bot_alive.py)을 넣음. 정기 점검·진행 메시지용
   --attached   (반복 가능) 같은 보고에서 따로 첨부하는 파일. 본문 경로 검사에서 이 파일의 경로는 첨부된 것으로 봄. 첫 번째 파일 인자도 같음
   --link-to    해당 ts 메시지의 Slack 링크(chat.getPermalink)를 본문 끝에 넣음. 조회 실패하면 링크 없이 전송
+  --quote      해당 ts 메시지의 첫 줄 인용 + Slack 정식 링크(chat.getPermalink)를 본문 끝(참고 줄 앞)에 넣음. 링크 조회 실패하면 '원본: 링크 없음'(전송은 함).
+               인용은 첫 줄만 40자 이내, 비밀·로컬 경로가 있으면 인용 없이 링크만. 링크가 든 메시지는 unfurl_links=true 로 보내 미리보기가 펼쳐지게 함
   --no-doc     (--kind decide 전용) 근거 문서 없는 결정임을 명시. decide 는 파일 인자·--attached 가 없으면 이게 있어야 보냄
   --no-check   양식 검사 생략(slack-sent.jsonl 에 unchecked:true 기록)
 환경 변수: LRM_BTN_WARN=off 는 '버튼 없음' 경고를 끔(시험용). LRM_FORMAT=warn|strict|off (기본 warn). warn 은 위반해도 전송하고 stderr 경고, strict 는 위반 시 미전송·종료 코드 2
@@ -45,7 +47,7 @@ usage() {
 EOF
 }
 die() { echo "$1" >&2; exit 2; }
-ATTACHED=() LINK_TO="" NO_DOC=0
+ATTACHED=() LINK_TO="" QUOTE="" NO_DOC=0
 TAG="" TITLE="" THREAD="" KIND="" NOCHECK=0 ALIVE=0CHOICES="" CHOICES_SET=0 EMOJISET=custom
 # 번호 카드 인자. 값 검증은 FORM_PY opts 가 함. *_SET 은 빈 값으로 준 경우도 '준 것'으로 보기 위함
 OPTIONS="" OPT_SET=0 RECOMMEND="" REC_SET=0 REVERSIBLE="" REV_SET=0 DECISION_ID="" DID_SET=0 SEQ="" SEQ_SET=0 TODO_ID="" TID_SET=0
@@ -66,6 +68,7 @@ while [ $# -gt 0 ]; do
     --todo-id) [ $# -ge 2 ] || die "--todo-id 값 필요 — 예 T-0001"; TODO_ID="$2" TID_SET=1; shift 2 ;;
     --attached) ATTACHED+=("${2:?--attached 값 필요}"); shift 2 ;;
     --link-to) LINK_TO="${2:?--link-to 값 필요}"; shift 2 ;;
+    --quote) QUOTE="${2:?--quote 값 필요}"; shift 2 ;;
     --no-doc) NO_DOC=1; shift ;;
     --no-check) NOCHECK=1; shift ;;
     --alive) ALIVE=1; shift ;;
@@ -110,6 +113,7 @@ ATT=(); [ $# -lt 2 ] || ATT=(--attached "$2")
 for a in ${ATTACHED[@]+"${ATTACHED[@]}"}; do ATT+=(--attached "$a"); done
 if ! CHK="$(printf '%s' "$1" | python3 -I "$HR" check-text ${ATT[@]+"${ATT[@]}"} 2>&1)"; then die "${CHK#오류: }"; fi
 if [ -n "$LINK_TO" ]; then printf '%s' "$LINK_TO" | grep -Eq '^[0-9]{1,12}\.[0-9]{1,9}$' || die "--link-to 형식 오류 — Slack 메시지 ts(숫자.숫자)"; fi
+if [ -n "$QUOTE" ]; then printf '%s' "$QUOTE" | grep -Eq '^[0-9]{1,12}\.[0-9]{1,9}$' || die "--quote 형식 오류 — Slack 메시지 ts(숫자.숫자)"; fi
 DIR="$HOME/.config/lrm-hubs"
 ENV="$DIR/slack-bot.env"
 SENT="$DIR/slack-sent.jsonl"
@@ -320,10 +324,13 @@ def buttons(spec):
                 "text": {"type": "plain_text", "text": "직접 입력", "emoji": True}})
     return {"type": "actions", "block_id": "lrm_decide:%s" % did, "elements": els}
 
-def build_payload(msg, kind, channel, thread, card=""):
+def build_payload(msg, kind, channel, thread, card="", unfurl=""):
     """chat.postMessage 본문 JSON. kind 가 색 표에 있으면 attachment 색 띠에 본문을 담고, 알림 미리보기용 text 에는 제목만 둠.
     번호 카드(card 에 options)면 색 띠 안을 section + 버튼 블록으로 바꿈. 이모지 답 줄은 버튼이 안 될 때를 위해 남김"""
     body = {"channel": channel, "text": msg}
+    if unfurl == "1":  # 정식 링크가 든 메시지만 미리보기를 펼침
+        body["unfurl_links"] = True
+        body["unfurl_media"] = True
     spec = json.loads(card) if card else {}
     if kind in KIND_COLOR:
         title = msg.split("\n", 1)[0].replace("*", "").strip()
@@ -436,7 +443,7 @@ elif sys.argv[1] == "check":
     for lvl, code, text in check_form(data, sys.argv[2], sys.argv[3] == "1"):
         sys.stdout.buffer.write(("%s\t%s\t%s\n" % (lvl, code, text)).encode("utf-8"))
 elif sys.argv[1] == "payload":
-    sys.stdout.buffer.write(build_payload(data, *sys.argv[2:6]).encode("utf-8"))
+    sys.stdout.buffer.write(build_payload(data, *sys.argv[2:7]).encode("utf-8"))
 elif sys.argv[1] in ("opts", "card"):
     try:
         if sys.argv[1] == "opts":
@@ -549,21 +556,53 @@ fi
 
 [ -n "$TITLE" ] || TITLE="${MSG%%$'\n'*}"
 CH=$(curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -d "users=$SLACK_USER_ID" $API/conversations.open | python3 -c 'import sys,json;print(json.load(sys.stdin)["channel"]["id"])')
-# 다른 메시지로 가는 링크. 조회 실패는 링크만 생략(전송은 계속)
-if [ -n "$LINK_TO" ]; then
-  LINK="$(curl -s -G -H "Authorization: Bearer $SLACK_BOT_TOKEN" --data-urlencode "channel=$CH" --data-urlencode "message_ts=$LINK_TO" $API/chat.getPermalink \
-    | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d["permalink"] if d.get("ok") else "")' 2>/dev/null || true)"
-  if [ -n "$LINK" ]; then  # 링크는 마지막 '참고:' 줄 앞에(참고 블록이 맨 아래). 참고 줄이 없으면 끝에
-    MSG="$(printf '%s' "$MSG" | python3 -c '
+# 다른 메시지로 가는 링크(--link-to)·원본 인용(--quote). 링크는 chat.getPermalink 정식 주소만 씀(손수 만든 주소 금지). 조회 실패는 링크만 생략(전송은 계속)
+UNFURL=""
+permalink_of() {
+  curl -s -G -H "Authorization: Bearer $SLACK_BOT_TOKEN" --data-urlencode "channel=$CH" --data-urlencode "message_ts=$1" $API/chat.getPermalink \
+    | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d["permalink"] if d.get("ok") else "")' 2>/dev/null || true
+}
+# 원본 첫 줄(최상위 메시지만 조회됨). 조회 실패·비밀·로컬 경로가 있으면 빈 값
+quote_of() {
+  curl -s -G -H "Authorization: Bearer $SLACK_BOT_TOKEN" --data-urlencode "channel=$CH" --data-urlencode "latest=$1" --data-urlencode "oldest=$1" \
+    --data-urlencode "inclusive=true" --data-urlencode "limit=1" $API/conversations.history \
+    | python3 -I -c '
+import sys, json
+sys.path.insert(0, sys.argv[1])
+import hub_report as h
+d = json.load(sys.stdin)
+t = ((d.get("messages") or [{}])[0].get("text") or "") if d.get("ok") else ""
+t = " ".join(t.split("\n", 1)[0].split())
+t = "".join(c for c in t if c not in "<>|*`\"")
+if len(t) > 40:
+    t = t[:39] + "…"
+print("" if h.has_secret(t) or h.local_paths(t) else t, end="")' "$(dirname "$HR")" 2>/dev/null || true
+}
+# 본문 끝(마지막 '참고:' 줄 앞, 없으면 끝)에 한 줄을 끼움
+add_ref_line() {
+  MSG="$(printf '%s' "$MSG" | python3 -c '
 import sys
 lines = sys.stdin.read().split("\n")
 idx = max((i for i, l in enumerate(lines) if l.lstrip().startswith("참고:")), default=len(lines))
-link = "<%s|결정 카드 열기>" % sys.argv[1]
 while idx > 0 and lines[idx - 1] == "":
     idx -= 1
 tail = lines[idx:] if idx < len(lines) else []
-print("\n".join(lines[:idx] + ["", link] + ([""] + tail if tail else [])), end="")' "$LINK")"
+print("\n".join(lines[:idx] + ["", sys.argv[1]] + ([""] + tail if tail else [])), end="")' "$1")"
+}
+if [ -n "$LINK_TO" ]; then
+  LINK="$(permalink_of "$LINK_TO")"
+  if [ -n "$LINK" ]; then add_ref_line "<$LINK|결정 카드 열기>"; UNFURL=1
   else echo "경고: 링크 조회 실패 — 링크 없이 전송" >&2; fi
+fi
+if [ -n "$QUOTE" ]; then
+  LINK="$(permalink_of "$QUOTE")"
+  if [ -n "$LINK" ]; then
+    Q="$(quote_of "$QUOTE")"
+    if [ -n "$Q" ]; then add_ref_line "\"$Q\" <$LINK|원본>"; else add_ref_line "<$LINK|원본>"; fi
+    UNFURL=1
+  else
+    add_ref_line "원본: 링크 없음"; echo "경고: --quote 링크 조회 실패 — '링크 없음' 표시로 전송" >&2
+  fi
 fi
 
 # 응답 JSON 을 받아 ok/에러 출력 + 성공 시 sent 기록. ts 는 postMessage 만 제공, 파일 업로드는 file_id 로 남김.
@@ -589,7 +628,7 @@ print("ok file_id=" + rec["file_id"] if kind=="file" else "ok " + rec["ts"])
 
 # 텍스트 게시. 번호 카드면 색 띠 안에 버튼 블록이 들어감
 post_text() {
-  PAYLOAD="$(printf '%s' "$MSG" | python3 -c "$FORM_PY" payload "$KIND" "$CH" "$THREAD" "$CARD_JSON")" \
+  PAYLOAD="$(printf '%s' "$MSG" | python3 -c "$FORM_PY" payload "$KIND" "$CH" "$THREAD" "$CARD_JSON" "$UNFURL")" \
     || die "페이로드 생성 실패(전송 안 함) — python3 동작 확인 뒤 다시 보내세요"
   curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H 'Content-Type: application/json' \
     -d "$PAYLOAD" $API/chat.postMessage | record text
