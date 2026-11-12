@@ -69,9 +69,9 @@ class RunBase(Base):
         self.run.replies["terminal send"] = send
         self.run.replies["terminal show"] = (1, None)  # 화면 확인 불가 → 불확실로 남김
 
-    def approve(self, did, pick=1, at=None):
-        wr(os.environ["LRM_SLACK_INBOX"], json.dumps({"type": "button", "decision_id": did, "action": "pick", "pick": pick,
-                                                      "received_at": at if at is not None else time.time() + 1}) + "\n", "a")
+    def approve(self, did, pick=1, at=None, type_="button", action="pick", **extra):
+        wr(os.environ["LRM_SLACK_INBOX"], json.dumps({"type": type_, "decision_id": did, "action": action, "pick": pick,
+                                                      "received_at": at if at is not None else time.time() + 1, **extra}) + "\n", "a")
 
     def status(self, slug, workers, hours_ago=0, **extra):
         data = {"slug": slug, "updatedAt": iso(hours_ago), "tasks": [], "branches": [], "blockers": [], "workers": workers, **extra}
@@ -163,7 +163,7 @@ class Split(RunBase):
         os.environ["FAKE_CREATE_RC"] = "1"
         rc, out, err = self.go()
         self.assertEqual(rc, 4)
-        self.assertIn("hubs: 백업으로 되돌림(대조 일치)", err)
+        self.assertIn("hubs: ui-popup 행만 되돌림(대조 일치)", err)
         self.assertEqual(rd(hs.hubs_tsv()), self.hubs_before)
         os.environ["FAKE_CREATE_RC"] = "0"
         self.assertEqual(self.go()[0], 0)
@@ -185,6 +185,44 @@ class Split(RunBase):
         self.assertIn(["terminal", "close", "--terminal", "term_b2"], self.run.calls)
         prog = json.loads(rd(os.path.join(self.d, "hub-split-runs", "D-S1", "progress.json")))
         self.assertEqual((prog["done"], prog["ledger"], prog["sent"]), (["backup", "report_before", "pending"], [], {}))
+
+    def test_hubs_undo_keeps_rows_added_between_runs(self):
+        self.ready()
+        os.environ["FAKE_CREATE_RC"] = "1"
+        self.assertEqual(self.go()[0], 4)
+        wr(hs.hubs_tsv(), "audio\t오디오\t~/r/role-audio.txt\t-\t-\n", "a")
+        self.assertEqual(self.go()[0], 4)
+        slugs = [h.slug for h in hs.read_hubs()]
+        self.assertIn("audio", slugs)
+        self.assertNotIn("ui-popup", slugs)
+
+    def test_routes_undo_keeps_other_routes(self):
+        self.ready()
+        orig = hs.Runner.routes
+
+        def broken(self_):
+            orig(self_)
+            wr(self.routes, "sfx\taudio\n", "a")
+            raise hs.SplitError("주입", 1)
+        with mock.patch.object(hs.Runner, "routes", broken):
+            self.assertEqual(self.go()[0], 1)
+        text = rd(self.routes)
+        self.assertIn("sfx\taudio", text)
+        self.assertNotIn("ui팝업", text)
+
+    # 4) 버튼·반응·글 답 해석 재사용
+    def test_reaction_and_reply_answers(self):
+        self.propose(approve=False)
+        self.go(apply=False)
+        cases = [({"type_": "thread_reply", "action": "free", "pick": None}, 4),
+                 ({"type_": "reaction", "action": "hold", "pick": None}, 4),
+                 ({"type_": "thread_reply", "action": "approve", "pick": 1, "conflict": True, "choices": ["1", "hold"]}, 4),
+                 ({"type_": "reaction", "action": "approve", "pick": 2}, 4),
+                 ({"type_": "thread_reply", "action": "approve", "pick": 1}, 0)]
+        for kw, want in cases:
+            self.approve("D-S1", **kw)
+            rc, _, err = self.go()
+            self.assertEqual(rc, want, (kw, err))
 
     def test_routes_failure_restores_routes(self):
         self.ready()
@@ -246,6 +284,16 @@ class Merge(RunBase):
                     w["childWorktreeIds"] = [i for i in w["childWorktreeIds"] if os.path.join(self.root, i) not in self.moved]
             return 0, {"ok": True}
         self.run.replies["worktree set"] = wset
+        self.run.replies["orchestration worker-list"] = (0, {"ok": True, "result": {"workers": []}})
+        self.close_rc = 0
+
+        def close(args):
+            if self.close_rc:
+                return self.close_rc, None
+            terms = self.run.replies["terminal list"][1]["result"]["terminals"]
+            terms[:] = [t for t in terms if t["handle"] != args[3]]
+            return 0, {"ok": True}
+        self.run.replies["terminal close"] = close
         rc, _, err = self.cli(["propose", "--kind", "merge", "--child", "ui-popup", "--decision-id", "D-M1", "--no-doc", "--record"], self.run)
         self.assertEqual(rc, 0, err)
         self.approve("D-M1")
@@ -266,7 +314,7 @@ class Merge(RunBase):
         self.assertIn("ui-popup", rd(hs.hubs_tsv()))
 
     def test_idle_rechecked_on_rerun_and_before_close(self):
-        self.run.replies["terminal close"] = (1, None)
+        self.close_rc = 1
         rc, _, err = self.go()
         self.assertEqual(rc, 3, err)  # 종료 실패
         self.status("ui-popup", ["ctx_9 /ws/b"])  # 그사이 워커가 생김
@@ -276,11 +324,11 @@ class Merge(RunBase):
 
     # 6) 불변 계획으로 재개
     def test_resume_after_row_removed_and_close_failed(self):
-        self.run.replies["terminal close"] = (1, None)
+        self.close_rc = 1
         rc, _, err = self.go()
         self.assertEqual(rc, 3, err)
         self.assertNotIn("ui-popup\t", rd(hs.hubs_tsv()))
-        self.run.replies.pop("terminal close")
+        self.close_rc = 0
         rc, out, err = self.go()
         self.assertEqual(rc, 0, err)
         st = {s["name"]: s["status"] for s in json.loads(out)["steps"]}
@@ -288,6 +336,40 @@ class Merge(RunBase):
         self.assertIn("ui팝업\tui", rd(self.routes))
         self.assertIn("C0013\t11-12\t팝업 색\t진행\tui-layer", rd(self.ledger))
         self.assertEqual(len(self.moved), 2)
+
+    def test_status_says_idle_but_orca_has_live_worker(self):
+        kid = os.path.join(self.root, "ui-popup-k0")
+        self.run.replies["orchestration worker-list"] = (0, {"ok": True, "result": {"workers": [
+            {"terminalState": "running", "resource": {"worktreeId": f"repo::{kid}"}}]}})
+        rc, _, err = self.go()
+        self.assertEqual(rc, 4)
+        self.assertIn("살아 있는 터미널·워커", err)
+        self.run.replies["orchestration worker-list"] = (1, None)
+        self.assertEqual(self.go()[0], 4)  # 조회 실패도 거부
+
+    def test_resume_after_close_with_stale_status(self):
+        self.run.replies["terminal send"] = (1, None)  # 부모 전송 실패 → parent_status 에서 멈춤
+        rc, out, err = self.go()
+        self.assertEqual(rc, 4, err)
+        self.assertEqual({s["name"]: s["status"] for s in json.loads(out)["steps"]}["close_child"], "done")
+        self.status("ui-popup", [], hours_ago=30)  # 다음 날: 하위 허브가 없어 상태 파일이 낡음
+        self.run.replies["terminal send"] = lambda a: ok_send()
+        rc, out, err = self.go()
+        self.assertEqual(rc, 0, err)
+        self.assertIn("하위 허브 종료 뒤 Orca 실제 상태", out)
+
+    def test_remove_row_failure_keeps_other_rows(self):
+        orig = hs.Runner.remove_row
+
+        def broken(self_):
+            orig(self_)
+            wr(hs.hubs_tsv(), "audio\t오디오\t~/r/role-audio.txt\t-\t-\n", "a")  # 그사이 다른 허브 추가
+            raise hs.SplitError("주입", 1)
+        with mock.patch.object(hs.Runner, "remove_row", broken):
+            self.assertEqual(self.go()[0], 1)
+        slugs = [h.slug for h in hs.read_hubs()]
+        self.assertIn("ui-popup", slugs)
+        self.assertIn("audio", slugs)
 
     def test_remove_row_failure_restores_table(self):
         orig = hs.Runner.remove_row

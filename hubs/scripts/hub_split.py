@@ -477,9 +477,12 @@ def py_tool(var: str, name: str, *args) -> subprocess.CompletedProcess:
     return subprocess.run([sys.executable, tool(var, name), *args], capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
 
 
+ANSWER_TYPES = ("button", "reaction", "thread_reply")  # 결정 답 레코드. action 해석은 slack_poll.sh·slack_socket.py 가 붙인 값을 그대로 씀
+
+
 def card_answer(did: str, since: float):
-    """결정 카드 버튼 답 중 제안 뒤 마지막 것의 선택 번호. 답 없으면 None"""
-    pick = None
+    """결정 카드 답 중 제안 뒤 마지막 것(레코드 dict). 답 없으면 None. free·hold·conflict 판단은 호출 쪽"""
+    last = None
     try:
         with open(slack_inbox(), encoding="utf-8") as f:
             for ln in f:
@@ -487,19 +490,31 @@ def card_answer(did: str, since: float):
                     d = json.loads(ln)
                 except ValueError:
                     continue
-                if (isinstance(d, dict) and d.get("decision_id") == did and d.get("type") == "button"
+                if (isinstance(d, dict) and d.get("decision_id") == did and d.get("type") in ANSWER_TYPES
+                        and d.get("action") in ("pick", "approve", "hold", "free")
                         and float(d.get("received_at") or 0) >= since):
-                    pick = d.get("pick")
+                    last = d
     except OSError:
         pass
-    return pick
+    return last
 
 
 def check_approved(did: str, prop: dict) -> None:
-    pick = card_answer(did, float(prop.get("at") or 0))
-    if pick != APPROVE_PICK:
-        why = "답 없음" if pick is None else f"선택 {pick}(승인 아님)"
-        raise SplitError(f"결정 {did} 승인 확인 실패: {why} — 사용자가 카드에서 '승인'을 고른 뒤 실행", EXIT_REFUSED)
+    """승인 = 마지막 답이 pick·approve 이고 선택이 1(승인), 충돌 없음. hold 는 보류, free 는 사람 확인 필요"""
+    d = card_answer(did, float(prop.get("at") or 0))
+    if d is None:
+        why = "답 없음"
+    elif d.get("conflict"):
+        why = f"답이 갈림({d.get('choices')}) — 사용자에게 다시 확인"
+    elif d["action"] == "hold":
+        why = "보류 답"
+    elif d["action"] == "free":
+        why = "자유 글 답 — 메인이 사용자 뜻을 확인해 카드 버튼·✅ 로 다시 받음"
+    elif d.get("pick") != APPROVE_PICK:
+        why = f"선택 {d.get('pick')}(승인 아님)"
+    else:
+        return
+    raise SplitError(f"결정 {did} 승인 확인 실패: {why} — 사용자가 카드에서 '승인'을 고른 뒤 실행", EXIT_REFUSED)
 
 
 def hub_live(run, path: str):
@@ -596,6 +611,8 @@ class Runner:
             raise SplitError(f"역할 파일 없음: {self.role_file} — 하위 허브 역할 파일을 먼저 만들고 다시 실행", EXIT_REFUSED)
         text = read_text(hubs_tsv())
         if not any(ln.split("\t")[0] == pl.child for ln in text.splitlines()):
+            self.prog["row_added"] = row
+            self.save()
             write_text(hubs_tsv(), text + ("" if text.endswith("\n") else "\n") + row + "\n")
         env = dict(os.environ)
         if par.ws_root not in ("", "-"):
@@ -671,9 +688,15 @@ class Runner:
                 return f"접수 경로: 머리말 {self.pl.prefix} 이미 있음(재실행)"
             idx = next((i for i, ln in enumerate(rows) if ln.startswith("*\t")), len(rows))  # 기본 행('*') 앞에 둠
             rows.insert(idx, f"{self.pl.prefix}\t{child_in}")
+            if self.apply:
+                self.prog["route_added"] = self.pl.prefix
+                self.save()
             desc = f"접수 경로 추가: {self.pl.prefix} → {child_in}"
         else:
             hit = [i for i, ln in enumerate(rows) if not ln.startswith("#") and ln.split("\t")[1:2] == [child_in]]
+            if self.apply and hit:
+                self.prog["route_changes"] = [[rows[i].split("\t")[0], child_in, par_in] for i in hit]
+                self.save()
             for i in hit:
                 rows[i] = rows[i].split("\t")[0] + "\t" + par_in
             desc = f"접수 경로 {len(hit)}줄: {child_in} → {par_in}"
@@ -682,22 +705,36 @@ class Runner:
         return desc
 
     def idle_check(self):
-        """상태 파일 workers 칸이 있고 낡음 기준 이내일 때만 진행 워커 0 으로 인정"""
+        """진행 워커 0 판정. 하위 허브 종료 전: 상태 파일(workers 칸·낡음 기준 이내)과 Orca 실제 터미널·워커가 모두 0 이어야 함.
+        종료 단계를 지난 재실행: 상태 파일을 쓸 주체가 없으므로 Orca 실제 상태만 봄. 어긋남·조회 실패는 거부"""
         import hub_status
-        data, path, err = hub_status.load(self.pl.child)
-        if err or data is None or not isinstance(data.get("workers"), list):
-            raise SplitError(f"{self.pl.child} 상태 파일 없음·손상·workers 칸 없음({path}) — 진행 워커 0 을 확인할 수 없어 병합 안 함", EXIT_REFUSED)
-        at = hub_status.parse_iso(data.get("updatedAt"))
-        if at is None or time.time() - at.timestamp() > hub_status.stale_hours() * 3600:
-            raise SplitError(f"{self.pl.child} 상태 파일이 낡음({data.get('updatedAt')}) — 허브에 hub_status.py write 를 요청한 뒤 다시 실행", EXIT_REFUSED)
-        if data["workers"]:
-            raise SplitError(f"{self.pl.child} 진행 워커 {len(data['workers'])}명 — 끝난 뒤 다시 실행", EXIT_REFUSED)
-        return f"{self.pl.child} 진행 워커 0(상태 파일 {data.get('updatedAt')})"
+        closed = "close_child" in self.prog["done"]
+        basis = "하위 허브 종료 뒤 Orca 실제 상태"
+        if not closed:
+            data, path, err = hub_status.load(self.pl.child)
+            if err or data is None or not isinstance(data.get("workers"), list):
+                raise SplitError(f"{self.pl.child} 상태 파일 없음·손상·workers 칸 없음({path}) — 진행 워커 0 을 확인할 수 없어 병합 안 함", EXIT_REFUSED)
+            at = hub_status.parse_iso(data.get("updatedAt"))
+            if at is None or time.time() - at.timestamp() > hub_status.stale_hours() * 3600:
+                raise SplitError(f"{self.pl.child} 상태 파일이 낡음({data.get('updatedAt')}) — 허브에 hub_status.py write 를 요청한 뒤 다시 실행", EXIT_REFUSED)
+            if data["workers"]:
+                raise SplitError(f"{self.pl.child} 진행 워커 {len(data['workers'])}명 — 끝난 뒤 다시 실행", EXIT_REFUSED)
+            basis = f"상태 파일 {data.get('updatedAt')} + Orca 실제 상태"
+        kids = sorted(set(worktree_kids(self.run).get(self.hub(self.pl.child).path, [])) | set(self.prog.get("relinked", [])))
+        for k in kids:
+            live = hub_live(self.run, k)
+            if live is None:
+                raise SplitError(f"Orca 터미널·워커 조회 실패({k}) — 판정 불가라 병합 안 함, Orca 확인 뒤 다시 실행", EXIT_REFUSED)
+            if live:
+                raise SplitError(f"상태 파일과 달리 {k} 에 살아 있는 터미널·워커 있음 — 끝난 뒤 다시 실행", EXIT_REFUSED)
+        return f"{self.pl.child} 진행 워커 0({basis}, 작업 공간 {len(kids)}곳 확인)"
 
     def relink_all(self):
         child, to = self.hub(self.pl.child).path, self.hub(self.pl.parent).path
         kids = worktree_kids(self.run).get(child, [])
         if self.apply:
+            self.prog["relinked"] = sorted(set(self.prog.get("relinked", [])) | set(kids))  # 종료 직전 재확인 대상
+            self.save()
             for k in kids:
                 rc, _ = self.run(["worktree", "set", "--worktree", f"path:{k}", "--parent-worktree", f"path:{to}", "--json"], 30)
                 if rc != 0:
@@ -711,6 +748,8 @@ class Runner:
         rows = read_text(hubs_tsv()).splitlines()
         keep = [ln for ln in rows if ln.split("\t")[0] != self.pl.child]
         if self.apply and len(keep) != len(rows):
+            self.prog["removed_rows"] = [ln for ln in rows if ln.split("\t")[0] == self.pl.child]
+            self.save()
             write_text(hubs_tsv(), "\n".join(keep) + "\n")
         return f"허브 목록 표에서 {self.pl.child} 행 삭제({len(rows) - len(keep)}줄)"
 
@@ -744,13 +783,31 @@ class Runner:
 
     # 보상: 설계의 '실패·되돌리기' 표. 결과를 검증해 문자열로 돌려줌
     def undo(self, what: str) -> str:
-        if what in ("hubs", "routes"):
-            src = hubs_tsv() if what == "hubs" else routes_tsv()
-            bak = self.backup_path(src)
-            if not os.path.exists(bak):
-                return f"{what}: 백업 없음, 되돌리지 못함"
-            write_text(src, read_text(bak))
-            return f"{what}: 백업으로 되돌림" + ("(대조 일치)" if read_text(src) == read_text(bak) else "(대조 불일치!)")
+        # 표는 이번 실행이 바꾼 줄만 되돌림. 재실행 사이 다른 허브가 추가·수정한 줄을 지키려고 백업 통째 복원은 하지 않음(백업은 증거)
+        if what == "hubs":
+            rows = read_text(hubs_tsv()).splitlines()
+            if self.pl.kind == "split":
+                rows = [ln for ln in rows if ln.split("\t")[0] != self.pl.child]
+                ok = self.pl.child not in [ln.split("\t")[0] for ln in rows]
+                self.prog.pop("row_added", None)
+            else:
+                back = [ln for ln in self.prog.get("removed_rows", []) if ln not in rows]
+                rows += back
+                ok = self.pl.child in [ln.split("\t")[0] for ln in rows]
+            write_text(hubs_tsv(), "\n".join(rows) + "\n")
+            return f"hubs: {self.pl.child} 행만 되돌림" + ("(대조 일치)" if ok else "(대조 불일치!)")
+        if what == "routes":
+            rows = read_text(routes_tsv()).splitlines()
+            if self.pl.kind == "split":
+                rows = [ln for ln in rows if ln.split("\t")[0] != self.prog.get("route_added", self.pl.prefix)]
+                ok = all(ln.split("\t")[0] != self.pl.prefix for ln in rows)
+                self.prog.pop("route_added", None)
+            else:
+                changes = {c[0]: c for c in self.prog.get("route_changes", [])}
+                rows = [f"{ln.split(chr(9))[0]}\t{changes[ln.split(chr(9))[0]][1]}" if ln.split("\t")[0] in changes and ln.split("\t")[1:2] == [changes[ln.split("\t")[0]][2]] else ln for ln in rows]
+                ok = all(f"{p}\t{old}" in rows for p, old, _ in changes.values())
+            write_text(routes_tsv(), "\n".join(rows) + "\n")
+            return f"routes: 이번 실행이 바꾼 줄만 되돌림" + ("(대조 일치)" if ok else "(대조 불일치!)")
         if what == "ledger":
             bad = []
             for m in reversed(self.prog["ledger"]):
