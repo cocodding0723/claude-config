@@ -7,14 +7,15 @@
 PR(gh)은 PR_INTERVAL_S 초에 한 번만 조회하고 그 사이는 직전 값을 씀.
 
 환경: LRM_HUB_DIR 작업 폴더 · LRM_PROGRESS 스냅샷 경로 · LRM_LEDGER 장부 · LRM_HUB_STATUS_DIR 허브 상태 폴더
-      LRM_DIGEST_GH gh 명령 · LRM_DIGEST_REPOS PR 조회 저장소(쉼표, 없으면 현재 저장소) · LRM_HUB_STATUS_STALE_HOURS 낡음 기준(기본 24)
-      LRM_PROGRESS_PR_INTERVAL PR 조회 간격 초(기본 300)
+      LRM_DIGEST_GH gh 명령(없으면 PATH → /opt/homebrew/bin·/usr/local/bin) · LRM_DIGEST_REPOS PR 조회 저장소(쉼표, 없으면 현재 저장소) · LRM_HUB_STATUS_STALE_HOURS 낡음 기준(기본 24)
+      LRM_PROGRESS_PR_INTERVAL PR 조회 간격 초(기본 300) · LRM_PROGRESS_PR_BUDGET PR 조회 전체 시간 상한 초(기본 30)
 종료 코드: 0 성공(원료 일부 실패 포함), 2 설정·입력 오류
 """
 import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -27,6 +28,10 @@ import ledger  # noqa: E402
 VERSION = 1
 HUB_DIR = os.path.expanduser(os.environ.get("LRM_HUB_DIR") or "~/.config/lrm-hubs")
 GH_TIMEOUT_S = 30
+PR_BUDGET_S = 30  # PR 조회 전체 시간 상한. panel_collect 회차(90초) 안에 끝나야 함
+GH_CANDIDATES = ("/opt/homebrew/bin/gh", "/usr/local/bin/gh")  # launchd 최소 PATH 대비
+ORCA_TIMEOUT_S = 15
+CHILD_WARN = 10  # 허브 하위 작업 공간이 이 수를 넘으면 경고
 PR_INTERVAL_S = 300  # LRM_PROGRESS_PR_INTERVAL 로 바꿈(시험용, 0 이면 매번 조회)
 TITLE_MAX = 80
 
@@ -77,6 +82,13 @@ def pr_interval():
         return PR_INTERVAL_S
 
 
+def pr_budget():
+    try:
+        return float(os.environ.get("LRM_PROGRESS_PR_BUDGET", PR_BUDGET_S))
+    except ValueError:
+        return PR_BUDGET_S
+
+
 def snapshot_path():
     return os.path.expanduser(os.environ.get("LRM_PROGRESS") or os.path.join(HUB_DIR, "progress.json"))
 
@@ -101,13 +113,14 @@ def collect_ledger(path):
     return out
 
 
-def collect_hubs(status_dir, now=None):
-    """허브 상태 파일 전부 → (항목, 알림). 낡은 허브는 제목에 '낡음'. 손상 파일은 건너뛰고 알림"""
-    out, notes = [], []
+def collect_hubs(status_dir, old_items=()):
+    """허브 상태 파일 전부 → (항목, 알림, 읽기 실패 허브). 낡은 허브는 제목에 '낡음'.
+    손상 파일은 그 허브의 이전 항목(old_items)을 그대로 두어 목록에서 완료 처리되지 않게 함"""
+    out, notes, failed = [], [], []
     try:
         names = sorted(n for n in os.listdir(status_dir) if n.endswith(".json"))
     except FileNotFoundError:
-        return out, notes
+        return out, notes, failed
     limit_s = hub_status.stale_hours() * 3600
     for name in names:
         slug = name[: -len(".json")]
@@ -118,7 +131,10 @@ def collect_hubs(status_dir, now=None):
         except (OSError, ValueError) as e:
             bad = str(e)
         if bad:
-            notes.append(f"허브 상태 {slug} 읽기 실패({one_line(bad, 40)}) — 건너뜀")
+            kept = [i for i in old_items if isinstance(i, dict) and i.get("group") == slug]
+            out += kept
+            failed.append(slug)
+            notes.append(f"허브 상태 {slug} 읽기 실패({one_line(bad, 40)}) — 이전 항목 {len(kept)}개 유지")
             continue
         at = hub_status.parse_iso(data.get("updatedAt", ""))
         stale = at is None or (time.time() - at.timestamp()) > limit_s
@@ -127,18 +143,26 @@ def collect_hubs(status_dir, now=None):
             out.append(item(f"hub:{slug}:t:{short_hash(task)}", WAIT if needs_user(task) else DOING, f"{tag}{slug}: {task}", slug))
         for blocker in data.get("blockers", []):
             out.append(item(f"hub:{slug}:b:{short_hash(blocker)}", WAIT if needs_user(blocker) else BLOCK, f"{tag}{slug}: {blocker}", slug))
-    return out, notes
+    return out, notes, failed
+
+
+def gh_bin():
+    """gh 실행 파일. LRM_DIGEST_GH → PATH → 알려진 설치 위치 순(launchd 는 PATH 가 짧음)"""
+    return os.environ.get("LRM_DIGEST_GH") or shutil.which("gh") or next((c for c in GH_CANDIDATES if os.path.exists(c)), "gh")
 
 
 def collect_prs(gh, repos):
     """내 열린 PR → 항목. 승인된 PR 은 병합 결정 대기, 변경 요청·충돌은 막힘. 실패는 SourceError"""
-    out = []
+    out, deadline = [], time.monotonic() + pr_budget()
     for repo in repos or [None]:
+        left = deadline - time.monotonic()
+        if left <= 1:
+            raise SourceError(f"PR 조회 시간 예산({pr_budget():g}초) 초과 — 저장소 수를 줄이거나 간격을 늘림")
         cmd = [gh, "pr", "list", "--author", "@me", "--state", "open", "--json", PR_FIELDS]
         if repo:
             cmd += ["--repo", repo]
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=GH_TIMEOUT_S, stdin=subprocess.DEVNULL)
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=min(GH_TIMEOUT_S, left), stdin=subprocess.DEVNULL)
             if p.returncode != 0:
                 raise SourceError(one_line(p.stderr or f"gh 종료 코드 {p.returncode}", 60))
             prs = json.loads(p.stdout or "[]")
@@ -156,6 +180,15 @@ def collect_prs(gh, repos):
             scope = f"{repo.split('/')[-1]}#" if repo else "#"
             out.append(item(f"{PR_PREFIX}{repo or ''}#{pr['number']}", bucket, f"PR {scope}{pr['number']} {pr.get('title', '')}", "PR", pr.get("url", "")))
     return out
+
+
+def query_pending(now):
+    """결정 대기를 panel_collect 와 같은 규칙으로 직접 조회(panel_collect 를 거치지 않고 실행될 때)"""
+    import panel_collect  # 지연 가져오기: 작업 폴더 경로가 환경 변수로 정해진 뒤
+    try:
+        return panel_collect.collect_pending(now)
+    except panel_collect.SourceError as e:
+        raise SourceError(f"결정 대기 읽기 실패({e.code})")
 
 
 def decision_items(pending):
@@ -185,24 +218,28 @@ def conf_from_env():
     return {
         "ledger": env("LRM_LEDGER") or os.path.join(HUB_DIR, "feedback-ledger.tsv"),
         "status_dir": os.path.expanduser(env("LRM_HUB_STATUS_DIR") or os.path.join(HUB_DIR, "hub-status")),  # 작업 폴더 밑이 기본(시험이 격리됨)
-        "gh": env("LRM_DIGEST_GH") or "gh",
+        "gh": gh_bin(),
         "repos": [r.strip() for r in (env("LRM_DIGEST_REPOS") or "").split(",") if r.strip()],
     }
 
 
 def build(conf, prev, now, pending=None, workers=None, use_pr=True):
-    """스냅샷 dict. prev 는 직전 스냅샷(없으면 {}). pending·workers 는 panel_collect 가 이미 모은 값(없으면 그 원료는 off)"""
+    """스냅샷 dict. prev 는 직전 스냅샷(없으면 {}). pending·workers 는 panel_collect 가 이미 모은 값.
+    pending 이 없으면 결정 대기를 직접 조회함(결정 원료를 끄면 미해결 결정이 목록에서 완료 처리되므로 끄지 않음)"""
     old = prev.get("sources", {}) if isinstance(prev, dict) else {}
-    hub_notes = []
+    hub_notes, hub_failed = [], []
 
     def hubs():
-        found, hub_notes[:] = collect_hubs(conf["status_dir"], now)
+        old_value = (old.get("hubs") or {}).get("value") or []
+        found, hub_notes[:], hub_failed[:] = collect_hubs(conf["status_dir"], old_value)
         return found
 
     src = {
         "ledger": run_source(lambda: collect_ledger(conf["ledger"]), old.get("ledger"), now),
         "hubs": run_source(hubs, old.get("hubs"), now),
     }
+    if hub_failed and src["hubs"]["ok"]:  # 일부 허브만 실패: 나머지는 새 값, 실패한 허브는 이전 항목 + 표시
+        src["hubs"].update(ok=False, err="허브 상태 읽기 실패: " + ", ".join(hub_failed), stale=True)
     prs_old = old.get("prs")
     fresh = isinstance(prs_old, dict) and prs_old.get("tried") is not None and now - prs_old["tried"] < pr_interval() and prs_old.get("ok")
     if not use_pr:
@@ -211,10 +248,7 @@ def build(conf, prev, now, pending=None, workers=None, use_pr=True):
         src["prs"] = prs_old  # 간격 안: gh 호출 없이 직전 결과
     else:
         src["prs"] = run_source(lambda: collect_prs(conf["gh"], conf["repos"]), prs_old, now)
-    if pending is None:
-        src["decisions"] = {"ok": True, "err": None, "at": now, "tried": now, "stale": False, "value": None, "off": True}
-    else:
-        src["decisions"] = run_source(lambda: decision_items(pending), old.get("decisions"), now)
+    src["decisions"] = run_source(lambda: decision_items(pending if pending is not None else query_pending(now)), old.get("decisions"), now)
     src["workers"] = {"ok": workers is not None, "err": None if workers is not None else "n/a", "at": now if workers is not None else None,
                       "tried": now, "stale": workers is None, "value": workers, "off": workers is None}
     items, seen = [], set()
@@ -229,6 +263,21 @@ def build(conf, prev, now, pending=None, workers=None, use_pr=True):
             "items": items, "notes": notes, "sources": src}
 
 
+def valid_snapshot(d):
+    """읽는 쪽이 의존하는 모양만 확인: items 는 {key,bucket,title} 문자열을 가진 객체 목록, sources 는 객체의 객체"""
+    if not isinstance(d, dict) or not isinstance(d.get("items"), list) or not isinstance(d.get("sources", {}), dict):
+        return False
+    if not all(isinstance(v, dict) for v in d.get("sources", {}).values()):
+        return False
+    known = {b for b, _, _ in BUCKETS}
+    ok = lambda i: isinstance(i, dict) and isinstance(i.get("key"), str) and i.get("bucket") in known and isinstance(i.get("title"), str)  # noqa: E731
+    if not all(ok(i) for i in d["items"]):
+        return False
+    # 이전 값을 재사용하는 원료의 value 도 같은 모양이어야 함(손상 값이 항목 합치기에서 터지지 않게)
+    return all(v.get("value") is None or (isinstance(v["value"], list) and all(ok(i) for i in v["value"]))
+               for name, v in d.get("sources", {}).items() if name in ("ledger", "hubs", "prs", "decisions"))
+
+
 def load_snapshot(path):
     """스냅샷 → dict. 없으면 None. 손상은 SourceError(다음 쓰기가 복구)"""
     try:
@@ -238,7 +287,7 @@ def load_snapshot(path):
         return None
     except (OSError, ValueError) as e:
         raise SourceError(f"스냅샷 읽기 실패({one_line(str(e), 40)}) — {path}")
-    if not isinstance(d, dict) or not isinstance(d.get("items"), list):
+    if not valid_snapshot(d):
         raise SourceError(f"스냅샷 형식 오류 — {path}")
     return d
 

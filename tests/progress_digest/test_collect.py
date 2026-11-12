@@ -13,7 +13,7 @@ COLLECT = os.path.join(HERE, "..", "..", "hubs", "scripts", "progress_collect.py
 HEADER = "id\t접수\t요청(원문 요약)\t상태\t담당\t진행·증거\t갱신\n"
 
 
-class CollectTest(unittest.TestCase):
+class Base(unittest.TestCase):
     def setUp(self):
         self.t = tempfile.TemporaryDirectory()
         self.addCleanup(self.t.cleanup)
@@ -37,16 +37,18 @@ class CollectTest(unittest.TestCase):
         with open(os.path.join(self.status, slug + ".json"), "w") as f:
             json.dump({"slug": slug, "updatedAt": at, "tasks": tasks, "blockers": []}, f)
 
-    def run_once(self, *args, interval="0"):
+    def run_once(self, *args, interval="0", **extra):
         env = {k: v for k, v in os.environ.items() if not k.startswith(("SLACK_", "LRM_"))}
         env.update(HOME=self.t.name, LRM_HUB_DIR=self.t.name, LRM_PROGRESS=self.snap, LRM_LEDGER=self.ledger,
-                   LRM_HUB_STATUS_DIR=self.status, LRM_DIGEST_GH=self.gh, LRM_PROGRESS_PR_INTERVAL=interval)
+                   LRM_HUB_STATUS_DIR=self.status, LRM_DIGEST_GH=self.gh, LRM_PROGRESS_PR_INTERVAL=interval, **extra)
         return subprocess.run([sys.executable, "-I", COLLECT, *args], env=env, capture_output=True, text=True, timeout=60)
 
     def load(self):
         with open(self.snap, encoding="utf-8") as f:
             return json.load(f)
 
+
+class CollectTest(Base):
     def test_snapshot_written_with_sources_and_counts(self):
         self.hub("ui", 1, ["버튼 구현"])
         self.assertEqual(self.run_once("--once").returncode, 0)
@@ -54,7 +56,7 @@ class CollectTest(unittest.TestCase):
         self.assertEqual(d["counts"], {"doing": 2, "wait": 1, "block": 0})
         for name in ("ledger", "hubs", "prs", "decisions", "workers"):
             self.assertTrue({"ok", "err", "at", "tried", "stale", "value"} <= set(d["sources"][name]), name)
-        self.assertTrue(d["sources"]["decisions"]["off"])
+        self.assertTrue(d["sources"]["decisions"]["ok"])  # 직접 조회(끄지 않음)
         self.assertEqual({i["group"] for i in d["items"]}, {"장부", "ui", "PR"})
         self.assertEqual([f for f in os.listdir(self.t.name) if f.startswith(".progress-")], [])  # 임시 파일 남지 않음
 
@@ -94,6 +96,58 @@ class CollectTest(unittest.TestCase):
             f.write("{broken")
         self.assertEqual(self.run_once("--once", "--no-pr").returncode, 0)
         self.assertEqual(self.load()["version"], 1)
+
+
+class ReviewFixTest(Base):
+    """Codex 리뷰 수정 회귀"""
+
+    def test_corrupt_hub_file_keeps_previous_items(self):
+        self.hub("ui", 1, ["버튼 구현"])
+        self.hub("db", 1, ["스키마"])
+        self.run_once("--once", "--no-pr")
+        with open(os.path.join(self.status, "ui.json"), "w") as f:
+            f.write("{broken")
+        self.assertEqual(self.run_once("--once", "--no-pr").returncode, 0)
+        d = self.load()
+        self.assertEqual(sorted(i["title"] for i in d["items"] if i["group"] == "ui"), ["ui: 버튼 구현"])
+        hubs = d["sources"]["hubs"]
+        self.assertFalse(hubs["ok"])
+        self.assertTrue(hubs["stale"])
+        self.assertIn("ui", hubs["err"])
+        self.assertTrue(any("db" in i["title"] for i in d["items"]))  # 다른 허브는 정상
+
+    def test_structurally_broken_snapshot_recovers(self):
+        for bad in ('{"items":[],"sources":[]}', '{"items":[1],"sources":{}}', '{"items":[],"sources":{"hubs":{"value":"x"}}}', '{"items":[{"key":"a","bucket":"zzz","title":"t"}]}'):
+            with open(self.snap, "w") as f:
+                f.write(bad)
+            r = self.run_once("--once", "--no-pr")
+            self.assertEqual(r.returncode, 0, bad + r.stderr)
+            self.assertEqual(self.load()["version"], 1)
+
+    def test_pr_total_budget(self):
+        with open(self.gh, "w") as f:
+            f.write("#!/bin/sh\nsleep 1.2\ncat " + self.gh_out + "\n")
+        import time
+        start = time.monotonic()
+        r = self.run_once("--dry-run", "--repo", "a/a", "--repo", "b/b", "--repo", "c/c", "--repo", "d/d", LRM_PROGRESS_PR_BUDGET="3")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertLess(time.monotonic() - start, 6)
+        prs = json.loads(r.stdout)["sources"]["prs"]
+        self.assertFalse(prs["ok"])
+        self.assertIn("시간 예산", prs["err"])
+
+    def test_gh_resolved_from_candidates_when_path_is_short(self):
+        code = ("import sys;sys.path.insert(0,%r);import progress_collect as p;p.GH_CANDIDATES=(%r,);print(p.gh_bin())" % (os.path.join(HERE, "..", "..", "hubs", "scripts"), self.gh))
+        env = {"PATH": "/nonexistent", "HOME": self.t.name}
+        r = subprocess.run([sys.executable, "-I", "-c", code], env=env, capture_output=True, text=True)
+        self.assertEqual(r.stdout.strip(), self.gh)
+
+    def test_plist_uses_python_placeholder_and_path(self):
+        with open(os.path.join(HERE, "..", "..", "hubs", "launchd", "ai.lrm.progressdigest.plist"), encoding="utf-8") as f:
+            x = f.read()
+        self.assertIn("__PYTHON3__", x)
+        self.assertNotIn("/usr/bin/python3", x)
+        self.assertIn("/opt/homebrew/bin", x)
 
 
 if __name__ == "__main__":
