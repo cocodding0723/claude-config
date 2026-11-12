@@ -90,6 +90,16 @@ reset; echo badjson > "$D/plan-collect"; post --date $WK; rc=$?
 [ $rc = 1 ] && grep -q "collect_bad_json" "$D/sent.log" && ok "수집 출력이 JSON 이 아니면 실패" || ko "깨진 JSON" "rc=$rc"
 reset; post --date $WK; ! grep -q "수집 누락" "$D/sent.log" && ok "오류 없으면 누락 경고 없음" || ko "정상 경고"
 
+# ---- Slack 으로 나가는 문자열 정제(리뷰 지적 4) ----
+reset; echo secret > "$D/plan-claude-fable-5-1"; post --date $WK; rc=$?
+[ $rc = 0 ] && [ "$(tr '\n' ' ' < "$D/claude.log")" = "claude-fable-5-1 claude-fable-5-2 " ] && ! grep -rq "FAKE_TEST_SECRET" "$D/sent.log" "$D"/draft && ok "비밀 패턴이 든 초안은 거부 → 다음 모델 채택, 본문·첨부에 노출 없음" || ko "비밀 초안" "rc=$rc $(cat "$D/claude.log")"
+reset; for m in claude-fable-5-1 claude-fable-5-2 claude-opus-5-5; do echo secret > "$D/plan-$m"; done; post --date $WK
+grep -q -- "--kind warn" "$D/sent.log" && grep -q "sensitive_text" "$D/sent.log" && ! grep -q "FAKE_TEST_SECRET\|D-PRIVATE" "$D/sent.log" "$D/scrum.log" && ok "전 모델이 비밀 초안이면 분류 코드만 담은 warn, 로그에도 원문 없음" || ko "비밀 warn"
+reset; echo idtopic > "$D/plan-claude-fable-5-1"; post --date $WK
+body=$(sed -n '1,/^참고/p' "$D/sent.log"); ! printf '%s' "$body" | grep -q "LRM-123\|D-PRIVATE" && printf '%s' "$body" | grep -q "정리" && grep -q "LRM-123" "$D"/draft/*.md && ok "Slack 본문 주제에서 내부 번호 제거(첨부 원문은 유지)" || ko "주제 정제" "$body"
+reset; for m in claude-fable-5-1 claude-fable-5-2 claude-opus-5-5; do echo authfail > "$D/plan-$m"; done; post --date $WK
+grep -q -- "--kind warn" "$D/sent.log" && grep -q "exit_1" "$D/sent.log" && ! grep -q "FAKE_TEST_SECRET\|Bearer\|Authorization" "$D/sent.log" "$D/scrum.log" && ok "CLI 오류 원문(Authorization 등)은 Slack·로그에 없고 분류 코드만" || ko "오류 원문" "$(cat "$D/sent.log")"
+
 # ---- 실패 시 warn 1건 ----
 reset; for m in claude-fable-5-1 claude-fable-5-2 claude-opus-5-5; do echo fail > "$D/plan-$m"; done; post --date $WK; rc=$?
 [ $rc = 1 ] && [ "$(sent)" = 1 ] && grep -q -- "--kind warn" "$D/sent.log" && grep -q "• 무엇" "$D/sent.log" && grep -q "• 왜" "$D/sent.log" && grep -q "• 결과" "$D/sent.log" && grep -q "👉 답" "$D/sent.log" && ok "전부 실패 → warn 1건(무엇·왜·결과·답 양식), 종료 코드 1" || ko "warn" "rc=$rc $(sent)"

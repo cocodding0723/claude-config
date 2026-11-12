@@ -73,6 +73,11 @@ NET_HOST = os.environ.get("LRM_SCRUM_NET_HOST", "api.anthropic.com")
 NET_WAIT_SEC = int(os.environ.get("LRM_SCRUM_NET_WAIT", "120"))  # 깨어난 직후 네트워크가 붙기를 기다리는 최대 시간
 SOURCES = ("prs", "commits", "hub_reports", "handoffs", "instructions")  # scrum_collect.collect 의 출처 키
 REQUIRED_SOURCES = ("prs", "commits")  # 둘 다 못 모이면 초안이 근거 없음
+# Slack 본문·경고·로그에 나가면 안 되는 문자열. 첨부 초안은 비밀만, 본문 주제는 내부 번호도 거름
+SECRET_RE = re.compile(r"(?i)\b(?:token|secret|passw(?:or)?d|api[_-]?key|authorization|credential)s?\b\s*[:=]"
+                       r"|bearer\s+[A-Za-z0-9._~+/=-]{8,}|\bxox[abprs]-|\bsk-[A-Za-z0-9]{8,}|\bgh[pousr]_[A-Za-z0-9]{10,}"
+                       r"|\bAKIA[0-9A-Z]{12,}|-----BEGIN|\beyJ[A-Za-z0-9_-]{15,}\.")
+INTERNAL_ID_RE = re.compile(r"\b(?:LRM-\d+|D-[A-Za-z0-9]{1,16}|T-[A-Za-z0-9]{1,16}|ctx_[0-9a-f]+|task_[0-9a-f]+|term_[0-9a-f-]+)\b")
 SLACK_TAG = "scrum"
 NO_ATLASSIAN = "@@atlassian-unavailable@@"  # 초안 작성 claude 가 Jira·Confluence 를 못 읽었을 때 맨 끝에 붙이는 표시
 NOTIFY_EXIT_API = 1  # slack_notify.sh: 1 API 실패, 2 설정·양식 오류
@@ -141,6 +146,11 @@ def wait_network():
     return True
 
 
+def redact(text):
+    """로그용: 비밀 패턴이 있으면 그 줄 전체를 가림"""
+    return "[민감 문자열 가림]" if SECRET_RE.search(text) else text
+
+
 def parse_material(text):
     """수집기 JSON → (누락 출처 키 목록, 실패 사유 또는 ''). errors 항목은 '<출처>: <원문>' 이며 원문은 Slack 으로 내보내지 않음.
     필수 입력(prs·commits)이 둘 다 못 모였거나 전 출처가 비면서 오류가 있으면 실패: 인증 실패를 '조용한 날'로 오판하지 않기 위함"""
@@ -176,7 +186,7 @@ def validate(raw):
     lines = [ln.rstrip() for ln in raw.replace(NO_ATLASSIAN, "").splitlines() if not ln.strip().startswith("```")]
     start = next((i for i, ln in enumerate(lines) if ln.strip() == "# %s" % NAME), None)
     if start is None:
-        return None, no_atl, "'# %s' 제목 없음" % NAME
+        return None, no_atl, "heading_missing"
     body = lines[start:]
     nxt = next((i for i, ln in enumerate(body[1:], 1) if ln.startswith("# ")), None)  # 다른 사람 칸이 딸려 오면 잘라냄
     body = body[:nxt] if nxt else body
@@ -184,10 +194,13 @@ def validate(raw):
     while body and not body[-1].strip():
         body.pop()
     if not any(ln.lstrip().startswith("- ") for ln in body):
-        return None, no_atl, "불릿 없음"
+        return None, no_atl, "no_bullet"
     if len(body) > MAX_LINES:
-        return None, no_atl, "%d줄(상한 %d)" % (len(body), MAX_LINES)
-    return "\n".join(body) + "\n", no_atl, ""
+        return None, no_atl, "too_long(%d>%d)" % (len(body), MAX_LINES)
+    text = "\n".join(body) + "\n"
+    if SECRET_RE.search(text):
+        return None, no_atl, "sensitive_text"  # 초안은 첨부 파일로 나가므로 비밀 패턴이 있으면 다음 모델로
+    return text, no_atl, ""
 
 
 def ask_claude(model, prompt):
@@ -199,15 +212,16 @@ def ask_claude(model, prompt):
         out = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=CLAUDE_TIMEOUT,
                              cwd=tempfile.gettempdir())
     except subprocess.TimeoutExpired:
-        return None, "%d초 시간 초과" % CLAUDE_TIMEOUT
+        return None, "timeout"
     except OSError as e:
-        return None, "claude 실행 불가(%s) — PATH 확인" % e
+        log("claude 실행 불가(%s) — PATH 확인" % e)
+        return None, "cli_missing"
     if out.returncode != 0:
         tail = (out.stderr.strip() or out.stdout.strip())[-160:].replace("\n", " ")
-        why = "사용 한도" if re.search(r"(?i)limit|quota|한도", tail) else "종료 코드 %d" % out.returncode
-        return None, "%s: %s" % (why, tail)
+        log("claude 오류 원문(로컬 로그만): %s" % redact(tail))
+        return None, "usage_limit" if re.search(r"(?i)limit|quota|한도", tail) else "exit_%d" % out.returncode
     if not out.stdout.strip():
-        return None, "출력 비어 있음"
+        return None, "empty_output"
     return out.stdout, ""
 
 
@@ -237,7 +251,7 @@ def topics(draft):
     for ln in draft.splitlines():
         m = re.match(r"- \*\*(.+?)\*\*", ln)
         if m:
-            out.append(m.group(1))
+            out.append(" ".join(INTERNAL_ID_RE.sub("", m.group(1)).split()) or "(주제)")  # 내부 번호는 첨부에만 둠
     return out
 
 
@@ -281,7 +295,7 @@ def summary_message(date, since, draft, model, missed, no_atl, lost=()):
 
 
 def failure_message(date, fails):
-    why = " / ".join(fails)[:300] or "재료 수집 실패"
+    why = redact(" / ".join(fails)[:300]) or "collect_failed"
     return "\n".join(["스크럼 초안 작성 실패",
                       "• 무엇: %s 스크럼 초안을 못 만들었음" % date.strftime("%m-%d"),
                       "• 왜: %s" % why,
@@ -359,7 +373,7 @@ def run(a, date, state):
                 state["warned"][date.isoformat()] = int(time.time())
                 save_state(state)
             else:
-                log("warn 발송 실패 rc=%d %s" % (rc, text[:120]))
+                log("warn 발송 실패 rc=%d %s" % (rc, redact(text[:120])))
                 local_alert("초안 작성 실패 — 로그 확인")
         return 1
 
@@ -371,7 +385,7 @@ def run(a, date, state):
         return 0
     rc, text = notify(["--kind", "doc", "--tag", SLACK_TAG, summary_message(date, since, draft, model, missed, no_atl, lost), str(path)])
     if rc != 0:
-        log("Slack 발송 실패 rc=%d %s — 초안 파일 %s 남김" % (rc, text[:160], path))
+        log("Slack 발송 실패 rc=%d %s — 초안 파일 %s 남김" % (rc, redact(text[:160]), path))
         local_alert("Slack 발송 실패. 초안: %s" % path)
         return 1
     state["sent"][date.isoformat()] = {"at": int(time.time()), "model": model}

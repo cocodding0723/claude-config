@@ -8,6 +8,9 @@ echo "$m" >> "${FAKE_DIR:?}/claude.log"
 N="${FAKE_NAME:?}"
 case "$(cat "$FAKE_DIR/plan-$m" 2>/dev/null || echo ok)" in
   noatl) printf '# %s\n\n- **주제 A**\n    - 일 하나\n- **막힌 것**: 없음\n\n(참고: 설명 문장)\n@@atlassian-unavailable@@\n' "$N" ;;
+  secret) printf '# %s\n\n- **LRM-123 D-PRIVATE token=FAKE_TEST_SECRET**\n    - 일 하나\n' "$N" ;;
+  idtopic) printf '# %s\n\n- **LRM-123 D-PRIVATE 정리** (진행 중)\n    - [LRM-123](https://x/LRM-123) 일 하나\n' "$N" ;;
+  authfail) echo "401 Authorization: Bearer FAKE_TEST_SECRET_12345 invalid" >&2; exit 1 ;;
   fail) echo "usage limit reached" >&2; exit 1 ;;
   empty) exit 0 ;;
   bad) echo "초안을 못 씁니다" ;;
