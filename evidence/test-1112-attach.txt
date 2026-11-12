@@ -1,0 +1,99 @@
+# 첨부 시험 2026-11-12 17:18:35 — 브랜치 feat/report-attach-files
+## tests/report_sender/run.sh
+test_decide_card_first_then_files_in_card_thread (test_attach.AttachTest.test_decide_card_first_then_files_in_card_thread) ... ok
+test_general_report_attaches_files_to_topic_thread_with_html_preview (test_attach.AttachTest.test_general_report_attaches_files_to_topic_thread_with_html_preview) ... ok
+test_missing_file_is_permanent_and_body_still_sent (test_attach.AttachTest.test_missing_file_is_permanent_and_body_still_sent) ... ok
+test_missing_preview_script_is_skipped (test_attach.AttachTest.test_missing_preview_script_is_skipped) ... ok
+test_oversize_file_is_permanent (test_attach.AttachTest.test_oversize_file_is_permanent) ... ok
+test_preview_failure_is_skipped_and_report_continues (test_attach.AttachTest.test_preview_failure_is_skipped_and_report_continues) ... ok
+test_script_permanent_rc_posts_one_line_and_continues (test_attach.AttachTest.test_script_permanent_rc_posts_one_line_and_continues) ... ok
+test_sender_logs_warning_for_path_only_body (test_attach.AttachTest.test_sender_logs_warning_for_path_only_body) ... ok
+test_sender_no_warning_when_attached (test_attach.AttachTest.test_sender_no_warning_when_attached) ... ok
+test_thread_pinned_report_attaches_in_that_thread (test_attach.AttachTest.test_thread_pinned_report_attaches_in_that_thread) ... ok
+test_transient_upload_failure_retries_without_reposting_body_or_done_files (test_attach.AttachTest.test_transient_upload_failure_retries_without_reposting_body_or_done_files) ... ok
+test_add_no_warning_with_file_or_plain_text (test_attach.PathRuleTest.test_add_no_warning_with_file_or_plain_text) ... ok
+test_add_warns_on_missing_file_and_still_records (test_attach.PathRuleTest.test_add_warns_on_missing_file_and_still_records) ... ok
+test_add_warns_on_path_only_body_with_exit_0 (test_attach.PathRuleTest.test_add_warns_on_path_only_body_with_exit_0) ... ok
+test_existing_relative_file_is_stored_absolute (test_attach.PathRuleTest.test_existing_relative_file_is_stored_absolute) ... ok
+test_local_path_rule (test_attach.PathRuleTest.test_local_path_rule) ... ok
+test_external_api_base_is_refused_before_any_request (test_poll_budget.PollBudgetTest.test_external_api_base_is_refused_before_any_request) ... ok
+test_poll_passes_remaining_budget_as_sender_cap (test_poll_budget.PollBudgetTest.test_poll_passes_remaining_budget_as_sender_cap) ... ok
+test_poll_skips_sender_when_budget_spent (test_poll_budget.PollBudgetTest.test_poll_skips_sender_when_budget_spent) ... ok
+test_add_writes_one_line_without_slack (test_report.ReportTest.test_add_writes_one_line_without_slack) ... ok
+test_bad_hub_task_kind (test_report.ReportTest.test_bad_hub_task_kind) ... ok
+test_concurrent_adds_keep_every_line_intact (test_report.ReportTest.test_concurrent_adds_keep_every_line_intact) ... ok
+test_decide_requires_card_fields (test_report.ReportTest.test_decide_requires_card_fields) ... ok
+test_dry_run_writes_nothing (test_report.ReportTest.test_dry_run_writes_nothing) ... ok
+test_help_and_usage_error_exit_codes (test_report.ReportTest.test_help_and_usage_error_exit_codes) ... ok
+test_invalid_records_are_isolated_not_fatal (test_report.ReportTest.test_invalid_records_are_isolated_not_fatal) ... ok
+test_json_output_and_list (test_report.ReportTest.test_json_output_and_list) ... ok
+test_malformed_decision_id_rejected_at_intake (test_report.ReportTest.test_malformed_decision_id_rejected_at_intake) ... ok
+test_record_without_files_key_is_invalid (test_report.ReportTest.test_record_without_files_key_is_invalid) ... ok
+test_same_content_is_duplicate_and_ignored (test_report.ReportTest.test_same_content_is_duplicate_and_ignored) ... ok
+test_secret_in_decide_fields_rejected (test_report.ReportTest.test_secret_in_decide_fields_rejected) ... ok
+test_secret_in_hub_task_kind_rejected_without_echo (test_report.ReportTest.test_secret_in_hub_task_kind_rejected_without_echo) ... ok
+test_secret_values_rejected_with_exit_2 (test_report.ReportTest.test_secret_values_rejected_with_exit_2) ... ok
+test_text_over_three_lines_rejected (test_report.ReportTest.test_text_over_three_lines_rejected) ... ok
+test_truncated_tail_is_quarantined_and_new_report_readable (test_report.ReportTest.test_truncated_tail_is_quarantined_and_new_report_readable) ... ok
+test_unrecoverable_tail_fails_with_nonzero_exit_and_no_write (test_report.ReportTest.test_unrecoverable_tail_fails_with_nonzero_exit_and_no_write) ... ok
+test_whole_json_tail_without_newline_keeps_record (test_report.ReportTest.test_whole_json_tail_without_newline_keeps_record) ... ok
+test_attempt_cap_counts_real_attempts (test_sender.SenderTest.test_attempt_cap_counts_real_attempts) ... ok
+test_cli_once_prints_one_processing_line_per_report (test_sender.SenderTest.test_cli_once_prints_one_processing_line_per_report) ... ok
+test_concurrent_runs_only_one_proceeds (test_sender.SenderTest.test_concurrent_runs_only_one_proceeds) ... ok
+test_corrupt_state_halts_without_reposting_and_warns_once (test_sender.SenderTest.test_corrupt_state_halts_without_reposting_and_warns_once) ... ok
+test_decide_uses_button_card_form_without_thread (test_sender.SenderTest.test_decide_uses_button_card_form_without_thread) ... ok
+test_dry_run_sends_nothing_and_writes_no_state (test_sender.SenderTest.test_dry_run_sends_nothing_and_writes_no_state) ... ok
+test_empty_body_ts_state_halts_instead_of_silent_sent (test_sender.SenderTest.test_empty_body_ts_state_halts_instead_of_silent_sent) ... ok
+test_env_missing_classification_uses_whole_line_with_real_notify_script (test_sender.SenderTest.test_env_missing_classification_uses_whole_line_with_real_notify_script)
+test_exit_code_2_is_permanent_one_attempt_one_warning (test_sender.SenderTest.test_exit_code_2_is_permanent_one_attempt_one_warning) ... ok
+test_failed_topic_blocks_later_reports_of_same_topic_only (test_sender.SenderTest.test_failed_topic_blocks_later_reports_of_same_topic_only) ... ok
+test_failing_topic_does_not_starve_healthy_topic (test_sender.SenderTest.test_failing_topic_does_not_starve_healthy_topic) ... ok
+test_failure_keeps_unsent_and_retries_next_round (test_sender.SenderTest.test_failure_keeps_unsent_and_retries_next_round) ... ok
+test_first_report_makes_topic_thread_and_one_progress_line (test_sender.SenderTest.test_first_report_makes_topic_thread_and_one_progress_line) ... ok
+test_halt_warning_respects_round_deadline (test_sender.SenderTest.test_halt_warning_respects_round_deadline) ... ok
+test_invalid_record_isolated_and_later_reports_still_sent (test_sender.SenderTest.test_invalid_record_isolated_and_later_reports_still_sent) ... ok
+test_missing_env_exit_2_is_transient (test_sender.SenderTest.test_missing_env_exit_2_is_transient) ... ok
+test_missing_progress_parent_skips_line_but_marks_sent (test_sender.SenderTest.test_missing_progress_parent_skips_line_but_marks_sent) ... ok
+test_missing_state_file_is_initial_state (test_sender.SenderTest.test_missing_state_file_is_initial_state) ... ok
+test_other_task_gets_its_own_topic_thread (test_sender.SenderTest.test_other_task_gets_its_own_topic_thread) ... ok
+test_progress_line_failure_retry_does_not_repost_body (test_sender.SenderTest.test_progress_line_failure_retry_does_not_repost_body) ... ok
+test_queued_invalid_decision_ids_are_stopped_without_resend (test_sender.SenderTest.test_queued_invalid_decision_ids_are_stopped_without_resend)
+test_record_without_files_key_does_not_stop_later_reports (test_sender.SenderTest.test_record_without_files_key_does_not_stop_later_reports) ... ok
+test_repair_lock_wait_respects_budget (test_sender.SenderTest.test_repair_lock_wait_respects_budget) ... ok
+test_retry_cap_stops_with_one_warning_in_topic_thread (test_sender.SenderTest.test_retry_cap_stops_with_one_warning_in_topic_thread) ... ok
+test_second_report_same_task_replies_in_same_thread (test_sender.SenderTest.test_second_report_same_task_replies_in_same_thread) ... ok
+test_sender_passes_no_slack_secrets_to_notify (test_sender.SenderTest.test_sender_passes_no_slack_secrets_to_notify) ... ok
+test_sender_quarantines_truncated_tail_and_continues (test_sender.SenderTest.test_sender_quarantines_truncated_tail_and_continues) ... 경고: outbox 끝의 잘린 줄 10바이트를 /var/folders/mb/130tt8qx31112yx1j11l965h0000gn/T/tmp92805kq9/box.jsonl.corrupt 로 옮김
+test_sender_repairs_missing_trailing_newline_of_whole_record (test_sender.SenderTest.test_sender_repairs_missing_trailing_newline_of_whole_record) ... ok
+test_sent_report_not_resent (test_sender.SenderTest.test_sent_report_not_resent) ... ok
+test_stop_warning_retry_keeps_transient_cause (test_sender.SenderTest.test_stop_warning_retry_keeps_transient_cause) ... ok
+test_stop_without_saved_cause_warns_neutral_not_input_error (test_sender.SenderTest.test_stop_without_saved_cause_warns_neutral_not_input_error) ... ok
+test_transient_failures_back_off (test_sender.SenderTest.test_transient_failures_back_off) ... ok
+test_unreadable_state_halts_and_wrong_shape_halts (test_sender.SenderTest.test_unreadable_state_halts_and_wrong_shape_halts) ... ok
+test_unreleased_repair_lock_never_blocks_now_run_forever (test_sender.SenderTest.test_unreleased_repair_lock_never_blocks_now_run_forever) ... ok
+test_bad_ts_rejected (test_thread.ThreadTest.test_bad_ts_rejected) ... ok
+test_channel_option_is_not_supported (test_thread.ThreadTest.test_channel_option_is_not_supported) ... ok
+test_done_follow_up_goes_to_same_thread (test_thread.ThreadTest.test_done_follow_up_goes_to_same_thread) ... ok
+test_now_send_failure_keeps_record_and_exit_zero (test_thread.ThreadTest.test_now_send_failure_keeps_record_and_exit_zero) ... ok
+test_now_sends_right_after_recording (test_thread.ThreadTest.test_now_sends_right_after_recording) ... ok
+test_now_when_sender_busy_leaves_report_for_next_round (test_thread.ThreadTest.test_now_when_sender_busy_leaves_report_for_next_round) ... ok
+test_now_with_dry_run_does_not_send (test_thread.ThreadTest.test_now_with_dry_run_does_not_send) ... ok
+test_same_thread_report_is_deduplicated_but_other_thread_is_not (test_thread.ThreadTest.test_same_thread_report_is_deduplicated_but_other_thread_is_not) ... ok
+test_secret_in_thread_rejected (test_thread.ThreadTest.test_secret_in_thread_rejected) ... ok
+test_sender_isolates_legacy_record_with_channel_and_continues (test_thread.ThreadTest.test_sender_isolates_legacy_record_with_channel_and_continues) ... ok
+test_thread_only_for_warn_and_done (test_thread.ThreadTest.test_thread_only_for_warn_and_done) ... ok
+test_thread_report_replies_in_given_thread_without_progress_line (test_thread.ThreadTest.test_thread_report_replies_in_given_thread_without_progress_line) ... ok
+Ran 86 tests in 8.951s
+OK
+## tests/slack_notify/run.sh (알림 스크립트 시험)
+PASS  J 첨부+--options: 첫 호출이 버튼 달린 카드(chat.postMessage)
+PASS  J 파일은 카드 ts 의 스레드로 업로드
+PASS  J 보낸 기록: 카드(ts·decision_id) 1줄 + 파일 1줄(카드 필드 없음)
+PASS  J 첨부 파일이 없으면 카드도 보내지 않음(종료 코드 2)
+PASS  J --options 없는 결정 카드 → 버튼 없음 경고(전송은 함)
+PASS  J --options 카드는 경고 없음
+
+결과: PASS 294, FAIL 0
+## 문법
+py_compile ok
+bash -n ok

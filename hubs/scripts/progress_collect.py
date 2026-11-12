@@ -45,6 +45,7 @@ BUCKETS = (
 LABEL = {b: name for b, name, _ in BUCKETS}
 ICON = {b: icon for b, _, icon in BUCKETS}
 # 사용자가 움직여야 풀리는 문구. 장부 진행 칸·허브 줄이 포함하면 '답 대기'. "승인 요청" 같은 앞으로의 일은 넓게 잡으면 오분류라 제외
+LINK_BASE = "https://slack.com/archives"  # report_sender.py 의 permalink 와 같은 형식
 WAIT_WORDS = ("병합 대기", "승인 대기", "답 대기", "결정 대기", "사용자 실행 대기", "사용자 답", "사용자 확인")
 STALE_TAG = "낡음"
 PR_PREFIX = "pr:"
@@ -244,12 +245,18 @@ def query_pending(now):
         raise SourceError(f"결정 대기 읽기 실패({e.code})")
 
 
+def card_link(p):
+    """결정 카드의 Slack 메시지 링크. 채널·ts 가 없으면 빈 문자열(링크 생략). 수집기는 토큰이 없어 chat.getPermalink 대신 같은 형식 주소를 만듦"""
+    ch, ts = p.get("channel"), p.get("ts")
+    return f"{LINK_BASE}/{ch}/p{ts.replace('.', '')}" if isinstance(ch, str) and ch and isinstance(ts, str) and ts else ""
+
+
 def decision_items(pending):
     """panel_collect 의 pending 값({count, items}) → 답 대기 항목"""
     out = []
     for p in (pending or {}).get("items", []):
         ident = p.get("id") or short_hash(str(p.get("title", "")))
-        out.append(item(f"decision:{ident}", WAIT, f"결정 {p.get('title', '')}", "결정"))
+        out.append(item(f"decision:{ident}", WAIT, f"결정 {p.get('title', '')}", "결정", card_link(p)))
     return out
 
 

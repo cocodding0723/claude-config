@@ -50,11 +50,11 @@ class ReportTest(unittest.TestCase):
 
     def test_malformed_decision_id_rejected_at_intake(self):
         for did in ("D-bad id", "x-1", "D-", "D-" + "a" * 17, "D-한글"):
-            r = self.add(text="제목\n배경", kind="decide", extra=["--options", "1=a,2=b", "--recommend", "1", "--decision-id", did])
+            r = self.add(text="제목\n배경", kind="decide", extra=["--options", "1=a,2=b", "--recommend", "1", "--decision-id", did, "--no-doc"])
             self.assertEqual(r.returncode, 2, did)
             self.assertIn("형식 오류: D-영문·숫자 1~16자", r.stderr)
         self.assertEqual(self.rows(), [])
-        r = self.add(text="제목\n배경", kind="decide", extra=["--options", "1=a,2=b", "--recommend", "1", "--decision-id", "D-" + "a" * 16])
+        r = self.add(text="제목\n배경", kind="decide", extra=["--options", "1=a,2=b", "--recommend", "1", "--decision-id", "D-" + "a" * 16, "--no-doc"])
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_secret_values_rejected_with_exit_2(self):
@@ -82,7 +82,7 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(r.returncode, 2)
         self.assertIn("--options", r.stderr)
         ok = self.add(text="시각 정하기\n배경", kind="decide",
-                      extra=["--options", "1=9시,2=10시", "--recommend", "1", "--decision-id", "D-0101"])
+                      extra=["--options", "1=9시,2=10시", "--recommend", "1", "--decision-id", "D-0101", "--no-doc"])
         self.assertEqual(ok.returncode, 0, ok.stderr)
         self.assertEqual(self.rows()[0]["decision_id"], "D-0101")
         self.assertEqual(self.add(extra=["--recommend", "1"]).returncode, 2)  # decide 가 아닌데 카드 필드

@@ -389,6 +389,7 @@ def collect_pending(now):
         at = s.get("at")
         items.append({"title": title.split("\n")[0][:TITLE_MAX],
                       "ageMin": int((now - at) // 60) if isinstance(at, (int, float)) else None,
+                      "ts": ts, "channel": s.get("channel") if isinstance(s.get("channel"), str) else None,  # 카드 Slack 링크용
                       "id": s["decision_id"] if card else None,
                       "state": cards[ts] if card else None})
     return {"count": len(items), "items": items}

@@ -26,6 +26,9 @@ usage() {
   --seq        (--options 선택) 순번/전체(예 3/9)
   --todo-id    (--kind todo 전용) 할 일 번호 T-영문·숫자 1~16자. 본문에 답 줄이 없으면 완료 안내 줄을 붙임
   --alive      주제(첫 줄) 아래에 봇 생존 줄('봇: 연결됨 · 마지막 수신 N분 전', bot_alive.py)을 넣음. 정기 점검·진행 메시지용
+  --attached   (반복 가능) 같은 보고에서 따로 첨부하는 파일. 본문 경로 검사에서 이 파일의 경로는 첨부된 것으로 봄. 첫 번째 파일 인자도 같음
+  --link-to    해당 ts 메시지의 Slack 링크(chat.getPermalink)를 본문 끝에 넣음. 조회 실패하면 링크 없이 전송
+  --no-doc     (--kind decide 전용) 근거 문서 없는 결정임을 명시. decide 는 파일 인자·--attached 가 없으면 이게 있어야 보냄
   --no-check   양식 검사 생략(slack-sent.jsonl 에 unchecked:true 기록)
 환경 변수: LRM_BTN_WARN=off 는 '버튼 없음' 경고를 끔(시험용). LRM_FORMAT=warn|strict|off (기본 warn). warn 은 위반해도 전송하고 stderr 경고, strict 는 위반 시 미전송·종료 코드 2
   --kind decide 는 결정이 2개 이상이거나 python3 검사가 실패하면 모드와 무관하게 미전송·종료 코드 2(결정 1건 = 메시지 1개). --no-check·off 로 우회하면 로그에 한 줄 남음
@@ -37,9 +40,12 @@ usage() {
   slack_notify.sh --kind decide --choices 3 "알림 시각 정하기"
   slack_notify.sh --kind decide --options '1=오전 9시,2=오전 10시' --recommend 1 --decision-id D-0001 --seq 1/3 "알림 시각"
 종료 코드: 0 성공, 1 API 실패, 2 설정·인자·양식 오류
+본문·참고에 로컬 문서·이미지 경로(.html .png .jpg .gif .mp4 .pdf, 폴더 포함)가 있는데 같은 파일이 첨부로 오지 않거나 첨부가 비밀 파일(.env·키·인증서·~/.ssh 등)이면 미전송·종료 코드 2(--no-check 로도 못 풀림).
+판정은 hub_report.py check-text 가 함(환경 변수 LRM_HUB_REPORT 로 경로 재정의). decide 카드(--options) 본문은 전송기와 같은 '- ' 줄 양식으로 정리함(hub_report.bullet_body).
 EOF
 }
 die() { echo "$1" >&2; exit 2; }
+ATTACHED=() LINK_TO="" NO_DOC=0
 TAG="" TITLE="" THREAD="" KIND="" NOCHECK=0 ALIVE=0CHOICES="" CHOICES_SET=0 EMOJISET=custom
 # 번호 카드 인자. 값 검증은 FORM_PY opts 가 함. *_SET 은 빈 값으로 준 경우도 '준 것'으로 보기 위함
 OPTIONS="" OPT_SET=0 RECOMMEND="" REC_SET=0 REVERSIBLE="" REV_SET=0 DECISION_ID="" DID_SET=0 SEQ="" SEQ_SET=0 TODO_ID="" TID_SET=0
@@ -58,6 +64,9 @@ while [ $# -gt 0 ]; do
     --decision-id) [ $# -ge 2 ] || die "--decision-id 값 필요 — 예 D-0001"; DECISION_ID="$2" DID_SET=1; shift 2 ;;
     --seq) [ $# -ge 2 ] || die "--seq 값 필요 — 예 3/9"; SEQ="$2" SEQ_SET=1; shift 2 ;;
     --todo-id) [ $# -ge 2 ] || die "--todo-id 값 필요 — 예 T-0001"; TODO_ID="$2" TID_SET=1; shift 2 ;;
+    --attached) ATTACHED+=("${2:?--attached 값 필요}"); shift 2 ;;
+    --link-to) LINK_TO="${2:?--link-to 값 필요}"; shift 2 ;;
+    --no-doc) NO_DOC=1; shift ;;
     --no-check) NOCHECK=1; shift ;;
     --alive) ALIVE=1; shift ;;
     --) shift; break ;;
@@ -88,7 +97,19 @@ fi
 if [ "$TID_SET" = 1 ] && [ "$KIND" != todo ]; then die "--todo-id 는 --kind todo 와만 사용 — --kind todo 를 함께 지정"; fi
 # 폴러·대기 목록은 최상위 메시지의 반응만 읽음. 스레드 답글로 나간 카드는 답할 수 없으므로 미전송
 if [ -n "$THREAD" ] && { [ "$OPT_SET" = 1 ] || [ "$TID_SET" = 1 ]; }; then die "--thread 는 --options·--todo-id 카드와 함께 쓸 수 없음 — 스레드 답글의 반응은 수집되지 않으므로 --thread 를 빼고 보내세요"; fi
+# 결정은 근거 문서 첨부가 계약(hub_report.py 와 같음). 문서 없는 결정만 --no-doc 로 명시
+if [ "$NO_DOC" = 1 ] && [ "$KIND" != decide ]; then die "--no-doc 는 --kind decide 와만 사용 — --kind decide 를 함께 지정"; fi
+if [ "$KIND" = decide ] && [ "$NO_DOC" = 0 ] && [ $# -lt 2 ] && [ ${#ATTACHED[@]} -eq 0 ]; then
+  die "decide 는 문서 첨부 필요 — 파일 경로를 마지막 인자로 주거나 --attached 로 알리고, 문서 없는 결정이면 --no-doc 를 명시(전송 안 함)"
+fi
 [ "$OPT_SET" = 0 ] || [ $# -lt 2 ] || [ -f "$2" ] || die "첨부 파일 없음: $2 — 경로 확인 뒤 다시 보내세요(카드도 보내지 않음)"
+# 본문·참고의 로컬 경로가 첨부와 짝이 맞는지, 첨부가 비밀 파일이 아닌지. 검사 도구가 없거나 실패해도 미전송(닫힌 쪽으로)
+HR="${LRM_HUB_REPORT:-$(dirname "$(readlink "$0" || echo "$0")")/hub_report.py}"
+[ -f "$HR" ] || die "경로·첨부 검사 도구 없음: hub_report.py — 알림 스크립트와 같은 폴더에 설치 필요"
+ATT=(); [ $# -lt 2 ] || ATT=(--attached "$2")
+for a in ${ATTACHED[@]+"${ATTACHED[@]}"}; do ATT+=(--attached "$a"); done
+if ! CHK="$(printf '%s' "$1" | python3 -I "$HR" check-text ${ATT[@]+"${ATT[@]}"} 2>&1)"; then die "${CHK#오류: }"; fi
+if [ -n "$LINK_TO" ]; then printf '%s' "$LINK_TO" | grep -Eq '^[0-9]{1,12}\.[0-9]{1,9}$' || die "--link-to 형식 오류 — Slack 메시지 ts(숫자.숫자)"; fi
 DIR="$HOME/.config/lrm-hubs"
 ENV="$DIR/slack-bot.env"
 SENT="$DIR/slack-sent.jsonl"
@@ -98,6 +119,8 @@ FMTLOG="$DIR/slack-format.log"
 : "${SLACK_BOT_TOKEN:?}" "${SLACK_USER_ID:?}"
 API="${SLACK_API_BASE:-https://slack.com/api}"  # SLACK_API_BASE: 시험용 주소 재정의
 MSG="$1"
+# 결정 카드 본문은 전송기와 같은 줄 양식(제목 + '- ' 배경). 직접 호출도 같은 모양으로 나가게 함
+if [ "$OPT_SET" = 1 ]; then MSG="$(printf '%s' "$MSG" | python3 -I "$HR" bullet-body)" || die "카드 본문 정리 실패(전송 안 함) — hub_report.py 확인"; fi
 # 생존 줄은 주제 아래에 둠(첫 줄 40자 검사·알림 미리보기는 주제 그대로). 조회 실패는 전송에 영향 없음
 if [ "$ALIVE" = 1 ]; then
   ALIVE_LINE="$(python3 "${LRM_BOT_ALIVE:-$(dirname "$(readlink "$0" || echo "$0")")/bot_alive.py}" 2>/dev/null || true)"
@@ -526,6 +549,22 @@ fi
 
 [ -n "$TITLE" ] || TITLE="${MSG%%$'\n'*}"
 CH=$(curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -d "users=$SLACK_USER_ID" $API/conversations.open | python3 -c 'import sys,json;print(json.load(sys.stdin)["channel"]["id"])')
+# 다른 메시지로 가는 링크. 조회 실패는 링크만 생략(전송은 계속)
+if [ -n "$LINK_TO" ]; then
+  LINK="$(curl -s -G -H "Authorization: Bearer $SLACK_BOT_TOKEN" --data-urlencode "channel=$CH" --data-urlencode "message_ts=$LINK_TO" $API/chat.getPermalink \
+    | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d["permalink"] if d.get("ok") else "")' 2>/dev/null || true)"
+  if [ -n "$LINK" ]; then  # 링크는 마지막 '참고:' 줄 앞에(참고 블록이 맨 아래). 참고 줄이 없으면 끝에
+    MSG="$(printf '%s' "$MSG" | python3 -c '
+import sys
+lines = sys.stdin.read().split("\n")
+idx = max((i for i, l in enumerate(lines) if l.lstrip().startswith("참고:")), default=len(lines))
+link = "<%s|결정 카드 열기>" % sys.argv[1]
+while idx > 0 and lines[idx - 1] == "":
+    idx -= 1
+tail = lines[idx:] if idx < len(lines) else []
+print("\n".join(lines[:idx] + ["", link] + ([""] + tail if tail else [])), end="")' "$LINK")"
+  else echo "경고: 링크 조회 실패 — 링크 없이 전송" >&2; fi
+fi
 
 # 응답 JSON 을 받아 ok/에러 출력 + 성공 시 sent 기록. ts 는 postMessage 만 제공, 파일 업로드는 file_id 로 남김.
 # form_kind(--kind 지정 시), unchecked(--no-check 시), 카드 필드(decision_id·options·recommended·reversible·seq 또는 todo_id)는
@@ -544,7 +583,7 @@ if kind=="file":
     rec["file_id"]=(d.get("files") or [{}])[0].get("id","")
     rec["path"]=os.environ.get("LRM_FILE_PATH","")
 with open(sent,"a",encoding="utf-8") as f: f.write(json.dumps(rec,ensure_ascii=False)+"\n")
-print("ok", rec["ts"])
+print("ok file_id=" + rec["file_id"] if kind=="file" else "ok " + rec["ts"])
 ' "$SENT" "$CH" "$TITLE" "$TAG" "$THREAD" "$1" "$KIND" "$NOCHECK" "${2-$CARD_JSON}"
 }
 

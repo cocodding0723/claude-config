@@ -1,0 +1,13 @@
+# 첨부 규칙 강화 시험 2026-11-12 17:39:47 — feat/report-attach-files
+## tests/report_sender/run.sh
+Ran 102 tests in 10.205s
+OK
+## tests/progress_digest/run.sh
+Ran 42 tests in 15.666s
+OK
+## tests/slack_notify/run.sh
+결과: PASS 311, FAIL 0
+## tests/panel/run.sh
+FAIL  dup — 
+결과: 통과 85, 실패 1
+(panel 1건 'dup' 은 병렬 실행 중 일시 실패, 단독 재실행 통과 86 실패 0)

@@ -1,0 +1,23 @@
+# 최종 리뷰 수정 시험 2026-11-12 17:50:09
+## tests/report_sender/run.sh
+Ran 108 tests in 12.393s
+OK
+## tests/progress_digest/run.sh
+Ran 42 tests in 16.847s
+OK
+## tests/slack_notify/run.sh
+PASS  M --no-doc 명시하면 통과
+PASS  M --attached 로 따로 첨부를 알리면 통과
+PASS  M 파일 인자가 있으면 통과
+결과: PASS 326, FAIL 0
+## tests/panel/run.sh
+PASS  중간 쪽 실패 → 워커 숫자는 실패 처리(부분 숫자를 맞는 값처럼 싣지 않음)
+PASS  부분 실패 → 그 부분만 이전 값 유지, ok:false·stale·err 에 부분:종류
+PASS  mod 순수 함수 node 시험 17건 통과
+결과: 통과 85, 실패 1
+## tests/restart_watch/run.sh
+PASS  실패 뒤 같은 신원이면 재시작 아님
+PASS  전송 실패: 종료 1·원인 안내·등록 철회
+PASS  전송 실패 뒤 재시도: 카드 1개 추가(총 3개)
+결과: PASS 44, FAIL 0
+(panel 'dup' 1건은 분 경계 시간 의존으로 간헐 실패 — 3회 재실행 중 2회 통과 86/0, 이번 변경과 무관한 quietMin 판정)
