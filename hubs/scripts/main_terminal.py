@@ -4,26 +4,34 @@
 Orca 재시작으로 터미널 핸들이 바뀌면 main.env 의 MAIN_TERMINAL 이 낡아 전달이 멈춤. 사람이 고쳐야 풀리는 사유(REDISCOVER)일 때
 orca terminal list 에서 메인 후보를 찾고, 정확히 1개면 MAIN_TERMINAL 줄만 원자적으로 교체함. 0개·2개 이상이면 건드리지 않고 후보 수만 돌려줌.
 핸들 값은 출력하지 않음(호출자가 로그에 앞 글자만 남김). Orca 호출은 run(args, timeout) -> (rc, JSON|None) 으로 주입받음.
+후보 = 제목이 TITLE_KEY 로 시작하는 메인 체크아웃의 claude 터미널(워커 제목에 표식이 끼어도 후보가 되지 않게 앞부분 일치).
+main.env 갱신은 파일 잠금 아래에서 재검증하고 읽은 내용이 그대로일 때만 교체함(폴러·소켓·set_main_terminal.sh 공유).
 
-CLI: main_terminal.py [--dry-run] [--env 경로]   종료 코드 0 갱신(또는 dry-run 에서 1개 발견), 2 오류, 3 후보 0개·2개 이상
+CLI: main_terminal.py [--dry-run] [--env 경로]   재탐색. 종료 코드 0 갱신(또는 dry-run 에서 1개 발견), 2 오류, 3 후보 0개·2개 이상
+     main_terminal.py --set <핸들> [--env 경로]   잠금 아래에서 MAIN_TERMINAL 줄 기록. 종료 코드 0, 2 형식·쓰기 오류
 """
+import contextlib
+import fcntl
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 
 HANDLE_RE = re.compile(r"term_[0-9a-f-]+")  # fullmatch 로만 씀. $ 는 끝 개행을 통과시킴
 MAIN_KEY = "MAIN_TERMINAL="
-TITLE_KEY = "MAIN-HANDOFF"  # 메인 터미널 제목에 들어가는 표식
+TITLE_KEY = "MAIN-HANDOFF"  # 메인 터미널 제목의 시작 표식(예: "MAIN-HANDOFF.md 메인 코디네이터"). 중간에 낀 경우는 후보 아님
 # Orca CLI 가 터미널 핸들 무효로 취급하는 오류 코드(번들 handlers/orchestration/terminal-identity.js). 그 밖(runtime_unavailable·시간 초과 등)은 일시 오류
 HANDLE_GONE_CODES = frozenset({"terminal_handle_stale", "terminal_gone", "terminal_not_found"})
 # main.env 를 사람이 고쳐야 풀리는 사유. 재탐색 대상. not_writable(일시 상태)·show_fail(조회 실패)·화면 상태는 제외
 REDISCOVER = frozenset({"no_main_handle", "handle_gone", "handle_dead", "wrong_worktree", "not_claude", "pane_title_mismatch"})
 LIST_ARGS = ["terminal", "list", "--limit", "1000", "--json"]
 LIST_TIMEOUT = 20
+LOCK_NAME, LOCK_WAIT = ".main-env.lock", 60  # main.env 옆 잠금 파일. 재탐색은 orca 호출 몇 번을 품으므로 넉넉히 기다림
+WRITE_TRIES = 3
 EXIT_NONE = 3
 
 
@@ -42,7 +50,7 @@ class Spec:
 
 @dataclass(frozen=True)
 class Found:
-    """재탐색 결과. status: updated | would_update(dry-run) | none | many | fail. count 는 후보 수(fail 이면 0)"""
+    """재탐색 결과. status: updated | would_update(dry-run) | current_ok(이미 정상) | none | many | fail. count 는 후보 수(fail 이면 0)"""
     status: str
     count: int = 0
     handle: str = ""
@@ -115,84 +123,159 @@ def check_link(run, spec, handle):
 
 
 def list_rows(run):
-    """terminal list 의 행 목록|None(조회 실패·목록 잘림). 잘린 목록은 개수·부재를 믿을 수 없음"""
+    """terminal list 의 행 목록|None(조회 실패·목록 잘림·모양 이상). 모든 행이 term_ 핸들을 가져야 믿음:
+    한 행이라도 어긋나면 그 행이 찾는 터미널일 수 있어 '목록에 없음'을 단정할 수 없음"""
     rc, d = run(LIST_ARGS, LIST_TIMEOUT)
     res = (d or {}).get("result") if isinstance(d, dict) else None
     rows = res.get("terminals") if isinstance(res, dict) else None
     if rc != 0 or not isinstance(rows, list) or res.get("truncated"):
         return None
-    return [t for t in rows if isinstance(t, dict)]
+    if not all(isinstance(t, dict) and isinstance(t.get("handle"), str) and HANDLE_RE.fullmatch(t["handle"]) for t in rows):
+        return None
+    return rows
 
 
 def candidates(run, spec):
-    """메인 후보 핸들 목록|None(조회 실패·목록 잘림). 제목에 TITLE_KEY 포함 + target_why 통과(메인 체크아웃·claude·연결됨·쓰기 가능)"""
+    """메인 후보 핸들 목록|None(조회 실패·목록 잘림·모양 이상). 제목이 TITLE_KEY 로 시작 + target_why 통과(메인 체크아웃·claude·연결됨·쓰기 가능)"""
     rows = list_rows(run)
     if rows is None:
         return None
     out = []
     for t in rows:
-        h = t.get("handle")
-        if isinstance(h, str) and HANDLE_RE.fullmatch(h) and TITLE_KEY in str(t.get("title") or "") and not target_why(t, spec) and h not in out:
+        h = t["handle"]
+        if str(t.get("title") or "").startswith(TITLE_KEY) and not target_why(t, spec) and h not in out:
             out.append(h)
     return out
 
 
-def is_dead(run, match):
-    """match(핸들)가 참인 터미널의 생사: 'dead'(목록에 없거나 끊김·고아) | 'alive' | 'unknown'(조회 실패). 핸들 원문 없이 해시 등으로만 아는 터미널 확인용"""
+def fate(run, match):
+    """match(핸들)가 참인 터미널의 생사: 'dead' | 'alive' | 'unknown'. 핸들 원문 없이 해시 등으로만 아는 터미널 확인용.
+    dead 는 종료 근거가 있을 때만: 목록 전체 조회가 성공했고(잘림·행 모양 이상 없음) 그 핸들이 없음.
+    목록에 있으면 연결·고아 표시로 종료를 단정할 수 없음(입력은 갔는데 통신만 끊겼을 수 있음) → 연결 정상이면 alive, 아니면 unknown.
+    조회 실패도 unknown"""
     rows = list_rows(run)
     if rows is None:
         return "unknown"
-    hit = [t for t in rows if isinstance(t.get("handle"), str) and match(t["handle"])]
-    return "alive" if any(t.get("connected") is True and not t.get("orphaned") for t in hit) else "dead"
+    hit = [t for t in rows if match(t["handle"])]
+    if not hit:
+        return "dead"
+    return "alive" if any(t.get("connected") is True and not t.get("orphaned") for t in hit) else "unknown"
+
+
+@contextlib.contextmanager
+def env_lock(path, wait=LOCK_WAIT):
+    """main.env(링크면 최종 대상) 옆 잠금 파일의 배타 잠금. wait 초 안에 못 얻으면 TimeoutError"""
+    d = os.path.dirname(os.path.realpath(path))
+    os.makedirs(d, exist_ok=True)
+    fd = os.open(os.path.join(d, LOCK_NAME), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        end = time.time() + wait
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.time() >= end:
+                    raise TimeoutError("main.env 잠금 대기 초과")
+                time.sleep(0.05)
+        yield
+    finally:
+        os.close(fd)  # 닫으면 잠금도 풀림
+
+
+def read_lines(path):
+    """main.env 줄 목록(원형·줄 끝 포함)|None(파일 없음)"""
+    try:
+        with open(path, encoding="utf-8", errors="surrogateescape", newline="") as f:
+            return f.readlines()
+    except FileNotFoundError:
+        return None
+
+
+def raw_values(lines):
+    """MAIN_TERMINAL 줄 값 목록(읽은 그대로). 갱신 전후 비교용"""
+    return [ln[len(MAIN_KEY):].strip() for ln in lines or [] if ln.startswith(MAIN_KEY)]
 
 
 def write_handle(path, handle):
     """main.env 의 MAIN_TERMINAL 줄만 교체(없으면 추가). 다른 줄은 원형 보존, 권한 600, 임시 파일 뒤 원자적 교체.
-    path 가 링크면 링크는 두고 최종 대상을 교체. set_main_terminal.sh 와 같은 규칙"""
+    path 가 링크면 링크는 두고 최종 대상을 교체. 호출자가 env_lock 안에서 부름.
+    교체 직전에 파일을 다시 읽어 처음 읽은 내용과 다르면(잠금 밖 편집) 새 내용으로 다시 만듦(WRITE_TRIES 회). 끝내 바뀌면 BlockingIOError"""
     path = os.path.realpath(path)
     d = os.path.dirname(path)
     os.makedirs(d, exist_ok=True)
-    keep = []
-    try:
-        with open(path, encoding="utf-8", errors="surrogateescape", newline="") as f:
-            keep = [ln for ln in f if not ln.startswith(MAIN_KEY)]
-    except FileNotFoundError:
-        pass
-    fd, tmp = tempfile.mkstemp(prefix=".main.env.", dir=d)  # mkstemp 는 600 으로 만듦
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
-            f.writelines(keep)
-            if keep and not keep[-1].endswith("\n"):
-                f.write("\n")
-            f.write(f"{MAIN_KEY}{handle}\n")
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
-    except BaseException:
+    for _ in range(WRITE_TRIES):
+        before = read_lines(path)
+        keep = [ln for ln in before or [] if not ln.startswith(MAIN_KEY)]
+        fd, tmp = tempfile.mkstemp(prefix=".main.env.", dir=d)  # mkstemp 는 600 으로 만듦
         try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
+            with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
+                f.writelines(keep)
+                if keep and not keep[-1].endswith("\n"):
+                    f.write("\n")
+                f.write(f"{MAIN_KEY}{handle}\n")
+            os.chmod(tmp, 0o600)
+            if read_lines(path) == before:
+                os.replace(tmp, path)
+                return
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+    raise BlockingIOError("main.env 가 계속 바뀜")
 
 
 def rediscover(run, spec, env_path, dry_run=False):
-    """후보가 정확히 1개면 main.env 를 갱신. 쓰기 실패는 status=fail"""
-    found = candidates(run, spec)
-    if found is None:
-        return Found("fail")
-    if len(found) != 1:
-        return Found("none" if not found else "many", len(found))
-    if dry_run:
-        return Found("would_update", 1, found[0])
+    """메인 연결이 끊겼을 때 후보가 정확히 1개면 main.env 를 갱신. 잠금 아래에서 현재 핸들을 다시 확인해
+    그 사이 다른 쪽이 고쳤으면(연결 정상) 쓰지 않고 status=current_ok. 쓰기·잠금 실패는 status=fail"""
     try:
-        write_handle(env_path, found[0])
-    except OSError:
-        return Found("fail", 1)
-    return Found("updated", 1, found[0])
+        with contextlib.nullcontext() if dry_run else env_lock(env_path):
+            cur = read_handle(env_path)
+            if cur:
+                _, why = check_link(run, spec, cur)
+                if why not in REDISCOVER:
+                    return Found("current_ok", 0, cur)  # 이미 고쳐졌거나 일시 오류(조회 실패·쓰기 불가)면 건드리지 않음
+            found = candidates(run, spec)
+            if found is None:
+                return Found("fail")
+            if len(found) != 1:
+                return Found("none" if not found else "many", len(found))
+            if dry_run:
+                return Found("would_update", 1, found[0])
+            write_handle(env_path, found[0])
+            return Found("updated", 1, found[0])
+    except (OSError, TimeoutError):
+        return Found("fail")
+
+
+def set_handle(path, handle):
+    """수동 기록: 형식 확인 뒤 잠금 아래에서 MAIN_TERMINAL 교체"""
+    if not HANDLE_RE.fullmatch(handle):
+        raise ValueError("핸들 형식 오류")
+    with env_lock(path):
+        write_handle(path, handle)
 
 
 def main(argv):
     args = argv[1:]
+    if args[:1] == ["--set"]:
+        env = os.environ.get("LRM_MAIN_ENV") or os.path.expanduser("~/.config/lrm-hubs/main.env")
+        if len(args) == 4 and args[2] == "--env":
+            env, args = args[3], args[:2]
+        if len(args) != 2:
+            print("사용: main_terminal.py --set <핸들> [--env 경로]", file=sys.stderr)
+            return 2
+        try:
+            set_handle(env, args[1])
+        except ValueError:
+            print("핸들 형식 오류: term_ 뒤에 16진·하이픈만 허용 — orca terminal list 의 handle 값을 그대로 넣음", file=sys.stderr)
+            return 2
+        except (OSError, TimeoutError) as err:
+            print(f"main.env 기록 실패({type(err).__name__}) — 폴더 권한·다른 갱신 작업 확인", file=sys.stderr)
+            return 2
+        print(f"MAIN_TERMINAL 기록함 — {os.path.basename(env)} (값은 출력하지 않음)")
+        return 0
     dry = "--dry-run" in args
     args = [a for a in args if a != "--dry-run"]
     env = os.environ.get("LRM_MAIN_ENV") or os.path.expanduser("~/.config/lrm-hubs/main.env")
@@ -203,6 +286,9 @@ def main(argv):
         return 2
     orca = os.environ.get("LRM_PUSH_ORCA", "orca")
     f = rediscover(lambda a, t: run_orca(orca, a, t), Spec.from_env(), env, dry)
+    if f.status == "current_ok":
+        print("메인 연결이 이미 정상 — 바꾸지 않음")
+        return 0
     if f.status in ("updated", "would_update"):
         verb = "갱신함" if f.status == "updated" else "발견함(dry-run, main.env 변경 없음)"
         print(f"메인 터미널 후보 1개 {verb} — {f.handle[:8]}…")
@@ -211,7 +297,7 @@ def main(argv):
         print("메인 터미널 재탐색 실패 — orca terminal list 응답·main.env 쓰기 권한 확인", file=sys.stderr)
         return 2
     print(f"메인 터미널 후보 {f.count}개 — "
-          + ("제목에 MAIN-HANDOFF 가 있는 메인 체크아웃 claude 터미널이 없음. 메인을 띄운 뒤 다시 실행" if f.count == 0
+          + ("제목이 MAIN-HANDOFF 로 시작하는 메인 체크아웃 claude 터미널이 없음. 메인을 띄운 뒤 다시 실행" if f.count == 0
              else "하나로 못 정함. orca terminal list 에서 골라 set_main_terminal.sh <핸들> 로 지정"), file=sys.stderr)
     return EXIT_NONE
 

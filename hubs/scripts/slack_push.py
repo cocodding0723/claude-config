@@ -498,7 +498,6 @@ def main_handle():
 
 
 def target_why(t):
-    """show 로 받은 터미널이 메인 세션이 아니면 사유 코드(판정은 main_terminal.target_why)"""
     return mt.target_why(t, SPEC)
 
 
@@ -526,6 +525,9 @@ def relink(handle, why, short):
     if why not in mt.REDISCOVER or os.environ.get("LRM_PUSH_HANDLE") is not None:
         return handle, why, short, None
     found = mt.rediscover(run_orca, SPEC, MAIN_ENV)
+    if found.status == "current_ok":  # 재탐색 잠금을 기다리는 사이 다른 쪽이 고침. 새 값으로 다시 확인
+        h2, why2, short2 = probe()
+        return h2, why2, short2, None
     if found.status != "updated":
         log("relink", result=found.status, cands=found.count, was=why)
         return handle, why, short, found.count if found.status in ("none", "many") else None
@@ -757,6 +759,19 @@ def release():
 
 
 # ---- 판단·전달 --------------------------------------------------------------------------------
+def release_moved(pp):
+    """target_changed 로 멈춘 묶음 중 대상이 또 바뀐 것을 풀어 재확인하게 함. 이전 버전은 이 보류를 moved_to 표식 없이 stop 만 남겨
+    대상이 바뀐 뒤에도 영구 정지했으므로(2026-11-12 사고) 표식이 없는 옛 상태도 같은 조건으로 이관함.
+    풀리는 것은 reason=unknown_delivery·옛 대상(ambig)과 지금 대상이 다르고 마지막으로 확인한 대상(moved_to)과도 다를 때만. unsubmitted 등 다른 stop 은 그대로"""
+    if not (pp and pp.get("stop") and pp.get("ambig") and pp.get("reason") == "unknown_delivery"):
+        return False
+    h = main_handle()
+    if not h or handle_tag(h) in (pp["ambig"], pp.get("moved_to")):
+        return False
+    pp["stop"], pp["next_at"] = False, 0
+    return True
+
+
 def prepare(state, lines, mark):
     """상태를 현재 inbox·표식에 맞춤. (state, 변경 여부)"""
     changed = False
@@ -765,7 +780,7 @@ def prepare(state, lines, mark):
     pp = state.get("push_pending")
     if pp and (mark >= pp["last"] or pp["last"] > len(lines)):  # 읽혔거나 inbox 가 잘린 보류분은 버림
         state["push_pending"], changed = None, True
-    return changed
+    return release_moved(state.get("push_pending")) or changed
 
 
 def needs_work(state, lines, mark):
@@ -822,17 +837,21 @@ def attempt(state, lines, mark, now):
         return "hold"
     if pp.get("ambig") and pp["ambig"] not in (handle_tag(handle), handle):  # 원문은 이전 버전이 남긴 상태 호환
         # 도착 여부를 모르는 시도를 한 터미널과 다름. 요청 ID 는 터미널에 묶이므로 다른 곳에 보내면 중복될 수 있음.
-        # 옛 터미널이 이미 죽었으면 사람이 못 본 것이므로 같은 묶음을 새 요청 ID 로 새 대상에 재전달. 살아 있거나 확인 못 하면 보류
+        # 옛 터미널이 종료됐음이 확인될 때만(목록 조회 성공 + 핸들 없음) 사람이 못 본 것으로 보고 같은 묶음을 새 요청 ID 로 재전달.
+        # 살아 있으면 보류+경고, 생사를 못 정하면 다음 회차에 다시 확인
         old = pp["ambig"]
-        fate = mt.is_dead(run_orca, lambda h: old in (handle_tag(h), h))
-        if fate != "dead":
+        fate = mt.fate(run_orca, lambda h: old in (handle_tag(h), h))
+        if fate == "unknown":
+            hold(pp, "target_check", now + HOLD_RETRY, span, why="target_check_unavailable")
+            return "hold"
+        if fate == "alive":
             hold(pp, "unknown_delivery", now + FOREVER, span, why="target_changed")
-            pp["stop"] = True
-            if fate == "alive":
-                alert("target_changed", text=ALERT_STALE)
+            pp["stop"], pp["moved_to"] = True, handle_tag(handle)
+            alert("target_changed", text=ALERT_STALE)
             return "hold"
         log("redeliver", why="target_dead_redeliver", lines=span)
         pp["ambig"], pp["request_id"], pp["attempts"] = None, str(uuid.uuid4()), 0
+        pp.pop("moved_to", None)
     seal(pp, items, lines, mark)
     save_state(state)  # 보내기 전에 본문·ID 를 저장. 전송 직후 프로세스가 죽어도 다음 시도가 같은 ID 로 재전송함
     verdict, code, info = send(handle, pp["text"], pp["request_id"])

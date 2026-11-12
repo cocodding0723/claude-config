@@ -256,7 +256,7 @@ LRM_PUSH_LIFE=3 W
 newhub E2f; echo ambig > "$FO/send.mode"; addmsg note 1400.000050 "터미널 바뀜"
 printf '#!/bin/bash\necho MAIN_TERMINAL=%s > "$LRM_HUB_DIR/main.env"\n' "$HD2" > "$FO/send.hook"; chmod 755 "$FO/send.hook"  # 첫 전송 뒤 main.env 가 다른 핸들로 바뀜
 LRM_PUSH_LIFE=6 W
-[ "$(nsend)" = 1 ] && [ "$(st .push_pending.reason)" = unknown_delivery ] && grep -q 'why=target_changed' "$H/slack-push.log" && ok "ⓔ 모호한 전송 뒤 대상 터미널이 바뀌면 다른 터미널에 보내지 않고 보류" || ko "ⓔ 대상 변경" "sends=$(nsend) $(st .push_pending.reason)"
+[ "$(nsend)" = 1 ] && [ "$(st .push_pending.reason)" = target_check ] && [ "$(st .push_pending.stop)" = false ] && grep -q 'why=target_check_unavailable' "$H/slack-push.log" && ok "ⓔ 모호한 전송 뒤 대상 터미널이 바뀌고 옛 대상 생사를 못 알면(list 미지원 응답) 다른 터미널에 보내지 않고 재확인 보류(영구 정지 아님)" || ko "ⓔ 대상 변경" "sends=$(nsend) $(st .push_pending.reason) stop=$(st .push_pending.stop)"
 newhub E2g; echo unsubmitted > "$FO/send.mode"; addmsg note 1400.000060 "제출 미확인"
 export LRM_PUSH_CONFIRM=0  # 화면 재확인을 끈 기존 동작(turn_started 필수). 화면 재확인은 ⓟ
 LRM_PUSH_LIFE=3 W
@@ -511,13 +511,13 @@ out=$(LRM_MAIN_ENV="$SM/b/main.env" bash "$SETMAIN" "$HD2" 2>&1); rc=$?
 want=$(printf 'PROJECT_NAME="fake-proj-v1"\nHUB_ROOT="$HOME/x"\nFOO=1\nMAIN_TERMINAL=%s' "$HD2")
 [ "$rc" = 0 ] && [ "$(cat "$SM/b/main.env")" = "$want" ] && [ "$(stat -f %Lp "$SM/b/main.env")" = 600 ] && ! printf '%s' "$out" | grep -q 'term_\|fake-proj' \
   && ok "set_main_terminal: 기존 MAIN_TERMINAL 줄 교체(1줄만 남음), 다른 줄은 순서대로 보존(끝 줄바꿈 없어도), 권한 644→600, 다른 값·핸들 비출력" || ko "set_main 교체" "rc=$rc $(cat "$SM/b/main.env" | tr '\n' '|')"
-[ "$(ls -A "$SM/b")" = main.env ] && ok "set_main_terminal: 임시 파일 남지 않음" || ko "set_main 임시" "$(ls -A "$SM/b")"
+[ "$(ls -A "$SM/b" | grep -v "^\.main-env\.lock$")" = main.env ] && ok "set_main_terminal: 임시 파일 남지 않음" || ko "set_main 임시" "$(ls -A "$SM/b")"
 cp "$SM/b/main.env" "$SM/b.before"
 bad=0; for v in "term_XYZ" "term_00;x" "" "x term_00" "term_00 term_11"; do
   LRM_MAIN_ENV="$SM/b/main.env" bash "$SETMAIN" $v >/dev/null 2>&1; [ $? = 2 ] || bad=1
 done
 LRM_MAIN_ENV="$SM/b/main.env" bash "$SETMAIN" "term_ab" "term_cd" >/dev/null 2>&1; [ $? = 2 ] || bad=1
-[ "$bad" = 0 ] && cmp -s "$SM/b/main.env" "$SM/b.before" && [ "$(ls -A "$SM/b")" = main.env ] && ok "set_main_terminal: 형식 오류·인자 수 오류는 종료 코드 2, 파일 불변" || ko "set_main 형식" "bad=$bad"
+[ "$bad" = 0 ] && cmp -s "$SM/b/main.env" "$SM/b.before" && [ "$(ls -A "$SM/b" | grep -v "^\.main-env\.lock$")" = main.env ] && ok "set_main_terminal: 형식 오류·인자 수 오류는 종료 코드 2, 파일 불변" || ko "set_main 형식" "bad=$bad"
 LRM_MAIN_ENV="$SM/c/main.env" bash "$SETMAIN" --help | grep -q '^사용: set_main_terminal.sh <핸들>' && [ ! -e "$SM/c/main.env" ] && ok "set_main_terminal: --help 는 파일을 만들지 않음" || ko "set_main help" ""
 newhub SM1; LRM_MAIN_ENV="$H/main.env" bash "$SETMAIN" "$HD2" >/dev/null; addmsg note 2000.000001 "갱신 뒤"; LRM_PUSH_QUIET=0 LRM_PUSH_LIFE=3 W
 [ "$(nsend)" = 1 ] && [ "$(awk -F'\t' '{print $3}' "$FO/sends.log")" = "$HD2" ] && ok "set_main_terminal 로 바꾼 핸들로 push 전달" || ko "set_main 연동" "sends=$(nsend)"
@@ -526,7 +526,7 @@ newhub SM1; LRM_MAIN_ENV="$H/main.env" bash "$SETMAIN" "$HD2" >/dev/null; addmsg
 mkdir -p "$SM/l"; printf 'KEEP=1\nMAIN_TERMINAL=%s\nTAIL=2\n' "$HD" > "$SM/l/real.env"; ln -s real.env "$SM/l/main.env"
 out=$(LRM_MAIN_ENV="$SM/l/main.env" bash "$SETMAIN" "$HD2" 2>&1); rc=$?
 want=$(printf 'KEEP=1\nTAIL=2\nMAIN_TERMINAL=%s' "$HD2")
-[ "$rc" = 0 ] && [ -L "$SM/l/main.env" ] && [ "$(readlink "$SM/l/main.env")" = real.env ] && [ "$(cat "$SM/l/real.env")" = "$want" ] && [ "$(stat -f %Lp "$SM/l/real.env")" = 600 ] && [ "$(ls -A "$SM/l" | tr '\n' ' ')" = "main.env real.env " ] \
+[ "$rc" = 0 ] && [ -L "$SM/l/main.env" ] && [ "$(readlink "$SM/l/main.env")" = real.env ] && [ "$(cat "$SM/l/real.env")" = "$want" ] && [ "$(stat -f %Lp "$SM/l/real.env")" = 600 ] && [ "$(ls -A "$SM/l" | grep -v "^\.main-env\.lock$" | tr '\n' ' ')" = "main.env real.env " ] \
   && ok "set_main_terminal: main.env 가 심볼릭 링크면 링크 보존·대상 내용 갱신·다른 줄 보존·임시 파일 없음" || ko "set_main 링크" "rc=$rc link=$([ -L "$SM/l/main.env" ] && echo y || echo n) $(tr '\n' '|' < "$SM/l/real.env") $(ls -A "$SM/l" | tr '\n' ' ')"
 # CRLF: 교체한 줄만 LF, 다른 줄은 원형(CRLF) 보존
 mkdir -p "$SM/r"; printf 'A=1\r\nMAIN_TERMINAL=%s\r\nB=2\r\n' "$HD" > "$SM/r/main.env"
