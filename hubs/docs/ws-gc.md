@@ -153,7 +153,7 @@ bash tests/ws_gc/mutate.sh   # 결함을 심은 사본에서 시험이 실패하
 | 구분 | 기준(설정은 `ws_gc.sh` 위쪽 `CFG_*` 한 곳) | 처리 |
 |---|---|---|
 | 허용 결과물 | 결과물 폴더 `docs/out/`·`evidence/`·`TestResults/`(`CFG_OUTPUT_DIRS_RE`), 작업 공간 **루트**의 `*.html *.md *.png *.jpg *.jpeg *.gif *.mp4 *.txt *.log`(`CFG_OUTPUT_ROOT_RE`, 확장자 대소문자 무시) | 보관 → 색인 → 삭제 |
-| 캐시 후보 | gitignore 된 `Library/ Temp/ obj/ Logs/ UserSettings/ .vs/ .idea/ node_modules/ .dart_tool/`, `.flutter-plugins(-dependencies)`, `.claude/settings.local.json`, `.DS_Store`(`CFG_CACHE_RE`). **폴더 이름만으로 캐시로 치지 않는다.** 안에 소스·자산 확장자(`.cs .py .js .meta .asset .prefab .unity .json` 등, `CFG_CACHE_VALUABLE_RE`) 파일이 있으면 미확인으로 보존한다. 도구가 만든 하위 경로(`Library/PackageCache` 등, `CFG_CACHE_GENERATED_RE`)는 검사에서 뺀다 | 소스·자산 파일이 없을 때만 보관 없이 삭제 |
+| 캐시 후보 | gitignore 된 `Library/ Temp/ obj/ Logs/ UserSettings/ .vs/ .idea/ node_modules/ .dart_tool/`, `.flutter-plugins(-dependencies)`, `.claude/settings.local.json`, `.DS_Store`(`CFG_CACHE_RE`). **폴더 이름만으로 캐시로 치지 않는다.** 폴더 안에서는 "지워도 되는 것" 목록(`CFG_CACHE_GENERATED_RE`: `Library/PackageCache·Artifacts·Bee` 등 도구가 다시 만드는 하위 경로, `Library` 바로 아래의 확장자 없는 파일·`.asset .json .meta .txt .log`, `obj/Debug·Release`, `node_modules/`, `.dart_tool/`, `Temp/`, `Logs/`, `.vs/`)에 든 파일만 버리고, 목록 밖 파일은 확장자와 상관없이(`.cs`·`.kt`·`.mp4` 모두) 미확인으로 보존한다 | 생성 목록 밖 파일이 없을 때만 보관 없이 삭제 |
 | 소스 폴더 | `Assets/ Packages/ ProjectSettings/` 아래(`CFG_SOURCE_DIR_RE`). 허용 목록과 겹쳐도(예 `Assets/TestResults/`) 항상 | 보존 |
 | 추적 파일 수정 | 추적 파일이 바뀐 모든 경우. `.meta`·`*SDF*.asset` 부산물 예외보다 항상 우선(예외는 미추적 파일에만 적용) | 보존 |
 | 미확인 | 위 어디에도 없는 미추적·gitignore 파일(예 `secret/Foo.cs`, `result.json`, `reports/s.md`, `Foo.CS`) | 보존(`dirty`) |

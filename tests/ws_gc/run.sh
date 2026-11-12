@@ -52,8 +52,8 @@ mk() {
   if [ "$when" = recent ]; then git -C "$W/$n" commit -q -m "$n"; else oldc "$n" "$n"; fi
   [ "$mode" = push ] && git -C "$W/$n" push -q -u origin "$b" 2>/dev/null
   # 결과물(gitignore): 보관 대상 TestResults·docs/out·html, 보관 제외 Library
-  mkdir -p "$W/$n/TestResults" "$W/$n/docs/out" "$W/$n/Library/Cache" "$W/$n/.dart_tool"; echo d > "$W/$n/.dart_tool/x"
-  echo r1 > "$W/$n/TestResults/a.xml"; echo r2 > "$W/$n/TestResults/b.xml"; echo h > "$W/$n/docs/out/x.html"; echo c > "$W/$n/Library/Cache/c.bin"
+  mkdir -p "$W/$n/TestResults" "$W/$n/docs/out" "$W/$n/Library/Bee" "$W/$n/.dart_tool"; echo d > "$W/$n/.dart_tool/x"
+  echo r1 > "$W/$n/TestResults/a.xml"; echo r2 > "$W/$n/TestResults/b.xml"; echo h > "$W/$n/docs/out/x.html"; echo c > "$W/$n/Library/Bee/c.bin"
   reg "$n" "refs/heads/$b" "$([ "$when" = recent ] && echo $NOW_MS || echo $OLD_MS)"
 }
 reg() { printf '%s\t%s\t%s\t%s\n' "$W/$1" "$2" "$3" "${4:-false}" >> "$SB/reg.tsv"; }
@@ -325,11 +325,14 @@ gc --parent "$W/coord-q-hub" --only out_arcfail --dry-run; chk "--parent: 그 �
 JS=$(jsonrun --parent "$W/coord-q-hub"); chk "--parent: 허브 하위 2곳만 items(다른 허브·무소속 제외)" 'echo "$JS" | jq -e "[.items[].name] | sort == [\"repoA/out_arcfail\", \"repoA/out_only\"]" >/dev/null' "$JS"
 
 # ---- 8. 재리뷰: 캐시 폴더 이름만 믿지 않음 / 추적 수정은 부산물 예외보다 우선 / 서브모듈 안 gitignore 코드 ----
-for n in cache_lib cache_idea cache_obj cache_gen tracked_sdf tracked_meta sub_ignored sub_untracked; do mk "$n" "feat/$n"; pr "feat/$n" '[{"number":70,"state":"MERGED"}]'; done
+for n in cache_lib cache_idea cache_obj cache_kt cache_mp4 cache_gen tracked_sdf tracked_meta sub_ignored sub_untracked; do mk "$n" "feat/$n"; pr "feat/$n" '[{"number":70,"state":"MERGED"}]'; done
 # [P1-1] 캐시 폴더(Library·.idea·obj) 안의 유일본 소스·자산
 mkdir -p "$W/cache_lib/Library"; echo 'class O{}' > "$W/cache_lib/Library/OnlyCopy.cs"
 mkdir -p "$W/cache_idea/.idea"; echo 'class O{}' > "$W/cache_idea/.idea/OnlyCopy.cs"
 mkdir -p "$W/cache_obj/obj"; echo 'class O{}' > "$W/cache_obj/obj/OnlyCopy.cs"
+# 3차: 보존 확장자 목록 밖(.kt·.mp4)이어도 생성 목록에 없으면 보존
+mkdir -p "$W/cache_kt/.idea"; echo 'class K' > "$W/cache_kt/.idea/OnlyCopy.kt"
+mkdir -p "$W/cache_mp4/obj"; echo v > "$W/cache_mp4/obj/review.mp4"
 # 도구가 만든 하위 경로(PackageCache·Library 바로 아래 .asset·obj AssemblyInfo)만 있으면 캐시로 보고 삭제
 mkdir -p "$W/cache_gen/Library/PackageCache/pkg" "$W/cache_gen/obj/Debug"; echo 'class P{}' > "$W/cache_gen/Library/PackageCache/pkg/Foo.cs"; echo a > "$W/cache_gen/Library/EditorUserBuildSettings.asset"; echo 'x' > "$W/cache_gen/obj/Debug/App.AssemblyInfo.cs"
 # [P1-2] 추적 파일 수정은 .meta·SDF 부산물 규칙보다 우선
@@ -343,11 +346,13 @@ mkdir -p "$W/sub_ignored/Assets/Sub/secret"; echo 'class O{}' > "$W/sub_ignored/
 printf 'secret/\n' >> "$(git -C "$W/sub_ignored/Assets/Sub" rev-parse --git-path info/exclude)"
 mkdir -p "$W/sub_untracked/Assets/Sub/src"; echo 'class O{}' > "$W/sub_untracked/Assets/Sub/src/OnlyCopy.cs"
 regen
-for n in cache_lib cache_idea cache_obj; do
+for n in cache_lib cache_idea cache_obj cache_kt cache_mp4; do
   FAKE_RM_CHECK_DIRTY=1 gc --only "$n" --apply
   chk "[P1-1] 캐시 폴더 안 소스(OnlyCopy.cs): $n 보존·삭제 시도 없음" 'untouched "$n" && has "SKIP dirty repoA/$n" && has "미확인 무시파일 .*OnlyCopy.cs" && [ "$RC" = 0 ]'
 done
-chk "[P1-1] 보존한 파일이 그대로 남음" '[ -f "$W/cache_lib/Library/OnlyCopy.cs" ] && [ -f "$W/cache_idea/.idea/OnlyCopy.cs" ] && [ -f "$W/cache_obj/obj/OnlyCopy.cs" ]'
+chk "[P1-1] 보존한 파일이 그대로 남음" '[ -f "$W/cache_lib/Library/OnlyCopy.cs" ] && [ -f "$W/cache_idea/.idea/OnlyCopy.cs" ] && [ -f "$W/cache_obj/obj/OnlyCopy.cs" ] && [ -f "$W/cache_kt/.idea/OnlyCopy.kt" ] && [ -f "$W/cache_mp4/obj/review.mp4" ]'
+JS=$(jsonrun --only cache_kt); chk "[3차] .idea/OnlyCopy.kt: --json 후보 0·keep_code 에 파일" 'echo "$JS" | jq -e ".candidates == 0 and (.keep_code[0].files[0] | test(\"OnlyCopy.kt\"))" >/dev/null' "$JS"
+JS=$(jsonrun --only cache_mp4); chk "[3차] obj/review.mp4: --json 후보 0·keep_code 에 파일" 'echo "$JS" | jq -e ".candidates == 0 and (.keep_code[0].files[0] | test(\"review.mp4\"))" >/dev/null' "$JS"
 gc --only cache_gen; chk "[P1-1] 도구 생성 하위 경로만 든 캐시: 후보(과잉 보존 방지)" 'has "CANDIDATE repoA/cache_gen "'
 for n in tracked_sdf tracked_meta; do
   FAKE_RM_CHECK_DIRTY=1 gc --only "$n" --apply
