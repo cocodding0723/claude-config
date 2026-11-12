@@ -25,7 +25,7 @@ from pathlib import Path
 
 import scrum_collect as collect
 
-# ── 설정(값은 이 블록 한 곳. LRM_SCRUM_* 환경 변수로 덮어씀) ─────────────────────────────────
+# 설정: 값은 이 블록 한 곳, LRM_SCRUM_* 환경 변수로 덮어씀
 HERE = Path(__file__).resolve().parent
 DIR = collect.DIR
 STATE = DIR / "scrum.state.json"
@@ -55,12 +55,11 @@ NOTIFY = os.environ.get("LRM_NOTIFY", str(DIR / "slack_notify.sh"))
 OSA = os.environ.get("LRM_SCRUM_OSA", "osascript")
 COLLECT = os.environ.get("LRM_SCRUM_COLLECT", str(HERE / "scrum_collect.py"))
 PROMPT = Path(os.environ.get("LRM_SCRUM_PROMPT", HERE / "scrum-prompt.md"))
-# 초안 작성 claude 도구 제한. --tools "" 로 내장 도구(Bash·Read·Edit·WebFetch 등)를 모두 끄고,
-# --allowedTools 는 자동 승인 목록일 뿐이라 dontAsk 로 목록 밖 호출을 거부하게 함. 기존 설정에 허용된 권한이 남지 않게 함.
+# 초안 작성 claude 도구 제한. --tools "" 로 내장 도구 제거. --allowedTools 는 자동 승인 목록일 뿐이라 dontAsk 와 함께 써야 목록 밖이 거부됨
 READ_TOOLS = ("mcp__atlassian__getAccessibleAtlassianResources", "mcp__atlassian__atlassianUserInfo",
               "mcp__atlassian__searchJiraIssuesUsingJql", "mcp__atlassian__getJiraIssue",
               "mcp__atlassian__searchConfluence", "mcp__atlassian__getConfluenceContent")
-# dontAsk 에 더하는 2중 방어: Atlassian 쓰기·범용 실행 도구 명시 거부
+# dontAsk 와 별개로 쓰기·실행 도구를 명시 거부
 DENY_TOOLS = ("Bash", "Read", "Write", "Edit", "WebFetch", "WebSearch", "Task",
               "mcp__atlassian__createJiraIssue", "mcp__atlassian__editJiraIssue",
               "mcp__atlassian__transitionJiraIssue", "mcp__atlassian__addOrEditJiraIssueComment",
@@ -68,7 +67,7 @@ DENY_TOOLS = ("Bash", "Read", "Write", "Edit", "WebFetch", "WebSearch", "Task",
               "mcp__atlassian__addGraphContext", "mcp__atlassian__executeWrite", "mcp__atlassian__executeDestructive")
 CLAUDE_TIMEOUT = int(os.environ.get("LRM_SCRUM_CLAUDE_TIMEOUT", "900"))
 MAX_LINES = 30  # 칸 길이 상한(11-12 실측 25줄 안팎에 여유)
-RETRY_WAITS = [int(x) for x in os.environ.get("LRM_SCRUM_RETRY_WAITS", "30,90").split(",") if x]  # 발송 API 실패(종료 코드 1)만 재시도
+RETRY_WAITS = [int(x) for x in os.environ.get("LRM_SCRUM_RETRY_WAITS", "30,90").split(",") if x]  # Slack 이 거절한 발송만 재시도
 NET_HOST = os.environ.get("LRM_SCRUM_NET_HOST", "api.anthropic.com")
 NET_WAIT_SEC = int(os.environ.get("LRM_SCRUM_NET_WAIT", "120"))  # 깨어난 직후 네트워크가 붙기를 기다리는 최대 시간
 SOURCES = ("prs", "commits", "hub_reports", "handoffs", "instructions")  # scrum_collect.collect 의 출처 키
@@ -81,12 +80,11 @@ INTERNAL_ID_RE = re.compile(r"\b(?:LRM-\d+|D-[A-Za-z0-9]{1,16}|T-[A-Za-z0-9]{1,1
 SLACK_TAG = "scrum"
 NO_ATLASSIAN = "@@atlassian-unavailable@@"  # 초안 작성 claude 가 Jira·Confluence 를 못 읽었을 때 맨 끝에 붙이는 표시
 NOTIFY_TIMEOUT = int(os.environ.get("LRM_SCRUM_NOTIFY_TIMEOUT", "120"))
-NOTIFY_RC_TIMEOUT = -1  # notify 가 시간 초과: 서버 반영 여부 모름
-NOTIFY_RC_OS = -2  # notify 실행 자체 실패: 보내지 않았음
-NOTIFY_RC_UNKNOWN = -3  # 응답이 Slack 오류 코드가 아니고 발송 기록도 없음: 올라갔는지 모름
+NOTIFY_RC_TIMEOUT = -1  # 시간 초과: 올라갔는지 모름
+NOTIFY_RC_OS = -2  # 실행 불가: 미전송
+NOTIFY_RC_UNKNOWN = -3  # Slack 오류 코드 없이 실패, 발송 기록도 없음: 올라갔는지 모름
 SENT_LOG = DIR / "slack-sent.jsonl"  # slack_notify.sh 가 Slack API ok 응답 뒤에만 적는 기록(file_id 포함)
 NOTIFY_EXIT_API = 1  # slack_notify.sh: 1 API 실패, 2 설정·양식 오류
-# ───────────────────────────────────────────────────────────────────────────────────────────
 
 
 def log(msg):
