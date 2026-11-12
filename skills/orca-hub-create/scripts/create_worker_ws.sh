@@ -12,6 +12,7 @@ while [ $# -gt 0 ]; do case "$1" in
 # 허브당 하위 작업 공간 상한(설정은 이 블록 한 곳). 넘으면 그 허브 하위만 ws_gc 로 1회 정리하고, 그래도 넘으면 경고·기록(생성은 계속)
 CFG_HUB_MAX="${LRM_HUB_MAX_CHILDREN:-10}"
 CFG_WS_GC="${LRM_WS_GC:-$HOME/.config/lrm-hubs/ws_gc.sh}"
+CFG_GC_TIMEOUT="${LRM_HUB_GC_TIMEOUT:-60}"   # 상한 정리에 줄 제한 시간(초). 넘기면 정리를 끊고 생성을 계속함
 CFG_HUB_REPORT="${LRM_HUB_REPORT:-$HOME/.config/lrm-hubs/hub_report.py}"
 count_kids() { # 허브 경로 → 등록된 하위 수. 조회 실패 시 빈 값
   orca worktree list --limit 1000 --json 2>/dev/null | jq -r --arg h "$1" \
@@ -20,7 +21,21 @@ count_kids() { # 허브 경로 → 등록된 하위 수. 조회 실패 시 빈 �
 kids=$(count_kids "$HUB")
 if [ -n "$kids" ] && [ "$kids" -ge "$CFG_HUB_MAX" ]; then
   echo "하위 작업 공간 ${kids}개(상한 ${CFG_HUB_MAX}) — 이 허브 하위만 정리 1회 실행" >&2
-  bash "$CFG_WS_GC" --parent "$HUB" --apply --quiet --no-slack >/dev/null 2>&1 || echo "⚠️ 정리기 실행 실패 — ~/orca/archive/ws_gc.log 확인" >&2
+  gc_rc=0
+  # 제한 시간 안에 못 끝나면 정리기와 그 자식 프로세스 전체를 종료(TERM 뒤 5초 지나면 KILL). 정리 실패·시간 초과여도 생성은 계속
+  python3 -c 'import os, signal, subprocess, sys
+p = subprocess.Popen(sys.argv[2:], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+try:
+    sys.exit(p.wait(int(sys.argv[1])))
+except subprocess.TimeoutExpired:
+    os.killpg(p.pid, signal.SIGTERM)
+    try:
+        p.wait(5)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+    sys.exit(124)' "$CFG_GC_TIMEOUT" bash "$CFG_WS_GC" --parent "$HUB" --apply --quiet --no-slack || gc_rc=$?
+  if [ "$gc_rc" = 124 ]; then echo "⚠️ 정리기가 ${CFG_GC_TIMEOUT}초 안에 끝나지 않아 중단 — 생성은 계속(~/orca/archive/ws_gc.log 확인)" >&2
+  elif [ "$gc_rc" != 0 ]; then echo "⚠️ 정리기 실행 실패(종료 ${gc_rc}) — ~/orca/archive/ws_gc.log 확인" >&2; fi
   kids=$(count_kids "$HUB")
   if [ -n "$kids" ] && [ "$kids" -ge "$CFG_HUB_MAX" ]; then
     echo "⚠️ 정리 뒤에도 하위 작업 공간 ${kids}개(상한 ${CFG_HUB_MAX}) — 남길 것만으로 초과. 끝난 워커는 release_ws.sh 로 반납할 것" >&2

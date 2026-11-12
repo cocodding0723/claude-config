@@ -35,6 +35,8 @@ EOS
 cat > "$BIN/ws_gc.sh" <<'EOS'
 #!/bin/bash
 echo "$*" >> "$FAKE_DIR/gc.calls"
+[ -z "${FAKE_GC_SLEEP:-}" ] || { sleep "$FAKE_GC_SLEEP"; echo done > "$FAKE_DIR/gc.finished"; }
+[ "${FAKE_GC_FAIL:-}" != 1 ] || exit 7
 [ -z "${FAKE_GC_DROP:-}" ] || jq --argjson n "$FAKE_GC_DROP" '(.result.worktrees[] | select(.childWorktreeIds | length > 0) | .childWorktreeIds) |= .[$n:]' "$FAKE_DIR/list.json" > "$FAKE_DIR/list.tmp" && mv "$FAKE_DIR/list.tmp" "$FAKE_DIR/list.json"
 EOS
 cat > "$BIN/hub_report.py" <<'EOS'
@@ -70,6 +72,14 @@ setlist 10; run w5 FAKE_REPORT_FAIL=1
 chk "보고 기록 실패해도 생성 계속(종료 0)" '[ "$RC" = 0 ] && made w5 && grep -q "허브 보고 기록 실패" "$SB/err"'
 setlist 10; run w6 FAKE_LIST_FAIL=1
 chk "orca 목록 조회 실패: 정리 없이 생성" '[ "$RC" = 0 ] && made w6 && [ ! -s "$F/gc.calls" ]' "rc=$RC"
+
+# [8] 정리가 멈추면 제한 시간 뒤 끊고 생성을 계속함
+setlist 10; rm -f "$F/gc.finished"; t0=$(date +%s); run w7 FAKE_GC_SLEEP=3 LRM_HUB_GC_TIMEOUT=1; t1=$(date +%s)
+chk "[8] 정리가 멈춰도 제한 시간(1초) 뒤 끊고 생성 계속(종료 0, 10초 안에 끝남)" '[ "$RC" = 0 ] && made w7 && [ $((t1 - t0)) -lt 10 ] && grep -q "1초 안에 끝나지 않아 중단" "$SB/err"' "rc=$RC took=$((t1 - t0)) $(cat "$SB/err")"
+sleep 4
+chk "[8] 끊긴 정리기는 남아 돌지 않음(3초 뒤에도 끝 표시 없음)" '[ ! -e "$F/gc.finished" ]'
+setlist 10; run w8 FAKE_GC_FAIL=1
+chk "[8] 정리기 실패(종료 7): 경고 뒤 생성 계속" '[ "$RC" = 0 ] && made w8 && grep -q "정리기 실행 실패(종료 7)" "$SB/err"'
 
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
