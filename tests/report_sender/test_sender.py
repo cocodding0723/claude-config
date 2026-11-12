@@ -66,7 +66,10 @@ class SenderTest(unittest.TestCase):
         self.assertIn("참고: docs/a.html", body[-1])
         self.assertEqual(line[line.index("--thread") + 1], PARENT)  # 진행 줄은 진행 스레드 부모의 답글
         self.assertIn("https://slack.com/archives/D1/p1700000000000001", line[-1])
-        self.assertEqual(len(line[-1].splitlines()), 1)
+        lines = line[-1].splitlines()  # 진행 줄: 제목 1줄 + '- ' 항목마다 1줄. ' · ' 로 잇지 않음
+        self.assertTrue(all(ln.startswith("- ") for ln in lines[1:]) and len(lines) == 3)
+        self.assertNotIn(" · ", line[-1])
+        self.assertTrue(all(ln.startswith("- ") for ln in body[-1].split("\n\n")[1].splitlines()))  # 본문 항목도 '- '
         self.assertTrue(self.state()["reports"][rep["id"]]["sent"])
         self.assertIn(f"전송 {rep['id']} ui-layer done → 주제 C0012 스레드 1700000000.000001", res["lines"][0])
 
