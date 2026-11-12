@@ -314,6 +314,8 @@ class DeliverTest(Base):
         with open(p("main.env"), "w", encoding="utf-8") as f:
             f.write(f"MAIN_TERMINAL={MAIN_H}\n")
         self.conf.hubs_table, self.conf.main_env, self.conf.sent, self.conf.orca = p("hubs.tsv"), p("main.env"), p("sent.json"), FAKE_ORCA
+        self.conf.ws_root = "/ws"
+        self.conf.main_spec = intake.mt.Spec(main_path="/main/checkout", pane="")
         self.terms(self.hub_term())
 
     def hub_term(self, slug="ui-layer", handle=HUB_H, **kw):
@@ -376,7 +378,7 @@ class DeliverTest(Base):
         (handle, text), = self.sends()
         self.assertEqual(handle, MAIN_H)
         self.assertIn("[접수 #C0001 하달 실패", text)
-        self.assertIn("ui-layer 허브 터미널 없음", text)
+        self.assertIn("coord-ui-layer-hub 코디네이터 터미널 없음", text)
         self.assertIn("[접수 #C0001] a", text)
 
     def test_two_hub_terminals_is_not_guessed(self):
@@ -441,11 +443,132 @@ class DeliverTest(Base):
         self.assertEqual((dv["sent"], dv["failed"]), ([], []))
         self.assertEqual(self.sends(), [])
 
+    def test_unconfirmed_receipt_is_not_sent(self):
+        """입력은 접수됐지만 turn_started 가 없는 영수증(시간 초과 관찰 포함)은 하달 성공이 아님: 보류 + 메인 알림, 재전송 없음"""
+        self.mode(f"send.mode.{HUB_H}", "unsubmitted")
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual((dv["sent"], dv["notified"]), ([], ["C0001"]))
+        self.assertEqual(self.row()["state"], "보류")
+        self.assertIn("턴 시작 미확인", self.sends()[1][1])
+        intake.deliver(self.conf, NOW)
+        self.assertEqual([h for h, _ in self.sends()], [HUB_H, MAIN_H])
+
+    def test_send_line_receipt_classes(self):
+        def receipt(accepted=True, stages=("input_accepted",), obs="timed_out"):
+            return lambda a, t: (0, {"ok": True, "result": {"send": {"accepted": accepted, "prompt": {"stages": list(stages), "observation": obs}}}})
+        self.assertEqual(intake.send_line(receipt(), "h", "x"), "unconfirmed")
+        self.assertEqual(intake.send_line(receipt(stages=("input_accepted", "turn_started"), obs="observed"), "h", "x"), "sent")
+        self.assertEqual(intake.send_line(receipt(accepted=False), "h", "x"), "rejected")
+        self.assertEqual(intake.send_line(lambda a, t: (0, {"ok": True, "result": {}}), "h", "x"), "unknown")
+        self.assertEqual(intake.send_line(lambda a, t: (None, None), "h", "x"), "unknown")
+
+    def test_unconfirmed_main_notice_is_not_retried(self):
+        self.terms()
+        self.mode(f"send.mode.{MAIN_H}", "unsubmitted")
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual(dv["notified"], ["C0001"])
+        intake.deliver(self.conf, NOW)
+        self.assertEqual([h for h, _ in self.sends()], [MAIN_H])
+
+    def test_dry_run_never_calls_send(self):
+        self.put(msg("ui: a", 1))
+        self.run_intake()
+        dv = intake.deliver(self.conf, NOW, dry=True)
+        self.assertEqual((dv["planned"], dv["sent"]), (["C0001"], []))
+        self.assertEqual(self.sends(), [])
+        self.assertFalse(os.path.exists(self.conf.sent))
+        self.assertEqual(self.row()["state"], "접수")
+        real = intake.deliver(self.conf, NOW)  # dry 뒤 정상 실행은 한 번만 전송
+        self.assertEqual(real["sent"], ["C0001"])
+        self.assertEqual(len(self.sends()), 1)
+
+    def test_dry_run_failure_path_does_not_notify_or_write(self):
+        self.terms()
+        self.put(msg("ui: a", 1))
+        self.run_intake()
+        dv = intake.deliver(self.conf, NOW, dry=True)
+        self.assertEqual(dv["notified"], [])
+        self.assertEqual(self.sends(), [])
+        self.assertEqual(self.row()["state"], "접수")
+
+    def test_cli_dry_run_calls_no_send(self):
+        self.conf.inbox = os.path.join(self.d, "slack-inbox.jsonl")
+        self.conf.state, self.conf.routes_log = os.path.join(self.d, "intake-state.json"), os.path.join(self.d, "intake-routes.jsonl")  # CLI 기본 파일명
+        self.put(msg("ui: a", 1))
+        self.run_intake()
+        env = {**os.environ, "LRM_HUB_DIR": self.d, "LRM_INTAKE_ROUTES": TABLE, "LRM_LEDGER": self.conf.ledger, "LRM_ORCA": FAKE_ORCA,
+               "LRM_HUBS_TABLE": self.conf.hubs_table, "LRM_MAIN_ENV": self.conf.main_env, "LRM_HUB_WS_ROOT": "/ws"}
+        r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "intake.py"), "--once", "--dry-run", "--json"], env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(json.loads(r.stdout)["deliver"]["planned"], ["C0001"])
+        self.assertEqual(self.sends(), [])
+
+    def test_worker_only_hub_is_not_delivered(self):
+        """같은 워크트리에 붙은 리뷰 워커(제목·pane 제목에 worker)는 코디네이터가 아님: 하달 안 하고 보류 + 메인 알림"""
+        self.terms(self.hub_term(title="review worker", paneTitle="WORKER"))
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual((dv["sent"], dv["notified"]), ([], ["C0001"]))
+        self.assertEqual([h for h, _ in self.sends()], [MAIN_H])
+        self.assertIn("워커 터미널만 있어", self.sends()[0][1])
+
+    def test_coordinator_chosen_over_worker_in_same_worktree(self):
+        worker = self.hub_term(handle="term_dddddddd-0000-4000-8000-000000000004", title="review worker", paneTitle="WORKER")
+        self.terms(worker, self.hub_term())
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual(dv["sent"], ["C0001"])
+        self.assertEqual([h for h, _ in self.sends()], [HUB_H])
+
+    def test_same_suffix_other_root_is_not_the_hub(self):
+        """폴더 접미사만 같은 다른 워크스페이스의 터미널은 후보가 아님(hubs.tsv 의 전체 경로 비교)"""
+        self.terms(self.hub_term(worktreePath="/elsewhere/coord-ui-layer-hub"))
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual(dv["notified"], ["C0001"])
+        self.assertEqual([h for h, _ in self.sends()], [MAIN_H])
+
+    def test_hub_path_uses_ws_root_column(self):
+        with open(self.conf.hubs_table, "w", encoding="utf-8") as f:
+            f.write("config\t설정\t~/.config/lrm-hubs/roles/role-config.txt\t/custom/root\t-\n")
+        self.assertEqual(intake.hub_path(self.conf, "config"), "/custom/root/coord-config-hub")
+        self.assertIsNone(intake.hub_path(self.conf, "ui"))
+
+    def test_main_handle_of_other_use_gets_no_send(self):
+        """main.env 의 핸들이 메인 체크아웃 터미널이 아니면(다른 용도) 보내지 않고 재탐색. 후보가 없으면 실패로 남김"""
+        self.terms()
+        self.mode(f"show.mode.{MAIN_H}", "other_wt")
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual((dv["failed"], dv["notified"]), (["C0001"], []))
+        self.assertEqual(self.sends(), [])
+        self.assertIn(("show", MAIN_H), [(ln.split()[0], ln.split()[2]) for ln in open(os.path.join(self.fo, "calls.log")) if ln.startswith("show")])
+
+    def test_main_handle_not_claude_gets_no_send(self):
+        self.terms()
+        self.mode(f"show.mode.{MAIN_H}", "codex")
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual(dv["notified"], [])
+        self.assertEqual(self.sends(), [])
+
+    def test_main_link_check_failure_does_not_send_or_rediscover(self):
+        self.terms()
+        self.mode(f"show.mode.{MAIN_H}", "unavail")
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual(dv["failed"], ["C0001"])
+        self.assertEqual(self.sends(), [])
+        self.assertFalse([ln for ln in open(os.path.join(self.fo, "calls.log")) if ln.startswith("list")][1:])  # 허브 탐색 list 1회뿐
+
+    def test_main_handle_gone_rediscovers_and_sends(self):
+        self.terms(self.hub_term(), {**self.hub_term(handle="term_eeeeeeee-0000-4000-8000-000000000005", worktreePath="/main/checkout"), "title": "MAIN-HANDOFF.md 메인"})
+        self.mode(f"show.mode.{MAIN_H}", "gone")
+        self.mode(f"send.mode.{HUB_H}", "unsubmitted")
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual(dv["notified"], ["C0001"])
+        self.assertEqual([h for h, _ in self.sends()], [HUB_H, "term_eeeeeeee-0000-4000-8000-000000000005"])
+
     def test_cli_reports_delivery(self):
         self.conf.inbox = os.path.join(self.d, "slack-inbox.jsonl")  # 프로세스 실행은 기본 파일명을 읽음
         self.put(msg("ui: a", 1))
         env = {**os.environ, "LRM_HUB_DIR": self.d, "LRM_INTAKE_ROUTES": TABLE, "LRM_LEDGER": self.conf.ledger, "LRM_ORCA": FAKE_ORCA,
-               "LRM_HUBS_TABLE": self.conf.hubs_table, "LRM_MAIN_ENV": self.conf.main_env}
+               "LRM_HUBS_TABLE": self.conf.hubs_table, "LRM_MAIN_ENV": self.conf.main_env, "LRM_HUB_WS_ROOT": "/ws",
+               "LRM_PUSH_MAIN": "/main/checkout", "LRM_PUSH_PANE": ""}
         r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "intake.py"), "--once", "--json"], env=env, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout)["deliver"]["sent"], ["C0001"])

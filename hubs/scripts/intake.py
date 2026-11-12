@@ -58,6 +58,7 @@ class Conf:
     main_env: str = ""
     orca: str = ""
     main_spec: object = None
+    ws_root: str = ""  # hubs.tsv 의 ws_root 가 '-' 인 허브의 작업 폴더 기본 위치(create_hub.sh 의 WS_ROOT 기본값과 같음)
     deliver_max_age_s: int = 3600  # 이보다 묵은 접수는 하달하지 않음(재개 직후 옛 명령이 허브로 쏟아지는 것 방지). 장부·메인 알림으로 남김
 
     def __post_init__(self) -> None:
@@ -76,6 +77,7 @@ class Conf:
         self.main_env = self.main_env or os.environ.get("LRM_MAIN_ENV") or join("main.env")
         self.orca = self.orca or os.environ.get("LRM_ORCA") or shutil.which("orca") or "orca"
         self.main_spec = self.main_spec or mt.Spec.from_env()
+        self.ws_root = self.ws_root or os.environ.get("LRM_HUB_WS_ROOT") or os.path.expanduser("~/orca/workspaces/LoveRevolutionMaker")
 
 
 @dataclass
@@ -307,56 +309,86 @@ SEND_TIMEOUT, LIST_TIMEOUT_S, SUBMIT_WAIT_S = 30, 15, 20
 LINE_MAX = 1500
 
 
-def hub_slug(path: str, hub: str):
-    """허브 표(hubs.tsv: slug·이름·역할 파일·…)에서 역할 파일 이름이 role-<hub>.txt 인 행의 slug. 없으면 None"""
+WORKER_MARK = "worker"  # 제목·pane 제목에 이 말이 들어간 터미널은 코디네이터가 아니라 워커(대소문자 무시)
+
+
+def hub_path(conf: Conf, hub: str):
+    """허브 표(hubs.tsv: slug·이름·역할 파일·ws_root·repo)에서 역할 파일 이름이 role-<hub>.txt 인 행의 코디네이터 작업 폴더 전체 경로
+    (<ws_root>/coord-<slug>-hub, ws_root 가 '-' 면 기본 위치). 행이 없으면 None"""
+    expand = lambda v: os.path.expanduser(v) if v.startswith("~") else v  # noqa: E731
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(conf.hubs_table, encoding="utf-8") as f:
             for ln in f:
                 cells = ln.rstrip("\n").split("\t")
                 if ln.startswith("#") or len(cells) < 3:
                     continue
                 if os.path.basename(cells[2].strip()) == f"role-{hub}.txt":
-                    return cells[0].strip()
+                    root = cells[3].strip() if len(cells) > 3 and cells[3].strip() not in ("", "-") else conf.ws_root
+                    return os.path.join(expand(root), f"coord-{cells[0].strip()}-hub")
     except OSError:
         pass
     return None
 
 
-def find_hub_terminal(run, slug: str):
-    """(핸들|None, 실패 사유|None). 작업 폴더가 .../coord-<slug>-hub 인 연결된 쓰기 가능 claude 터미널이 정확히 1개일 때만"""
+def is_worker(t: dict) -> bool:
+    return any(WORKER_MARK in str(t.get(k) or "").lower() for k in ("title", "paneTitle"))
+
+
+def find_hub_terminal(run, path: str):
+    """(핸들|None, 실패 사유|None). 작업 폴더가 허브 전체 경로와 같고 연결된 쓰기 가능 claude 터미널 중 워커 표시(제목·pane 제목)가 없는 것이 정확히 1개일 때만.
+    같은 워크트리에 붙은 리뷰·작업 워커는 후보가 아님. 워커만 있으면 코디네이터를 확인할 수 없으므로 하달하지 않음"""
     rows = mt.list_rows(run)
     if rows is None:
         return None, "터미널 목록 조회 실패"
-    hit = [t["handle"] for t in rows
-           if str(t.get("worktreePath") or "").rstrip("/").endswith(f"/coord-{slug}-hub") and t.get("agentIdentity") == "claude"
-           and t.get("connected") is True and not t.get("orphaned") and t.get("writable") is True]
+    live = [t for t in rows
+            if str(t.get("worktreePath") or "").rstrip("/") == path.rstrip("/") and t.get("agentIdentity") == "claude"
+            and t.get("connected") is True and not t.get("orphaned") and t.get("writable") is True]
+    hit = [t["handle"] for t in live if not is_worker(t)]
+    name = os.path.basename(path.rstrip("/"))
     if not hit:
-        return None, f"{slug} 허브 터미널 없음"
-    return (hit[0], None) if len(hit) == 1 else (None, f"{slug} 허브 터미널 후보 {len(hit)}개")
+        return None, f"{name} 코디네이터 터미널 없음" + ("(워커 터미널만 있어 코디네이터 확인 불가)" if live else "")
+    return (hit[0], None) if len(hit) == 1 else (None, f"{name} 코디네이터 후보 {len(hit)}개")
 
 
 def send_line(run, handle: str, text: str) -> str:
-    """'sent' | 'rejected'(핸들 무효 오류=입력 전 거절) | 'unknown'(시간 초과·일반 오류, 입력됐을 수 있음)"""
+    """영수증까지 확인한 결과. 'sent'(입력 접수 + turn_started) | 'rejected'(입력 전 거절: 핸들 무효·accepted=false) |
+    'unconfirmed'(입력은 접수됐으나 턴 시작 미확인 — 시간 초과 관찰 등) | 'unknown'(시간 초과·일반 오류·영수증 이상, 입력됐을 수 있음)"""
     rc, d = run(["terminal", "send", "--terminal", handle, "--text", text, "--enter", "--wait-submit", str(SUBMIT_WAIT_S), "--json"], SEND_TIMEOUT)
-    if rc == 0:
-        return "sent"
-    return "rejected" if mt.error_code(d) in mt.HANDLE_GONE_CODES else "unknown"
+    if rc != 0:
+        return "rejected" if mt.error_code(d) in mt.HANDLE_GONE_CODES else "unknown"
+    send = ((d or {}).get("result") or {}).get("send") if isinstance(d, dict) else None
+    if not isinstance(send, dict) or not isinstance(send.get("accepted"), bool):
+        return "unknown"
+    if not send["accepted"]:
+        return "rejected"
+    prompt = send.get("prompt") if isinstance(send.get("prompt"), dict) else {}
+    stages = prompt.get("stages") if isinstance(prompt.get("stages"), list) else []
+    return "sent" if "turn_started" in stages else "unconfirmed"
 
 
-def tell_main(conf: Conf, run, text: str) -> bool:
-    """메인 터미널로 알림. 핸들이 없거나 무효(입력 전 거절)일 때만 재탐색 1회. 도착 불명이면 재전송하지 않음"""
+def tell_main(conf: Conf, run, text: str) -> str:
+    """메인 터미널로 알림: 'sent' | 'unconfirmed'(도착 불명, 재전송 안 함) | 'failed'(보내지 못함, 다음 회차 재시도).
+    slack_socket.send_main 과 같은 원칙: 보내기 전에 check_link 로 메인(경로·claude·pane)임을 확인하고,
+    확인 실패가 사람이 고쳐야 풀리는 사유(REDISCOVER)일 때나 입력 전 거절일 때만 재탐색 1회. 조회 실패·쓰기 불가는 보내지 않음"""
     handle = mt.read_handle(conf.main_env)
     if handle:
-        res = send_line(run, handle, text)
-        if res == "sent":
-            return True
-        if res != "rejected":
-            return False
+        _, why = mt.check_link(run, conf.main_spec, handle)
+        if why and why not in mt.REDISCOVER:
+            return "failed"
+        if not why:
+            res = send_line(run, handle, text)
+            if res in ("sent", "unconfirmed"):
+                return res
+            if res != "rejected":
+                return "failed"
     found = mt.rediscover(run, conf.main_spec, conf.main_env)
     new = found.handle if found.status in ("updated", "current_ok") else ""
     if found.status == "current_ok":
         new = mt.read_handle(conf.main_env) or ""
-    return bool(new) and new != handle and send_line(run, new, text) == "sent"
+    if not new or new == handle:
+        return "failed"
+    res = send_line(run, new, text)
+    return res if res in ("sent", "unconfirmed") else "failed"
 
 
 def load_sent(path: str) -> dict:
@@ -384,12 +416,12 @@ def mark_failed(conf: Conf, rid: str, hub: str, why: str, now: float) -> None:
 
 
 def deliver(conf: Conf, now: float, run=None, dry: bool = False) -> dict:
-    """routes 기록 중 아직 하달 안 한 접수를 담당 허브 터미널에 전달. 결과 {"sent":[번호], "failed":[번호], "notified":[번호]}.
+    """routes 기록 중 아직 하달 안 한 접수를 담당 허브 터미널에 전달. 결과 {"sent","failed","notified","planned"}(번호 목록, planned 는 dry 에서 보냈을 번호).
     기본 대상(main)은 하달 대상 아님. 상태 파일이 없는 첫 실행은 한 시간보다 묵은 기록을 옛 접수(legacy)로 표시만 하고 보내지 않음.
     실패한 접수는 장부 보류 + 메인 알림, 메인 알림이 안 가면 failed 로 남겨 다음 회차에 알림만 다시 시도(허브 재전송은 안 함)"""
     run = run or (lambda a, t: mt.run_orca(conf.orca, a, t))
     routes = load_routes(conf.table)
-    out = {"sent": [], "failed": [], "notified": []}
+    out = {"sent": [], "failed": [], "notified": [], "planned": []}
     entries = []
     try:
         with open(conf.routes_log, encoding="utf-8") as f:
@@ -420,8 +452,11 @@ def deliver(conf: Conf, now: float, run=None, dry: bool = False) -> dict:
                 if age > conf.deliver_max_age_s:
                     why = "접수 후 한 시간이 지나 하달하지 않음"
                 else:
-                    slug = hub_slug(conf.hubs_table, hub)
-                    handle, why = (None, f"허브 표에 {hub} 행 없음") if slug is None else find_hub_terminal(run, slug)
+                    path = hub_path(conf, hub)
+                    handle, why = (None, f"허브 표에 {hub} 행 없음") if path is None else find_hub_terminal(run, path)
+                    if handle and dry:  # 계획만. 전송 호출·상태 기록 없음
+                        out["planned"].append(rid)
+                        continue
                     if handle:
                         st[rid] = {"st": ST_SENDING, "hub": hub, "at": int(now)}
                         if not dry:
@@ -434,7 +469,8 @@ def deliver(conf: Conf, now: float, run=None, dry: bool = False) -> dict:
                                 with contextlib.suppress(ledger.LedgerError):
                                     ledger.set_state(conf.ledger, rid, "진행", None, f"{hub} 허브에 하달", now, False)
                             continue
-                        why = "허브 터미널이 입력을 거절함" if res == "rejected" else "전송 응답 없음·도착 여부 불명(재전송 안 함, 허브에서 직접 확인)"
+                        why = {"rejected": "허브 터미널이 입력을 거절함",
+                               "unconfirmed": "입력은 접수됐지만 턴 시작 미확인·도착 여부 불명(재전송 안 함, 허브에서 직접 확인)"}.get(res, "전송 응답 없음·도착 여부 불명(재전송 안 함, 허브에서 직접 확인)")
                 st[rid] = {"st": ST_FAILED, "hub": hub, "at": int(now), "why": why}
             elif ent.get("st") == ST_SENDING:  # 전송 중 죽은 회차
                 st[rid] = {"st": ST_FAILED, "hub": hub, "at": int(now), "why": "전송 중 중단·도착 여부 불명(재전송 안 함, 허브에서 직접 확인)"}
@@ -446,7 +482,8 @@ def deliver(conf: Conf, now: float, run=None, dry: bool = False) -> dict:
                 ent["ledgered"] = True
             out["failed"].append(rid)
             text = f"[접수 #{rid} 하달 실패 → 메인이 처리] {hub} 허브: {ent['why']}\n{line_for(rid, e.get('text') or '')}"
-            if not dry and tell_main(conf, run, text):
+            res = "failed" if dry else tell_main(conf, run, text)
+            if res != "failed":  # unconfirmed 도 재전송하지 않음(중복 방지). 장부 보류 기록은 남아 있음
                 ent["st"] = ST_NOTIFIED
                 out["notified"].append(rid)
         if not dry:
@@ -500,7 +537,7 @@ def main(argv=None) -> int:
         for n in res["new"]:
             print(f"{'[dry-run] ' if args.dry_run else ''}접수 {n['id']} → {n['hub']} (inbox {n['line']}줄)")
         dv = res["deliver"]
-        print(f"하달 {len(dv['sent'])}건 · 실패 {len(dv['failed'])}건(메인 알림 {len(dv['notified'])}건)")
+        print(f"{'[dry-run] 하달 예정 ' + str(len(dv['planned'])) + '건 · ' if args.dry_run else ''}하달 {len(dv['sent'])}건 · 실패 {len(dv['failed'])}건(메인 알림 {len(dv['notified'])}건)")
         print(f"새 접수 {len(res['new'])}건 · 이미 접수 {res['seen']}건 · 제외 {res['skipped']}건")
     return 0
 
