@@ -652,5 +652,22 @@ LRM_BTN_WARN=on run_n --kind decide --choices 2 "주제"
 LRM_BTN_WARN=on run_n --kind decide --options '1=A 안,2=B 안' --recommend 2 --decision-id D-0J03 "주제"
 ! grep -q '선택지 버튼 없음' "$SB/err" && ok "J --options 카드는 경고 없음" || ko "J 정상 카드 경고" "$(cat "$SB/err")"
 
+# ---- K. 줄바꿈 양식: '- ' 여러 줄 허용 · ' / '·' · ' 3개 이상 이은 줄은 경고만 ---------------------------
+newhome k
+run_n --kind done $'완료\n\n- 무엇: 끝\n- 왜: 이유\n- 결과: 반영'
+[ "$RC" = 0 ] && [ "$(errn)" = 0 ] && posted && ok "K '- ' 항목 여러 줄 → 경고 없이 전송" || ko "K 여러 줄" "rc=$RC $(cat "$SB/err")"
+run_n --kind done $'완료\n\n- 무엇: A / B / C / D'
+[ "$RC" = 0 ] && grep -q "^경고: ' / '·' · ' 로 이은 줄이 있음(3번째 줄)" "$SB/err" && ! grep -q '양식 위반' "$SB/err" && posted && ok "K ' / ' 3개 이상 → 경고만(위반 건수에 안 셈, 전송)" || ko "K 슬래시 경고" "rc=$RC $(cat "$SB/err")"
+run_n --kind done $'완료\n\n- 무엇: A · B · C · D'
+grep -q "로 이은 줄이 있음" "$SB/err" && ok "K ' · ' 3개 이상 → 경고" || ko "K 가운뎃점 경고" "$(cat "$SB/err")"
+LRM_FORMAT=strict run_n --kind done $'완료\n\n- 무엇: A / B / C / D'
+[ "$RC" = 0 ] && posted && ok "K strict 에서도 거부하지 않음" || ko "K strict" "rc=$RC"
+run_n --kind done $'완료\n\n- 무엇: A / B\n- 왜: C · D'
+[ "$(errn)" = 0 ] && ok "K 2개까지는 경고 없음" || ko "K 2개" "$(cat "$SB/err")"
+run_n --kind done $'완료 · 가 · 나 · 다 · 라\n\n- 무엇: 끝'
+! grep -q "로 이은 줄" "$SB/err" && ok "K 첫 줄(제목)은 검사 제외" || ko "K 제목" "$(cat "$SB/err")"
+run_n --kind decide "주제$ANS"
+! grep -q "로 이은 줄" "$SB/err" && ok "K 고정 형식 '👉 답:' 줄은 검사 제외" || ko "K 답 줄" "$(cat "$SB/err")"
+
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

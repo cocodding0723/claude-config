@@ -38,7 +38,7 @@ class Base(unittest.TestCase):
             json.dump({"slug": slug, "updatedAt": at, "tasks": tasks, "blockers": []}, f)
 
     def run_once(self, *args, interval="0", **extra):
-        env = {k: v for k, v in os.environ.items() if not k.startswith(("SLACK_", "LRM_"))}
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("SLACK_", "LRM_", "PANEL_"))}
         env.update(HOME=self.t.name, LRM_HUB_DIR=self.t.name, LRM_PROGRESS=self.snap, LRM_LEDGER=self.ledger,
                    LRM_HUB_STATUS_DIR=self.status, LRM_DIGEST_GH=self.gh, LRM_PROGRESS_PR_INTERVAL=interval, LRM_ORCA=os.path.join(self.t.name, "no-orca"))
         env.update(extra)
@@ -86,6 +86,58 @@ class CollectTest(Base):
         self.run_once("--once", interval="300")
         with open(os.path.join(self.t.name, "gh.calls")) as f:
             self.assertEqual(len(f.read().split()), 1)
+
+    def gh_args(self):
+        """가짜 gh 가 받은 --repo 값 목록(호출 순서). 호출마다 인자를 기록하는 gh 로 바꿔 씀"""
+        log = os.path.join(self.t.name, "gh.args")
+        with open(self.gh, "w") as f:
+            f.write(f'#!/bin/sh\necho "$@" >> "{log}"\ncat "{self.gh_out}"\n')
+        return log
+
+    def repos_called(self, log):
+        with open(log, encoding="utf-8") as f:
+            return [ln.split("--repo ")[1].split()[0] if "--repo " in ln else None for ln in f]
+
+    def test_pr_repos_fall_back_to_panel_env(self):
+        # launchd 처럼 저장소 밖에서 돌 때: LRM_DIGEST_REPOS 가 비면 작업 폴더 panel.env 의 PANEL_GH_REPOS 를 씀
+        log = self.gh_args()
+        with open(os.path.join(self.t.name, "panel.env"), "w") as f:
+            f.write('PANEL_RECENT=5\nPANEL_GH_REPOS="Org/One, Org/Two"\n')
+        self.assertEqual(self.run_once("--once").returncode, 0)
+        self.assertEqual(self.repos_called(log), ["Org/One", "Org/Two"])
+        self.assertIn("pr:Org/One#3", [i["key"] for i in self.load()["items"]])
+
+    def test_pr_repos_env_wins_over_panel_env(self):
+        log = self.gh_args()
+        with open(os.path.join(self.t.name, "panel.env"), "w") as f:
+            f.write("PANEL_GH_REPOS=Org/Panel\n")
+        self.assertEqual(self.run_once("--once", LRM_DIGEST_REPOS="Org/Env").returncode, 0)
+        self.assertEqual(self.repos_called(log), ["Org/Env"])
+        os.remove(log)
+        self.assertEqual(self.run_once("--once", PANEL_GH_REPOS="Org/PanelEnv").returncode, 0)  # 환경 변수 PANEL_GH_REPOS 도 파일보다 우선
+        self.assertEqual(self.repos_called(log), ["Org/PanelEnv"])
+
+    def test_broken_panel_env_does_not_stop_collection(self):
+        # 디코딩 불가 panel.env: --once 는 경고 후 파일 무시, --no-pr·--repo 는 파일을 읽지도 않음
+        log = self.gh_args()
+        with open(os.path.join(self.t.name, "panel.env"), "wb") as f:
+            f.write(b"PANEL_GH_REPOS=Org/One\n#\xff\n")
+        r = self.run_once("--once")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("panel.env 읽기 실패", r.stderr)
+        self.assertEqual(self.repos_called(log), [None])
+        r = self.run_once("--dry-run", "--no-pr")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("panel.env", r.stderr)
+        os.remove(log)
+        r = self.run_once("--dry-run", "--repo", "Org/Explicit")
+        self.assertEqual((r.returncode, self.repos_called(log)), (0, ["Org/Explicit"]))
+        self.assertNotIn("panel.env", r.stderr)
+
+    def test_pr_repos_default_to_current_repo_without_any_setting(self):
+        log = self.gh_args()
+        self.assertEqual(self.run_once("--once").returncode, 0)
+        self.assertEqual(self.repos_called(log), [None])
 
     def test_stale_hub_tagged(self):
         self.hub("old", 30, ["오래된 작업"])

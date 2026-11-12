@@ -234,20 +234,25 @@ def topic_key(rep: dict) -> str:
 def topic_text(conf: Conf, rep: dict) -> str:
     key = topic_key(rep)
     title = f"{rep['task']} 보고 스레드" if rep["task"] != hub_report.NO_TASK else f"{rep['hub']} 보고 스레드"
-    lines = [title, "", f"• 허브: {rep['hub']}"]
+    lines = [title, "", f"- 허브: {rep['hub']}"]
     ask = request_of(conf, rep["task"]) if not key.startswith("hub:") else ""
     if ask:
-        lines.append(f"• 요청: {ask[:LINE_MAX]}")
+        lines.append(f"- 요청: {ask[:LINE_MAX]}")
     return "\n".join(lines)
+
+
+def bullet(line: str) -> str:
+    """항목 한 줄을 '- ' 로 시작하게 함. 이미 '- '·'• ' 로 시작하면 머리만 통일"""
+    return "- " + line.lstrip().removeprefix("- ").removeprefix("• ").lstrip()
 
 
 def body_text(rep: dict) -> str:
     label = hub_report.KINDS[rep["kind"]][1]
-    lines = rep["text"].splitlines()
+    lines = [ln for ln in rep["text"].splitlines() if ln.strip()]
     if rep["kind"] == "decide":  # 첫 줄이 제목, 나머지가 배경. 선택지·답 줄은 slack_notify.sh 가 붙임
-        out = [lines[0]] + ([""] + [f"• {ln}" for ln in lines[1:]] if lines[1:] else [])
+        out = [lines[0]] + ([""] + [bullet(ln) for ln in lines[1:]] if lines[1:] else [])
     else:
-        out = [f"{label} · {rep['hub']}", ""] + [f"• {ln}" for ln in lines]
+        out = [f"{label} · {rep['hub']}", ""] + [bullet(ln) for ln in lines]
     if rep["files"]:
         out += ["", "참고: " + ", ".join(rep["files"])]
     return "\n".join(out)
@@ -257,8 +262,10 @@ def progress_line(rep: dict, link: str) -> str:
     emoji, label, _ = hub_report.KINDS[rep["kind"]]
     first = rep["text"].splitlines()[0]
     first = first if len(first) <= LINE_MAX else first[: LINE_MAX - 1] + "…"
-    where = f" · <{link}|{'결정 카드' if rep['kind'] == 'decide' else '주제 스레드'}>" if link else ""
-    return f"{emoji} {rep['hub']} {label} · {first}{where}"
+    out = [f"{emoji} {rep['hub']} {label}", f"- {first}"]
+    if link:
+        out.append(f"- <{link}|{'결정 카드' if rep['kind'] == 'decide' else '주제 스레드'}>")
+    return "\n".join(out)
 
 
 def decide_args(rep: dict) -> list:
@@ -308,8 +315,8 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
 
 def warn_failure(conf: Conf, rep: dict, why: str, deadline: float) -> None:
     label = hub_report.KINDS[rep["kind"]][1]
-    msg = (f"허브 보고 전송 실패\n\n• 무엇: {rep['hub']} {label} 보고가 {conf.fail_limit}회 연속 전송 실패\n"
-           f"• 원인: {why}\n• 결과: 다음 회차에도 재시도함")
+    msg = (f"허브 보고 전송 실패\n\n- 무엇: {rep['hub']} {label} 보고가 {conf.fail_limit}회 연속 전송 실패\n"
+           f"- 원인: {why}\n- 결과: 다음 회차에도 재시도함")
     run_notify(conf, ["--tag", rep["hub"], "--kind", "warn", msg], deadline)
 
 
@@ -340,7 +347,7 @@ def halt(conf: Conf, err: StateCorrupt, out: dict, dry: bool, deadline: float) -
     sig = state_signature(conf.state)
     if dry or read_text(marker) == sig:
         return out
-    msg = f"허브 보고 전송 중단\n\n• 원인: 상태 파일 {err}\n• 결과: 보고 전송 멈춤(같은 보고 재게시 방지)\n• 조치: {out['guide']}"
+    msg = f"허브 보고 전송 중단\n\n- 원인: 상태 파일 {err}\n- 결과: 보고 전송 멈춤(같은 보고 재게시 방지)\n- 조치: {out['guide']}"
     try:
         run_notify(conf, ["--kind", "warn", msg], deadline)  # 회차 공통 deadline 을 지킴
         with open(marker, "w", encoding="utf-8") as f:
