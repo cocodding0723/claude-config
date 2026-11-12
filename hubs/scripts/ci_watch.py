@@ -81,10 +81,10 @@ def pr_list():
         nums = [ln.split("#")[0].strip() for ln in WATCH_FILE.read_text().splitlines()]
         nums = [n for n in nums if n.isdigit()]
         if nums:
-            return [json.loads(gh("pr", "view", n, "-R", REPO, "--json", "number,title,headRefName,headRefOid,isDraft,labels")) for n in nums]
+            return [json.loads(gh("pr", "view", n, "-R", REPO, "--json", "number,title,headRefName,headRefOid,isDraft,labels,state")) for n in nums]
     except OSError:
         pass
-    return json.loads(gh("pr", "list", "-R", REPO, "--author", "@me", "--state", "open", "--json", "number,title,headRefName,headRefOid,isDraft,labels"))
+    return json.loads(gh("pr", "list", "-R", REPO, "--author", "@me", "--state", "open", "--json", "number,title,headRefName,headRefOid,isDraft,labels,state"))
 
 
 def cause(link):
@@ -100,7 +100,7 @@ def cause(link):
     for rx in CAUSE:
         for ln in lines:
             hit = rx.search(ln)
-            if hit:
+            if hit and review.specific(hit.group(0).strip()):  # 'exit code 1' 같은 일반 요약은 건너뜀
                 return hit.group(0).strip()[:120]
     return xml_cause(m.group(1))
 
@@ -192,31 +192,42 @@ def reviewer_errors(pr):
 
 
 def pick_hub(pr, state, with_common=False):
-    """담당 허브와 근거. 작업 공간 조회가 실패하면 표·미배정으로 진행"""
+    """담당 허브와 근거. 작업 공간 조회가 불완전하면 그 단계를 건너뛰고 표·미배정으로 진행"""
     names = review.load_hub_names(HUBS_TSV)
     common = review.common_cause(state.get(CAUSES, {}), str(pr["number"])) if with_common else ()
     return review.assign_hub(pr.get("headRefName", ""), pr.get("title", ""), review.load_table(HUB_TABLE),
-                             review.list_worktrees(ORCA), names, common, names.get(QA_SLUG, ""))
+                             review.list_worktrees(ORCA), names, common, names.get(QA_SLUG, ""), REPO)
 
 
 def relay_fail(pr, fails, prev, state, slack_ts=""):
     """CI 실패를 메인 터미널에 전달(허브가 고치도록 메인이 배정). 같은 커밋은 1회. 전송 실패는 Slack warn 이 대신함
-    리뷰어 오류로만 실패한 경우는 'AI 리뷰 오류' 알림이 이미 갔으므로 보내지 않음"""
+    리뷰어 오류로만 실패한 경우는 'AI 리뷰 오류' 알림이 이미 갔으므로 보내지 않음.
+    같은 구체 원인이 다른 PR 에도 있으면 테스트·QA 허브로 지정하고, 이미 다른 허브로 전달한 PR 은 담당 변경을 알림"""
     fails = [c for c in fails if not c.get("reviewer_error")]
     if not fails:
         return
     sha = pr.get("headRefOid") or "unknown"
+    n = str(pr["number"])
+    causes = state.setdefault(CAUSES, {})
+    old = causes.get(n) if (causes.get(n) or {}).get("head") == sha else None
+    causes[n] = {"head": sha, "fails": [{"key": c["key"], "cause": c.get("cause", "")} for c in fails], "hub": (old or {}).get("hub", "")}
+    handle = review.main_handle(MAIN_ENV)
+    hub, why_hub = pick_hub(pr, state, with_common=True)
+    for m in review.common_cause(causes, n):
+        e = causes[m]
+        if e.get("hub") and e["hub"] != hub and hub != review.UNASSIGNED and handle:
+            text = f"[CI→메인] 담당 변경 PR#{m} · {e['hub']} → {hub} · 근거: 같은 원인이 PR #{n} 에도 있음"
+            if review.send_main(ORCA, handle, text):
+                e["hub"] = hub
     if prev.get(FAIL_SENT) == sha:
         return
-    state.setdefault(CAUSES, {})[str(pr["number"])] = [{"key": c["key"], "cause": c.get("cause", "")} for c in fails]
-    hub, why_hub = pick_hub(pr, state, with_common=True)
     path = review.write_fail(REVIEW_OUT, pr, f"{hub} ({why_hub})", sha, fails, slack_ts)
     first = fails[0]
     why = first.get("cause") or "원인 줄 못 찾음"
-    handle = review.main_handle(MAIN_ENV)
     text = f"[CI→메인] CI 실패 PR#{pr['number']} · 담당 허브 {hub} ({why_hub}) · 원인 {first['key']}: {why} · 파일 {path}"
     if handle and review.send_main(ORCA, handle, text):
         prev[FAIL_SENT] = sha
+        causes[n]["hub"] = hub
 
 
 def is_bundle(pr):
@@ -249,7 +260,8 @@ def main():
     review_base = not state.get(REVIEW_INIT)
     adv_base = not state.get(ADV_INIT)  # 처음 켠 실행은 지금 head 들을 본 것으로만 기록(일괄 실행 방지)
     sent = 0
-    for pr in pr_list():
+    prs = pr_list()
+    for pr in prs:
         n = str(pr["number"])
         try:
             checks = json.loads(gh("pr", "checks", n, "-R", REPO, "--json", "name,bucket,link,workflow"))
@@ -309,6 +321,8 @@ def main():
             sent += 1
         else:  # 실패하면 다음 주기에 다시 보내도록 이번 결론을 기록하지 않음
             state[n] = before
+    open_heads = {str(p["number"]): p.get("headRefOid") for p in prs if p.get("state", "OPEN") == "OPEN"}
+    review.prune_causes(state.get(CAUSES, {}), open_heads)  # 닫힌 PR·옛 head 의 원인 제거
     state[REVIEW_INIT] = True
     state[ADV_INIT] = True
     if not dry:

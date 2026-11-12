@@ -100,26 +100,69 @@ sed -i '' 's/1111111111111111/2222222222222222/' "$D/prs.json"; c701 pending; ru
 
 # ---- CI 실패 담당 허브 자동 지정 ----
 cp "$HERE/../../hubs/hubs.tsv" "$D/hubs.tsv"
-wt() { printf '{"result":{"worktrees":[{"id":"r::/w/coord-ui-layer-hub","path":"/w/coord-ui-layer-hub","branch":"refs/heads/main"},{"id":"r::/w/x","path":"/w/x","branch":"refs/heads/%s","parentWorktreeId":"r::/w/coord-ui-layer-hub"}]}}' "$1" > "$D/worktrees.json"; }
-newpr() { echo "[{\"number\":$1,\"title\":\"[LRM-1] t\",\"headRefName\":\"$2\",\"headRefOid\":\"$3\"}]" > "$D/prs.json"; rm -f "$D/ci-watch.state.json" "$D/orca.log"; : > "$D/orca.log"; }
-runfail() { printf '[{"name":"Run Unity validation / Unity validation","workflow":"PR Test Pipeline","bucket":"%s","link":"https://x/actions/runs/11/job/22"}]' "$1" > "$D/checks-$2.json"; }
-newpr 710 feat/mine aaaaaaaaaaaaaaaa; wt feat/mine; runfail pending 710; run; runfail fail 710; run
-grep -q "담당 허브 UI 계층 통합 설계 (근거: PR 브랜치의 작업 공간 부모 허브)" "$D/orca.log" && ok "브랜치 → 부모 허브(1순위)" || ko "부모 허브" "$(cat "$D/orca.log")"
-newpr 711 feat/LRM-397-x bbbbbbbbbbbbbbbb; wt feat/other; runfail pending 711; run; runfail fail 711; run
-grep -q "담당 허브 VFX 허브(vfx) (근거: 허브 표" "$D/orca.log" && ok "작업 공간 없음 → 표(2순위)" || ko "표 대체" "$(cat "$D/orca.log")"
-newpr 712 feat/none cccccccccccccccc; rm -f "$D/worktrees.json"; runfail pending 712; run; runfail fail 712; run
+PJ=github:basakansoft/loverevolutionmaker
+# wt <브랜치> [projectId] [truncated] [omitted호스트]: 허브 폴더 + 하위 작업 공간 1개
+wt() { printf '{"result":{"truncated":%s,"hostScope":{"hostIds":["local"],"omittedHostIds":[%s]},"worktrees":[{"id":"r::/w/coord-ui-layer-hub","path":"/w/coord-ui-layer-hub","branch":"refs/heads/main","projectId":"%s"},{"id":"r::/w/x","path":"/w/x","branch":"refs/heads/%s","projectId":"%s","parentWorktreeId":"r::/w/coord-ui-layer-hub"}]}}' "${3:-false}" "${4:-}" "$PJ" "$1" "${2:-$PJ}" > "$D/worktrees.json"; }
+prs() { echo "[$1]" > "$D/prs.json"; }
+pj() { printf '{"number":%s,"title":"[LRM-1] t","headRefName":"%s","headRefOid":"%s"%s}' "$1" "$2" "$3" "${4:-}"; }
+fresh() { rm -f "$D/ci-watch.state.json" "$D/orca.log" "$D/worktrees.json"; : > "$D/orca.log"; }
+# 검사 결과·로그: 710 계열은 같은 검사, 로그 마지막 줄만 다름
+ck() { printf '[{"name":"Run Unity validation / Unity validation","workflow":"PR Test Pipeline","bucket":"%s","link":"https://x/actions/runs/%s/job/22"}]' "$1" "$2" > "$D/checks-$3.json"; }
+cycle() { for n in "$@"; do ck pending 11 $n; done; run; for n in "$@"; do ck fail 11 $n; done; run; }
+log() { printf 'x\t2026-11-11T05:00:01.1Z %s\n' "$1" > "$D/log.txt"; }
+fresh; log "not ok 3 - eye"; prs "$(pj 710 feat/mine aaaaaaaaaaaaaaaa)"; wt feat/mine; cycle 710
+grep -q "담당 허브 UI 계층 통합 설계 (근거: PR 브랜치의 작업 공간 허브)" "$D/orca.log" && ok "브랜치 → 부모 허브(작업 공간 순위)" || ko "부모 허브" "$(cat "$D/orca.log")"
+fresh; prs "$(pj 711 feat/LRM-397-x bbbbbbbbbbbbbbbb)"; wt feat/other; cycle 711
+grep -q "담당 허브 VFX 허브(vfx) (근거: 허브 표" "$D/orca.log" && ok "작업 공간 없음 → 표" || ko "표 대체" "$(cat "$D/orca.log")"
+fresh; prs "$(pj 712 feat/none cccccccccccccccc)"; cycle 712
 grep -q "담당 허브 미배정(메인 판단) (근거: 작업 공간·표·공통 원인 모두 없음)" "$D/orca.log" && ok "조회 실패+표 없음 → 미배정" || ko "미배정" "$(cat "$D/orca.log")"
-newpr 713 feat/LRM-397-y dddddddddddddddd; rm -f "$D/worktrees.json"; runfail pending 713; run; runfail fail 713; run
+fresh; prs "$(pj 713 feat/LRM-397-y dddddddddddddddd)"; cycle 713
 grep -q "담당 허브 VFX 허브(vfx) (근거: 허브 표" "$D/orca.log" && ok "조회 실패 → 표로 안전하게" || ko "조회 실패 표" "$(cat "$D/orca.log")"
+fresh; prs "$(pj 714 feat/LRM-397-z eeeeeeeeeeeeeeee)"; wt feat/LRM-397-z github:basakansoft/other-repo; cycle 714
+grep -q "담당 허브 VFX 허브(vfx) (근거: 허브 표" "$D/orca.log" && ok "다른 저장소 같은 브랜치 → 소유 허브 미지정(표)" || ko "다른 저장소" "$(cat "$D/orca.log")"
+fresh; prs "$(pj 715 feat/mine ffffffffffffffff)"; wt feat/mine "$PJ" true; cycle 715
+grep -q "담당 허브 미배정(메인 판단)" "$D/orca.log" && ok "truncated → 조회 불완전, 표로(없으면 미배정)" || ko "truncated" "$(cat "$D/orca.log")"
+fresh; prs "$(pj 716 feat/mine 1010101010101010)"; wt feat/mine "$PJ" false '"runtime:x"'; cycle 716
+grep -q "담당 허브 미배정(메인 판단)" "$D/orca.log" && ok "원격 호스트 누락 → 조회 불완전" || ko "호스트 누락" "$(cat "$D/orca.log")"
+fresh; prs "$(pj 717 coord/ui 2020202020202020)"; printf '{"result":{"truncated":false,"worktrees":[{"id":"r::/w/coord-ui-layer-hub","path":"/w/coord-ui-layer-hub","branch":"refs/heads/coord/ui","projectId":"%s"}]}}' "$PJ" > "$D/worktrees.json"; cycle 717
+grep -q "담당 허브 UI 계층 통합 설계 (근거: PR 브랜치의 작업 공간 허브)" "$D/orca.log" && ok "허브 폴더 자체 브랜치 → 그 허브" || ko "허브 폴더" "$(cat "$D/orca.log")"
+fresh; prs "$(pj 718 feat/dup 3030303030303030)"; wt feat/dup; python3 - "$D/worktrees.json" <<'PY'
+import json,sys
+d=json.load(open(sys.argv[1])); d["result"]["worktrees"].append(dict(d["result"]["worktrees"][1],id="r::/w/y",path="/w/y")); json.dump(d,open(sys.argv[1],"w"))
+PY
+cycle 718
+grep -q "담당 허브 미배정(메인 판단)" "$D/orca.log" && ok "후보가 2개 → 지정 안 함" || ko "후보 중복" "$(cat "$D/orca.log")"
+
+# 공통 원인: 서로 다른 PR 의 같은 시험 실패 → QA 허브. 처리 순서를 바꿔도 같은 결과
+for order in "720 721" "721 720"; do
+  fresh; log "not ok 9 - shared"; wt feat/mine; prs "$(pj 720 feat/mine 4040404040404040),$(pj 721 feat/o 5050505050505050)"
+  set -- $order; first=$1
+  [ "$first" = 721 ] && prs "$(pj 721 feat/o 5050505050505050),$(pj 720 feat/mine 4040404040404040)"
+  cycle 720 721
+  [ "$(grep -c "담당 허브 테스트·QA" "$D/orca.log")" -ge 1 ] && grep -q "담당 변경 PR#" "$D/orca.log" && ok "공통 원인 → QA 허브 + 먼저 간 PR 담당 변경 ($order)" || ko "공통 원인 $order" "$(cat "$D/orca.log")"
+done
+# 같은 종료 요약, 서로 다른 assert → 공통 아님
+fresh; wt feat/mine; prs "$(pj 730 feat/mine 6060606060606060),$(pj 731 feat/o 7070707070707070)"
+printf 'x\t2026-11-11T05:00:01.1Z ##[error]Process completed with exit code 1.\n' > "$D/log.txt"
+cycle 730 731
+! grep -q "테스트·QA" "$D/orca.log" && grep -q "담당 허브 UI 계층" "$D/orca.log" && ok "종료 요약만 같고 구체 원인 없음 → 공통 아님" || ko "종료 요약" "$(cat "$D/orca.log")"
 python3 -c '
 import sys;sys.path.insert(0,sys.argv[1]);import ci_review as r
 n={"test-qa":"테스트·QA","ui-layer":"UI 계층 통합 설계"}
-f={"710":[{"key":"U","cause":"c"}],"711":[{"key":"U","cause":"c"}],"712":[{"key":"U","cause":"다름"}]}
-assert r.common_cause(f,"710")==["711"], "공통"
-assert r.common_cause(f,"712")==[], "단독"
+def e(h,c): return {"head":h,"fails":[{"key":"U","cause":c}],"hub":""}
+f={"710":e("a","not ok 1 - A"),"711":e("b","not ok 1 - A"),"712":e("c","not ok 2 - B"),"713":e("d","Process completed with exit code 1."),"714":e("e","Process completed with exit code 1.")}
+assert r.common_cause(f,"710")==["711"] and r.common_cause(f,"711")==["710"], "공통 대칭"
+assert r.common_cause(f,"712")==[] and r.common_cause(f,"713")==[], "단독·종료 요약"
+r.prune_causes(f,{"710":"a","712":"zzz"}); assert set(f)=={"710"}, "닫힌 PR·옛 head 제거"
+assert r.common_cause(f,"710")==[], "제거 뒤 공통 아님"
 h,w=r.assign_hub("feat/zzz","t",[],[],n,["711"],"테스트·QA"); assert h=="테스트·QA" and "711" in w, "QA"
 assert r.assign_hub("feat/zzz","t",[],[],n,[],"테스트·QA")[0].startswith("미배정"), "공통 없음"
-assert r.assign_hub("feat/zzz","t",[],None,n)[0].startswith("미배정"), "조회 None"
-' "$S" && ok "공통 원인 → QA 허브, 단독이면 미배정" || ko "공통 원인"
+' "$S" && ok "공통 원인 판정: 대칭·종료 요약 제외·닫힌 PR/옛 head 제거" || ko "공통 원인 단위"
+fresh; log "##[error]Process completed with exit code 1."; printf 'x\t2026-11-11T05:00:02.1Z not ok 5 - real\n' >> "$D/log.txt"; prs "$(pj 740 feat/mine 8080808080808080)"; cycle 740
+grep -q "원인 Run Unity validation / Unity validation: not ok 5 - real" "$D/orca.log" && ok "일반 종료 요약은 건너뛰고 구체 원인 추출" || ko "원인 추출" "$(cat "$D/orca.log")"
+# 닫힌 PR 은 상태 파일 원인 표에서 제거
+fresh; log "not ok 9 - shared"; prs "$(pj 750 feat/mine 9090909090909090)"; cycle 750
+prs "$(pj 750 feat/mine 9090909090909090 ',"state":"CLOSED"')"; ck pending 11 750; run
+python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));assert "750" not in d.get("_causes",{}),d' "$D/ci-watch.state.json" && ok "닫힌 PR 원인 제거" || ko "닫힌 PR"
 
 echo "통과 $PASS / 실패 $FAIL"; [ "$FAIL" = 0 ]

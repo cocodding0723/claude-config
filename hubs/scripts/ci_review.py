@@ -69,37 +69,70 @@ def load_hub_names(path):
     return names
 
 
-def parent_hub(branch, worktrees, names):
-    """PR head 브랜치를 가진 작업 공간의 부모 허브 표시 이름. 못 찾으면 빈 문자열.
-    worktrees: orca worktree list 의 result.worktrees. 부모 id 는 '<repo>::<경로>' 형식"""
-    by_id = {w.get("id"): w for w in worktrees}
-    for w in worktrees:
-        if w.get("branch") != f"refs/heads/{branch}" or not branch:
-            continue
-        parent = by_id.get(w.get("parentWorktreeId"))
-        base = os.path.basename((parent or {}).get("path") or str(w.get("parentWorktreeId") or "").split("::")[-1])
-        m = HUB_DIR.match(base)
-        for slug in ([m.group(1)] if m else []) + [base]:  # 'coord-server-hub' 처럼 폴더 이름 자체가 slug 인 허브도 있음
-            if slug in names:
-                return names[slug]
-        return ""
+def hub_name(base, names):
+    """폴더 이름 → 표시 이름. coord-<slug>-hub 의 slug, 또는 'coord-server-hub' 처럼 폴더 이름 자체가 slug 인 허브"""
+    m = HUB_DIR.match(base)
+    for slug in ([m.group(1)] if m else []) + [base]:
+        if slug in names:
+            return names[slug]
     return ""
 
 
-def list_worktrees(orca, timeout=20):
-    """orca worktree list(읽기 전용) 의 작업 공간 목록. 조회 실패는 None"""
-    rc, data = mt.run_orca(orca, ["worktree", "list", "--json"], timeout)
-    if rc != 0 or not data:
+def same_repo(wt, repo):
+    """작업 공간이 PR 저장소('owner/name')의 것인지. projectId 가 없으면 같다고 보지 않음"""
+    return bool(repo) and str(wt.get("projectId") or "").lower() == f"github:{repo}".lower()
+
+
+def parent_hub(branch, worktrees, names, repo=""):
+    """PR head 브랜치를 가진 작업 공간의 허브 표시 이름. 못 찾으면 빈 문자열.
+    PR 과 같은 저장소의 작업 공간 중 후보가 정확히 1개일 때만 지정(이름만 같은 다른 저장소·중복은 건너뜀).
+    후보가 허브 폴더(coord-*-hub) 자체면 그 허브, 아니면 부모 허브. 부모 id 는 '<repo>::<경로>' 형식"""
+    if not branch:
+        return ""
+    found = [w for w in worktrees if w.get("branch") == f"refs/heads/{branch}" and same_repo(w, repo)]
+    if len(found) != 1:
+        return ""
+    w = found[0]
+    own = hub_name(os.path.basename(str(w.get("path") or "")), names)
+    if own:
+        return own
+    by_id = {x.get("id"): x for x in worktrees}
+    parent = by_id.get(w.get("parentWorktreeId"))
+    return hub_name(os.path.basename((parent or {}).get("path") or str(w.get("parentWorktreeId") or "").split("::")[-1]), names)
+
+
+def list_worktrees(orca, timeout=30):
+    """orca worktree list(읽기 전용) 의 작업 공간 목록. 조회 실패·잘림(truncated)·누락 호스트가 있으면 None(조회 불완전)"""
+    rc, data = mt.run_orca(orca, ["worktree", "list", "--limit", "5000", "--json"], timeout)
+    res = (data or {}).get("result") or {}
+    wts = res.get("worktrees")
+    if rc != 0 or not isinstance(wts, list) or res.get("truncated") or (res.get("hostScope") or {}).get("omittedHostIds"):
         return None
-    wts = (data.get("result") or {}).get("worktrees")
-    return wts if isinstance(wts, list) else None
+    return wts
 
 
-def common_cause(prs_fails, own):
-    """다른 열린 PR 에도 같은 검사가 같은 원인 문구로 실패했는지. prs_fails: {PR 번호: [{key, cause}]}, own: 이 PR 번호"""
-    mine = {(c["key"], c.get("cause", "")) for c in prs_fails.get(own, []) if c.get("cause")}
-    others = {n for n, cs in prs_fails.items() if n != own and mine & {(c["key"], c.get("cause", "")) for c in cs}}
-    return sorted(others)
+GENERIC = re.compile(r"(?i)exit(ed)?( with)? (code|status) \d+|^(##\[error\])?\s*(error)?\.?\s*$")  # 종료 코드만 있는 요약은 원인 식별자가 아님
+
+
+def specific(cause):
+    """구체 원인 식별자(실패 시험 이름·assert 문구·오류 첫 줄)인지. 빈 값·일반 종료 요약은 아님"""
+    return bool(cause) and not GENERIC.search(cause)
+
+
+def common_cause(causes, own):
+    """다른 열린 PR 에도 같은 검사가 같은 구체 원인으로 실패했는지. causes: {PR 번호: {head, fails:[{key, cause}], hub}}, own: 이 PR 번호.
+    구체 식별자가 없으면 공통으로 보지 않음. 번호 순 정렬이라 처리 순서와 무관"""
+    def ids(e):
+        return {(c["key"], c.get("cause", "")) for c in (e or {}).get("fails", []) if specific(c.get("cause", ""))}
+
+    mine = ids(causes.get(own))
+    return sorted((n for n, e in causes.items() if n != own and mine & ids(e)), key=lambda n: (len(n), n))
+
+
+def prune_causes(causes, open_heads):
+    """열린 PR 의 현재 head 에 묶인 원인만 남김. open_heads: {PR 번호: head}"""
+    for n in [n for n, e in causes.items() if open_heads.get(n) != e.get("head")]:
+        del causes[n]
 
 
 def hub_for(branch, title, table):
@@ -107,18 +140,18 @@ def hub_for(branch, title, table):
     return assign_hub(branch, title, table)[0]
 
 
-def assign_hub(branch, title, table, worktrees=None, names=None, common=(), qa_hub=""):
-    """담당 허브와 근거 (허브, 근거 문구). 1순위 head 브랜치 작업 공간의 부모 허브, 2순위 표(정규식\t허브) 첫 일치,
-    3순위 같은 원인의 PR 이 여럿이면 qa_hub, 모두 실패하면 미배정"""
-    hub = parent_hub(branch, worktrees or [], names or {})
+def assign_hub(branch, title, table, worktrees=None, names=None, common=(), qa_hub="", repo=""):
+    """담당 허브와 근거 (허브, 근거 문구). 1순위 같은 원인의 PR 이 여럿이면 qa_hub(소유 허브보다 먼저),
+    2순위 head 브랜치 작업 공간의 허브, 3순위 표(정규식\t허브) 첫 일치, 모두 실패하면 미배정"""
+    if common and qa_hub:
+        return qa_hub, f"근거: 같은 원인이 PR {', '.join('#' + str(n) for n in common)} 에도 있음 → 테스트·QA 허브"
+    hub = parent_hub(branch, worktrees or [], names or {}, repo)
     if hub:
-        return hub, "근거: PR 브랜치의 작업 공간 부모 허브"
+        return hub, "근거: PR 브랜치의 작업 공간 허브"
     text = f"{branch} {title}"
     for pat, name in table:
         if re.search(pat, text):
             return name, "근거: 허브 표(ci-review-hubs.tsv) 일치"
-    if common and qa_hub:
-        return qa_hub, f"근거: 같은 원인이 PR {', '.join('#' + str(n) for n in common)} 에도 있음 → 테스트·QA 허브"
     return UNASSIGNED, "근거: 작업 공간·표·공통 원인 모두 없음"
 
 
