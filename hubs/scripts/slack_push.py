@@ -15,6 +15,9 @@ import time
 import unicodedata
 import uuid
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # python -I 는 스크립트 폴더를 경로에 넣지 않음. 링크로 설치돼도 원본 폴더의 공용 모듈을 찾음
+import main_terminal as mt  # noqa: E402
+
 DIR = os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
 INBOX, READ_MARK = os.path.join(DIR, "slack-inbox.jsonl"), os.path.join(DIR, ".main-read-lines")
 STATE, LOCK, LOG = (os.path.join(DIR, n) for n in ("slack-push-state.json", ".slack-push.lock", "slack-push.log"))
@@ -56,16 +59,10 @@ SEND_CAP = 3                                          # 워커 1회당 전달 �
 BATCH_ITEMS, MSG_CHARS, BATCH_CHARS = 20, 400, 3000
 FIRST_MAX = 20                                        # 첫 실행에서 안 읽은 줄이 이보다 많으면 과거분은 보내지 않음
 KEEP_DAYS, LOCK_STALE = 30, 900
-MAIN_PATH = (os.environ.get("LRM_PUSH_MAIN") or os.path.expanduser("~/orca/LoveRevolutionMaker")).rstrip("/")
 MAIN_ENV = os.environ.get("LRM_MAIN_ENV") or os.path.join(DIR, "main.env")  # 메인 터미널 핸들(MAIN_TERMINAL=…) 설정. 메인 재시작 때 set_main_terminal.sh 가 갱신
-MAIN_KEY = "MAIN_TERMINAL="
-HANDLE_RE = re.compile(r"term_[0-9a-f-]+")  # fullmatch 로만 씀. $ 는 끝 개행을 통과시킴
-# Orca CLI 가 터미널 핸들 무효로 취급하는 오류 코드(번들 handlers/orchestration/terminal-identity.js). 그 밖(runtime_unavailable·시간 초과 등)은 일시 오류
-HANDLE_GONE_CODES = frozenset({"terminal_handle_stale", "terminal_gone", "terminal_not_found"})
 HANDLE_LOG = 13                                       # 로그에 남기는 핸들 앞 글자 수
-PANE = os.environ.get("LRM_PUSH_PANE", "MAIN")        # 보조 조건. show 에 paneTitle 이 있고 이 값과 다르면 보류, 키가 없으면 통과. "" 이면 대조 생략
+SPEC = mt.Spec.from_env()                             # 메인 판정 기준(메인 체크아웃 LRM_PUSH_MAIN·claude·제목 보조 조건 LRM_PUSH_PANE). 판정·재탐색은 main_terminal 이 맡음
 ORCA = os.environ.get("LRM_PUSH_ORCA", "orca")
-AGENT = "claude"
 NOTIFY = os.environ.get("LRM_PUSH_NOTIFY") or os.path.join(SELF_DIR, "slack_notify.sh")
 ALERT = os.path.join(DIR, ".slack-push-alert.json")  # '메인 연결 끊김' 알림을 보낸 사유 목록. 연결이 확인되면 지움
 # 메인 핸들이 없거나 다른 터미널을 가리키는 사유. 사람이 main.env 를 고쳐야 풀리므로 알림 대상(화면 상태·조회 실패는 제외)
@@ -73,9 +70,17 @@ LINK_LOST = frozenset({"no_main_handle", "handle_gone", "handle_dead", "not_writ
 ALERT_TEXT = "\n".join([
     "메인 연결 끊김",
     "",
-    "• 무엇: Slack 메시지를 메인 세션에 넘기지 못하고 모아 두는 중이다 (사유: {reason})",
-    "• 할 일: 메인 세션에서 set_main_terminal.sh <새 핸들> 로 main.env 의 MAIN_TERMINAL 을 고친다",
+    "• 무엇: Slack 메시지를 메인 세션에 넘기지 못하고 모아 두는 중이다 (사유: {reason}, 자동 재탐색 후보: {cands})",
+    "• 할 일: {todo}",
 ])
+ALERT_STALE = "\n".join([
+    "메인 연결 끊김",
+    "",
+    "• 무엇: 옛 메인 터미널로 보낸 묶음의 도착 여부를 몰라 새 메인으로 다시 보내지 않고 멈췄다. 옛 터미널이 아직 살아 있다",
+    "• 할 일: 옛 터미널 화면에서 도착했는지 본다. 도착했으면 .main-read-lines 를 그 묶음 끝 줄로 올리고, 아니면 slack-push-state.json 을 다른 이름으로 옮긴다",
+])
+TODO_PICK = "후보가 여럿이라 자동으로 못 골랐다. orca terminal list 에서 메인을 골라 set_main_terminal.sh <핸들> 로 지정한다"
+TODO_SET = "메인 세션에서 set_main_terminal.sh <새 핸들> 로 main.env 의 MAIN_TERMINAL 을 고친다(후보가 하나면 set_main_terminal.sh --auto)"
 MSG_TYPES = ("note", "command", "thread_reply")       # 본문 인용으로 전달하는 메시지 종류. 반응은 아래 REACT_TYPE 이 한 줄로 전달
 REACT_TYPE = "reaction"                               # 반응도 전달함(parent_ts 필수). 전달하지 않고 표식을 막는 것은 react_since 이하 옛 반응뿐
 # 번호 카드·할 일 반응의 사람이 읽는 해석. 형식은 slack_poll.sh 와 같음. 하나라도 어긋나면 해석 문장 대신 action 원문을 씀
@@ -431,21 +436,8 @@ def prune_batches():
 
 # ---- 대상 터미널·전송 -------------------------------------------------------------------------
 def run_orca(args, timeout):
-    """(returncode, 파싱한 JSON|None). 시간 초과는 (None, None)"""
-    try:
-        p = subprocess.run([ORCA] + args, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        return None, None
-    except OSError:
-        return 127, None
-    for blob in (p.stdout, p.stderr):
-        try:
-            d = json.loads(blob)
-            if isinstance(d, dict):
-                return p.returncode, d
-        except ValueError:
-            pass
-    return p.returncode, None
+    """(returncode, 파싱한 JSON|None). 시간 초과는 (None, None), 실행 불가는 (127, None)"""
+    return mt.run_orca(ORCA, args, timeout)
 
 
 def screen_state(preview):
@@ -501,54 +493,47 @@ def main_handle():
     형식이 term_<16진·하이픈> 이 아니거나 서로 다른 값이 둘 이상이면 무효"""
     v = os.environ.get("LRM_PUSH_HANDLE")
     if v is None:
-        vals = set()
-        try:
-            with open(MAIN_ENV, encoding="utf-8", errors="replace") as f:
-                for ln in f:
-                    if ln.startswith(MAIN_KEY):
-                        vals.add(ln[len(MAIN_KEY):].strip())
-        except OSError:
-            return None
-        if len(vals) != 1:
-            return None
-        v = vals.pop()
-    return v if HANDLE_RE.fullmatch(v) else None
+        return mt.read_handle(MAIN_ENV)
+    return v if mt.HANDLE_RE.fullmatch(v) else None
 
 
 def target_why(t):
-    """show 로 받은 터미널이 메인 세션이 아니면 사유 코드. 끊김·고아·쓰기 불가·다른 체크아웃·claude 아님·제목 불일치 순"""
-    if t.get("connected") is not True or t.get("orphaned"):
-        return "handle_dead"
-    if t.get("writable") is not True:
-        return "not_writable"
-    if str(t.get("worktreePath") or "").rstrip("/") != MAIN_PATH:
-        return "wrong_worktree"
-    if t.get("agentIdentity") != AGENT:
-        return "not_claude"
-    if PANE and "paneTitle" in t and t.get("paneTitle") != PANE:  # set-pane-title 이 show 에 안 보이는 경우가 있어 키가 없으면 통과
-        return "pane_title_mismatch"
-    return None
+    return mt.target_why(t, SPEC)
 
 
 def find_target():
-    """(handle|None, 사유 코드|None, 로그용 핸들 앞부분). 매번 새로 확인. main.env 가 가리키는 터미널이 살아 있고 메인 체크아웃의
-    claude 세션이며 입력 대기 상태일 때만 대상. 제목으로 후보를 고르지 않음(제목이 사라지면 다른 터미널이 대상이 되는 일을 막음)"""
+    """(handle|None, 사유 코드|None, 로그용 핸들 앞부분, 재탐색 후보 수|None). 매번 새로 확인. main.env 가 가리키는 터미널이 살아 있고 메인 체크아웃의
+    claude 세션이며 입력 대기 상태일 때만 대상. 제목으로 후보를 고르지 않음(제목이 사라지면 다른 터미널이 대상이 되는 일을 막음).
+    사람이 고쳐야 풀리는 사유면 relink 가 제목 후보를 재탐색해 main.env 를 갱신한 뒤 다시 확인함(후보가 정확히 1개일 때만)"""
+    return relink(*probe())
+
+
+def probe():
+    """main.env 핸들 1회 확인: (handle|None, 사유 코드|None, 로그용 핸들 앞부분)"""
     handle = main_handle()
     if not handle:
         return None, "no_main_handle", "none"
     short = handle[:HANDLE_LOG]
-    rc, d = run_orca(["terminal", "show", "--terminal", handle, "--json"], 20)
-    if rc is None or rc == 127:
-        return None, "show_fail", short
-    t = ((d or {}).get("result") or {}).get("terminal") if isinstance(d, dict) else None
-    if rc != 0 or not isinstance(t, dict):
-        err = d.get("error") if isinstance(d, dict) else None
-        code = err.get("code") if isinstance(err, dict) else None
-        return None, ("handle_gone" if code in HANDLE_GONE_CODES else "show_fail"), short
-    if t.get("handle") not in (None, handle):  # 다른 터미널의 정보를 돌려받음
-        return None, "handle_gone", short
-    why = target_why(t) or screen_hold(t.get("preview"))
+    t, why = mt.check_link(run_orca, SPEC, handle)
+    why = why or screen_hold(t.get("preview"))
     return (None, why, short) if why else (handle, None, short)
+
+
+def relink(handle, why, short):
+    """probe 결과가 REDISCOVER 사유면 재탐색해 main.env 를 갱신하고 다시 probe. 반환: (handle, 사유, 앞부분, 후보 수|None).
+    후보 수는 재탐색을 했을 때만(알림 문구용). 조회 실패·LRM_PUSH_HANDLE 고정(시험)이면 재탐색하지 않음"""
+    if why not in mt.REDISCOVER or os.environ.get("LRM_PUSH_HANDLE") is not None:
+        return handle, why, short, None
+    found = mt.rediscover(run_orca, SPEC, MAIN_ENV)
+    if found.status == "current_ok":  # 재탐색 잠금을 기다리는 사이 다른 쪽이 고침. 새 값으로 다시 확인
+        h2, why2, short2 = probe()
+        return h2, why2, short2, None
+    if found.status != "updated":
+        log("relink", result=found.status, cands=found.count, was=why)
+        return handle, why, short, found.count if found.status in ("none", "many") else None
+    log("relink", note="재탐색으로_갱신", handle=found.handle[:8], was=why)
+    h2, why2, short2 = probe()
+    return h2, why2, short2, 1
 
 
 def screen_check(handle):
@@ -562,7 +547,7 @@ def screen_check(handle):
     if rc != 0 or not isinstance(t, dict):
         err = d.get("error") if isinstance(d, dict) else None
         code = err.get("code") if isinstance(err, dict) else None
-        return ("changed", "handle_gone") if code in HANDLE_GONE_CODES else ("unknown", "show_fail")
+        return ("changed", "handle_gone") if code in mt.HANDLE_GONE_CODES else ("unknown", "show_fail")
     if t.get("handle") not in (None, handle):
         return "changed", "handle_gone"
     why = target_why(t)
@@ -621,9 +606,10 @@ def alert_save(s):
     os.replace(tmp, ALERT)
 
 
-def alert(reason):
+def alert(reason, cands=None, text=None):
     """'메인 연결 끊김' 경고를 사유마다 한 번만 보냄. 보낸 사유는 상태 파일(600)에 남겨 연결이 확인될 때까지 다시 보내지 않음.
-    알림 실패는 전달·수집을 막지 않음(로그만). 본문에 핸들 값·메시지 내용은 넣지 않음"""
+    알림 실패는 전달·수집을 막지 않음(로그만). 본문에 핸들 값·메시지 내용은 넣지 않음.
+    cands = 재탐색이 센 후보 수(None 이면 재탐색 안 함·실패). 2개 이상이면 사람이 고르라고 안내함"""
     s = alert_state() or {"reasons": []}
     if reason in s["reasons"]:
         return
@@ -635,7 +621,7 @@ def alert(reason):
         log("alert", reason=reason, result="state_fail")
         return
     try:
-        p = subprocess.run(["/bin/bash", NOTIFY, "--kind", "warn", "--tag", "slack-push", "--title", "메인 연결 끊김", ALERT_TEXT.format(reason=reason)],
+        p = subprocess.run(["/bin/bash", NOTIFY, "--kind", "warn", "--tag", "slack-push", "--title", "메인 연결 끊김", text or ALERT_TEXT.format(reason=reason, cands="미확인" if cands is None else f"{cands}개", todo=TODO_PICK if cands and cands > 1 else TODO_SET)],
                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
         result = "ok" if p.returncode == 0 else f"fail_rc{p.returncode}"
     except subprocess.TimeoutExpired:
@@ -773,6 +759,25 @@ def release():
 
 
 # ---- 판단·전달 --------------------------------------------------------------------------------
+def release_moved(pp):
+    """target_changed 로 멈춘 묶음 중 대상이 또 바뀐 것을 풀어 재확인하게 함. 이전 버전은 이 보류를 moved_to 표식 없이 stop 만 남겨
+    대상이 바뀐 뒤에도 영구 정지했으므로(2026-11-12 사고) 표식이 없는 옛 상태도 같은 조건으로 이관함.
+    풀리는 것은 reason=unknown_delivery·옛 대상(ambig)과 지금 대상이 다르고 마지막으로 확인한 대상(moved_to)과도 다를 때만. unsubmitted 등 다른 stop 은 그대로"""
+    if not (pp and pp.get("stop") and pp.get("ambig") and pp.get("reason") == "unknown_delivery"):
+        return False
+    h = main_handle()
+    if not h or h == pp["ambig"] or handle_tag(h) == pp["ambig"]:
+        return False
+    if handle_tag(h) == pp.get("moved_to"):
+        # 마지막으로 확인한 대상 그대로. 그 대상도 리셋으로 죽었으면 새 후보로 재탐색해야 풀림(안 하면 stop 때문에 attempt 에 못 가 영구 보류).
+        # 살아 있거나 조회 실패·후보 0·2개 이상이면 그대로 둠
+        h, why, _, _ = find_target()
+        if not h or why or handle_tag(h) in (pp["ambig"], pp.get("moved_to")):
+            return False
+    pp["stop"], pp["next_at"] = False, 0
+    return True
+
+
 def prepare(state, lines, mark):
     """상태를 현재 inbox·표식에 맞춤. (state, 변경 여부)"""
     changed = False
@@ -781,7 +786,7 @@ def prepare(state, lines, mark):
     pp = state.get("push_pending")
     if pp and (mark >= pp["last"] or pp["last"] > len(lines)):  # 읽혔거나 inbox 가 잘린 보류분은 버림
         state["push_pending"], changed = None, True
-    return changed
+    return release_moved(state.get("push_pending")) or changed
 
 
 def needs_work(state, lines, mark):
@@ -828,18 +833,31 @@ def attempt(state, lines, mark, now):
     if not items:  # 보류분이 사라짐(inbox 가 바뀜). 보낼 것 없음
         state["push_pending"] = None
         return "sent"
-    handle, why, short = find_target()
+    handle, why, short, cands = find_target()
     if why in LINK_LOST:
-        alert(why)
+        alert(why, cands)
     elif why != "show_fail":  # 핸들이 메인 세션임을 확인함(화면 상태 보류 포함). 조회 실패는 판단 보류
         alert_clear()
     if why:
         hold(pp, why, now + HOLD_RETRY, span, handle=short)
         return "hold"
-    if pp.get("ambig") and pp["ambig"] not in (handle_tag(handle), handle):  # 원문은 이전 버전이 남긴 상태 호환  # 도착 여부를 모르는 시도를 한 터미널과 다름. 요청 ID 는 터미널에 묶이므로 다른 곳에 보내면 중복될 수 있음
-        hold(pp, "unknown_delivery", now + FOREVER, span, why="target_changed")
-        pp["stop"] = True
-        return "hold"
+    if pp.get("ambig") and pp["ambig"] not in (handle_tag(handle), handle):  # 원문은 이전 버전이 남긴 상태 호환
+        # 도착 여부를 모르는 시도를 한 터미널과 다름. 요청 ID 는 터미널에 묶이므로 다른 곳에 보내면 중복될 수 있음.
+        # 옛 터미널이 종료됐음이 확인될 때만(목록 조회 성공 + 핸들 없음) 사람이 못 본 것으로 보고 같은 묶음을 새 요청 ID 로 재전달.
+        # 살아 있으면 보류+경고, 생사를 못 정하면 다음 회차에 다시 확인
+        old = pp["ambig"]
+        fate = mt.fate(run_orca, lambda h: old in (handle_tag(h), h))
+        if fate == "unknown":
+            hold(pp, "target_check", now + HOLD_RETRY, span, why="target_check_unavailable")
+            return "hold"
+        if fate == "alive":
+            hold(pp, "unknown_delivery", now + FOREVER, span, why="target_changed")
+            pp["stop"], pp["moved_to"] = True, handle_tag(handle)
+            alert("target_changed", text=ALERT_STALE)
+            return "hold"
+        log("redeliver", why="target_dead_redeliver", lines=span)
+        pp["ambig"], pp["request_id"], pp["attempts"] = None, str(uuid.uuid4()), 0
+        pp.pop("moved_to", None)
     seal(pp, items, lines, mark)
     save_state(state)  # 보내기 전에 본문·ID 를 저장. 전송 직후 프로세스가 죽어도 다음 시도가 같은 ID 로 재전송함
     verdict, code, info = send(handle, pp["text"], pp["request_id"])

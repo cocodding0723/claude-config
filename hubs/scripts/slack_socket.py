@@ -32,6 +32,9 @@ from slack_sdk.socket_mode import SocketModeClient
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # 링크로 설치돼도 원본 폴더의 공용 모듈을 찾음
+import main_terminal as mt  # noqa: E402
+
 DIR = os.environ.get("LRM_HUB_DIR", os.path.expanduser("~/.config/lrm-hubs"))
 POLL = os.path.join(DIR, "slack_poll.sh")
 MAX_FAILS = 5  # 재연결 연속 실패 상한. 넘으면 EXIT_RESTART 로 끝냄
@@ -45,6 +48,7 @@ NOTIFY = os.environ.get("LRM_NOTIFY", os.path.join(DIR, "slack_notify.sh"))
 BLOCK_RE = re.compile(r"^lrm_decide:([A-Za-z0-9-]{1,32})$")
 MODAL_ID = "lrm_custom"
 CUSTOM_MAX = 500  # 직접 입력 글자 상한
+SPEC = mt.Spec.from_env()  # 메인 판정 기준. slack_push 와 같은 환경 변수(LRM_PUSH_MAIN·LRM_PUSH_PANE)
 
 
 def card_title(message: dict) -> str:
@@ -79,17 +83,46 @@ def main_handle(path: str):
     return None
 
 
+def orca_run(args: list, timeout: float):
+    return mt.run_orca(ORCA, args, timeout)
+
+
+def send_to(handle: str, text: str) -> str:
+    """전송 결과 분류. 'sent' | 'gone'(핸들 무효 오류 = 입력 전 거절, 아무 터미널에도 안 들어감) | 'unknown'(시간 초과·일반 오류. 입력됐을 수 있음)"""
+    rc, d = mt.run_orca(ORCA, ["terminal", "send", "--terminal", handle, "--text", text, "--enter", "--wait-submit", "20", "--json"], 60)
+    if rc == 0:
+        return "sent"
+    return "gone" if mt.error_code(d) in mt.HANDLE_GONE_CODES else "unknown"
+
+
 def send_main(text: str) -> bool:
+    """메인 터미널로 전달. 대상을 바꿔 다시 보내는 경우는 옛 대상에 입력되지 않았음이 확실할 때만:
+    ① 보내기 전 확인에서 옛 대상이 메인이 아님(보낸 적 없음) ② 전송이 핸들 무효 오류로 거절됨.
+    시간 초과·일반 오류는 입력됐을 수 있어 재탐색·재전송 없이 실패로 돌려줌(두 터미널에 중복 전달 방지)"""
     handle = main_handle(MAIN_ENV)
-    if not handle:
-        log("메인 터미널 없음 — main.env 의 MAIN_TERMINAL 확인")
+    if handle:
+        _, why = mt.check_link(orca_run, SPEC, handle)
+        if why and why not in mt.REDISCOVER:  # 조회 실패·쓰기 불가: 메인인지 확인 못 함. 보내지 않고 실패(재탐색도 안 함)
+            log(f"메인 확인 실패({why}) — 전달 보류")
+            return False
+        if not why:  # 메인임을 확인함. 설정된 대상으로 보냄
+            res = send_to(handle, text)
+            if res == "sent":
+                return True
+            if res != "gone":
+                log("메인 전달 실패 — 도착 여부 불명이라 대상을 바꾸지 않음")
+                return False
+    else:
+        why = "no_main_handle"
+    found = mt.rediscover(orca_run, SPEC, MAIN_ENV)
+    if found.status == "current_ok":  # 다른 쪽이 이미 고침
+        new = main_handle(MAIN_ENV)
+        return bool(new) and new != handle and send_to(new, text) == "sent"
+    if found.status != "updated":
+        log(f"메인 재탐색 {found.status} 후보={found.count} (사유={why}) — set_main_terminal.sh 확인" if handle else "메인 터미널 없음 — main.env 의 MAIN_TERMINAL 확인")
         return False
-    try:
-        p = subprocess.run([ORCA, "terminal", "send", "--terminal", handle, "--text", text, "--enter", "--wait-submit", "20", "--json"],
-                           capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
-        return p.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+    log(f"재탐색으로 갱신 {found.handle[:8]}")
+    return send_to(found.handle, text) == "sent"
 
 
 def warn_slack(thread: str, text: str) -> None:

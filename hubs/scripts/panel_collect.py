@@ -227,9 +227,25 @@ def classify(preview, quiet_min=None):
         return "idle"
     if any(k in tail for k in PATROL_KEYS):
         return "approval"
+    # 입력 칸(❯)이 마지막 줄이고 번호 선택지(❯ 1.)가 아니면 입력 대기. 뒤에 'Crunched … done' 같은 상태 글이 붙어도 같음
+    last = tail_lines[-1].strip()
+    if last.startswith("❯") and not re.match(r"❯\s*\d+\.", last):
+        return "idle"
     if quiet_min is not None and quiet_min >= QUIET_IDLE_MIN:
         return "idle"
     return "unknown"
+
+
+def hub_state(t, quiet, get):
+    """목록 미리보기로 못 정하면(TUI 는 실행 명령만 남기도 함, 11-11 실측) 렌더된 화면을 한 번 더 읽어 판정"""
+    state = classify(t.get("preview"), quiet)
+    if state != "unknown" or not t.get("handle"):
+        return state
+    try:
+        tail = (get("terminal", "read", "--terminal", t["handle"], "--screen", "--limit", "40").get("terminal") or {}).get("tail") or []
+    except SourceError:
+        return state
+    return classify("\n".join(str(x) for x in tail), quiet)
 
 
 def hub_name(base):
@@ -270,20 +286,29 @@ def collect_hubs(conf, now, get):
             continue
         last = t.get("lastOutputAt")
         quiet = int((now * 1000 - last) // 60000) if isinstance(last, (int, float)) and last > 0 else None
-        connected = bool(t.get("connected")) and not t.get("orphaned")
+        # orphaned = 탭은 닫혔지만 세션은 살아 있음(11-11 실측: 재시작한 허브가 orphaned·connected 로 계속 출력). 연결 여부만 봄
+        connected = bool(t.get("connected"))
         rows.append({
             "hub": base,
             "name": hub_name(base),
             "agent": str(t.get("agentIdentity"))[:20],
-            "state": classify(t.get("preview"), quiet) if connected else "unknown",
+            "state": hub_state(t, quiet, get) if connected else "unknown",
             "quietMin": max(quiet, 0) if quiet is not None else None,
             "connected": connected,
         })
-    seen = {}
+    # 같은 허브에 터미널이 여럿이면(재시작 뒤 옛 세션 남음) 연결된 것 → 최근 출력 순으로 하나만 남기고 dup 표시
+    best = {}
     for r in rows:
-        seen[r["hub"]] = seen.get(r["hub"], 0) + 1
-    for r in rows:
-        r["dup"] = seen[r["hub"]] > 1
+        key = (r["connected"], -(r["quietMin"] if r["quietMin"] is not None else 1 << 30))
+        cur = best.get(r["hub"])
+        if cur is None or key > cur[0]:
+            best[r["hub"]] = (key, r, (cur[2] + 1) if cur else 1)
+        else:
+            best[r["hub"]] = (cur[0], cur[1], cur[2] + 1)
+    rows = []
+    for _, r, n in best.values():
+        r["dup"] = n > 1
+        rows.append(r)
     rows.sort(key=lambda r: (r["name"], r["quietMin"] if r["quietMin"] is not None else 1 << 30))
     counts = {k: sum(1 for r in rows if r["state"] == k) for k in ("busy", "approval", "idle", "unknown")}
     return {"rows": rows, "counts": counts, "truncated": terminals_truncated(get)}

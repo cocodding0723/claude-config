@@ -139,3 +139,12 @@ test('idleLines: 워커를 끝까지 못 셌으면 하한 표시, 목록 잘림,
   assert.equal(b.idleLines({ ...base, workers: null, wsSize: { gb: null, at: null, dir, err: 'timeout' } })[0].text, '~/orca/workspaces 크기 ⚠ 측정 시간 초과')
   assert.deepEqual(b.idleLines({ ...base, workers: null, wsSize: { gb: null, at: null, dir, err: null } }), [])
 })
+
+test('progressBar: 퍼센트·막대·상태 꼬리, 깨진 값은 0~100% 로 자름', () => {
+  assert.equal(b.progressBar({ done: 5, total: 9, eta: '내일 15:00', state: 'on' }, 10).text, '██████░░░░ 56% 5/9  내일 15:00')
+  assert.equal(b.progressBar({ done: 1, total: 5, eta: '오늘 밤', state: 'blocked' }, 10).text, '██░░░░░░░░ 20% 1/5  막힘 · 오늘 밤')
+  assert.equal(b.progressBar({ done: 1, total: 1, state: 'done' }, 4).text, '████ 100% 1/1  완료')
+  assert.equal(b.progressBar({ done: 3, total: 0 }, 4).pct, 0)
+  assert.equal(b.progressBar({ done: 9, total: 3 }, 4).pct, 100)
+  assert.equal(b.progressBar({ done: NaN, total: 3 }, 4).bar, '░░░░')
+})
