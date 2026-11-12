@@ -135,6 +135,15 @@ def warn_slack(thread: str, text: str) -> None:
         log(f"Slack 경고 실패 {type(err).__name__}")
 
 
+def said_text(did: str, extra: dict, label: str) -> str:
+    """메인 전달 문장. slack_push.py 의 스레드 글·반응 해석과 같은 머리: '결정 D-0001 = 선택 2(문구) (버튼)', 직접 입력은 '결정 D-0001 답(자유 글): 원문'"""
+    if extra.get("action") == "custom":
+        return f"결정 {did} 답(자유 글): {extra.get('text', '')}"
+    pick = extra.get("pick")
+    name = re.sub(r"^\d+\.\s*", "", label)
+    return f"결정 {did} = " + (f"선택 {pick}({name})" if isinstance(pick, int) else name) + " (버튼)"
+
+
 class Decide:
     """결정 카드 버튼·직접 입력 처리. 수신 값은 데이터로만 씀(실행 안 함)"""
 
@@ -194,7 +203,7 @@ class Decide:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         with open(DONE, "a", encoding="utf-8") as f:
             f.write(ts + "\n")
-        ok = send_main(f"[Slack→메인] 결정: {title or did} = {label} ({ts})")
+        ok = send_main(f"[Slack→메인] {said_text(did, extra, label)} ({ts})")
         if not ok:
             warn_slack(ts, f"메인 전달 실패: {title or did} = {label}\n\n• 무엇: 버튼 답은 기록했지만 메인 터미널로 못 보냄\n• 결과: 메인에 직접 알려 주세요")
         log(f"결정 {did} 버튼 답 기록 · 메인 전달 {'성공' if ok else '실패'}")

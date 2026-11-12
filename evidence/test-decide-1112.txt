@@ -1,0 +1,15 @@
+$ bash tests/slack_poll/reply.sh
+결과: PASS 35, FAIL 0
+$ bash tests/slack_poll/decide.sh
+결과: PASS 72, FAIL 0
+$ bash tests/slack_poll/react.sh
+결과: PASS 80, FAIL 0
+$ bash tests/slack_notify/run.sh
+결과: PASS 294, FAIL 0
+$ bash tests/slack_socket/run.sh
+결과: PASS 46, FAIL 0
+$ bash tests/slack_poll/push.sh
+결과: PASS 91, FAIL 0
+$ bash tests/slack_poll/ack.sh
+결과: PASS 91, FAIL 0
+# manifest diff: 라이브와 의도된 차이만(앱 이름·표시 이름·배경색). interactivity·socket·이벤트 키는 일치
