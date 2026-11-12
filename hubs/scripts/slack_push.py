@@ -766,8 +766,14 @@ def release_moved(pp):
     if not (pp and pp.get("stop") and pp.get("ambig") and pp.get("reason") == "unknown_delivery"):
         return False
     h = main_handle()
-    if not h or handle_tag(h) in (pp["ambig"], pp.get("moved_to")):
+    if not h or h == pp["ambig"] or handle_tag(h) == pp["ambig"]:
         return False
+    if handle_tag(h) == pp.get("moved_to"):
+        # 마지막으로 확인한 대상 그대로. 그 대상도 리셋으로 죽었으면 새 후보로 재탐색해야 풀림(안 하면 stop 때문에 attempt 에 못 가 영구 보류).
+        # 살아 있거나 조회 실패·후보 0·2개 이상이면 그대로 둠
+        h, why, _, _ = find_target()
+        if not h or why or handle_tag(h) in (pp["ambig"], pp.get("moved_to")):
+            return False
     pp["stop"], pp["next_at"] = False, 0
     return True
 
