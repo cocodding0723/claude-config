@@ -1,0 +1,15 @@
+# resume_all.sh 가 재기동할 허브 목록. 탭 구분 5칸, 빈 칸은 -
+# slug: 폴더 coord-<slug>-hub 의 <slug> (상태 파일 이름과 같음)
+# name: 표시 이름, role_file: 역할 파일(~/ 는 $HOME), ws_root·repo: 기본 게임 저장소 허브가 아니면 create_hub.sh 의 WS_ROOT·REPO 로 넘김
+# 검수 대기 허브(coord-review-hub)는 코디네이터 세션이 없는 보관용이라 제외
+# slug	name	role_file	ws_root	repo
+ui-layer	UI 계층 통합 설계	~/.config/lrm-hubs/roles/role-ui.txt	-	-
+test-qa	테스트·QA	~/.config/lrm-hubs/roles/role-test.txt	-	-
+arch-audit	아키텍처 점검	~/.config/lrm-hubs/roles/role-arch.txt	-	-
+scrum	개인 비서	~/.config/lrm-hubs/roles/role-scrum.txt	-	-
+tutorial	튜토리얼·가이드	~/.config/lrm-hubs/roles/role-tutorial.txt	-	-
+docs	문서	~/.config/lrm-hubs/roles/role-docs.txt	-	-
+data-design	게임 데이터·시나리오 구조 설계	~/.config/lrm-hubs/roles/role-data.txt	-	-
+vfx	연출·VFX 폴리싱	~/.config/lrm-hubs/roles/role-vfx.txt	-	-
+coord-server-hub	서버·Firebase 환경 분리	~/.config/lrm-hubs/roles/role-server.txt	-	-
+config	개인 설정	~/.config/lrm-hubs/roles/role-config.txt	~/orca/workspaces/claude-config	~/orca/claude-config
