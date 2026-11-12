@@ -192,6 +192,8 @@ def request_of(conf: Conf, task: str) -> str:
 
 
 def topic_key(rep: dict) -> str:
+    if rep.get("thread"):
+        return f"thread:{rep['thread']}"  # 지정 스레드별로 순서 유지. 주제 스레드는 만들지 않음
     return rep["task"] if rep["task"] != hub_report.NO_TASK else f"hub:{rep['hub']}"
 
 
@@ -235,6 +237,15 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
     rs = st["reports"].setdefault(rep["id"], {})
     decide = rep["kind"] == "decide"
     key = topic_key(rep)
+    if rep.get("thread"):  # 지정 스레드 답글. 진행 스레드 한 줄은 올리지 않음
+        if "body_ts" not in rs:
+            _, _, kind = hub_report.KINDS[rep["kind"]]
+            rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind, "--thread", rep["thread"], body_text(rep)], deadline)
+            save_state(conf.state, st)
+        rs["line_ts"] = ""
+        rs["sent"] = int(time.time())
+        save_state(conf.state, st)
+        return {"topic_ts": rep["thread"], "body_ts": rs["body_ts"], "line_ts": "", "pinned": True}
     if not decide and key not in st["topics"]:
         ts = run_notify(conf, ["--tag", rep["hub"], "--kind", "progress", topic_text(conf, rep)], deadline)
         st["topics"][key] = {"ts": ts, "channel": channel_of(conf, ts)}
@@ -330,6 +341,10 @@ def quarantine(conf: Conf, bad: list, st: dict, dry: bool) -> int:
 def _round(conf: Conf, out: dict, dry: bool) -> dict:
     bad = []
     reports = hub_report.read_outbox(conf.outbox, bad)
+    allowed = hub_report.allowed_channels(conf.sync_state)
+    for r in [r for r in reports if r.get("channel") and r["channel"] not in allowed]:  # 허용 밖 채널 지정은 게시하지 않고 격리
+        reports.remove(r)
+        bad.append(json.dumps(r, ensure_ascii=False))
     try:
         st = load_state(conf.state)
     except StateCorrupt as err:
@@ -372,7 +387,7 @@ def _round(conf: Conf, out: dict, dry: bool) -> dict:
             out["sent"] += 1
             line = (f"전송 {rep['id']} {rep['hub']} {rep['kind']} → "
                     + (f"결정 카드 {res['body_ts']}" if rep["kind"] == "decide" else f"주제 {key} 스레드 {res['topic_ts']} 답글 {res['body_ts']}")
-                    + (f" · 진행 줄 {res['line_ts']}" if res["line_ts"] else " · 진행 줄 생략"))
+                    + (f" · 진행 줄 {res['line_ts']}" if res["line_ts"] else " · 진행 줄 없음(스레드 지정)" if res.get("pinned") else " · 진행 줄 생략"))
         out["lines"].append(line)
         log(conf, line)
     out["status"] = "partial" if out["failed"] else "done"
