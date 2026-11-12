@@ -99,7 +99,9 @@ for o in ${ONLY[@]+"${ONLY[@]}"}; do
 done
 
 FAILED=0
-while IFS=$'\t' read -r SLUG NAME ROLE WSROOT REPO; do
+# 부모 칸(여섯째)이 빈 허브를 먼저 띄움. 하위 허브는 한 층뿐이라 두 번 훑으면 순서가 맞음
+ordered() { awk -F'\t' '/^[[:space:]]*(#|$)/ { next } ($6 == "" || $6 == "-")' "$TSV"; awk -F'\t' '/^[[:space:]]*(#|$)/ { next } !($6 == "" || $6 == "-")' "$TSV"; }
+while IFS=$'\t' read -r SLUG NAME ROLE WSROOT REPO _PARENT; do
   case "$SLUG" in ''|'#'*) continue ;; esac
   if [ ${#ONLY[@]} -gt 0 ]; then
     hit=0; for o in "${ONLY[@]}"; do [ "$o" = "$SLUG" ] && hit=1; done
@@ -120,7 +122,7 @@ while IFS=$'\t' read -r SLUG NAME ROLE WSROOT REPO; do
   fi
   "${CMD[@]}" 2>&1 | tail -1
   [ "${PIPESTATUS[0]}" = 0 ] || { FAILED=$((FAILED + 1)); echo "ERROR: $NAME 기동 실패 — 위 출력 확인 후 --only $SLUG 로 재시도" >&2; }
-done < "$TSV"
+done < <(ordered)
 
 echo "확인: Codex 실행 옵션에 workspace-write 가 없어야 함 → ps -axww -o command | grep '^codex ' | grep -c workspace-write"
 [ "$FAILED" = 0 ]
