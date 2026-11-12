@@ -88,5 +88,50 @@ setlist 10; rm -f "$F/gc.stray"; run w9 FAKE_GC_STUBBORN=1 LRM_HUB_GC_TIMEOUT=1 
 chk "[P2] TERM 무시 자식이 있어도 시간 초과 뒤 생성 계속" '[ "$RC" = 0 ] && made w9 && grep -q "1초 안에 끝나지 않아 중단" "$SB/err"' "rc=$RC $(cat "$SB/err")"
 sleep 5
 chk "[P2] TERM 무시 자식이 그룹 KILL 로 종료됨(4초 뒤 표시 없음)" '[ ! -e "$F/gc.stray" ]'
+# ---- 한글 이름·--json·중복 거부 ----
+runx() { # 인자 그대로 전달(환경은 LOC 로 로케일 지정). 결과: RC, $SB/out, $SB/err
+  : > "$F/orca.calls"; : > "$F/gc.calls"
+  env LC_ALL="${LOC:-ko_KR.UTF-8}" PATH="$BIN:$PATH" FAKE_DIR="$F" REPO="$SB/repo" WS_ROOT="$WSR" LRM_WS_GC="$BIN/ws_gc.sh" LRM_HUB_REPORT="$BIN/hub_report.py" \
+    bash "$CW" --hub "$HUBP" --paths README.md "$@" > "$SB/out" 2>"$SB/err"
+  RC=$?
+}
+dirbytes() { ls "$WSR" | grep -F -- "$1" | head -1 | tr -d '\n' | xxd -p | tr -d '\n'; }   # 폴더 이름 바이트(정규화·깨짐 확인)
+KO='[LRM-507] 한글 이름'
+setlist 1
+runx --name "$KO"
+chk "한글 이름(분리 detached): 폴더 LRM-507-한글-이름, 표시 이름은 원문 그대로" '[ "$RC" = 0 ] && [ -d "$WSR/LRM-507-한글-이름" ] && grep -qF -- "--display-name [LRM-507] 한글 이름" "$F/orca.calls" && [ "$(cat "$SB/out")" = "$WSR/LRM-507-한글-이름" ]' "rc=$RC $(cat "$SB/err")"
+runx --name "$KO 둘째" --branch "feat/LRM-507-한글-브랜치"
+chk "한글 이름·한글 --branch: 폴더 feat-LRM-507-한글-브랜치, 브랜치 이름 보존" '[ "$RC" = 0 ] && [ -d "$WSR/feat-LRM-507-한글-브랜치" ] && git -C "$SB/repo" rev-parse --verify -q "refs/heads/feat/LRM-507-한글-브랜치" >/dev/null' "rc=$RC $(cat "$SB/err")"
+for L in C POSIX en_US.UTF-8; do
+  LOC=$L runx --name "[LRM-508] 로케일 $L"
+  chk "로케일 $L: 한글 폴더 이름 바이트 보존" '[ "$RC" = 0 ] && [ -d "$WSR/LRM-508-로케일-$L" ]' "rc=$RC $(cat "$SB/err")"
+done
+NFD=$(python3 -c 'import unicodedata;print(unicodedata.normalize("NFD","[LRM-509] 한글 정규화"),end="")')
+runx --name "$NFD"
+chk "NFD(분해형) 입력도 NFC 폴더로 통일" '[ "$RC" = 0 ] && [ "$(dirbytes LRM-509)" = "$(printf "LRM-509-한글-정규화" | xxd -p | tr -d "\n")" ]' "got=$(dirbytes LRM-509)"
+runx --name "$NFD"
+chk "같은 이름(NFC·NFD 만 다름)을 다시 만들면 거부(종료 3)" '[ "$RC" = 3 ] && grep -q "이미 있는 작업 공간" "$SB/err"'
+runx --name "$(printf '[LRM-510] \xed\x95')"
+chk "잘린 UTF-8 이름: 실패하지 않고 깨진 글자만 버림" '[ "$RC" = 0 ] && [ -d "$WSR/LRM-510" ]' "rc=$RC $(cat "$SB/err")"
+runx --name "///"
+chk "이름에서 폴더 이름을 만들 수 없으면 종료 2" '[ "$RC" = 2 ] && grep -q "폴더 이름을 만들 수 없음" "$SB/err"'
+
+runx --name "[LRM-511] JSON 출력" --branch "feat/LRM-511-json"
+chk "기본 출력은 경로 한 줄(호환)" '[ "$RC" = 0 ] && [ "$(wc -l < "$SB/out" | tr -d " ")" = 1 ] && [ "$(cat "$SB/out")" = "$WSR/feat-LRM-511-json" ]'
+runx --name "[LRM-512] JSON 출력" --branch "feat/LRM-512-json" --json
+chk "--json: path·branch·displayName·parent 한 줄" '[ "$RC" = 0 ] && [ "$(wc -l < "$SB/out" | tr -d " ")" = 1 ] && jq -e --arg w "$WSR" --arg h "$HUBP" ".path == \$w + \"/feat-LRM-512-json\" and .branch == \"feat/LRM-512-json\" and .displayName == \"[LRM-512] JSON 출력\" and .parent == \$h" "$SB/out" >/dev/null' "$(cat "$SB/out" "$SB/err")"
+runx --name "[LRM-513] 한글 JSON" --json
+chk "--json: detached 는 branch null, 한글 displayName 보존" '[ "$RC" = 0 ] && jq -e ".branch == null and .displayName == \"[LRM-513] 한글 JSON\" and (.path | endswith(\"/LRM-513-한글-JSON\"))" "$SB/out" >/dev/null' "$(cat "$SB/out")"
+
+# 중복 거부: 폴더가 있으면 덮어쓰지 않고 orca·git 을 건드리지 않음
+echo keep > "$WSR/LRM-511-json-marker"; mkdir -p "$WSR/LRM-514-기존"; echo keep > "$WSR/LRM-514-기존/marker"
+runx --name "[LRM-514] 기존"
+chk "같은 이름 폴더가 있으면 거부(종료 3), 기존 내용·orca 호출 없음" '[ "$RC" = 3 ] && [ "$(cat "$WSR/LRM-514-기존/marker")" = keep ] && ! grep -q "^worktree set" "$F/orca.calls" && [ ! -s "$SB/out" ]' "rc=$RC $(cat "$SB/err")"
+setlist 1; jq --arg p "$WSR/LRM-515-등록됨" '.result.worktrees += [{id:"r::x",path:$p,childWorktreeIds:[]}]' "$F/list.json" > "$F/list.tmp" && mv "$F/list.tmp" "$F/list.json"
+runx --name "[LRM-515] 등록됨"
+chk "폴더는 없어도 Orca 에 같은 경로가 등록돼 있으면 거부(종료 3)" '[ "$RC" = 3 ] && [ ! -e "$WSR/LRM-515-등록됨" ]' "rc=$RC"
+runx --name "[LRM-514] 기존" --json
+chk "--json 도 중복이면 거부(JSON 출력 없음)" '[ "$RC" = 3 ] && [ ! -s "$SB/out" ]'
+
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
