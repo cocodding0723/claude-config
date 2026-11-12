@@ -6,12 +6,13 @@ import os
 import sys
 import time
 
+SECRET_ENV = ("SLACK_BOT_TOKEN", "SLACK_USER_ID", "SLACK_APP_TOKEN", "SLACK_SIGNING_SECRET")  # 로컬 SLACK_API_BASE 같은 설정값은 세지 않음
 d = os.environ["FAKE_DIR"]
 rd = lambda n: open(os.path.join(d, n)).read().strip() if os.path.exists(os.path.join(d, n)) else ""  # noqa: E731
 if rd("sleep"):
     time.sleep(float(rd("sleep")))
 with open(os.path.join(d, "calls.jsonl"), "a", encoding="utf-8") as f:
-    f.write(json.dumps({"args": sys.argv[1:], "slack_env": sum(k.startswith("SLACK_") for k in os.environ)}, ensure_ascii=False) + "\n")
+    f.write(json.dumps({"args": sys.argv[1:], "slack_env": sum(k in SECRET_ENV for k in os.environ)}, ensure_ascii=False) + "\n")
 left = int(rd("fail.n") or 0)
 if rd("fail.all") or left > 0:
     if left > 0:

@@ -95,6 +95,7 @@ class StateCorrupt(Exception):
 
 
 STATE_KEYS = ("topics", "reports", "warned", "bad")
+REQUIRED_KEYS = STATE_KEYS[:3]  # bad 는 뒤에 생긴 키라 옛 상태 파일에는 없을 수 있음
 
 
 def load_state(path: str) -> dict:
@@ -108,9 +109,42 @@ def load_state(path: str) -> dict:
         raise StateCorrupt(f"읽기 실패({err.strerror})")
     except ValueError:
         raise StateCorrupt("JSON 손상")
-    if not isinstance(st, dict) or any(k in st and not isinstance(st[k], dict) for k in STATE_KEYS):
-        raise StateCorrupt("최상위·항목 모양 오류")
+    if not isinstance(st, dict) or any(not isinstance(st.get(k), dict) for k in REQUIRED_KEYS) or not isinstance(st.get("bad", {}), dict):
+        raise StateCorrupt("필수 항목(topics·reports·warned) 없음 또는 모양 오류")  # {} 로 비워진 파일을 새 상태로 보면 보고를 다시 올림
+    if (any(not isinstance(v, dict) or not is_ts(v.get("ts")) for v in st["topics"].values())
+            or any(not report_state_ok(v) for v in st["reports"].values())
+            or any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in st["warned"].values())):
+        raise StateCorrupt("항목 내용 모양 오류")
     return {k: st.get(k, {}) for k in STATE_KEYS}
+
+
+def is_ts(v) -> bool:
+    """비어 있지 않은 Slack ts(숫자.숫자)인가"""
+    return isinstance(v, str) and bool(hub_report.TS_RE.match(v))
+
+
+def report_state_ok(v) -> bool:
+    """보고 1건의 전송 단계 기록이 일관된가. body_ts 는 있으면 ts 형식, line_ts 는 ts 형식이거나 빈 문자열(진행 줄 생략),
+    전송됨(sent)이면 body_ts·line_ts 가 모두 있어야 함. 아니면 손상(빈 body_ts 로 본문을 건너뛴 채 전송됨 처리되는 것을 막음)"""
+    if not isinstance(v, dict):
+        return False
+    sent, fails = v.get("sent", 0), v.get("fails", 0)
+    if isinstance(sent, bool) or not isinstance(sent, (int, float)) or isinstance(fails, bool) or not isinstance(fails, int):
+        return False
+    if "error" in v and not isinstance(v["error"], str):
+        return False
+    if "body_ts" in v and not is_ts(v["body_ts"]):
+        return False
+    if "line_ts" in v and not (v["line_ts"] == "" or is_ts(v["line_ts"])):
+        return False
+    return not sent or ("body_ts" in v and "line_ts" in v)
+
+
+def check_consistency(st: dict, reports: list) -> None:
+    """상태와 outbox 의 교차 검증: 전송됨인 주제 보고는 그 주제의 ts 가 상태에 있어야 함(없으면 상태가 잘렸거나 손으로 고쳐진 것)"""
+    for r in reports:
+        if st["reports"].get(r["id"], {}).get("sent") and r["kind"] != "decide" and not r.get("thread") and topic_key(r) not in st["topics"]:
+            raise StateCorrupt(f"전송됨 보고 {r['id']} 의 주제 스레드 기록 없음")
 
 
 def state_signature(path: str) -> str:
@@ -288,16 +322,17 @@ def log(conf: Conf, line: str) -> None:
 def run(conf: Conf, dry: bool = False) -> dict:
     """한 회차. {'status': idle|done|partial|busy, 'sent': n, 'failed': n, 'pending': n, 'lines': [처리 로그]}"""
     out = {"status": "idle", "sent": 0, "failed": 0, "pending": 0, "lines": []}
+    deadline = time.monotonic() + conf.budget_s  # 회차 공통 시간 예산. 경고·주제·본문·진행 줄 전송이 모두 이 안에서 끝남
     if dry:
-        return _round(conf, out, True)
+        return _round(conf, out, True, deadline)
     with exclusive(conf.state) as got:
         if not got:
             out["status"] = "busy"
             return out
-        return _round(conf, out, False)
+        return _round(conf, out, False, deadline)
 
 
-def halt(conf: Conf, err: StateCorrupt, out: dict, dry: bool) -> dict:
+def halt(conf: Conf, err: StateCorrupt, out: dict, dry: bool, deadline: float) -> dict:
     """상태 파일을 못 읽음. 전송을 멈추고 복구 안내를 돌려줌. 메인 경고는 같은 손상 상태에 1번만"""
     out.update(status="halted", error=f"상태 파일 {err} — {conf.state}",
                guide="내용을 확인해 고치거나, 이미 올라간 보고가 다시 올라가도 괜찮으면 파일을 지운 뒤 다시 실행")
@@ -307,7 +342,7 @@ def halt(conf: Conf, err: StateCorrupt, out: dict, dry: bool) -> dict:
         return out
     msg = f"허브 보고 전송 중단\n\n• 원인: 상태 파일 {err}\n• 결과: 보고 전송 멈춤(같은 보고 재게시 방지)\n• 조치: {out['guide']}"
     try:
-        run_notify(conf, ["--kind", "warn", msg], time.monotonic() + NOTIFY_TIMEOUT_S)
+        run_notify(conf, ["--kind", "warn", msg], deadline)  # 회차 공통 deadline 을 지킴
         with open(marker, "w", encoding="utf-8") as f:
             f.write(sig)
     except (NotifyError, OSError):
@@ -338,17 +373,60 @@ def quarantine(conf: Conf, bad: list, st: dict, dry: bool) -> int:
     return len(bad)
 
 
-def _round(conf: Conf, out: dict, dry: bool) -> dict:
+LOCK_POLL_S = 0.02
+
+
+@contextlib.contextmanager
+def try_lock(path: str, deadline: float):
+    """배타 잠금을 deadline 안에서만 비차단으로 시도. 잡으면 True, 못 잡으면 False(대기 무기한 금지)"""
+    lock = None
+    try:
+        lock = open(path + ".lock", "a")
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() + LOCK_POLL_S >= deadline:
+                    yield False
+                    return
+                time.sleep(LOCK_POLL_S)
+        yield True
+    except OSError:
+        yield False
+    finally:
+        if lock is not None:
+            lock.close()
+
+
+def repair_outbox(conf: Conf, deadline: float) -> None:
+    """읽기 전에 잠금 아래에서 끝줄 개행 복구(정상 JSON 끝 개행 누락·잘린 줄 격리). 남은 예산 안에서 잠금을 못 잡거나 복구가 실패하면
+    다음 회차로 미룸(개행 없는 끝줄은 읽지 않으므로 보고가 사라지지 않음)"""
+    if not os.path.exists(conf.outbox):
+        return
+    with try_lock(conf.outbox, deadline) as got:
+        if not got:
+            log(conf, "outbox 끝줄 복구 보류: 잠금 대기 예산 초과")
+            return
+        try:
+            hub_report.repair_tail(conf.outbox)
+        except hub_report.ReportError as err:
+            log(conf, f"outbox 끝줄 복구 실패: {err}")
+
+
+def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
+    if not dry:
+        repair_outbox(conf, deadline)
     bad = []
     reports = hub_report.read_outbox(conf.outbox, bad)
-    allowed = hub_report.allowed_channels(conf.sync_state)
-    for r in [r for r in reports if r.get("channel") and r["channel"] not in allowed]:  # 허용 밖 채널 지정은 게시하지 않고 격리
-        reports.remove(r)
-        bad.append(json.dumps(r, ensure_ascii=False))
     try:
         st = load_state(conf.state)
     except StateCorrupt as err:
-        return halt(conf, err, out, dry)
+        return halt(conf, err, out, dry, deadline)
+    try:
+        check_consistency(st, reports)
+    except StateCorrupt as err:
+        return halt(conf, err, out, dry, deadline)
     out["bad"] = quarantine(conf, bad, st, dry)
     todo = [r for r in reports if not st["reports"].get(r["id"], {}).get("sent")]
     out["pending"] = len(todo)
@@ -358,7 +436,6 @@ def _round(conf: Conf, out: dict, dry: bool) -> dict:
         out["status"] = "dry-run"
         out["lines"] = [f"전송 예정 {r['id']} {r['hub']} {r['kind']} → {'결정 카드' if r['kind'] == 'decide' else '주제 ' + topic_key(r)}" for r in todo]
         return out
-    deadline = time.monotonic() + conf.budget_s
     blocked = set()  # 앞 보고가 실패한 주제는 순서가 바뀌지 않게 이번 회차에 건너뜀
     tried = 0
     for rep in todo:

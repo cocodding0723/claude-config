@@ -71,6 +71,11 @@ hubs/scripts/orphan_check.sh	.config/lrm-hubs/orphan_check.sh	link
 hubs/scripts/restart_hub.sh	.config/lrm-hubs/restart_hub.sh	link
 hubs/scripts/resume_all.sh	.config/lrm-hubs/resume_all.sh	link
 hubs/scripts/hub_status.py	.config/lrm-hubs/hub_status.py	link
+hubs/scripts/card_actions.py	.config/lrm-hubs/card_actions.py	link
+hubs/scripts/restart_watch.py	.config/lrm-hubs/restart_watch.py	link
+hubs/docs/restart-watch.md	.config/lrm-hubs/docs/restart-watch.md	link
+hubs/scripts/stall_watch.py	.config/lrm-hubs/stall_watch.py	link
+hubs/docs/stall-watch.md	.config/lrm-hubs/docs/stall-watch.md	link
 hubs/hubs.tsv	.config/lrm-hubs/hubs.tsv	link
 hubs/scripts/slack_cmd.sh	.config/lrm-hubs/slack_cmd.sh	link
 hubs/scripts/slack_notify.sh	.config/lrm-hubs/slack_notify.sh	link
@@ -80,6 +85,8 @@ hubs/scripts/slack_push.sh	.config/lrm-hubs/slack_push.sh	link
 hubs/scripts/slack_push.py	.config/lrm-hubs/slack_push.py	link
 hubs/scripts/panel_collect.sh	.config/lrm-hubs/panel_collect.sh	link
 hubs/scripts/panel_collect.py	.config/lrm-hubs/panel_collect.py	link
+hubs/scripts/progress_collect.py	.config/lrm-hubs/progress_collect.py	link
+hubs/scripts/progress_digest.py	.config/lrm-hubs/progress_digest.py	link
 hubs/scripts/ws_gc.sh	.config/lrm-hubs/ws_gc.sh	link
 hubs/scripts/scrum_run.sh	.config/lrm-hubs/scrum_run.sh	link
 hubs/scripts/scrum_post.py	.config/lrm-hubs/scrum_post.py	link
@@ -109,10 +116,12 @@ hubs/docs/slack-format.md	.config/lrm-hubs/docs/slack-format.md	link
 hubs/docs/slack-push.md	.config/lrm-hubs/docs/slack-push.md	link
 hubs/docs/install-orca-main.md	.config/lrm-hubs/docs/install-orca-main.md	link
 hubs/docs/panel.md	.config/lrm-hubs/docs/panel.md	link
+hubs/docs/progress-digest.md	.config/lrm-hubs/docs/progress-digest.md	link
 hubs/docs/ws-gc.md	.config/lrm-hubs/docs/ws-gc.md	link
 hubs/docs/scrum-auto.md	.config/lrm-hubs/docs/scrum-auto.md	link
 hubs/launchd/ai.lrm.slackpoll.plist	Library/LaunchAgents/ai.lrm.slackpoll.plist	copy
 hubs/launchd/ai.lrm.panelcollect.plist	Library/LaunchAgents/ai.lrm.panelcollect.plist	copy
+hubs/launchd/ai.lrm.progressdigest.plist	Library/LaunchAgents/ai.lrm.progressdigest.plist	copy
 hubs/launchd/ai.lrm.wsgc.plist	Library/LaunchAgents/ai.lrm.wsgc.plist	copy
 hubs/launchd/ai.lrm.scrum.plist	Library/LaunchAgents/ai.lrm.scrum.plist	copy
 hubs/launchd/ai.lrm.cinotify.plist	Library/LaunchAgents/ai.lrm.cinotify.plist	copy
@@ -134,7 +143,7 @@ hubs/mods/lrm-board/hooks/hooks.json	.claude/dev-mods/ab8a5233-c566-4f47-b3ee-4b
 hubs/mods/lrm-board/hooks/register.tsx	.claude/dev-mods/ab8a5233-c566-4f47-b3ee-4b573b330e22/lrm-board/hooks/register.tsx	render
 hubs/mods/lrm-board/hooks/board.ts	.claude/dev-mods/ab8a5233-c566-4f47-b3ee-4b573b330e22/lrm-board/hooks/board.ts	copy
 hubs/mods/lrm-board/types/index.d.ts	.claude/dev-mods/ab8a5233-c566-4f47-b3ee-4b573b330e22/lrm-board/types/index.d.ts	copy
-hubs/scripts/progress_collect.py	.config/lrm-hubs/progress_collect.py	link
-hubs/scripts/progress_digest.py	.config/lrm-hubs/progress_digest.py	link
-hubs/docs/progress-digest.md	.config/lrm-hubs/docs/progress-digest.md	link
-hubs/launchd/ai.lrm.progressdigest.plist	Library/LaunchAgents/ai.lrm.progressdigest.plist	copy
+hubs/scripts/ask_user_press.sh	.config/lrm-hubs/ask_user_press.sh	link
+hubs/scripts/session_gc.py	.config/lrm-hubs/session_gc.py	link
+hubs/docs/session-gc.md	.config/lrm-hubs/docs/session-gc.md	link
+hubs/launchd/ai.lrm.sessiongc.plist	Library/LaunchAgents/ai.lrm.sessiongc.plist	copy

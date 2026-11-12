@@ -155,6 +155,16 @@ class ReportTest(unittest.TestCase):
         self.assertEqual([r["id"] for r in rows], ["g1"])
         self.assertEqual(len(bad), 4)
 
+    def test_record_without_files_key_is_invalid(self):
+        rec = {"id": "nf", "at": 1, "hub": "ui", "task": "C1", "kind": "done", "text": "x"}  # files 키 없음
+        self.assertFalse(hub_report.valid_record(rec))
+        self.assertTrue(hub_report.valid_record({**rec, "files": []}))
+        with open(self.box, "w", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+        bad = []
+        self.assertEqual(hub_report.read_outbox(self.box, bad), [])
+        self.assertEqual(len(bad), 1)
+
     def test_help_and_usage_error_exit_codes(self):
         self.assertEqual(self.cli("--help").returncode, 0)
         self.assertEqual(self.cli("add").returncode, 2)
