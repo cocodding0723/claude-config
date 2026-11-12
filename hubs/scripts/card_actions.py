@@ -122,7 +122,7 @@ def run_notify(args: dict) -> tuple[int, str]:
             notes.append(f"{slug or '허브 미확인'}: 코디네이터 터미널 없음")
         elif len(handles) > 1:
             notes.append(f"{slug}: 코디네이터 {len(handles)}개라 보내지 않음")
-        elif send_line(handles[0], "[멈춘 워커 감시] 응답 없는 워커: " + " / ".join(lines)[:600] + " — 상태 확인 후 필요하면 재배정"):
+        elif send_line(handles[0], "[멈춘 워커 감시] 응답 없는 워커: " + " / ".join(lines)[:600] + " — 상태 확인 후 조치 판단(확인 창은 사용자만 누름)"):
             sent += 1
         else:
             notes.append(f"{slug}: 전송 실패")

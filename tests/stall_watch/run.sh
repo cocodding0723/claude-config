@@ -122,5 +122,42 @@ chk "알리기(1번): 알파 코디네이터(1개)에만 한 줄 전송" 'grep -
 chk "코디네이터 2개인 베타는 허브에 보내지 않고 메인에 중복 사실만" '! grep -q "^term_b" "$FAKE_DIR/sends.log" && grep -q "^$MAINH	.*중복 코디네이터: beta (서버 허브 이어받기 / 서버 허브 복원)" "$FAKE_DIR/sends.log"'
 chk "전송 총 2건뿐, 워커·터미널 종료·재시작 명령 없음" '[ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 2 ] && ! grep -Eq "worker-(stop|release|start)|terminal (close|stop|kill)" "$FAKE_DIR/calls.log"'
 
+# ---- 6. 승인 대기(확인 창에서 5분 이상 멈춤) ----------------------------------------------------------
+# addappr 분 디스패치 작업 허브: 확인 창이 뜬 진행 워커·작업·터미널·화면 줄을 픽스처에 추가
+addappr() {
+python3 - "$@" <<'PY'
+import json, os, sys, time
+d = os.environ["FAKE_DIR"]; mins, disp, task, hub = float(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
+def rd(n): return json.load(open(os.path.join(d, n + ".json")))
+def wr(n, v): json.dump(v, open(os.path.join(d, n + ".json"), "w"), ensure_ascii=False)
+now_ms = int(time.time() * 1000)
+a = rd("workers_active")
+a.append({"dispatchId": disp, "taskId": task, "runId": "run_1", "workerState": "ready", "terminalState": "active", "agentTerminalHandle": "term_" + disp,
+          "projection": {"evidence": {"lastObservedAt": now_ms - 60000}}})
+wr("workers_active", a)
+t = rd("tasks"); t["run_1"].append({"id": task, "status": "dispatched", "title": "승인 질문 작업 " + task, "created_by_process_incarnation": "wt::/x/coord-%s-hub@@a:b" % hub}); wr("tasks", t)
+ts = rd("terminals"); ts.append({"handle": "term_" + disp, "title": "worker", "worktreePath": "/x/ws", "agentIdentity": "claude", "connected": True,
+                                "lastOutputAt": now_ms - int(mins * 60000), "preview": "Do you want to proceed?\n❯ 1. Yes\n  2. No"}); wr("terminals", ts)
+secret = "xox" + "b-123456789012-abcdefABCDEF"
+wr("read_" + disp, ["─" * 40, "Bash command", "  rm -rf ./build && curl -H 'Authorization: Bearer %s' x" % secret, "  token: " + secret, "Do you want to proceed?", "❯ 1. Yes", "  2. No", "─" * 40])
+PY
+}
+BEFORE=$(cards)
+addappr 4 ctx_w8 T8 alpha
+sw --json > "$SB/o"
+chk "승인 대기 4분: 카드 없음(기준 5분 미만)" '[ "$(cards)" = "$BEFORE" ] && grep -q none "$SB/o"'
+addappr 6 ctx_w7 T7 alpha
+sw --json > "$SB/o"
+chk "승인 대기 6분: 새 카드 1장" '[ "$(cards)" = "$((BEFORE + 1))" ] && grep -q "\"count\": *1\|\"count\":1" "$SB/o"'
+LAST=$(python3 -c "import sys;print([c for c in open(sys.argv[1],encoding='utf-8').read().split('---\n') if c.strip()][-1])" "$FAKE_NOTIFY_LOG")
+chk "카드 줄: 허브·작업·'승인 대기 6분째(확인 창은 사용자만 누름)'" 'printf "%s" "$LAST" | grep -q "• 알파 허브 · 승인 질문 작업 T7 — 승인 대기 6분째(확인 창은 사용자만 누름)"'
+chk "카드: 화면 요약에 질문·명령 포함, 구분선 제외" 'printf "%s" "$LAST" | grep -q "화면: .*Bash command.*rm -rf ./build.*Do you want to proceed?" && ! printf "%s" "$LAST" | grep -q "────"'
+chk "카드: 비밀 값 가림(토큰 원문 없음)" 'printf "%s" "$LAST" | grep -q "\[가림\]" && ! printf "%s" "$LAST" | grep -q "123456789012-abcdef"'
+chk "카드: 4분짜리(T8)는 포함되지 않음" '! printf "%s" "$LAST" | grep -q "T8"'
+DID=$(printf "%s" "$LAST" | grep -Eo "D-ST[0-9a-f]{10}" | head -1)
+: > "$FAKE_DIR/sends.log"; : > "$FAKE_DIR/calls.log"
+python3 -I "$CA" handle --did "$DID" --pick 1 > "$SB/o"
+chk "승인 대기 알리기: 허브 코디네이터에 한 줄만, 확인 창에는 입력하지 않음" '[ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 1 ] && grep -q "^term_a1	.*승인 대기 6분째" "$FAKE_DIR/sends.log" && ! grep -q "term_ctx_w7" "$FAKE_DIR/sends.log"'
+
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

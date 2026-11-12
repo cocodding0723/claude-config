@@ -29,6 +29,8 @@ elif args[:2] == ["orchestration", "task-list"]:
     out = {"runId": opt("--run"), "tasks": load("tasks.json").get(opt("--run"), [])}
 elif args[:2] == ["terminal", "list"]:
     out = {"terminals": load("terminals.json")}
+elif args[:2] == ["orchestration", "worker-read"]:
+    out = {"terminal": {"tail": load("read_%s.json" % opt("--dispatch"))}}
 elif args[:2] == ["terminal", "send"]:
     with open(os.path.join(d, "sends.log"), "a", encoding="utf-8") as f:
         f.write("%s\t%s\n" % (opt("--terminal"), opt("--text")))

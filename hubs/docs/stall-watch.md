@@ -12,6 +12,7 @@
 |---|---|
 | 종료 보고 없이 멈춤 | 워커 stopped + 터미널 retained, 작업은 아직 열림 |
 | 응답 없음 | 작업 진행 중인데 워커 관찰이 30분 넘게 갱신 없음(관찰 시각이 비어 있으면 제외) |
+| 승인 대기 | 확인 창(승인·권한 질문)이 떠 있고 출력이 5분 넘게 멈춤. 카드 줄 아래에 화면 마지막 줄 요약(비밀 값 가림)이 붙는다. 확인 창은 대신 누르지 않는다(사용자만) |
 | 중복 코디네이터 줄 | 같은 허브 폴더(`coord-*-hub`)에 연결된 claude 터미널이 2개 이상. 카드 본문에 줄만 추가 |
 
 - 허브 판별: 작업을 만든 터미널의 워크트리(`coord-<slug>-hub`) → `hubs.tsv`. 못 찾으면 "허브 미확인".
@@ -32,6 +33,6 @@ python3 ~/.config/lrm-hubs/stall_watch.py check --dry-run   # 감지 결과만 �
 ## 끄기·되돌리기
 
 - 이 감시만 끄기: `slack_socket.py` 의 `WATCHERS` 에서 `stall_watch.py` 삭제. 감시 전체는 `LRM_SOCKET_WATCH_S=0`.
-- 기준 바꾸기: `LRM_STALL_SILENCE_MIN`(분, 기본 30), `LRM_STALL_DEDUPE_H`(시간, 기본 6).
+- 기준 바꾸기: `LRM_STALL_SILENCE_MIN`(분, 기본 30), `LRM_STALL_APPROVAL_MIN`(분, 기본 5), `LRM_STALL_DEDUPE_H`(시간, 기본 6).
 - 처음부터 다시: `stall-watch.json` 삭제(다음 실행은 기준선만 기록).
 - 시험: `bash tests/stall_watch/run.sh`

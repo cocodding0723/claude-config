@@ -3,6 +3,7 @@
 
 대상: (a) 워커 stopped + 터미널 retained(= 종료 보고 worker_done 없이 멈춤) 이고 작업이 아직 열려 있음
       (b) 작업이 진행 중인데 워커 관찰(lastObservedAt)이 SILENCE_MIN 분 넘게 갱신 없음
+      (c) 확인 창(승인·권한 질문)에서 approval_min 분 넘게 멈춘 워커. 카드에 화면 마지막 줄 요약(비밀 값 가림)을 싣고, 확인 창은 대신 누르지 않음(사용자만)
 침묵·시간 초과는 워커 사망의 증거가 아니므로 문구는 '응답 없음'. 워커를 멈추거나 재시작하지 않고, 🅰️ 선택 시 허브 코디네이터에 한 줄 알림만 보냄(card_actions.py).
 중복 방지: 같은 dispatch 는 DEDUPE_H 시간 안에 다시 알리지 않음(stall-watch.json). 첫 실행은 이미 멈춰 있던 옛 워커를 기준선으로만 기록(카드 없음).
 호출은 slack_socket.py 의 감시 루프가 주기적으로 함.
@@ -22,6 +23,12 @@ sys.path.insert(0, HERE)
 import card_actions  # noqa: E402
 import main_terminal as mt  # noqa: E402
 import restart_watch as rw  # noqa: E402  (허브 목록·문구 정리·상태 파일 저장 재사용)
+import hub_status  # noqa: E402
+
+try:  # 확인 창 판별은 panel_collect.classify 한 곳을 재사용. 없으면 승인 대기 감지만 건너뜀
+    import panel_collect as pc  # noqa: E402
+except ImportError:
+    pc = None
 
 
 @dataclass(frozen=True)
@@ -30,6 +37,7 @@ class Limits:
     silence_min: float  # 진행 중 워커의 관찰이 이 시간(분) 넘게 갱신 없으면 응답 없음
     dedupe_h: float  # 같은 dispatch 를 다시 알리지 않는 시간
     pages: int  # worker-list 쪽 수 상한(한 쪽 100건, 최신순)
+    approval_min: float  # 확인 창(승인·권한 질문)에서 이 시간(분) 이상 멈추면 승인 대기
 
     @classmethod
     def from_env(cls) -> "Limits":
@@ -39,7 +47,7 @@ class Limits:
                 return v if v > 0 else default
             except ValueError:
                 return default
-        return cls(num("LRM_STALL_SILENCE_MIN", 30.0), num("LRM_STALL_DEDUPE_H", 6.0), int(num("LRM_STALL_PAGES", 5)))
+        return cls(num("LRM_STALL_SILENCE_MIN", 30.0), num("LRM_STALL_DEDUPE_H", 6.0), int(num("LRM_STALL_PAGES", 5)), num("LRM_STALL_APPROVAL_MIN", 5.0))
 
 
 DIR = card_actions.DIR
@@ -51,6 +59,11 @@ CLOSED_TASK = frozenset({"completed", "failed", "cancelled", "canceled", "done"}
 RUNNING_TASK = frozenset({"dispatched", "running", "in_progress"})
 HUB_RE = re.compile(r"/coord-([a-z0-9-]+)-hub(?:@@|$)")
 LINE_MAX = 60
+SUMMARY_LINES = 6  # 카드에 싣는 화면 마지막 줄 수
+SUMMARY_MAX = 240  # 화면 요약 글자 상한
+MASK = "[가림]"
+EXTRA_SECRET_RE = re.compile(r"(?i)(?:bearer\s+\S{8,}|[A-Za-z0-9_-]{32,}|--?(?:token|password|secret|key)[= ]\S+)")
+RULE_RE = re.compile(r"^[\s─━—\-=_│|]*$")  # 구분선·빈 줄
 
 EPILOG = """종료 코드: 0 정상(감지 없음·기준선 기록 포함), 1 카드 전송 실패·조회 실패, 2 인자 오류
 환경: LRM_HUB_DIR, LRM_ORCA, LRM_NOTIFY, HUBS_TSV,
@@ -58,6 +71,7 @@ EPILOG = """종료 코드: 0 정상(감지 없음·기준선 기록 포함), 1 �
 예:
   stall_watch.py check --dry-run          # 감지 결과·카드 문구만 출력
   stall_watch.py check --report-existing  # 첫 실행에도 이미 멈춘 워커를 카드로 보냄
+기준: LRM_STALL_APPROVAL_MIN 승인 대기 기준(분, 기본 5). 확인 창은 대신 누르지 않음(사용자만)
 """
 
 
@@ -97,6 +111,35 @@ def run_tasks(run_id: str):
     return out
 
 
+def approval_waiting(active: list, limits: Limits, now: float) -> list:
+    """확인 창이 떠 있고 출력이 approval_min 분 넘게 멈춘 진행 워커. 터미널 조회 실패·판별 불가면 빈 목록"""
+    if pc is None or not any(w.get("workerState") == "ready" for w in active):
+        return []
+    res = orca_json(["terminal", "list", "--json", "--limit", "1000"])
+    terms = {t.get("handle"): t for t in (res or {}).get("terminals", []) if isinstance(t, dict)}
+    out = []
+    for w in active:
+        t = terms.get(w.get("agentTerminalHandle"))
+        if w.get("workerState") == "ready" and t and t.get("lastOutputAt") and pc.classify(t.get("preview")) == "approval" \
+                and now - t["lastOutputAt"] / 1000 >= limits.approval_min * 60:
+            w["_quiet_min"] = int((now - t["lastOutputAt"] / 1000) // 60)
+            out.append(w)
+    return out
+
+
+def screen_summary(dispatch: str) -> str:
+    """워커 화면 마지막 줄 요약(질문·명령 위주). 비밀 값은 가림. 조회 실패는 안내 문구"""
+    res = orca_json(["orchestration", "worker-read", "--dispatch", dispatch, "--source", "terminal", "--json", "--limit", "40"])
+    tail = ((res or {}).get("terminal") or {}).get("tail")
+    if not isinstance(tail, list):
+        return "화면 요약 불가(worker-read 실패)"
+    lines = [rw.clean(pc.ANSI_RE.sub("", str(x)) if pc else str(x)) for x in tail]
+    lines = [ln for ln in lines if ln and not RULE_RE.match(ln)][-SUMMARY_LINES:]
+    text = " / ".join(ln[:80] for ln in lines)
+    text = hub_status.SECRET_RE.sub(MASK, EXTRA_SECRET_RE.sub(MASK, text))
+    return text[:SUMMARY_MAX] or "화면 요약 불가(빈 화면)"
+
+
 def detect(limits: Limits, now: float):
     """(감지 목록, 오류 문구|None). 항목 {dispatch,kind,mins,title,slug}"""
     cands = []
@@ -107,7 +150,11 @@ def detect(limits: Limits, now: float):
     for w in stopped:
         if w.get("workerState") == "stopped":
             cands.append((w, "stopped"))
+    approval = approval_waiting(active, limits, now)
+    cands += [(w, "approval") for w in approval]
     for w in active:
+        if any(a is w for a in approval):
+            continue
         seen_ms = ((w.get("projection") or {}).get("evidence") or {}).get("lastObservedAt")
         if w.get("workerState") == "ready" and isinstance(seen_ms, (int, float)) and now - seen_ms / 1000 > limits.silence_min * 60:
             cands.append((w, "silent"))
@@ -122,7 +169,9 @@ def detect(limits: Limits, now: float):
         t = tasks.get(w.get("taskId"))
         if t is None or t["status"] in CLOSED_TASK or (kind == "silent" and t["status"] not in RUNNING_TASK):
             continue
-        mins = int((now - w["projection"]["evidence"]["lastObservedAt"] / 1000) // 60) if kind == "silent" else None
+        if kind == "approval" and t["status"] not in RUNNING_TASK:
+            continue
+        mins = int((now - w["projection"]["evidence"]["lastObservedAt"] / 1000) // 60) if kind == "silent" else w.get("_quiet_min")
         out.append({"dispatch": w.get("dispatchId"), "kind": kind, "mins": mins, "title": rw.clean(t["title"]), "slug": t["slug"]})
     return out, None
 
@@ -143,6 +192,8 @@ def load_state() -> dict:
 
 
 def describe(item: dict) -> str:
+    if item["kind"] == "approval":
+        return f"승인 대기 {item['mins']}분째(확인 창은 사용자만 누름)"
     if item["kind"] == "silent":
         return f"{item['mins']}분째 응답 없음"
     return "종료 보고 없이 멈춤"
@@ -165,6 +216,8 @@ def build(items: list, names: dict, dups: dict) -> tuple:
         for it in its:
             text = f"{it['title'][:LINE_MAX]} — {describe(it)}"
             lines.append(f"• {label} · {text}")
+            if it.get("screen"):
+                lines.append(f"    화면: {it['screen']}")
             notify.setdefault(slug, []).append(text)
     return "\n".join(lines), notify
 
@@ -184,6 +237,9 @@ def check(limits: Limits, dry: bool, report_existing: bool, now: float | None = 
              and not (st["seen"].get(i["dispatch"]) or {}).get("baseline")]
     if not fresh:
         return 0, {"status": "none"}
+    for i in fresh:
+        if i["kind"] == "approval":
+            i["screen"] = screen_summary(i["dispatch"])
     names = dict(rw.hub_rows())
     dups = {}
     for slug in {i["slug"] for i in fresh if i["slug"]}:
