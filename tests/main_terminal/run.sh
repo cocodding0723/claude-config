@@ -129,5 +129,26 @@ newhub S4; { row "$NEW" "MAIN-HANDOFF 메인" "$MAIN"; } | setlist; printf 'OTHE
 r=$(S)
 [ "$r" = sent ] && [ "$(envval)" = "$NEW" ] && ok "slack_socket: MAIN_TERMINAL 줄 없음 → 재탐색해 추가 후 전송" || ko "socket 핸들 없음" "r=$r env=$(envval)"
 
+# ---- 모호한 전송 뒤 main.env 가 새 핸들로 바뀜(target_changed): 옛 대상이 죽었으면 재전달, 살아 있으면 보류+경고 ----------------
+stale() { # 이름: 옛 핸들로 보낸 첫 전송이 모호(ambig)하고 그 직후 main.env 가 NEW 로 바뀜
+  newhub "$1"; rm -f "$FO/show.mode.$OLD"; printf '#!/bin/bash\nprintf "MAIN_TERMINAL=%%s\\n" "%s" > "$LRM_HUB_DIR/main.env"\n' "$NEW" > "$FO/send.hook"; chmod 755 "$FO/send.hook"
+  echo ambig > "$FO/send.mode.$OLD"
+}
+stale R1; { row "$NEW" "MAIN-HANDOFF 메인" "$MAIN"; } | setlist  # 옛 핸들은 목록에 없음 = 죽음
+LRM_PUSH_LIFE=8 LRM_PUSH_RETRY=0.5 W
+[ "$(nsend)" = 2 ] && [ "$(awk -F'\t' 'NR==2{print $3}' "$FO/sends.log")" = "$NEW" ] && [ "$(awk -F'\t' 'NR==1{print $4}' "$FO/sends.log")" != "$(awk -F'\t' 'NR==2{print $4}' "$FO/sends.log")" ] \
+  && grep -q 'push redeliver why=target_dead_redeliver' "$H/slack-push.log" && [ "$(jq -r .push_pending "$H/slack-push-state.json")" = null ] && ok "옛 대상 죽음 → 같은 묶음을 새 요청 ID 로 새 대상에 재전달(로그 target_dead_redeliver)" || ko "죽음→재전달" "sends=$(nsend) $(cat "$FO/sends.log") $(cat "$H/slack-push.log")"
+stale R2; { row "$OLD" "MAIN-HANDOFF 옛 메인(살아 있음)" "$MAIN"; row "$NEW" "MAIN-HANDOFF 메인" "$MAIN"; } | setlist
+LRM_PUSH_LIFE=8 LRM_PUSH_RETRY=0.5 W
+[ "$(nsend)" = 1 ] && [ "$(jq -r .push_pending.reason "$H/slack-push-state.json")" = unknown_delivery ] && grep -q 'why=target_changed' "$H/slack-push.log" && ! grep -q redeliver "$H/slack-push.log" \
+  && grep -q '옛 메인 터미널' "$FO/notify.log" && [ "$(wc -l < "$FO/notify.log" | tr -d ' ')" = 1 ] && ! grep -q 'term_' "$FO/notify.log" && ok "옛 대상 살아 있음 → 보류 유지·재전달 없음·사람에게 경고 1회(핸들 값 없음)" || ko "살아 있음→보류" "sends=$(nsend) $(cat "$FO/notify.log" 2>/dev/null)"
+stale R3; echo fail > "$FO/list.mode"
+LRM_PUSH_LIFE=8 LRM_PUSH_RETRY=0.5 W
+[ "$(nsend)" = 1 ] && grep -q 'why=target_changed' "$H/slack-push.log" && ! grep -q redeliver "$H/slack-push.log" && ok "옛 대상 생사를 못 알면(list 조회 실패) 보류 유지" || ko "조회 실패→보류" "sends=$(nsend)"
+stale R4; { row "$OLD" "MAIN-HANDOFF 끊긴 옛 메인" "$MAIN" | jq -c '.connected=false'; row "$NEW" "MAIN-HANDOFF 메인" "$MAIN"; } | setlist
+LRM_PUSH_LIFE=8 LRM_PUSH_RETRY=0.5 W
+[ "$(nsend)" = 2 ] && grep -q 'why=target_dead_redeliver' "$H/slack-push.log" && ok "옛 대상이 목록에 있어도 끊김(connected=false)이면 죽음으로 보고 재전달" || ko "끊김→재전달" "sends=$(nsend)"
+rm -f "$FO/send.hook"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

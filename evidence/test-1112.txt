@@ -1,0 +1,48 @@
+# 2026-11-12 메인 터미널 자동 재탐색 시험 증거
+
+$ bash tests/main_terminal/run.sh
+PASS  후보 1개 → MAIN_TERMINAL 을 새 핸들로 교체
+PASS  다른 줄(주석·키·뒤 줄) 순서·내용 보존
+PASS  권한 600·임시 파일 남지 않음
+PASS  같은 회차에 새 핸들로 전달 계속(전달 1회)
+PASS  로그에 '재탐색으로 갱신' 한 줄, 핸들은 앞 8자만
+PASS  성공 시 '메인 연결 끊김' 알림 없음
+PASS  후보 0개 → 보류, main.env 불변
+PASS  알림 문구에 후보 0개, 1회
+PASS  후보 2개 → 보류, main.env 불변
+PASS  알림 문구에 후보 2개·사람이 고르라는 안내(핸들 값 없음)
+PASS  show 조회 실패(runtime_unavailable) → terminal list 호출 0·main.env 불변·알림 없음
+PASS  terminal list 조회 실패 → 보류, main.env 불변, 알림은 후보 미확인
+PASS  잘린 목록(truncated) → 후보 수를 믿지 않고 갱신 안 함
+PASS  main.env 가 링크면 링크 유지·최종 대상 파일만 교체
+PASS  --auto --dry-run: 1개 발견·종료 0·main.env 불변·핸들 앞 8자만 출력
+PASS  --auto: 1개 → 기록·종료 0
+PASS  --auto: 0개 → 종료 3·후보 0개 안내·불변
+PASS  --auto: 2개 → 종료 3·후보 2개 안내·불변
+PASS  --auto 잘못된 옵션 → 종료 2
+PASS  --help 에 --auto 안내
+PASS  --auto: terminal list 실패 → 종료 2
+PASS  slack_socket: 옛 핸들 전송 실패+gone → 재탐색 1개 → main.env 갱신 후 새 핸들로 재전송 성공
+PASS  slack_socket: 후보 0개 → 실패 반환·main.env 불변
+PASS  slack_socket: 조회 실패(일시 오류) → 재탐색 안 함
+PASS  slack_socket: MAIN_TERMINAL 줄 없음 → 재탐색해 추가 후 전송
+PASS  옛 대상 죽음 → 같은 묶음을 새 요청 ID 로 새 대상에 재전달(로그 target_dead_redeliver)
+PASS  옛 대상 살아 있음 → 보류 유지·재전달 없음·사람에게 경고 1회(핸들 값 없음)
+PASS  옛 대상 생사를 못 알면(list 조회 실패) 보류 유지
+PASS  옛 대상이 목록에 있어도 끊김(connected=false)이면 죽음으로 보고 재전달
+
+29 passed, 0 failed
+rc=0
+
+$ bash tests/slack_poll/push.sh   (기존 slack_push 시험, 별도 실행분 마지막 줄)
+184 PASS, 0 FAIL
+
+$ bash tests/slack_socket/run.sh   (기존 slack_socket 시험, 마지막 줄)
+결과: PASS 46, FAIL 0
+
+$ LRM_MAIN_ENV=<임시>/main.env bash hubs/scripts/set_main_terminal.sh --auto --dry-run   (실제 orca terminal list 읽기 전용, main.env 쓰지 않음)
+메인 터미널 후보 1개 발견함(dry-run, main.env 변경 없음) — term_398…
+rc=0
+임시 폴더 파일 수:        0
+
+변이 검증: 재탐색 조건·생사 판정을 일부러 틀린 사본으로 돌리면 시험이 실패함(REDISCOVER 에 show_fail 추가 → 5건, 재전달 조건 고정 → 2건)

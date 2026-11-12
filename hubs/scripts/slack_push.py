@@ -73,6 +73,12 @@ ALERT_TEXT = "\n".join([
     "• 무엇: Slack 메시지를 메인 세션에 넘기지 못하고 모아 두는 중이다 (사유: {reason}, 자동 재탐색 후보: {cands})",
     "• 할 일: {todo}",
 ])
+ALERT_STALE = "\n".join([
+    "메인 연결 끊김",
+    "",
+    "• 무엇: 옛 메인 터미널로 보낸 묶음의 도착 여부를 몰라 새 메인으로 다시 보내지 않고 멈췄다. 옛 터미널이 아직 살아 있다",
+    "• 할 일: 옛 터미널 화면에서 도착했는지 본다. 도착했으면 .main-read-lines 를 그 묶음 끝 줄로 올리고, 아니면 slack-push-state.json 을 다른 이름으로 옮긴다",
+])
 TODO_PICK = "후보가 여럿이라 자동으로 못 골랐다. orca terminal list 에서 메인을 골라 set_main_terminal.sh <핸들> 로 지정한다"
 TODO_SET = "메인 세션에서 set_main_terminal.sh <새 핸들> 로 main.env 의 MAIN_TERMINAL 을 고친다(후보가 하나면 set_main_terminal.sh --auto)"
 MSG_TYPES = ("note", "command", "thread_reply")       # 본문 인용으로 전달하는 메시지 종류. 반응은 아래 REACT_TYPE 이 한 줄로 전달
@@ -598,7 +604,7 @@ def alert_save(s):
     os.replace(tmp, ALERT)
 
 
-def alert(reason, cands=None):
+def alert(reason, cands=None, text=None):
     """'메인 연결 끊김' 경고를 사유마다 한 번만 보냄. 보낸 사유는 상태 파일(600)에 남겨 연결이 확인될 때까지 다시 보내지 않음.
     알림 실패는 전달·수집을 막지 않음(로그만). 본문에 핸들 값·메시지 내용은 넣지 않음.
     cands = 재탐색이 센 후보 수(None 이면 재탐색 안 함·실패). 2개 이상이면 사람이 고르라고 안내함"""
@@ -613,7 +619,7 @@ def alert(reason, cands=None):
         log("alert", reason=reason, result="state_fail")
         return
     try:
-        p = subprocess.run(["/bin/bash", NOTIFY, "--kind", "warn", "--tag", "slack-push", "--title", "메인 연결 끊김", ALERT_TEXT.format(reason=reason, cands="미확인" if cands is None else f"{cands}개", todo=TODO_PICK if cands and cands > 1 else TODO_SET)],
+        p = subprocess.run(["/bin/bash", NOTIFY, "--kind", "warn", "--tag", "slack-push", "--title", "메인 연결 끊김", text or ALERT_TEXT.format(reason=reason, cands="미확인" if cands is None else f"{cands}개", todo=TODO_PICK if cands and cands > 1 else TODO_SET)],
                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
         result = "ok" if p.returncode == 0 else f"fail_rc{p.returncode}"
     except subprocess.TimeoutExpired:
@@ -815,9 +821,18 @@ def attempt(state, lines, mark, now):
         hold(pp, why, now + HOLD_RETRY, span, handle=short)
         return "hold"
     if pp.get("ambig") and pp["ambig"] not in (handle_tag(handle), handle):  # 원문은 이전 버전이 남긴 상태 호환
-        hold(pp, "unknown_delivery", now + FOREVER, span, why="target_changed")  # 도착 여부를 모르는 시도를 한 터미널과 다름. 요청 ID 는 터미널에 묶이므로 다른 곳에 보내면 중복될 수 있음
-        pp["stop"] = True
-        return "hold"
+        # 도착 여부를 모르는 시도를 한 터미널과 다름. 요청 ID 는 터미널에 묶이므로 다른 곳에 보내면 중복될 수 있음.
+        # 옛 터미널이 이미 죽었으면 사람이 못 본 것이므로 같은 묶음을 새 요청 ID 로 새 대상에 재전달. 살아 있거나 확인 못 하면 보류
+        old = pp["ambig"]
+        fate = mt.is_dead(run_orca, lambda h: old in (handle_tag(h), h))
+        if fate != "dead":
+            hold(pp, "unknown_delivery", now + FOREVER, span, why="target_changed")
+            pp["stop"] = True
+            if fate == "alive":
+                alert("target_changed", text=ALERT_STALE)
+            return "hold"
+        log("redeliver", why="target_dead_redeliver", lines=span)
+        pp["ambig"], pp["request_id"], pp["attempts"] = None, str(uuid.uuid4()), 0
     seal(pp, items, lines, mark)
     save_state(state)  # 보내기 전에 본문·ID 를 저장. 전송 직후 프로세스가 죽어도 다음 시도가 같은 ID 로 재전송함
     verdict, code, info = send(handle, pp["text"], pp["request_id"])

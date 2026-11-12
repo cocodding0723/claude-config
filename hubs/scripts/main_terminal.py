@@ -137,6 +137,15 @@ def candidates(run, spec):
     return out
 
 
+def is_dead(run, match):
+    """match(핸들)가 참인 터미널의 생사: 'dead'(목록에 없거나 끊김·고아) | 'alive' | 'unknown'(조회 실패). 핸들 원문 없이 해시 등으로만 아는 터미널 확인용"""
+    rows = list_rows(run)
+    if rows is None:
+        return "unknown"
+    hit = [t for t in rows if isinstance(t.get("handle"), str) and match(t["handle"])]
+    return "alive" if any(t.get("connected") is True and not t.get("orphaned") for t in hit) else "dead"
+
+
 def write_handle(path, handle):
     """main.env 의 MAIN_TERMINAL 줄만 교체(없으면 추가). 다른 줄은 원형 보존, 권한 600, 임시 파일 뒤 원자적 교체.
     path 가 링크면 링크는 두고 최종 대상을 교체. set_main_terminal.sh 와 같은 규칙"""
