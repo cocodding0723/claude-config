@@ -20,7 +20,8 @@ import ci_review as review
 import main_terminal as mt
 
 DIR = Path(os.environ.get("LRM_HUB_DIR", Path.home() / ".config/lrm-hubs"))
-REPO = os.environ.get("LRM_CI_REPO", "Basakansoft/LoveRevolutionMaker")
+GAME_REPO = os.environ.get("LRM_GAME_REPO", "Basakansoft/LoveRevolutionMaker")  # hubs.tsv 저장소 칸이 '-' 인 허브의 저장소. 감시 대상과 별개
+REPO = os.environ.get("LRM_CI_REPO", GAME_REPO)  # 감시 대상 PR 저장소
 WATCH_FILE = DIR / "ci-watch.txt"
 STATE = DIR / "ci-watch.state.json"
 GH = os.environ.get("LRM_GH", "gh")
@@ -31,6 +32,8 @@ HUBS_TSV = DIR / "hubs.tsv"
 QA_SLUG = os.environ.get("LRM_QA_HUB_SLUG", "test-qa")  # 공통 원인 담당 허브
 WT_LIMIT = int(os.environ.get("LRM_WT_LIMIT", "1000"))  # worktree list 행 상한
 CAUSES = "_causes"  # PR 별 마지막 실패 검사·원인(공통 원인 판정용)
+STATUS_DIR = Path(os.environ.get("LRM_HUB_STATUS_DIR") or DIR / "hub-status")  # 티켓→허브 근거 1: 허브 상태 파일
+ROUTES = DIR / "intake-routes.jsonl"  # 티켓→허브 근거 2: 접수 경로
 HUB_TABLE = DIR / "ci-review-hubs.tsv"  # 정규식<TAB>허브. 브랜치·제목에 위에서부터 맞춤
 REVIEW_OUT = DIR / "ci-review"
 REVIEW_INIT = "_review_init"
@@ -89,30 +92,31 @@ def pr_list():
 
 
 def cause(link):
-    """실패 잡 로그에서 원인 한 줄. 못 찾으면 빈 문자열"""
+    """실패 잡 로그에서 (원인 한 줄, 실패 메시지). 메시지는 공통 원인 비교용으로 시험 이름을 뺀 값. 못 찾으면 빈 문자열"""
     m = re.search(r"/runs/(\d+)/job/(\d+)", link or "")
     if not m:
-        return ""
+        return "", ""
     try:
         log = gh("run", "view", m.group(1), "-R", REPO, "--job", m.group(2), "--log-failed")
     except (RuntimeError, subprocess.TimeoutExpired):
-        return ""
+        return "", ""
     lines = [TS_PREFIX.sub("", ln).strip() for ln in log.splitlines()]
     for rx in CAUSE:
         for ln in lines:
             hit = rx.search(ln)
             if hit and review.specific(hit.group(0).strip()):  # 'exit code 1' 같은 일반 요약은 건너뜀
-                return hit.group(0).strip()[:120]
+                text = hit.group(0).strip()
+                return text[:120], text
     return xml_cause(m.group(1))
 
 
 def xml_cause(run_id):
-    """로그에 원인 줄이 없을 때 테스트 결과 아티팩트(xml)의 첫 실패 메시지. 로그 요약이 'FAILED 0' 으로 틀릴 때 대비"""
+    """로그에 원인 줄이 없을 때 테스트 결과 아티팩트(xml)의 첫 실패 (표시 줄, 메시지). 로그 요약이 'FAILED 0' 으로 틀릴 때 대비"""
     with tempfile.TemporaryDirectory() as tmp:
         try:
             gh("run", "download", run_id, "-R", REPO, "-p", "*[Tt]est*", "-D", tmp)
         except (RuntimeError, subprocess.TimeoutExpired):
-            return ""
+            return "", ""
         for x in sorted(Path(tmp).rglob("*.xml")):
             try:
                 root = ET.parse(x).getroot()
@@ -122,8 +126,8 @@ def xml_cause(run_id):
                 if case.get("result") == "Failed":
                     msg = case.find("./failure/message")
                     text = " ".join((msg.text or "").split()) if msg is not None else ""
-                    return f"{case.get('name', '')}: {text}"[:120]
-    return ""
+                    return f"{case.get('name', '')}: {text}"[:120], text
+    return "", ""
 
 
 def message(pr, fails):
@@ -197,7 +201,8 @@ def pick_hub(pr, state, with_common=False):
     names = review.load_hub_names(HUBS_TSV)
     common = review.common_cause(state.get(CAUSES, {}), str(pr["number"])) if with_common else ()
     return review.assign_hub(pr.get("headRefName", ""), pr.get("title", ""), review.load_table(HUB_TABLE),
-                             review.list_worktrees(ORCA, REPO, WT_LIMIT), names, common, names.get(QA_SLUG, ""), REPO)
+                             review.list_worktrees(ORCA, REPO, WT_LIMIT), names, common, names.get(QA_SLUG, ""), REPO,
+                             review.ticket_hubs(STATUS_DIR, ROUTES, HUBS_TSV, REPO, GAME_REPO))
 
 
 def relay_fail(pr, fails, prev, state, slack_ts=""):
@@ -211,7 +216,7 @@ def relay_fail(pr, fails, prev, state, slack_ts=""):
     n = str(pr["number"])
     causes = state.setdefault(CAUSES, {})
     old = causes.get(n) if (causes.get(n) or {}).get("head") == sha else None
-    causes[n] = {"head": sha, "fails": [{"key": c["key"], "cause": c.get("cause", "")} for c in fails], "hub": (old or {}).get("hub", "")}
+    causes[n] = {"head": sha, "fails": [{"key": c["key"], "cause": c.get("cause", ""), "msg": c.get("msg", "")} for c in fails], "hub": (old or {}).get("hub", "")}
     handle = review.main_handle(MAIN_ENV)
     hub, why_hub = pick_hub(pr, state, with_common=True)
     for m in review.common_cause(causes, n):
@@ -304,7 +309,7 @@ def main():
                         # 게이트 실패가 리뷰어 오류 때문이면 고칠 코드가 없음. 오류 알림이 이미 메인에 가므로 원인만 한 줄로
                         c["cause"], c["reviewer_error"] = REVIEWER_ERROR, True
                         continue
-                c["cause"] = cause(c["link"])
+                c["cause"], c["msg"] = cause(c["link"])
             kind, msg = message(pr, fails)
         else:
             kind, msg = passed_message(pr)
