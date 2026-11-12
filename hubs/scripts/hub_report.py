@@ -131,7 +131,7 @@ def valid_record(d) -> bool:
         return False
     if not all(isinstance(d.get(k), str) and d[k].strip() for k in ("id", "hub", "task", "kind", "text")):
         return False
-    files = d.get("files", [])
+    files = d.get("files")  # make_report 는 항상 files 를 씀. 키가 없으면 손상 레코드
     if not isinstance(files, list) or not all(isinstance(f, str) for f in files):
         return False
     if not hub_status.SLUG_RE.match(d["hub"]) or d["kind"] not in KINDS or not (d["task"] == NO_TASK or TASK_RE.match(d["task"])):
