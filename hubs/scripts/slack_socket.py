@@ -13,6 +13,7 @@ REFRESH 주기마다 계획 재연결(반쯤 죽은 연결 방지). ALIVE 주기
       LRM_SOCKET_CHECK_S 감시 간격(30) · LRM_SOCKET_DOWN_S 끊김 판정(60) ·
       LRM_SOCKET_REFRESH_S 정기 재연결 주기(21600, 0 이면 끔) · LRM_SOCKET_ALIVE_S 생존 기록 주기(600) ·
       LRM_SOCKET_DEBOUNCE_S 수집 묶음 대기(2) · LRM_SOCKET_RETIRE_TIMEOUT_S 옛 클라이언트 runner 종료 대기 상한(5)
+      LRM_SOCKET_WATCH_S 감시기(재시작 감지 등) 실행 주기(120, 0 이면 끔)
 종료 코드: 2 설정 오류(토큰 없음)·첫 연결 실패, 3 재연결 연속 실패(launchd 가 재시작). 0 은 없음 — 신호(SIGTERM)로만 끝남
 """
 import json
@@ -33,6 +34,7 @@ from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # 링크로 설치돼도 원본 폴더의 공용 모듈을 찾음
+import card_actions as actions  # noqa: E402
 import main_terminal as mt  # noqa: E402
 
 DIR = os.environ.get("LRM_HUB_DIR", os.path.expanduser("~/.config/lrm-hubs"))
@@ -125,12 +127,17 @@ def send_main(text: str) -> bool:
     return send_to(found.handle, text) == "sent"
 
 
-def warn_slack(thread: str, text: str) -> None:
-    """메인 전달 실패를 카드 스레드에 경고. 실패해도 로그 한 줄만"""
+def note_thread(kind: str, thread: str, text: str) -> None:
+    """카드 스레드에 알림. 실패해도 로그 한 줄만"""
     try:
-        subprocess.run([NOTIFY, "--kind", "warn", "--thread", thread, text], capture_output=True, timeout=60, stdin=subprocess.DEVNULL)
+        subprocess.run([NOTIFY, "--kind", kind, "--thread", thread, text], capture_output=True, timeout=60, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired) as err:
-        log(f"Slack 경고 실패 {type(err).__name__}")
+        log(f"Slack 알림 실패 {type(err).__name__}")
+
+
+def warn_slack(thread: str, text: str) -> None:
+    """메인 전달 실패를 카드 스레드에 경고"""
+    note_thread("warn", thread, text)
 
 
 class Decide:
@@ -192,10 +199,33 @@ class Decide:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         with open(DONE, "a", encoding="utf-8") as f:
             f.write(ts + "\n")
+        status, entry = actions.try_take(did)  # 비차단: 다른 프로세스가 등록부 잠금을 쥐어도 수신 스레드는 멈추지 않음
+        if status == "busy":  # 등록 여부 불명(처리 중). 일반 카드로 오인하지 않고 별도 스레드가 잠금을 기다려 이어서 처리
+            log(f"결정 {did} 등록부 잠금 사용 중 — 백그라운드에서 이어서 처리")
+            threading.Thread(target=self.settle, args=(did, ts, title, label, extra.get("pick")), daemon=True).start()
+            return
+        self.route(entry, did, ts, title, label, extra.get("pick"))
+
+    def settle(self, did: str, ts: str, title: str, label: str, pick) -> None:
+        """잠금을 기다려 take 한 뒤 route. 답은 inbox 에 이미 기록돼 있어 프로세스가 죽어도 사라지지 않음"""
+        self.route(actions.take(did), did, ts, title, label, pick)
+
+    def route(self, entry, did: str, ts: str, title: str, label: str, pick) -> None:
+        """감시기가 건 카드(entry 있음)는 후속 동작만 실행하고 메인에는 전달하지 않음(메인이 같은 일을 또 하지 않게). 일반 카드는 메인 전달"""
+        if entry is not None:
+            threading.Thread(target=self.run_action, args=(entry, did, ts, pick), daemon=True).start()
+            return
         ok = send_main(f"[Slack→메인] 결정: {title or did} = {label} ({ts})")
         if not ok:
             warn_slack(ts, f"메인 전달 실패: {title or did} = {label}\n\n• 무엇: 버튼 답은 기록했지만 메인 터미널로 못 보냄\n• 결과: 메인에 직접 알려 주세요")
         log(f"결정 {did} 버튼 답 기록 · 메인 전달 {'성공' if ok else '실패'}")
+
+    def run_action(self, entry: dict, did: str, ts: str, pick) -> None:
+        """카드 후속 동작 실행(오래 걸릴 수 있어 별도 스레드). 실행했으면 결과를 스레드에 남김"""
+        rc, msg = actions.execute(entry, pick)
+        log(f"결정 {did} 후속 동작 rc={rc} {msg[:120]}")
+        if pick == actions.RUN_PICK:
+            note_thread("done" if rc == 0 else "warn", ts, f"{'후속 동작 완료' if rc == 0 else '후속 동작 실패'}\n\n• 결과: {msg[:200]}")
 
 
 def env_secs(name: str, default: float, allow_zero: bool = False) -> float:
@@ -243,6 +273,29 @@ def load_env(path: str) -> dict:
             key = key.removeprefix("export ").strip()
             values[key] = value.strip().strip('"').strip("'")
     return values
+
+
+# 주기 감시기(새 launchd 를 늘리지 않고 이 상주 프로세스의 감시 루프에 얹음). 각 스크립트의 `check` 를 부름
+WATCH_S = env_secs("LRM_SOCKET_WATCH_S", 120.0, allow_zero=True)
+WATCH_TIMEOUT_S = 120
+WATCHERS = ("restart_watch.py", "stall_watch.py")
+_watch_lock = threading.Lock()
+
+
+def run_watchers() -> None:
+    """감시기를 순서대로 실행. 이전 실행이 안 끝났으면 건너뜀. 출력은 첫 줄만 로그에 남김"""
+    if not _watch_lock.acquire(blocking=False):
+        return
+    try:
+        for name in WATCHERS:
+            path = os.path.join(os.path.dirname(os.path.realpath(__file__)), name)
+            try:
+                p = subprocess.run([sys.executable, "-I", path, "check"], capture_output=True, text=True, timeout=WATCH_TIMEOUT_S, stdin=subprocess.DEVNULL)
+                log(f"감시 {name} rc={p.returncode} {(p.stdout.strip().splitlines() or [''])[0][:100]}")
+            except (OSError, subprocess.TimeoutExpired) as err:
+                log(f"감시 {name} 실패 {type(err).__name__}")
+    finally:
+        _watch_lock.release()
 
 
 def log(msg: str) -> None:
@@ -353,7 +406,7 @@ def swap(old, make):
 
 def watch(client, make, trigger: Trigger, pulse: Pulse, timing: Timing) -> int:
     start = time.monotonic()
-    last_alive = last_refresh = start
+    last_alive = last_refresh = last_watch = start
     down_since: float | None = None
     fails = 0
     while True:
@@ -394,6 +447,9 @@ def watch(client, make, trigger: Trigger, pulse: Pulse, timing: Timing) -> int:
             else:
                 pulse.reconnects += 1
                 trigger.fire("정기 재연결")
+        if WATCH_S and now - last_watch >= WATCH_S:
+            last_watch = now
+            threading.Thread(target=run_watchers, daemon=True).start()
         if now - last_alive >= timing.alive_s:
             last_alive = now
             log(f"생존 연결={'예' if is_up(client) else '아니오'} 마지막이벤트={pulse.idle_text(now)} 재연결={pulse.reconnects}회")

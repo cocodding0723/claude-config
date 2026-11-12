@@ -8,7 +8,9 @@ LOAD=$(sysctl -n vm.loadavg | awk '{print $2}')
 FREE=$(memory_pressure 2>/dev/null | awk -F': ' '/free percentage/{gsub("%","",$2);print $2}')
 UNITY=$(pgrep -f 'Unity.app/Contents/MacOS/Unity' | wc -l | tr -d ' ')
 HEAVY="${1:-}"   # 'unity' 를 주면 Unity 작업
-reason="load=$LOAD/$NCPU free=${FREE:-?}% unity=$UNITY"
+# 허브당 동시 구현 워커 상한. 규칙 문장(common-rules)과 같은 경계값: 부하 12 이하 4, 16 미만 2, 이상 0(새 구현 워커 금지)
+CAP=$(awk -v l="$LOAD" 'BEGIN{print (l<=12)?4:((l<16)?2:0)}')
+reason="load=$LOAD/$NCPU free=${FREE:-?}% unity=$UNITY 구현워커상한=$CAP"
 busy=0
 awk -v l="$LOAD" -v n="$NCPU" 'BEGIN{exit !(l>=n)}' && busy=1
 [ -n "${FREE:-}" ] && [ "$FREE" -lt 20 ] && busy=1
