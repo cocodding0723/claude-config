@@ -1,13 +1,14 @@
 display_information:
-  name: LRM 작업 알림
+  name: 강비서
   description: 연애혁명 키우기 AI 코디네이터 보고·결정 알림
+  background_color: "#2C2D30"
 features:
   app_home:
     home_tab_enabled: false
     messages_tab_enabled: true
     messages_tab_read_only_enabled: false
   bot_user:
-    display_name: lrm-ai
+    display_name: 강비서
     always_online: true
 oauth_config:
   scopes:
