@@ -318,11 +318,14 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
     return {"topic_ts": topic.get("ts", ""), "body_ts": rs["body_ts"], "line_ts": rs["line_ts"]}
 
 
-def warn_stop(conf: Conf, rep: dict, st: dict, why: str, permanent: bool, deadline: float) -> None:
+def warn_stop(conf: Conf, rep: dict, st: dict, why: str, permanent: "bool | None", deadline: float) -> None:
     """재시도 중단 경고 1건(원인 + 조치). 원래 주제 스레드가 있으면 그 답글, 없으면(결정 카드 등) DM 새 글"""
     label = hub_report.KINDS[rep["kind"]][1]
     thread = rep.get("thread") or st["topics"].get(topic_key(rep), {}).get("ts", "")
-    cause = f"입력 오류(재시도해도 같은 결과) — {why}" if permanent else f"{conf.fail_limit}회 연속 전송 실패 — {why}"
+    if permanent is None:  # 분류를 저장하기 전 기록: 입력 오류로 단정하지 않음
+        cause = "원인 미확인(이전 기록)" + (f" — {why}" if why else "")
+    else:
+        cause = f"입력 오류(재시도해도 같은 결과) — {why}" if permanent else f"{conf.fail_limit}회 연속 전송 실패 — {why}"
     msg = (f"허브 보고 전송 중단\n\n• 무엇: {rep['hub']} {label} 보고 {rep['id']} 재시도 중단\n"
            f"• 원인: {cause}\n• 조치: 보고를 고쳐 hub_report.py add 로 다시 기록")
     run_notify(conf, ["--tag", rep["hub"], "--kind", "warn"] + (["--thread", thread] if thread else []) + [msg], deadline)
@@ -342,7 +345,7 @@ def warn_pending(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
         return
     rs = st["reports"].get(rep["id"], {})
     try:
-        warn_stop(conf, rep, st, rs.get("error", "원인 미확인"), rs.get("stop_permanent", True), deadline)  # 키 없는 옛 상태는 영구로 간주
+        warn_stop(conf, rep, st, rs.get("error", ""), rs.get("stop_permanent"), deadline)  # 키 없는 옛 상태는 분류 불명(None)
         st["warned"][rep["id"]] = int(time.time())
         save_state(conf.state, st)
     except NotifyError:

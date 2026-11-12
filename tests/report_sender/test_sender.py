@@ -211,12 +211,14 @@ class SenderTest(unittest.TestCase):
         self.assertNotIn("입력 오류", text)
         self.assertIn(rep["id"], self.state()["warned"])
 
-    def test_stop_without_saved_cause_defaults_to_permanent(self):
+    def test_stop_without_saved_cause_warns_neutral_not_input_error(self):
         rep = self.report()
-        st = {"topics": {}, "reports": {rep["id"]: {"error": "옛 기록"}}, "warned": {}, "bad": {rep["id"]: 1}}
+        st = {"topics": {}, "reports": {rep["id"]: {"fails": 6, "error": "전송 시간 초과"}}, "warned": {}, "bad": {rep["id"]: 1}}
         report_sender.save_state(self.conf.state, st)
         report_sender.run(self.conf)
-        self.assertIn("입력 오류", self.warns()[-1][-1])
+        text = self.warns()[-1][-1]
+        self.assertIn("원인 미확인(이전 기록)", text)
+        self.assertNotIn("입력 오류", text)
 
     def test_transient_failures_back_off(self):
         self.conf.backoff_s = 60
