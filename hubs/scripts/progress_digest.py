@@ -112,9 +112,17 @@ def digest_hash(items, groups=None):
     return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
+def card_name(i):
+    """결정 항목은 카드 링크가 있으면 제목을 Slack 링크(<주소|제목>)로. 링크 문법을 깨는 문자(<>|)는 뺌"""
+    name = one_line(i.title, NAME_MAX)
+    if i.key.startswith("decision:") and i.link:
+        return f"<{i.link}|{name.translate(str.maketrans('', '', '<>|'))}>"
+    return name
+
+
 def name_lines(items, limit=NAMES_MAX):
     """항목마다 '- 이름' 한 줄. limit 초과분은 '- 외 n건' 한 줄"""
-    out = [f"- {one_line(i.title, NAME_MAX)}" for i in items[:limit]]
+    out = [f"- {card_name(i)}" for i in items[:limit]]
     extra = len(items) - limit
     return out + ([f"- 외 {extra}건"] if extra > 0 else [])
 
