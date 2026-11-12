@@ -3,10 +3,10 @@
 <plist version="1.0">
 <dict>
   <key>Label</key><string>ai.lrm.sessiongc</string>
-  <!-- 시험 모드(--apply 없음)로 등록. 실제 정리 전환은 hubs/docs/session-gc.md -->
+  <!-- 시험 모드(apply 옵션 없음)로 등록. 실제 정리 전환은 hubs/docs/session-gc.md -->
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/bin/python3</string>
+    <string>__PYTHON3__</string>
     <string>__HOME__/.config/lrm-hubs/session_gc.py</string>
   </array>
   <key>EnvironmentVariables</key>
