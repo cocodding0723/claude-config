@@ -180,6 +180,44 @@ class SenderTest(unittest.TestCase):
         self.assertEqual((res["failed"], res.get("stopped", 0)), (1, 0))
         self.assertEqual(self.state()["bad"], {})
 
+    def test_env_missing_classification_uses_whole_line_with_real_notify_script(self):
+        """실제 slack_notify.sh 를 빈 HOME 으로 실행: 환경 누락 줄 전체만 일시, 입력값에 그 문구가 섞인 양식 오류는 영구"""
+        real = os.path.join(SCRIPTS, "slack_notify.sh")
+        conf = report_sender.Conf(outbox=self.p("b"), state=self.p("s"), notify=real, ledger=self.p("l"), sync_state=self.p("y"),
+                                  sent=self.p("t"), log=self.p("g"))
+        home = os.environ.get("HOME")
+        os.environ["HOME"] = self.dir.name  # 빈 HOME = 봇 env 파일 없음. 실제 Slack 호출 전에 종료됨
+        self.addCleanup(os.environ.__setitem__, "HOME", home)
+        deadline = report_sender.time.monotonic() + 30
+        with self.assertRaises(report_sender.NotifyError) as miss:
+            report_sender.run_notify(conf, ["--kind", "done", "본문"], deadline)
+        self.assertFalse(miss.exception.permanent)
+        with self.assertRaises(report_sender.NotifyError) as mixed:
+            report_sender.run_notify(conf, ["--kind", report_sender.USER_FIX_LINES[0].split(" —")[0], "본문"], deadline)
+        self.assertIn(report_sender.USER_FIX_LINES[0].split(" —")[0], str(mixed.exception))
+        self.assertTrue(mixed.exception.permanent)
+
+    def test_stop_warning_retry_keeps_transient_cause(self):
+        self.conf.fail_limit = 1
+        rep = self.report()
+        self.set_fake("fail.all", 1)  # 본 전송·첫 경고 모두 일시 실패
+        self.assertEqual(report_sender.run(self.conf)["stopped"], 1)
+        self.assertTrue(self.state()["reports"][rep["id"]]["stop_permanent"] is False)
+        self.assertNotIn(rep["id"], self.state()["warned"])
+        self.set_fake("fail.all", "")
+        report_sender.run(self.conf)  # 경고 재시도
+        text = self.warns()[-1][-1]
+        self.assertIn("1회 연속 전송 실패", text)
+        self.assertNotIn("입력 오류", text)
+        self.assertIn(rep["id"], self.state()["warned"])
+
+    def test_stop_without_saved_cause_defaults_to_permanent(self):
+        rep = self.report()
+        st = {"topics": {}, "reports": {rep["id"]: {"error": "옛 기록"}}, "warned": {}, "bad": {rep["id"]: 1}}
+        report_sender.save_state(self.conf.state, st)
+        report_sender.run(self.conf)
+        self.assertIn("입력 오류", self.warns()[-1][-1])
+
     def test_transient_failures_back_off(self):
         self.conf.backoff_s = 60
         self.report()

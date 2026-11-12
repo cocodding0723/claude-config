@@ -35,7 +35,8 @@ HUB_DIR = hub_report.HUB_DIR
 FAIL_LIMIT = 6  # 일시 실패 재시도 상한. 이 횟수째 실패에 중단·경고 1건
 BACKOFF_BASE_S, BACKOFF_MAX_S = 60, 1800  # 일시 실패 뒤 대기 = BASE·2^(실패-1), 상한 MAX. 1시간 안팎에서 상한 도달
 PERMANENT_RC = 2  # 알림 스크립트 종료 코드: 설정·인자·양식 오류 = 재시도해도 같은 결과
-USER_FIX_MARKS = ("slack-bot.env 없음",)  # 종료 코드 2 지만 사용자가 파일을 만들면 풀리는 환경 문제 = 일시로 취급
+# 종료 코드 2 지만 사용자가 파일을 만들면 풀리는 환경 문제 = 일시. stderr 전체가 이 줄과 같을 때만 인정(입력값이 섞인 메시지를 부분 일치로 분류하지 않음)
+USER_FIX_LINES = ("slack-bot.env 없음 — 사용자 설정 필요",)
 NOTIFY_TIMEOUT_S = 30
 DEFAULT_BUDGET_S = 40.0  # 회차 시간 예산. 넘기면 새 전송을 시작하지 않고 다음 회차로 넘김
 MAX_PER_RUN = 10
@@ -97,7 +98,7 @@ def run_notify(conf: Conf, args: list, deadline: float) -> str:
     if p.returncode == 0 and last.startswith("ok ") and last[3:].strip():
         return last[3:].strip()
     why = " ".join((p.stderr.strip() or p.stdout.strip() or f"종료 코드 {p.returncode}").split())[:ERR_MAX]
-    perm = p.returncode == PERMANENT_RC and not any(m in why for m in USER_FIX_MARKS)
+    perm = p.returncode == PERMANENT_RC and p.stderr.strip() not in USER_FIX_LINES
     raise NotifyError("비밀 값 포함 오류 숨김" if hub_status.SECRET_RE.search(why) else why, permanent=perm)
 
 
@@ -330,16 +331,18 @@ def warn_stop(conf: Conf, rep: dict, st: dict, why: str, permanent: bool, deadli
 def stop_report(conf: Conf, rep: dict, st: dict, why: str, permanent: bool, deadline: float) -> None:
     """보고를 재시도 대상에서 빼고(bad) 경고 1건. 경고 전송이 실패하면 다음 회차에 경고만 다시 시도"""
     st["bad"][rep["id"]] = int(time.time())
-    st["reports"].setdefault(rep["id"], {})["error"] = why
+    rs = st["reports"].setdefault(rep["id"], {})
+    rs["error"], rs["stop_permanent"] = why, permanent  # 경고 재시도에도 같은 원인 분류를 쓰도록 저장
     save_state(conf.state, st)
-    warn_pending(conf, rep, st, deadline, permanent)
+    warn_pending(conf, rep, st, deadline)
 
 
-def warn_pending(conf: Conf, rep: dict, st: dict, deadline: float, permanent: bool = False) -> None:
+def warn_pending(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
     if rep["id"] in st["warned"]:
         return
+    rs = st["reports"].get(rep["id"], {})
     try:
-        warn_stop(conf, rep, st, st["reports"].get(rep["id"], {}).get("error", "원인 미확인"), permanent, deadline)
+        warn_stop(conf, rep, st, rs.get("error", "원인 미확인"), rs.get("stop_permanent", True), deadline)  # 키 없는 옛 상태는 영구로 간주
         st["warned"][rep["id"]] = int(time.time())
         save_state(conf.state, st)
     except NotifyError:
@@ -471,7 +474,7 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
     if not dry:
         for r in reports:  # 중단됐지만 경고가 안 나간 보고
             if r["id"] in st["bad"] and r["id"] not in st["warned"] and not st["reports"].get(r["id"], {}).get("sent"):
-                warn_pending(conf, r, st, deadline, True)
+                warn_pending(conf, r, st, deadline)
     todo = [r for r in reports if not st["reports"].get(r["id"], {}).get("sent") and r["id"] not in st["bad"]]
     out["pending"] = len(todo)
     if not todo:
