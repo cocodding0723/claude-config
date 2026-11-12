@@ -404,6 +404,26 @@ class DeliverTest(Base):
         _, dv = self.go(msg("ui: a", 1))
         self.assertEqual(dv["notified"], ["C0001"])
 
+    def test_orphaned_live_hub_alone_is_delivered(self):
+        self.terms(self.hub_term(orphaned=True))
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual(dv["sent"], ["C0001"])
+        self.assertEqual([h for h, _ in self.sends()], [HUB_H])
+
+    def test_orphaned_loses_to_tabbed_hub(self):
+        other = "term_cccccccc-0000-4000-8000-000000000003"
+        self.terms(self.hub_term(handle=other, orphaned=True), self.hub_term())
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual(dv["sent"], ["C0001"])
+        self.assertEqual([h for h, _ in self.sends()], [HUB_H])
+
+    def test_two_orphaned_hubs_is_not_guessed(self):
+        self.terms(self.hub_term(orphaned=True), self.hub_term(handle="term_cccccccc-0000-4000-8000-000000000003", orphaned=True))
+        _, dv = self.go(msg("ui: a", 1))
+        self.assertEqual(dv["notified"], ["C0001"])
+        self.assertEqual([h for h, _ in self.sends()], [MAIN_H])
+        self.assertIn("후보 2개", self.sends()[0][1])
+
     def test_hub_without_row_in_hubs_table(self):
         _, dv = self.go(msg("vfx: 폭죽", 1))
         self.assertEqual(dv["notified"], ["C0001"])
