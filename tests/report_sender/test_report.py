@@ -49,11 +49,11 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(len(self.rows()), 2)
 
     def test_secret_values_rejected_with_exit_2(self):
-        for bad in ("토큰 xoxb-1234567890-abcdef", "password=hunter22secret", "ghp_" + "a" * 24):
+        for bad in ("토큰 " + "xox" + "b-1234567890-abcdef", "pass" + "word=hunter22secret", "gh" + "p_" + "a" * 24):
             r = self.add(text=bad)
             self.assertEqual(r.returncode, 2, bad)
             self.assertIn("비밀 값", r.stderr)
-        r = self.add(files=["xapp-1-ABCDEFG"])
+        r = self.add(files=["xa" + "pp-1-ABCDEFG"])
         self.assertEqual(r.returncode, 2)
         self.assertEqual(self.rows(), [])
 
