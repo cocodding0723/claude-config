@@ -65,6 +65,9 @@ DENY_TOOLS = ("Bash", "Read", "Write", "Edit", "WebFetch", "WebSearch", "Task",
               "mcp__atlassian__transitionJiraIssue", "mcp__atlassian__addOrEditJiraIssueComment",
               "mcp__atlassian__createConfluenceContent", "mcp__atlassian__updateConfluenceContent",
               "mcp__atlassian__addGraphContext", "mcp__atlassian__executeWrite", "mcp__atlassian__executeDestructive")
+# 초안 claude 전용 MCP 설정. --strict-mcp-config 와 함께 써서 사용자·프로젝트 MCP 서버를 전부 배제함(인증은 키체인의 같은 서버 이름·URL 항목을 씀)
+ATLASSIAN_MCP = {"mcpServers": {"atlassian": {"type": "http", "url": "https://mcp.atlassian.com/v2/mcp"}}}
+MCP_CONFIG = os.environ.get("LRM_SCRUM_MCP_CONFIG") or json.dumps(ATLASSIAN_MCP)  # JSON 문자열 또는 파일 경로(시험에서 가짜 MCP 로 교체)
 CLAUDE_TIMEOUT = int(os.environ.get("LRM_SCRUM_CLAUDE_TIMEOUT", "900"))
 MAX_LINES = 30  # 칸 길이 상한(11-12 실측 25줄 안팎에 여유)
 RETRY_WAITS = [int(x) for x in os.environ.get("LRM_SCRUM_RETRY_WAITS", "30,90").split(",") if x]  # Slack 이 거절한 발송만 재시도
@@ -209,7 +212,9 @@ def validate(raw):
 
 def ask_claude(model, prompt):
     """(출력, 사유). 실패면 출력 None"""
+    # --setting-sources "" : 사용자·프로젝트 settings 의 permissions.allow·훅을 물려받지 않게 함(dontAsk 가 allow 목록의 쓰기 MCP 도구를 실행한 사례)
     cmd = [CLAUDE, "-p", "--model", model, "--output-format", "text", "--tools", "",
+           "--setting-sources", "", "--strict-mcp-config", "--mcp-config", MCP_CONFIG,
            "--permission-mode", "dontAsk", "--allowedTools", ",".join(READ_TOOLS),
            "--disallowedTools", ",".join(DENY_TOOLS)]
     try:

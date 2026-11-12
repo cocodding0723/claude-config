@@ -79,6 +79,30 @@ for t in Bash Read Write Edit WebFetch mcp__atlassian__createJiraIssue mcp__atla
   printf '%s' "$denied" | tr ',' '\n' | grep -qx "$t" || ko "--disallowedTools" "$t 누락"
 done; ok "--disallowedTools 에 Bash·파일·웹·Atlassian 쓰기 도구 명시"
 
+# ---- 사용자 설정 격리(재검토 지적 1) ----
+[ "$(opt --setting-sources)" = "<빈값>" ] && ok "--setting-sources \"\" 로 사용자·프로젝트 settings 배제" || ko "--setting-sources" "$(opt --setting-sources)"
+printf '%s\n' "$args" | grep -qx -- --strict-mcp-config && ok "--strict-mcp-config 로 기존 MCP 서버 배제" || ko "--strict-mcp-config"
+python3 -c 'import json,sys; c=json.loads(sys.argv[1]); assert list(c["mcpServers"])==["atlassian"]' "$(opt --mcp-config)" && ok "--mcp-config 는 스크럼 전용 atlassian 하나뿐" || ko "--mcp-config" "$(opt --mcp-config)"
+if command -v claude > /dev/null 2>&1; then
+  # 재검토와 같은 형태: 진짜 claude + localhost 가짜 API + 가짜 MCP(writeProbe) + 임시 HOME·설정 폴더에 writeProbe 허용
+  I="$D/iso"; mkdir -p "$I/home" "$I/cfg"; echo '{"permissions":{"allow":["mcp__review__writeProbe"]}}' > "$I/cfg/settings.json"
+  python3 -c 'import json,sys; print(json.dumps({"mcpServers":{"review":{"command":"python3","args":[sys.argv[1],sys.argv[2]]}}}))' "$HERE/fake_mcp.py" "$I/called.txt" > "$I/mcp.json"
+  python3 "$HERE/fake_api.py" "$I/port" mcp__review__writeProbe & API_PID=$!
+  for _ in $(seq 50); do [ -s "$I/port" ] && break; sleep 0.1; done
+  iso() { rm -f "$I/called.txt"; (cd "$I" && env -i HOME="$I/home" PATH="$PATH" CLAUDE_CONFIG_DIR="$I/cfg" ANTHROPIC_BASE_URL="http://127.0.0.1:$(cat "$I/port")" ANTHROPIC_API_KEY=sk-fake \
+    LRM_HUB_DIR="$D" LRM_SCRUM_DRAFT_DIR="$D/draft" LRM_SCRUM_LOG="$D/scrum.log" LRM_SCRUM_NAME=x LRM_SCRUM_MCP_CONFIG="$I/mcp.json" LRM_SCRUM_MODELS=test python3 -I -c '
+import sys; sys.path.insert(0, sys.argv[1]); import scrum_post as p
+print(p.ask_claude("test", "hi")[1] or "ok")' "$S" > /dev/null 2>&1); }
+  iso; [ ! -e "$I/called.txt" ] && ok "사용자 settings 가 writeProbe 를 허용해도 ask_claude 는 호출 못 함(called.txt 없음)" || ko "writeProbe 호출됨"
+  # 대조군: 격리 플래그가 없는 명령이면 같은 환경에서 호출됨(시험이 실제로 위험을 재현하는지)
+  rm -f "$I/called.txt"; (cd "$I" && echo hi | env -i HOME="$I/home" PATH="$PATH" CLAUDE_CONFIG_DIR="$I/cfg" ANTHROPIC_BASE_URL="http://127.0.0.1:$(cat "$I/port")" ANTHROPIC_API_KEY=sk-fake \
+    claude -p --model test --tools "" --permission-mode dontAsk --allowedTools mcp__atlassian__getJiraIssue --mcp-config "$I/mcp.json" > /dev/null 2>&1)
+  [ -e "$I/called.txt" ] && ok "대조: 격리 없는 명령은 같은 환경에서 writeProbe 가 실행됨(시험이 위험을 재현)" || ko "대조군 미재현"
+  kill "$API_PID" 2>/dev/null; wait "$API_PID" 2>/dev/null
+else
+  echo "SKIP  claude 없음 — 격리 회귀 시험 생략"
+fi
+
 # ---- 수집 오류 반영(리뷰 지적 5) ----
 reset; echo err-all > "$D/plan-collect"; post --date $WK; rc=$?
 [ $rc = 1 ] && [ ! -e "$D/claude.log" ] && grep -q -- "--kind warn" "$D/sent.log" && grep -q "collect_required_missing" "$D/sent.log" && [ ! -d "$D/draft" ] && ok "prs·commits 수집 둘 다 실패 → 초안 없이 warn(정상 초안으로 확정 안 함)" || ko "수집 전부 실패" "rc=$rc"
