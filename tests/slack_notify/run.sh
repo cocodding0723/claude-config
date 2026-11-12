@@ -744,7 +744,7 @@ printf '%s' "$(printf '가%.0s' $(seq 1 60))" > "$LOG/history.text"
 run_n --kind done --quote "$Q" $'완료\n\n- 무엇: 끝'
 q=$(text | grep -F '원본>' | sed 's/ <.*//')
 [ "${#q}" -le 43 ] && ok "N 인용 길이 제한(40자 + 따옴표·말줄임)" || ko "N 길이" "${#q}: $q"
-printf 'token xoxb-1234567890-abcdefghij 확인' > "$LOG/history.text"
+printf 'token %s 확인' "xo$(printf xb)-1234567890-abcdefghij" > "$LOG/history.text"
 run_n --kind done --quote "$Q" $'완료\n\n- 무엇: 끝'
 [ "$RC" = 0 ] && text | grep -qxF "<$URL|원본>" && ! text | grep -q 'xoxb' && ok "N 비밀이 든 원본은 인용 없이 링크만" || ko "N 비밀 인용" "$(text)"
 printf '결과는 /Users/me/out/report.html 에' > "$LOG/history.text"
