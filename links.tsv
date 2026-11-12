@@ -71,6 +71,7 @@ hubs/scripts/orphan_check.sh	.config/lrm-hubs/orphan_check.sh	link
 hubs/scripts/restart_hub.sh	.config/lrm-hubs/restart_hub.sh	link
 hubs/scripts/resume_all.sh	.config/lrm-hubs/resume_all.sh	link
 hubs/scripts/hub_status.py	.config/lrm-hubs/hub_status.py	link
+hubs/scripts/hub_split.py	.config/lrm-hubs/hub_split.py	link
 hubs/scripts/card_actions.py	.config/lrm-hubs/card_actions.py	link
 hubs/scripts/restart_watch.py	.config/lrm-hubs/restart_watch.py	link
 hubs/docs/restart-watch.md	.config/lrm-hubs/docs/restart-watch.md	link
@@ -121,6 +122,7 @@ hubs/docs/install-orca-main.md	.config/lrm-hubs/docs/install-orca-main.md	link
 hubs/docs/panel.md	.config/lrm-hubs/docs/panel.md	link
 hubs/docs/progress-digest.md	.config/lrm-hubs/docs/progress-digest.md	link
 hubs/docs/ws-gc.md	.config/lrm-hubs/docs/ws-gc.md	link
+hubs/docs/hub-split.md	.config/lrm-hubs/docs/hub-split.md	link
 hubs/docs/scrum-auto.md	.config/lrm-hubs/docs/scrum-auto.md	link
 hubs/launchd/ai.lrm.slackpoll.plist	Library/LaunchAgents/ai.lrm.slackpoll.plist	copy
 hubs/launchd/ai.lrm.panelcollect.plist	Library/LaunchAgents/ai.lrm.panelcollect.plist	copy

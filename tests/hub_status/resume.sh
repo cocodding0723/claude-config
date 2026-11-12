@@ -6,7 +6,12 @@ source "$(dirname "$0")/lib.sh"
 # 허브 목록 전부(주석·빈 줄 제외)가 출력에 나오는지
 SLUGS=(); while IFS= read -r l; do SLUGS+=("$l"); done < <(grep -v '^[[:space:]]*#' "$TSV" | grep -v '^[[:space:]]*$' | cut -f1)
 chk "hubs.tsv 허브 10개 이상, slug 중복 없음" '[ "${#SLUGS[@]}" -ge 10 ] && [ -z "$(printf "%s\n" "${SLUGS[@]}" | sort | uniq -d)" ]'
-chk "hubs.tsv 필드 5칸 고정" '! grep -v "^[[:space:]]*#" "$TSV" | grep -v "^[[:space:]]*$" | awk -F"\t" "NF!=5" | grep -q .'
+chk "hubs.tsv 필드 5칸(하위 허브만 6칸)" '! grep -v "^[[:space:]]*#" "$TSV" | grep -v "^[[:space:]]*$" | awk -F"\t" "NF!=5 && NF!=6" | grep -q .'
+chk "hubs.tsv 부모 칸은 부모 없는 허브만 가리킴(한 층)" '[ -z "$(grep -v "^[[:space:]]*#" "$TSV" | grep -v "^[[:space:]]*$" | awk -F"\t" "{p[\$1]=\$6} END{for(s in p) if(p[s]!=\"\"&&p[s]!=\"-\"&&(!(p[s] in p)||(p[p[s]]!=\"\"&&p[p[s]]!=\"-\"))) print s}")" ]'
+# 부모 칸: 하위 허브는 부모 뒤에 띄움(표 순서와 무관)
+printf 'kid\t하위\t~/r/role-k.txt\t-\t-\tpar\npar\t부모\t~/r/role-p.txt\t-\t-\n' > "$SB/hubs6.tsv"
+OUT6=$(HUBS_TSV="$SB/hubs6.tsv" bash "$RA" --dry-run 2>&1)
+chk "재기동: 부모 칸 있는 허브는 부모 다음, 6칸이 repo 에 섞이지 않음" '[ "$(printf "%s\n" "$OUT6" | grep "^== " | tr "\n" "|")" = "== 부모|== 하위|" ] && ! printf "%s" "$OUT6" | grep -q "REPO=.*par"'
 chk "hubs.tsv 역할 파일이 ~/ 경로이거나 저장소 hubs/roles 와 짝" 'ROLES_OK=1; for r in $(grep -v "^[[:space:]]*#" "$TSV" | grep -v "^[[:space:]]*$" | cut -f3); do case "$r" in "~/.config/lrm-hubs/roles/"*) b=$(basename "$r"); [ -e "$REPO/hubs/roles/$b" ] || [ -e "$REPO/hubs/roles/$b.tmpl" ] || ROLES_OK=0 ;; *) ROLES_OK=0 ;; esac; done; [ "$ROLES_OK" = 1 ]'
 
 hs write --slug ui-layer --run run_ui1 --task "U11 후속 조사" --next "U12 확정" >/dev/null
