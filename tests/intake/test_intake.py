@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+import unittest.mock
 
 REPO = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SCRIPTS = os.path.join(REPO, "hubs", "scripts")
@@ -631,6 +632,24 @@ class DeliverTest(Base):
         self.assertEqual(dv["notified"], ["C0001"])
         self.assertEqual([h for h, _ in self.sends()], [HUB_H, "term_eeeeeeee-0000-4000-8000-000000000005"])
 
+    def deliver_one(self, text, **kw):
+        self.put(msg("ui: " + text, 1, **kw))
+        self.run_intake()
+        intake.deliver(self.conf, NOW)
+        return intake.load_sent(self.conf.sent)["C0001"]
+
+    def test_short_text_no_attachment_not_partial(self):
+        ent = self.deliver_one("짧은 글")
+        self.assertEqual(ent["st"], "sent")
+        self.assertNotIn("partial", ent)
+
+    def test_long_text_marks_partial_and_notes_hub_line(self):
+        self.assertTrue(self.deliver_one("가" * (intake.LINE_MAX + 50))["partial"])
+        self.assertIn(intake.PARTIAL_NOTE.strip(), intake.line_for("C0001", "가" * (intake.LINE_MAX + 50)))
+
+    def test_attachment_marks_partial(self):
+        self.assertTrue(self.deliver_one("사진", files=[{"path": "/x.png"}])["partial"])
+
     def test_cli_reports_delivery(self):
         self.conf.inbox = os.path.join(self.d, "slack-inbox.jsonl")  # 프로세스 실행은 기본 파일명을 읽음
         self.put(msg("ui: a", 1))
@@ -640,6 +659,69 @@ class DeliverTest(Base):
         r = subprocess.run([sys.executable, os.path.join(SCRIPTS, "intake.py"), "--once", "--json"], env=env, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout)["deliver"]["sent"], ["C0001"])
+
+    def test_min_path_finds_orca_in_candidates(self):
+        """launchd 최소 PATH 에는 orca 가 없음 → 후보 설치 경로의 orca 로 하달(11-12 실측: '터미널 목록 조회 실패')"""
+        cand = os.path.join(self.d, "cand", "orca")
+        os.makedirs(os.path.dirname(cand))
+        shutil.copy(FAKE_ORCA, cand)
+        os.chmod(cand, 0o755)
+        self.conf.inbox = os.path.join(self.d, "slack-inbox.jsonl")
+        self.put(msg("ui: a", 1))
+        saved = intake.mt.find_orca.__defaults__
+        intake.mt.find_orca.__defaults__ = (None, None, (cand,))
+        self.addCleanup(setattr, intake.mt.find_orca, "__defaults__", saved)
+        with unittest.mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}):
+            os.environ.pop("LRM_ORCA", None)
+            conf = intake.Conf(inbox=self.conf.inbox, state=self.conf.state, routes_log=self.conf.routes_log, ledger=self.conf.ledger,
+                               table=TABLE, hubs_table=self.conf.hubs_table, main_env=self.conf.main_env, sent=self.conf.sent,
+                               ws_root="/ws", main_spec=self.conf.main_spec)
+        self.assertEqual(conf.orca, cand)
+        intake.intake(conf, NOW)
+        self.assertEqual(intake.deliver(conf, NOW)["sent"], ["C0001"])
+
+
+class PushFilterTest(Base):
+    """slack_push 의 메인 전달: 허브 하달이 확인된(st=sent) 접수 줄만 거름. 실패·도착 불명·미처리는 메인 전달 유지"""
+
+    def setUp(self):
+        super().setUp()
+        sp = intake.sp
+        for name, val in (("INBOX", os.path.join(self.d, "inbox.jsonl")), ("INTAKE_ROUTES", self.conf.routes_log),
+                          ("INTAKE_SENT", os.path.join(self.d, "sent.json"))):
+            old = getattr(sp, name)
+            setattr(sp, name, val)
+            self.addCleanup(setattr, sp, name, old)
+
+    def case(self, st, partial=False, **kw):
+        a, b = msg("ui: a", 1, **kw), msg("그냥 메모", 2)
+        self.put(a, b, {"type": "thread_reply", "ts": a["ts"], "parent_ts": a["ts"], "text": "답"})
+        with open(self.conf.routes_log, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"id": "C0001", "ts": a["ts"], "hub": "ui-layer", "text": "a"}) + "\n")
+        with open(intake.sp.INTAKE_SENT, "w", encoding="utf-8") as f:
+            json.dump({"C0001": {"st": st, **({"partial": True} if partial else {})}}, f)
+        return [x is not None for x in intake.sp.read_inbox()]
+
+    def test_sent_line_skipped_others_kept(self):
+        self.assertEqual(self.case("sent"), [False, True, True])  # 같은 ts 의 스레드 답은 유지
+
+    def test_partial_sent_kept(self):
+        self.assertEqual(self.case("sent", partial=True), [True, True, True])
+
+    def test_attachment_in_record_kept_even_without_partial_mark(self):
+        self.assertEqual(self.case("sent", files=[{"path": "/x.png"}]), [True, True, True])
+        os.remove(self.conf.inbox)
+        self.assertEqual(self.case("sent", files_failed=[{"why": "size"}]), [True, True, True])
+
+    def test_failed_notified_sending_kept(self):
+        for st in ("failed", "notified", "sending", "legacy"):
+            with self.subTest(st=st):
+                os.remove(self.conf.inbox) if os.path.exists(self.conf.inbox) else None
+                self.assertEqual(self.case(st), [True, True, True])
+
+    def test_unreadable_files_keep_everything(self):
+        self.put(msg("ui: a", 1))
+        self.assertEqual([x is not None for x in intake.sp.read_inbox()], [True])
 
 
 if __name__ == "__main__":

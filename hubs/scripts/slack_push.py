@@ -22,6 +22,7 @@ DIR = os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
 INBOX, READ_MARK = os.path.join(DIR, "slack-inbox.jsonl"), os.path.join(DIR, ".main-read-lines")
 STATE, LOCK, LOG = (os.path.join(DIR, n) for n in ("slack-push-state.json", ".slack-push.lock", "slack-push.log"))
 OUT_DIR = os.path.join(DIR, "slack-push")
+INTAKE_ROUTES, INTAKE_SENT = (os.path.join(DIR, n) for n in ("intake-routes.jsonl", "intake-sent.json"))  # 접수기 기록. 허브 하달이 확인된 줄은 메인에 다시 보내지 않음
 DELIVERED = os.path.join(DIR, "slack-push-delivered.jsonl")  # 전달 기록. 토큰이 있는 폴러가 읽어 확인 답장을 "전달했어요" 로 고침
 SELF_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -121,8 +122,26 @@ def log(event, **kv):
 
 
 # ---- 파일 입출력 ------------------------------------------------------------------------------
+def hub_delivered_ts():
+    """접수기가 허브에 하달 확인(st=sent)한 명령의 Slack ts 집합. 하달 실패·도착 불명·미처리, 원문이 잘리거나 첨부가 있는 하달(partial)은
+    포함하지 않아 메인 전달이 유지됨"""
+    try:
+        with open(INTAKE_SENT, encoding="utf-8") as f:
+            sent = json.load(f)
+        ids = {k for k, v in sent.items() if isinstance(v, dict) and v.get("st") == "sent" and not v.get("partial")} if isinstance(sent, dict) else set()
+        if not ids:
+            return set()
+        with open(INTAKE_ROUTES, encoding="utf-8") as f:
+            rows = [json.loads(ln) for ln in f if ln.strip()]
+        return {str(r["ts"]) for r in rows if isinstance(r, dict) and r.get("id") in ids and r.get("ts")}
+    except (OSError, ValueError, TypeError):
+        return set()  # 읽지 못하면 거르지 않음: 중복이 유실보다 낫다
+
+
 def read_inbox():
-    """inbox 의 모든 물리 줄을 (dict|None) 목록으로. 줄 번호 = 인덱스 + 1(폴러의 .main-read-lines 와 같은 기준)"""
+    """inbox 의 모든 물리 줄을 (dict|None) 목록으로. 줄 번호 = 인덱스 + 1(폴러의 .main-read-lines 와 같은 기준).
+    접수기가 허브에 하달한 최상위 명령 줄은 None 으로 비움(메인 중복 전달 방지, 줄 번호는 유지)"""
+    skip = hub_delivered_ts()
     try:
         with open(INBOX, encoding="utf-8") as f:
             out = []
@@ -131,7 +150,11 @@ def read_inbox():
                     d = json.loads(line)
                 except ValueError:
                     d = None
-                out.append(d if isinstance(d, dict) else None)
+                d = d if isinstance(d, dict) else None
+                if d is not None and skip and not d.get("parent_ts") and str(d.get("ts")) in skip and d.get("type") in MSG_TYPES \
+                        and not d.get("files") and not d.get("files_failed"):  # 첨부는 하달되지 않으므로 기록 없는 옛 접수도 메인에 보냄
+                    d = None
+                out.append(d)
             return out
     except OSError:
         return []
