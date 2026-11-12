@@ -55,7 +55,7 @@ class TitleTest(unittest.TestCase):
         self.assertEqual((r.title, r.answer), ("D-TESTERAUTO 결정", "결정 D-TESTERAUTO A 식으로 카드에 답"))
 
     def test_decision_card_head_and_ellipsis_removed(self):
-        self.assertEqual(self.title("decision:x1", "wait", "결정 비서-선택해주세요: 환경 동기화 도구 PR 올려도 될까?").title, "환경 동기화 도구 PR 올려도 될까?")
+        self.assertEqual(self.title("decision:x1", "wait", "결정 :비서-선택해주세요: 환경 동기화 도구 PR 올려도 될까?").title, "환경 동기화 도구 PR 올려도 될까?")
         self.assertEqual(self.title("decision:x2", "wait", "결정 오토마 push, 3곳 직렬화 …").title, "오토마 push, 3곳 직렬화 결정")
 
     def test_same_title_one_row(self):

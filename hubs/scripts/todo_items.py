@@ -27,7 +27,7 @@ _RULES = (
 )
 _PREFIX = re.compile(r"^(?:\[낡음\] )?([^:\s]+): ")
 _NOISE = re.compile(r"ctx_[0-9a-f]+|\b[0-9a-f]{7,}\b|\([^)]*\)|\[[^\]]*\]")
-_CARD_HEAD = re.compile(r"^[^\s:]*선택해주세요:\s*")
+_CARD_HEAD = re.compile(r"^(?::[^\s:]+:\s*)+|^[^\s:]*선택해주세요:\s*")  # 슬랙 이모지 코드(:이름:)와 옛 머리말
 _LEDGER_ID = re.compile(r"^[A-Z]+\d+ ")
 _PR_NUM = re.compile(r"#(\d+)")
 _CODE = re.compile(r"\bD-[A-Z0-9]{3,}")
@@ -60,7 +60,7 @@ def _body(key, title):
     if key.startswith("hub:"):
         t = _PREFIX.sub("", t, count=1)
     if key.startswith("decision:"):
-        t = _CARD_HEAD.sub("", t.removeprefix("결정 "), count=1).rstrip("…")  # 카드 머리말('비서-선택해주세요:')·잘림 표시 제거
+        t = _CARD_HEAD.sub("", t.removeprefix("결정 "), count=1).rstrip("…")  # 카드 머리말(이모지 코드)·잘림 표시 제거
     if key.startswith("ledger:"):
         t = _LEDGER_ID.sub("", t, count=1)  # 장부 번호(F11 등)는 내부 기호
     return t.strip()
