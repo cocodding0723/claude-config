@@ -35,8 +35,8 @@ import tls_ctx  # noqa: E402
 import todo_items  # noqa: E402
 
 HUB_DIR = os.path.expanduser(os.environ.get("LRM_HUB_DIR") or "~/.config/lrm-hubs")
-DEFAULT_LIST_ID = "F0CH72MJKBN"
-DEFAULT_LIST_URL = "https://w1709475506-et9433868.slack.com/lists/T06M7SZGSP9/F0CH72MJKBN"
+DEFAULT_LIST_ID = "F0CH5KARYBB"
+DEFAULT_LIST_URL = "https://w1709475506-et9433868.slack.com/lists/T06M7SZGSP9/F0CH5KARYBB"
 DEFAULT_API = "https://slack.com/api"
 # 옛 목록(칸 3개)의 열 ID. 새 목록은 봇 목록 상태 파일(bot-list.json)의 columns·options 를 씀
 COL_TITLE, COL_DONE, COL_LINK = "Col0CHXNEMP1N", "Col0CH58810LR", "Col0CGN0B5WT1"

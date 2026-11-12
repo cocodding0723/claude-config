@@ -17,6 +17,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import progress_digest as pd  # noqa: E402
 
+OLD_LIST_ID = "F0CH72MJKBN"  # 옛 목록(칸 3개). 이 도구의 기본 정리 대상
 BACKUP_DIR = "~/Documents/90_정리기록/workspace-archive/20261112"
 PAGE = 100
 PACE_S = float(os.environ.get("LRM_MIGRATE_PACE_S", "1.2"))  # 삭제 호출 간격. Slack 이 연속 삭제를 429 로 막음
@@ -65,7 +66,7 @@ def mine(rows, state):
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog="todo_list_migrate.py", description="옛 목록 행 백업 후 봇이 만든 행 삭제", epilog="환경:" + __doc__.split("환경:", 1)[1])
-    p.add_argument("--list-id", default=pd.DEFAULT_LIST_ID, help="정리할 옛 목록 ID")
+    p.add_argument("--list-id", default=OLD_LIST_ID, help="정리할 옛 목록 ID")
     p.add_argument("--backup-dir", default=BACKUP_DIR, help="백업 폴더")
     p.add_argument("--dry-run", action="store_true", help="백업·삭제 없이 대상 수만 출력")
     p.add_argument("--keep", action="store_true", help="백업만 하고 삭제 안 함")
