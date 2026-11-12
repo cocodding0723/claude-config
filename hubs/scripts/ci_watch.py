@@ -196,13 +196,25 @@ def reviewer_errors(pr):
         return 0
 
 
+_WT_ROUND = []  # 회차당 orca 작업 공간 조회 1회. main() 이 회차 시작에 비움
+
+
+def round_worktrees():
+    """회차 안에서 작업 공간 목록을 한 번만 조회해 재사용. 조회 실패·불완전은 None(작업 공간 근거만 건너뜀)"""
+    if not _WT_ROUND:
+        _WT_ROUND.append(review.list_worktrees(ORCA, REPO, WT_LIMIT))
+    return _WT_ROUND[0]
+
+
 def pick_hub(pr, state, with_common=False):
     """담당 허브와 근거. 작업 공간 조회가 불완전하면 그 단계를 건너뛰고 표·미배정으로 진행"""
     names = review.load_hub_names(HUBS_TSV)
     common = review.common_cause(state.get(CAUSES, {}), str(pr["number"])) if with_common else ()
+    wts = round_worktrees()
     return review.assign_hub(pr.get("headRefName", ""), pr.get("title", ""), review.load_table(HUB_TABLE),
-                             review.list_worktrees(ORCA, REPO, WT_LIMIT), names, common, names.get(QA_SLUG, ""), REPO,
-                             review.ticket_hubs(STATUS_DIR, ROUTES, HUBS_TSV, REPO, GAME_REPO))
+                             wts, names, common, names.get(QA_SLUG, ""), REPO,
+                             review.ticket_hubs(STATUS_DIR, ROUTES, HUBS_TSV, REPO, GAME_REPO, wts),
+                             review.workspace_tickets(wts, names, REPO))
 
 
 def relay_fail(pr, fails, prev, state, slack_ts=""):
@@ -257,6 +269,7 @@ def start_adv(pr, prev, baseline, dry):
 
 def main():
     dry = "--dry-run" in sys.argv[1:]
+    _WT_ROUND.clear()
     try:
         state = json.loads(STATE.read_text())
     except (OSError, ValueError):

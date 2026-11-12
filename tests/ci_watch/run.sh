@@ -280,4 +280,27 @@ fresh; log "not ok 3 - eye"; tp 726 "[LRM-458] x" b1b1b1b1b1b1b1b1; wt feat/mine
 grep -q "담당 허브 미배정(메인 판단)" "$D/orca.log" && ok "감시 대상이 claude-config 여도 게임 허브(ui-layer)로 배정 안 함" || ko "감시 대상 분리" "$(cat "$D/orca.log")"
 rm -rf "$D/hub-status"
 
+# ---- 작업 공간 이름 → 허브 (2차 근거) ----
+python3 -c '
+import sys,os,tempfile;sys.path.insert(0,sys.argv[1]);import ci_review as r
+d=tempfile.mkdtemp();os.makedirs(d+"/hs")
+open(d+"/hubs.tsv","w").write("ui-layer\tUI\t~/r/role-ui.txt\t-\t-\nvfx\tVFX\t~/r/role-vfx.txt\t-\t-\n")
+G="Basakansoft/Game";PJ="github:basakansoft/game"
+def w(i,name,hub,pj=PJ,br="refs/heads/x"): return {"id":"r::/w/"+i,"path":"/w/"+i,"displayName":name,"branch":br,"projectId":pj,"parentWorktreeId":"r::/w/coord-%s-hub"%hub}
+def t(wts,n="458"): return r.ticket_hubs(d+"/hs",d+"/n.jsonl",d+"/hubs.tsv",G,G,wts).get(n,set())
+assert t([w("a","[LRM-458] 오토마 데이터 설계","ui-layer"),w("b","[LRM-461] x","ui-layer")])=={"UI"}, "UI 단독 → UI"
+assert t([w("a","[LRM-458] x","ui-layer"),w("b","y","vfx",br="refs/heads/feat/LRM-458-z")])=={"UI","VFX"}, "두 허브 갈림"
+assert t([w("a","[LRM-458] x","ui-layer",pj="github:other/repo")])==set(), "다른 저장소 제외"
+assert t(None)==set() and t([])==set(), "조회 실패·빈 목록은 근거 없음"
+assert t([w("a","[LRM-458] x","unknown")])==set(), "허브 아닌 부모 제외"
+wsm=r.workspace_tickets([w("a","[LRM-458] x","ui-layer")],{"ui-layer":"UI"},G)
+h,why=r.assign_hub("bundle-automa-data","[LRM-458][LRM-461] t",[],[],{"ui-layer":"UI"},tmap={"458":{"UI"},"461":{"UI"}},ws=wsm)
+assert h=="UI" and "작업 공간 [LRM-458] → ui-layer" in why, why
+' "$S" && ok "작업 공간 근거: UI 단독·갈림·다른 저장소·실패" || ko "작업 공간 근거 단위"
+# 통합: 브랜치로는 못 찾아도 작업 공간 이름의 티켓으로 UI 허브 배정, 조회는 회차당 1회
+fresh; prs "$(pj 730 bundle-x 4040404040404040)"; wt feat/other; sed -i '' 's#"branch":"refs/heads/feat/other"#"branch":"refs/heads/feat/other","displayName":"[LRM-1] 이름"#' "$D/worktrees.json"; cycle 730
+grep -q "담당 허브 UI 계층 통합 설계 (근거: 제목 티켓 LRM-1 · 작업 공간 \[LRM-1\] → ui-layer)" "$D/orca.log" && ok "작업 공간 이름 티켓 → ui-layer 근거 문구" || ko "작업 공간 통합" "$(cat "$D/orca.log")"
+fresh; prs "$(pj 731 b1 5050505050505050),$(pj 732 b2 6060606060606060)"; wt feat/other; cycle 731 732
+[ "$(grep -c '^worktree list' "$D/orca.log")" = 1 ] && ok "작업 공간 조회 회차당 1회(PR 2개 → 1회)" || ko "조회 횟수" "$(grep -c '^worktree list' "$D/orca.log")"
+
 echo "통과 $PASS / 실패 $FAIL"; [ "$FAIL" = 0 ]
