@@ -18,7 +18,8 @@ cp "$HERE/fake_orca.py" "$BIN/orca"; chmod +x "$BIN/orca"
 cat > "$BIN/notify" <<'SH'
 #!/bin/bash
 [ "${FAKE_NOTIFY_FAIL:-}" = 1 ] && exit 1
-[ -n "${FAKE_NOTIFY_SLEEP:-}" ] && sleep "$FAKE_NOTIFY_SLEEP"
+# 게이트: 열리는 파일이 생길 때까지(최대 10초) 전송을 붙잡아 잠금 보유 상태를 시험이 원하는 만큼 유지
+if [ -n "${FAKE_NOTIFY_GATE:-}" ]; then for _ in $(seq 200); do [ -e "$FAKE_NOTIFY_GATE" ] && break; sleep 0.05; done; fi
 { printf '%s\n' "$@"; echo '---'; } >> "$FAKE_NOTIFY_LOG"
 SH
 chmod +x "$BIN/notify"
@@ -170,14 +171,15 @@ r = rd("workers_retained"); r.append({"dispatchId": "ctx_c1", "taskId": "T9", "r
 t = rd("tasks"); t["run_1"].append({"id": "T9", "status": "blocked", "title": "동시 시험 작업", "created_by_process_incarnation": "wt::/x/coord-alpha-hub@@a:b"}); wr("tasks", t)
 PY
 C0=$(cards)
-FAKE_NOTIFY_SLEEP=1.5 sw --json > "$SB/p1" 2>&1 &
-sleep 0.5
-t0=$(python3 -c "import time;print(time.time())")
-sw --json > "$SB/p2" 2>&1
-t1=$(python3 -c "import time;print(time.time())")
-wait
+GATE="$SB/gate"; rm -f "$GATE"
+FAKE_NOTIFY_GATE="$GATE" sw --json > "$SB/p1" 2>&1 &
+FAKE_NOTIFY_GATE="$GATE" sw --json > "$SB/p2" 2>&1 &
+# 한쪽이 busy 로 즉시 끝날 때까지 기다린 뒤(= 다른 쪽이 잠금을 쥔 채 전송 게이트에서 대기 중) 게이트를 엶. 어느 쪽이 먼저 잡든 같은 판정
+for _ in $(seq 200); do grep -qs busy "$SB/p1" "$SB/p2" && break; sleep 0.05; done
+BUSY_EARLY=$(grep -ls busy "$SB/p1" "$SB/p2" | wc -l | tr -d ' ')
+: > "$GATE"; wait
 chk "동시 check 2개: 카드 1장만 전송" '[ "$(cards)" = "$((C0 + 1))" ]' "$(( $(cards) - C0 ))장"
-chk "잠금을 못 잡은 쪽은 busy 로 건너뜀(대기 없이 1초 안에 반환)" 'grep -q busy "$SB/p2" && grep -q "\"carded\"" "$SB/p1" && awk -v a="$t0" -v b="$t1" "BEGIN{exit !(b-a<1.0)}"'
+chk "하나는 carded·하나는 busy(순서 무관), busy 는 전송이 끝나기 전에 이미 반환(대기 없음)" '[ "$(cat "$SB/p1" "$SB/p2" | grep -c "\"carded\"")" = 1 ] && [ "$(cat "$SB/p1" "$SB/p2" | grep -c busy)" = 1 ] && [ "$BUSY_EARLY" = 1 ]'
 sw --json > "$SB/p3"; chk "잠금 해제 뒤: 같은 dispatch 6시간 중복 방지 유지(카드 추가 없음)" '[ "$(cards)" = "$((C0 + 1))" ] && grep -q none "$SB/p3"'
 
 # ---- 8. 화면 요약 비밀 가림: JSON·key=value·Bearer·xox 토큰 ------------------------------------------------
