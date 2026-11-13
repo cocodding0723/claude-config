@@ -36,7 +36,6 @@ import slack_list_create  # noqa: E402
 import tls_ctx  # noqa: E402
 import todo_facts  # noqa: E402
 import todo_items  # noqa: E402
-import todo_sync  # noqa: E402
 
 HUB_DIR = os.path.expanduser(os.environ.get("LRM_HUB_DIR") or "~/.config/lrm-hubs")
 DEFAULT_LIST_ID = "F0CH5KARYBB"
@@ -541,41 +540,18 @@ def send_dm(conf, text):
 FACTS_KEEP_S = 30 * 24 * 3600  # 근거 캐시 보관 기간
 
 
-def pr_repo_hints(items):
-    """수집기가 아는 열린 PR 키('pr:owner/name#N') → {번호: 저장소}"""
-    out = {}
-    for i in items:
-        if i.key.startswith(pc.PR_PREFIX) and "#" in i.key:
-            repo, num = i.key[len(pc.PR_PREFIX):].rsplit("#", 1)
-            if repo:
-                out[num] = repo
-    return out
-
-
 def make_facts(items, state, now, use_pr):
     """근거 조회 객체. 상태 파일의 facts 칸을 캐시로 씀"""
-    cfg = pc.conf_from_env(read_panel=use_pr)
     cache = state.setdefault("facts", {})
     for k in [k for k, v in cache.items() if not isinstance(v, dict) or now - v.get("at", 0) > FACTS_KEEP_S]:
         del cache[k]
-    f = todo_facts.Facts(cfg["gh"], cfg["repos"], todo_facts.orca_worktrees, set(), cache, now, use_pr=use_pr)
-    f.repo_hint = pr_repo_hints(items)
-    return todo_facts.load_local(f, pc.HUB_DIR, cfg["ledger"])
+    return todo_facts.make_facts([i.key for i in items], cache, now, use_pr)
 
 
 def settle_rows(rows, facts, state):
-    """행 정리: 끝난 대상은 완료, 같은 대상은 합침, 허브 칸은 근거로 바로잡음. 반환: (남은 행, {버린 키: ('done'|'dup', 근거})"""
-    closed = facts.closed([t for r in rows for t in r.targets])
+    """행 정리(todo_facts.settle_rows). 반환: (남은 행, {버린 키: ('done'|'dup', 근거})"""
     prefer = [k for k in state["items"] if not k.startswith(DONE_PREFIX)]
-    kept, dropped = todo_sync.settle(rows, closed, prefer)
-    for r in kept:
-        found = facts.hub(r.targets) if r.targets else None
-        if r.kind == todo_items.MERGE and r.targets:
-            r.hub = found or todo_items.UNKNOWN_HUB  # 허브 상태 줄의 PR 언급은 근거가 아님(오기재 원인)
-        elif found:
-            r.hub = found
-        elif r.key.startswith("decision:"):
-            r.hub = todo_items.UNKNOWN_HUB
+    kept, dropped = todo_facts.settle_rows(rows, facts, prefer)
     return kept, {r.key: (kind, why) for r, kind, why in dropped}
 
 

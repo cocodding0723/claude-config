@@ -12,6 +12,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import progress_collect as pc  # noqa: E402
+import todo_items  # noqa: E402
+import todo_sync  # noqa: E402
 
 PR_STATE_FIELDS = "state,headRefName"
 CLOSED_STATES = ("MERGED", "CLOSED")
@@ -204,3 +206,37 @@ def load_local(facts, hub_dir, ledger_path):
         facts.errors.append("결정 카드 기록 읽기 실패 — 결정 행 완료·허브 판정 보류")
     facts.ledger = ledger_done(ledger_path, ledger.read_rows, ledger.DONE)
     return facts
+
+
+def repo_hints(keys):
+    """수집기가 아는 열린 PR 키('pr:owner/name#N') → {번호: 저장소}"""
+    out = {}
+    for key in keys:
+        if key.startswith(pc.PR_PREFIX) and "#" in key:
+            repo, num = key[len(pc.PR_PREFIX):].rsplit("#", 1)
+            if repo:
+                out[num] = repo
+    return out
+
+
+def make_facts(keys, cache, now, use_pr):
+    """근거 조회 객체. cache 는 호출자가 보관하는 dict(상태 파일의 facts 칸). 할 일 목록·확인 목록이 같은 규칙으로 씀"""
+    cfg = pc.conf_from_env(read_panel=use_pr)
+    f = Facts(cfg["gh"], cfg["repos"], orca_worktrees, set(), cache, now, use_pr=use_pr)
+    f.repo_hint = repo_hints(keys)
+    return load_local(f, pc.HUB_DIR, cfg["ledger"])
+
+
+def settle_rows(rows, facts, prefer=()):
+    """행 정리: 끝난 대상은 완료, 같은 대상은 합침, 허브 칸은 근거로 바로잡음. 반환: (남은 행, [(버린 행, 'done'|'dup', 근거)])"""
+    closed = facts.closed([t for r in rows for t in r.targets])
+    kept, dropped = todo_sync.settle(rows, closed, prefer)
+    for r in kept:
+        found = facts.hub(r.targets) if r.targets else None
+        if r.kind == todo_items.MERGE and r.targets:
+            r.hub = found or todo_items.UNKNOWN_HUB  # 허브 상태 줄의 PR 언급은 근거가 아님(오기재 원인)
+        elif found:
+            r.hub = found
+        elif r.key.startswith("decision:"):
+            r.hub = todo_items.UNKNOWN_HUB
+    return kept, dropped
