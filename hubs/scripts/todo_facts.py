@@ -73,6 +73,7 @@ class Facts:
         self.cards = {}  # 결정 번호 → 닫힘 여부
         self.dec_hubs = {}
         self.ledger = set()
+        self.open_ttl = OPEN_TTL_S  # 열린 PR 재조회 간격(호출자가 바꿈)
         self.use_pr = use_pr  # False 면 gh 를 부르지 않음(--no-pr): PR 은 모두 '모름'
         self.errors = []  # 조회 실패 안내(사람이 읽는 문장)
 
@@ -100,7 +101,7 @@ class Facts:
         """PR 번호 → {state, branch, repo, ...} 또는 None(모름). 병합·닫힘은 캐시에서 영구 재사용"""
         key = PR_PREFIX + num
         hit = self.cache.get(key)
-        if isinstance(hit, dict) and (hit.get("state") in CLOSED_STATES or self.now - hit.get("at", 0) < OPEN_TTL_S):
+        if isinstance(hit, dict) and (hit.get("state") in CLOSED_STATES or self.now - hit.get("at", 0) < self.open_ttl):
             return hit
         got = self._view(num)
         if got is None:

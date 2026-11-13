@@ -94,6 +94,7 @@ hubs/scripts/progress_collect.py	.config/lrm-hubs/progress_collect.py	link
 hubs/scripts/todo_items.py	.config/lrm-hubs/todo_items.py	link
 hubs/scripts/todo_sync.py	.config/lrm-hubs/todo_sync.py	link
 hubs/scripts/todo_facts.py	.config/lrm-hubs/todo_facts.py	link
+hubs/scripts/blocker_evidence.py	.config/lrm-hubs/blocker_evidence.py	link
 hubs/scripts/todo_list_migrate.py	.config/lrm-hubs/todo_list_migrate.py	link
 hubs/scripts/progress_digest.py	.config/lrm-hubs/progress_digest.py	link
 hubs/scripts/tls_ctx.py	.config/lrm-hubs/tls_ctx.py	link

@@ -27,7 +27,7 @@ _RULES = (
     (MERGE, re.compile(r"병합|머지")),
     (INPUT, re.compile(r"직접 (?:승인|입력|실행)|승인|\(사용자|사용자 실행|리베이스")),
 )
-_PREFIX = re.compile(r"^(?:\[낡음\] )?([^:\s]+): ")
+_PREFIX = re.compile(r"^(?:\[(?:낡음|근거 없음·오래됨)\] )?([^:\s]+): ")
 _NOISE = re.compile(r"ctx_[0-9a-f]+|\b[0-9a-f]{7,}\b|\([^)]*\)|\[[^\]]*\]")
 _CARD_HEAD = re.compile(r"^(?::[^\s:]+:\s*)+|^[^\s:]*선택해주세요:\s*")  # 슬랙 이모지 코드(:이름:)와 옛 머리말
 _LEDGER_ID = re.compile(r"^[A-Z]+\d+ ")
@@ -60,7 +60,7 @@ def hub_of(key, title=""):
 
 def _body(key, title):
     """제목에서 허브 접두사·낡음 표시 제거"""
-    t = re.sub(r"^(?:\[낡음\] )?", "", title or "")
+    t = re.sub(r"^(?:\[(?:낡음|근거 없음·오래됨)\] )?", "", title or "")
     if key.startswith("hub:"):
         t = _PREFIX.sub("", t, count=1)
     if key.startswith("decision:"):
