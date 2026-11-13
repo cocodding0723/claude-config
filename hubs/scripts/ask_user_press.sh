@@ -6,6 +6,7 @@
 # 종료 코드: 0 전송, 1 메인 전송 실패, 2 인자 오류·터미널 없음, 3 확인 창 문구가 화면에 없음(요청 거부)
 # 환경: LRM_ORCA(orca 경로) · LRM_MAIN_ENV(main.env, MAIN_TERMINAL 줄만 읽음)
 set -u
+. "$(dirname "$0")/lib/py.sh"  # PY = 3.10 이상 python3 (launchd 짧은 PATH 의 3.9 방지)
 ORCA="${LRM_ORCA:-$(command -v orca || echo /usr/local/bin/orca)}"
 MAIN_ENV="${LRM_MAIN_ENV:-$HOME/.config/lrm-hubs/main.env}"
 TERM_H="" EXPECT="" DRY=0
@@ -23,7 +24,7 @@ done
 [ -n "$TERM_H" ] && [ -n "$EXPECT" ] && [ $# -eq 1 ] && [ -n "$1" ] || die "사용: ask_user_press.sh --terminal 핸들 --expect '문구' \"요청 한 줄\""
 REQ="$1"
 RAW=$("$ORCA" terminal read --terminal "$TERM_H" --screen --json 2>/dev/null)
-TEXT=$(printf '%s' "$RAW" | EXPECT="$EXPECT" REQ="$REQ" H="$TERM_H" python3 -c '
+TEXT=$(printf '%s' "$RAW" | EXPECT="$EXPECT" REQ="$REQ" H="$TERM_H" "$PY" -c '
 import json,os,sys,time
 try:
     d=json.load(sys.stdin)

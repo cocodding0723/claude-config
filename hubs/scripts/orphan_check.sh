@@ -1,6 +1,7 @@
 #!/bin/bash
 # 허브에 묶이지 않았거나 이름이 규칙에 안 맞는 워크스페이스 목록
-orca worktree list --json 2>/dev/null | python3 -c "
+. "$(dirname "$0")/lib/py.sh"  # PY = 3.10 이상 python3 (launchd 짧은 PATH 의 3.9 방지)
+orca worktree list --json 2>/dev/null | "$PY" -c "
 import json,sys,os,re
 ws=json.load(sys.stdin)['result']['worktrees']; ids={w['id'] for w in ws}
 for w in ws:
