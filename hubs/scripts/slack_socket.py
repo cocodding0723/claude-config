@@ -33,6 +33,7 @@ from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # 링크·-I 실행에서도 같은 폴더의 공용 모듈(card_actions·main_terminal·ledger_sync)을 찾음
+import answer_store  # noqa: E402
 import card_actions as actions  # noqa: E402
 import ledger  # noqa: E402
 import ledger_sync  # noqa: E402
@@ -42,7 +43,7 @@ DIR = os.environ.get("LRM_HUB_DIR", os.path.expanduser("~/.config/lrm-hubs"))
 POLL = os.path.join(DIR, "slack_poll.sh")
 MAX_FAILS = 5  # 재연결 연속 실패 상한. 넘으면 EXIT_RESTART 로 끝냄
 EXIT_RESTART = 3
-INBOX, DONE = os.path.join(DIR, "slack-inbox.jsonl"), os.path.join(DIR, "slack-done.txt")
+STORE = answer_store.AnswerStore(DIR)  # 결정 답 기록·중복 판정은 문서 사이트와 공용
 MAIN_ENV = os.environ.get("LRM_MAIN_ENV", os.path.join(DIR, "main.env"))
 # launchd 기본 PATH(/usr/bin:/bin)에는 orca 가 없어 전달이 실패했음 → PATH 밖 설치 위치도 찾음
 ORCA = mt.find_orca()
@@ -195,20 +196,19 @@ class Decide:
         self.finish(meta["did"], meta["channel"], meta["ts"], msg, "직접 입력: " + text, {"action": "custom", "text": text})
 
     def finish(self, did: str, ch: str, ts: str, msg: dict, label: str, extra: dict) -> None:
-        """카드 닫기 → inbox·done 기록 → 메인 전달. 앞 단계가 실패해도 뒤 단계는 진행"""
+        """답 기록(먼저 온 답만) → 카드 닫기 → 메인 전달. 늦은 답이면 카드에 사유만 남기고 아무것도 실행하지 않음"""
         at = time.strftime("%m-%d %H:%M")
         title = card_title(msg)
+        claim = STORE.claim(answer_store.Answer(did, ts, ch, title, label, answer_store.SLACK, extra))
+        line = f"ℹ️ {claim.late_text()} — 이번 선택은 반영하지 않음 ({at})" if claim.late else f"✅ {label} 선택됨 ({at})"
         try:
-            self.web.chat_update(channel=ch, ts=ts, text=title or did, attachments=answered(msg, f"✅ {label} 선택됨 ({at})"))
+            self.web.chat_update(channel=ch, ts=ts, text=title or did, attachments=answered(msg, line))
         except Exception as err:
             log(f"카드 갱신 실패 {type(err).__name__} — 버튼은 남음")
-        rec = {"type": "button", "parent_ts": ts, "channel": ch, "title": title, "decision_id": did, "kind": "decide",
-               "option_text": label[:80], "received_at": int(time.time()), **extra}
-        with open(INBOX, "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        with open(DONE, "a", encoding="utf-8") as f:
-            f.write(ts + "\n")
-        status, entry = actions.try_take(did)  # 비차단: 다른 프로세스가 등록부 잠금을 쥐어도 수신 스레드는 멈추지 않음
+        if claim.late:
+            log(f"결정 {did} 버튼 답 무시 — {claim.late_text()}")
+            return
+        status, entry = claim.taken  # 비차단: 다른 프로세스가 등록부 잠금을 쥐어도 수신 스레드는 멈추지 않음
         if status == "busy":  # 등록 여부 불명(처리 중). 일반 카드로 오인하지 않고 별도 스레드가 잠금을 기다려 이어서 처리
             log(f"결정 {did} 등록부 잠금 사용 중 — 백그라운드에서 이어서 처리")
             threading.Thread(target=self.settle, args=(did, ts, title, label, extra), daemon=True).start()

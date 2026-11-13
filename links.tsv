@@ -76,6 +76,7 @@ hubs/scripts/hub_status.py	.config/lrm-hubs/hub_status.py	link
 hubs/scripts/hub_dups.py	.config/lrm-hubs/hub_dups.py	link
 hubs/scripts/hub_split.py	.config/lrm-hubs/hub_split.py	link
 hubs/scripts/card_actions.py	.config/lrm-hubs/card_actions.py	link
+hubs/scripts/answer_store.py	.config/lrm-hubs/answer_store.py	link
 hubs/scripts/restart_watch.py	.config/lrm-hubs/restart_watch.py	link
 hubs/docs/restart-watch.md	.config/lrm-hubs/docs/restart-watch.md	link
 hubs/scripts/stall_watch.py	.config/lrm-hubs/stall_watch.py	link
