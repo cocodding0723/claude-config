@@ -1,6 +1,8 @@
 export type BoardLink = { label: string; href: string }
 
 export type BoardItem = {
+  /** 확인 목록 원료 항목의 키. 손 칸과 겹침 판정에 씀 */
+  key?: string
   /** 1 이 가장 급함 */
   p: number
   title: string
@@ -92,6 +94,9 @@ export type AutoProgressItem = { key: string; bucket: 'doing' | 'wait' | 'block'
 /** 허브(slug)별 하위 작업 공간 수. warn 은 10개 초과 */
 export type AutoWorkspaces = Record<string, { children: number; active: number; warn: boolean }>
 export type AutoProgress = { counts: { doing: number; wait: number; block: number }; items: AutoProgressItem[]; notes: string[]; groups?: AutoWorkspaces }
+/** 확인 목록(confirm_items.py)의 안 함 항목. 문서 사이트·Slack 할 일 목록과 같은 원천. urgency 3 이 가장 급함 */
+export type AutoConfirmItem = { key: string; kind: string; kind_label: string; title: string; hub: string; urgency: number; how: string }
+export type AutoConfirm = { todo: number; done: number; items: AutoConfirmItem[] }
 export type AutoPush = { lines: Array<{ at: string; event: string; reason: string | null }> }
 export type AutoWorkers = { live: number; recent: Array<{ title: string | null; status: string; at: number | null }> }
 /** 쉬는 자원. 부분마다 따로 실패해 한 부분이 null 일 수 있음 */
@@ -130,6 +135,7 @@ export type AutoBoard = {
     hubs?: AutoSource<AutoHubs>
     pending?: AutoSource<AutoPending>
     progress?: AutoSource<AutoProgress>
+    confirm?: AutoSource<AutoConfirm>
     push?: AutoSource<AutoPush>
     workers?: AutoSource<AutoWorkers>
     gh?: AutoSource<AutoGh>

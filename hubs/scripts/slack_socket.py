@@ -239,7 +239,12 @@ class Decide:
         del Decide.workers[:-64]
 
     def send_out(self, did: str, ts: str, title: str, label: str, extra: dict, source: str = answer_store.SLACK) -> None:
-        out = self.router.route(did, ts, source, answer_route.said_text(did, extra, label))
+        try:
+            out = self.router.route(did, ts, source, answer_route.said_text(did, extra, label))
+        except Exception as err:  # 전송 예외가 스레드를 조용히 죽이지 않게 종류만 남김(본문·traceback 제외). pending 은 늦은 클릭의 재전달이 복구
+            log(f"결정 {did} 전달 예외 {type(err).__name__} — 답은 기록됨, 재전달 대기")
+            warn_slack(ts, f"전달 예외: {title or did}\n\n• 무엇: 답은 기록했지만 전달 중 오류({type(err).__name__})\n• 결과: 카드를 다시 누르면 재전달함. 급하면 메인에 직접 알려 주세요")
+            return
         if not out.ok:
             where = "메인 터미널" if out.via == "main" else f"{out.hub} 허브·메인 터미널"
             warn_slack(ts, f"{'메인' if out.via == 'main' else '허브'} 전달 실패: {title or did} = {label}\n\n• 무엇: 버튼 답은 기록했지만 {where}로 못 보냄 ({out.note})\n• 결과: 메인에 직접 알려 주세요")
@@ -400,6 +405,70 @@ class LedgerTick:
             self._busy.release()
 
 
+class DocsiteCards:
+    """문서 사이트에서 답한 결정의 Slack 카드를 닫음(버튼 제거 + '✅ 선택됨 — 문서 사이트'). 문서 사이트 서버는 토큰이 없어
+    이 프로세스가 감시 회차마다 inbox 의 문서 사이트 답을 보고 chat.update 함. 닫은 카드는 docsite-card-closed.txt 에 기록해 한 번만 함.
+    버튼이 이미 없는 카드(다른 경로로 갱신됨)는 갱신 없이 기록만. 실패는 종류만 로그하고 다음 회차에 재시도(카드당 최대 TRIES 회)"""
+    MARK_NAME, PER_TICK, TRIES = "docsite-card-closed.txt", 3, 3
+
+    def __init__(self, web) -> None:
+        self.web = web
+        self.mark = os.path.join(DIR, self.MARK_NAME)
+        self._busy = threading.Lock()
+        self._fails: dict = {}
+
+    def pending(self) -> list:
+        try:
+            with open(self.mark, encoding="utf-8") as f:
+                closed = set(f.read().split())
+        except OSError:
+            closed = set()
+        out = {}
+        for d in STORE.read_inbox():
+            ts = d.get("parent_ts")
+            if d.get("type") == "button" and d.get("kind") == "decide" and d.get("source") == answer_store.DOCSITE and isinstance(ts, str) and ts \
+                    and ts not in closed and self._fails.get(ts, 0) < self.TRIES and isinstance(d.get("channel"), str) and d["channel"]:
+                out.setdefault(ts, d)
+        return list(out.values())[: self.PER_TICK]
+
+    def tick(self) -> None:
+        if not self._busy.acquire(blocking=False):
+            return
+        try:
+            todo = self.pending()
+            if not todo:
+                self._busy.release()
+                return
+            threading.Thread(target=self._run, args=(todo,), daemon=True).start()
+        except Exception:  # 스레드 생성 실패면 잠금을 돌려 다음 회차가 이어가게 함
+            self._busy.release()
+            log("문서 사이트 카드 닫기 스레드 시작 실패")
+
+    def _run(self, todo: list) -> None:
+        try:
+            for d in todo:
+                self.close(d)
+        finally:
+            self._busy.release()
+
+    def close(self, d: dict) -> None:
+        ts, ch = d["parent_ts"], d["channel"]
+        try:
+            hist = self.web.conversations_history(channel=ch, latest=ts, inclusive=True, limit=1)
+            msg = next((x for x in hist.get("messages", []) if x.get("ts") == ts), None)
+            if msg is None:
+                raise LookupError("card not found")
+            if any(b.get("type") == "actions" for a in msg.get("attachments") or [] for b in a.get("blocks") or []):
+                at = time.strftime("%m-%d %H:%M", time.localtime(d.get("received_at") or time.time()))
+                line = f"✅ {d.get('option_text') or '답함'} 선택됨 — 문서 사이트 ({at})"
+                self.web.chat_update(channel=ch, ts=ts, text=card_title(msg) or d.get("title") or d.get("decision_id", ""), attachments=answered(msg, line))
+            answer_store.AnswerStore.append(self.mark, ts + "\n")
+            log(f"결정 {d.get('decision_id')} 문서 사이트 답 — Slack 카드 닫음")
+        except Exception as err:  # 본문·토큰 없이 종류만
+            self._fails[ts] = self._fails.get(ts, 0) + 1
+            log(f"문서 사이트 답 카드 닫기 실패 {type(err).__name__} {self._fails[ts]}/{self.TRIES}")
+
+
 class Pulse:
     """수신·재연결 기록. 마지막 이벤트가 없어도 정상(사용자가 안 쓰는 동안)이라 끊김 판정에는 쓰지 않음"""
 
@@ -477,7 +546,7 @@ def swap(old, make):
     return fresh
 
 
-def watch(client, make, trigger: Trigger, pulse: Pulse, timing: Timing, ledgers: LedgerTick | None = None) -> int:
+def watch(client, make, trigger: Trigger, pulse: Pulse, timing: Timing, ledgers: LedgerTick | None = None, cards: DocsiteCards | None = None) -> int:
     start = time.monotonic()
     last_alive = last_refresh = last_watch = start
     down_since: float | None = None
@@ -486,6 +555,8 @@ def watch(client, make, trigger: Trigger, pulse: Pulse, timing: Timing, ledgers:
         time.sleep(timing.check_s)
         if ledgers is not None:
             ledgers.tick()
+        if cards is not None:
+            cards.tick()
         now = time.monotonic()
         up = is_up(client)
         if up:
@@ -544,6 +615,7 @@ def main() -> int:
     web = WebClient(token=bot_token)
     decide = Decide(web, me)
     ledgers = LedgerTick(web, me)
+    cards = DocsiteCards(web)
 
     def on_request(c: SocketModeClient, req: SocketModeRequest) -> None:
         pulse.touch()
@@ -580,7 +652,7 @@ def main() -> int:
         return 2
     log("연결됨")
     trigger.fire("시작")  # 끊긴 동안 쌓인 것 한 번 수집
-    return watch(client, make, trigger, pulse, timing, ledgers)
+    return watch(client, make, trigger, pulse, timing, ledgers, cards)
 
 
 if __name__ == "__main__":

@@ -254,6 +254,27 @@ waitfor s26 out '원문 다시 전달' 4 && waitfor s26 out '결정 D-T1 버튼 
 [ "$(grep -c 'D-T1 = 선택 2(B 안)' "$SB/s26/orca.calls")" = 1 ] && ! grep -q 'D-T1 = 선택 1' "$SB/s26/orca.calls" && grep -q '이전 답의 전달 기록이 없어 다시 전달함' "$SB/s26/calls" && ok "전달 기록 없는 이전 답 → 늦은 클릭이 원문을 1회만 다시 전달·안내" || ko "재전달" "$(cut -c1-160 "$SB/s26/orca.calls" 2>/dev/null)"
 stop s26
 
+# 전달 중 예외(허브 보고 기록이 깨짐) → 스레드가 조용히 죽지 않고 종류만 로그 + 카드 스레드 경고. 본문·traceback 은 남기지 않음
+mkdir -p "$SB/s27/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/s27/hub/main.env"; printf 'alpha\t알파\t-\t-\t-\n' > "$SB/s27/hub/hubs.tsv"
+printf '%s\n' '{"decision_id":"D-T1","hub":["alpha"]}' > "$SB/s27/hub/hub-reports.jsonl"
+start s27 "{\"events\":[$(act 0.4 i1 $ME pick_2 'D-T1|2' '2. B 안')]}" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s27/orca.calls" LRM_NOTIFY="$SB/fake_notify.sh" FAKE_NOTIFY_LOG="$SB/s27/notify.calls" HUB_PROC_TABLE="$SB/none"
+waitfor s27 out '결정 D-T1 전달 예외 TypeError' 4 && waitfor s27 notify.calls '전달 예외' 4 && grep -q -- '--kind warn' "$SB/s27/notify.calls" && ! grep -q 'Traceback' "$SB/s27/out" && ok "전달 예외 → 종류만 로그(traceback 없음)·카드 스레드 warn, 답 기록은 유지" || ko "전달 예외" "$(tail -c 300 "$SB/s27/out")"
+[ "$(grep -c '"decision_id": "D-T1"' "$SB/s27/hub/slack-inbox.jsonl")" = 1 ] && ok "예외 뒤에도 inbox 답 기록 1건 유지(재전달 대상으로 남음)" || ko "예외 뒤 기록" ""
+stop s27
+
+# 문서 사이트에서 답한 결정의 Slack 카드를 감시 회차가 닫음(버튼 제거 + '문서 사이트' 표기). 한 번만, 이미 닫힌 카드는 갱신 없음
+mkdir -p "$SB/s28/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/s28/hub/main.env"
+printf '%s\n' '{"type":"button","parent_ts":"1794383274.541929","channel":"Dch1","title":"시험 결정","decision_id":"D-T1","kind":"decide","option_text":"2. B 안","action":"pick","pick":2,"source":"docsite","received_at":1794383300}' > "$SB/s28/hub/slack-inbox.jsonl"
+start s28 "{\"history\":[$MSG]}" LRM_SOCKET_CHECK_S=0.3 LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s28/orca.calls"
+waitfor s28 out '결정 D-T1 문서 사이트 답 — Slack 카드 닫음' 5 && sleep 1
+[ "$(grep -c 'web chat_update' "$SB/s28/calls")" = 1 ] && grep -q 'web chat_update .*✅ 2. B 안 선택됨 — 문서 사이트' "$SB/s28/calls" && ! grep -q 'web chat_update .*"type": "actions"' "$SB/s28/calls" && [ "$(grep -c 1794383274.541929 "$SB/s28/hub/docsite-card-closed.txt")" = 1 ] && ok "문서 사이트 답 → Slack 카드 1회만 닫음(버튼 제거·표기)·기록" || ko "카드 닫기" "$(grep 'web ' "$SB/s28/calls" | cut -c1-160)"
+[ ! -s "$SB/s28/orca.calls" ] && ok "카드 닫기는 허브·메인 전달을 하지 않음" || ko "카드 닫기 전달" "$(cat "$SB/s28/orca.calls")"
+stop s28
+mkdir -p "$SB/s29/hub"; cp "$SB/s28/hub/slack-inbox.jsonl" "$SB/s29/hub/"; printf '1794383274.541929\n' > "$SB/s29/hub/docsite-card-closed.txt"
+start s29 "{\"history\":[$MSG]}" LRM_SOCKET_CHECK_S=0.3 LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s29/orca.calls"
+sleep 1.5; [ "$(grep -c 'web ' "$SB/s29/calls")" = 0 ] && ok "이미 닫은 카드는 Slack 을 다시 부르지 않음" || ko "재닫기" "$(grep 'web ' "$SB/s29/calls" | cut -c1-120)"
+stop s29
+
 # ---- 9. 토큰·ID 는 어떤 출력에도 없음 ----------------------------------------------------------
 leaks=$(cat "$SB"/*/out | grep -Ec "$APPTOK|$BOTTOK|$ME|$LEAK|Uother9|Bbot1" || true)
 [ "$leaks" = 0 ] && ok "모든 시나리오 로그·표준출력에 토큰·사용자 ID·예외 본문 0건" || ko "유출" "${leaks}줄"

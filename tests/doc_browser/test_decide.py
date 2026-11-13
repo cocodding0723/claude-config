@@ -141,6 +141,16 @@ class DecideTest(ServerBase):
         self.assertEqual(self.sends(), [])
         self.assertFalse(json.loads(self.req("GET", f"/api/decision?id={DID}")[2])["actionable"])
 
+    def test_docsite_answer_stuck_pending_is_redelivered_once_via_commit(self):
+        self.env.jsonl("slack-inbox.jsonl", [{"type": "button", "decision_id": DID, "kind": "decide", "action": "pick", "pick": 1, "option_text": "1. A 안",
+                                             "parent_ts": "1.1", "source": "docsite"}])
+        self.env.jsonl("answer-delivery.jsonl", [{"decision_id": DID, "parent_ts": "1.1", "state": "pending", "ok": None, "at": 1}])
+        intent = self.preview(2)[1]["intent"]  # 오래된 pending 은 preview 가 막지 않음
+        st, j = self.decide({"id": DID, "pick": 2, "intent": intent})
+        self.assertEqual((st, j["via"]), (200, "hub"))
+        self.assertEqual(self.hub_sends(), [f"사용자 원문: 결정 {DID} = 선택 1(A 안) (버튼) (출처: 문서 사이트)"])  # 먼저 답한 원문, 이번 선택(2) 아님
+        self.assertEqual(self.preview(2)[0], 409)  # 재전달은 1회뿐: 이후엔 이미 답함
+
     def test_two_confirmed_clicks_at_once_only_one_wins(self):
         i1, i2 = self.preview()[1]["intent"], self.preview(1)[1]["intent"]
         res = []

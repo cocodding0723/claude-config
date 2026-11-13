@@ -68,6 +68,8 @@ git/hooks/pre-push	.config/git/hooks/pre-push	link
 git/hooks/pre-rebase	.config/git/hooks/pre-rebase	link
 git/hooks/prepare-commit-msg	.config/git/hooks/prepare-commit-msg	link
 hubs/scripts/close_dup_sessions.sh	.config/lrm-hubs/close_dup_sessions.sh	link
+hubs/scripts/confirm_items.py	.config/lrm-hubs/confirm_items.py	link
+hubs/scripts/doc_confirm.py	.config/lrm-hubs/doc_confirm.py	link
 hubs/scripts/html_preview.sh	.config/lrm-hubs/html_preview.sh	link
 hubs/scripts/orphan_check.sh	.config/lrm-hubs/orphan_check.sh	link
 hubs/scripts/restart_hub.sh	.config/lrm-hubs/restart_hub.sh	link

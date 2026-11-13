@@ -1,0 +1,223 @@
+"""확인 목록 API 시험: GET /api/confirm 항목 집합, POST /api/confirm('했음') 보안·전달·중복 방지·감사 로그.
+허브·메인 전송은 가짜 orca(tests/stall_watch/fake_orca.py). 실제 Orca·Slack·gh·~/.config 는 쓰지 않음(PR 조회 끔)."""
+import json
+import os
+import time
+import unittest
+
+import test_decide as td
+from test_server import ServerBase
+
+KEY_CMD, KEY_WIN, KEY_SHEET = "hub:alpha:1", "hub:alpha:3", "hub:alpha:2"
+SNAP_ITEMS = [
+    {"key": "decision:D-0001", "bucket": "wait", "title": "결정 D-0001 시험 결정", "since": 1},
+    {"key": KEY_CMD, "bucket": "wait", "title": "alpha: 직접 실행 `bash run.sh` 필요", "since": 0},
+    {"key": KEY_SHEET, "bucket": "block", "title": "alpha: 구글 시트 직접 입력 대기", "since": 0},
+    {"key": KEY_WIN, "bucket": "wait", "title": "alpha: 창 직접 승인 대기", "since": 0},
+]
+
+
+class ConfirmTest(ServerBase):
+    prepare_hub = td.DecideTest.prepare
+    fwrite, sends, hub_sends, main_sends = td.DecideTest.fwrite, td.DecideTest.sends, td.DecideTest.hub_sends, td.DecideTest.main_sends
+
+    def prepare(self):
+        self.prepare_hub()
+        self.snap = os.path.join(self.env.hub, "progress.json")
+        os.environ.update({"LRM_PROGRESS": self.snap, "LRM_DIGEST_REPOS": "Org/Repo", "LRM_DIGEST_GH": os.path.join(self.env.tmp.name, "no-gh"),
+                           "LRM_LEDGER": os.path.join(self.env.hub, "no-ledger.tsv")})
+        self.write_snap(SNAP_ITEMS)
+
+    def write_snap(self, items):
+        with open(self.snap, "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "updatedAt": time.time(), "items": items, "sources": {}, "notes": [], "counts": {}, "groups": {}}, f)
+
+    def setUp(self):
+        super().setUp()
+        self.app.checklist.refresh(use_pr=False)
+
+    def items(self):
+        return {i["key"]: i for i in json.loads(self.req("GET", "/api/confirm")[2])["items"]}
+
+    def confirm(self, key, **kw):
+        kw.setdefault("token", self.page_token())
+        st, _, b = self.post({"id": key}, path="/api/confirm", **kw)
+        return st, json.loads(b)
+
+    def page_token(self):
+        if not hasattr(self, "_t"):
+            self._t = self.token()
+        return self._t
+
+    def audit(self):
+        p = os.path.join(self.env.hub, "docsite-audit.jsonl")
+        with open(p, encoding="utf-8") as f:
+            return [json.loads(x) for x in f if x.strip()]
+
+    # ---- 읽기 ----
+    def test_get_lists_all_kinds_with_state_and_confirmable_flag(self):
+        j = json.loads(self.req("GET", "/api/confirm")[2])
+        by = {i["key"]: i for i in j["items"]}
+        self.assertEqual({k: v["kind"] for k, v in by.items()}, {"decision:D-0001": "decision", KEY_CMD: "command", KEY_SHEET: "sheet", KEY_WIN: "window"})
+        self.assertEqual((j["todo"], j["done"]), (4, 0))
+        self.assertEqual(by[KEY_CMD]["command"], "bash run.sh")
+        self.assertTrue(by[KEY_WIN]["confirmable"] and not by["decision:D-0001"]["confirmable"])
+        self.assertEqual(j["items"][0]["kind"], "decision")  # 종류 순서
+
+    def test_related_docs_link_by_decision_id(self):
+        self.env.write(self.env.docs, "dec.html", "<!doctype html><title>결정 문서</title><h1>결정 문서</h1>D-0001")
+        self.app.index.refresh()
+        self.assertIsInstance(self.items()["decision:D-0001"]["docs"], list)
+
+    # ---- 쓰기 ----
+    def test_confirm_records_and_tells_hub_with_user_original_line(self):
+        st, j = self.confirm(KEY_CMD)
+        self.assertEqual((st, j["ok"], j["via"]), (200, True, "hub"))
+        self.assertEqual(self.hub_sends(), ["사용자 원문: 확인 완료: " + self.items()[KEY_CMD]["title"] + " (직접 실행 명령) (출처: 문서 사이트)"])
+        self.assertEqual(len(self.main_sends()), 1)
+        it = self.items()[KEY_CMD]
+        self.assertEqual(it["state"], "done")
+        self.assertIn("사용자 확인 — 문서 사이트", it["basis"])
+        with open(os.path.join(self.env.hub, "confirm-log.jsonl"), encoding="utf-8") as f:
+            self.assertEqual([json.loads(x)["key"] for x in f], [KEY_CMD])
+
+    def test_second_press_does_not_resend(self):
+        self.confirm(KEY_CMD)
+        st, j = self.confirm(KEY_CMD)
+        self.assertEqual((st, j.get("already")), (200, True))
+        self.assertEqual(len(self.hub_sends()), 1)
+
+    def test_decision_and_unknown_keys_rejected_without_send(self):
+        self.assertEqual(self.confirm("decision:D-0001")[0], 409)
+        self.assertEqual(self.confirm("hub:alpha:999")[0], 404)
+        self.assertEqual(self.sends(), [])
+        self.assertFalse(os.path.exists(os.path.join(self.env.hub, "confirm-log.jsonl")))
+
+    def test_client_cannot_supply_text_or_extra_keys(self):
+        tok = self.page_token()
+        for body in ({"id": KEY_CMD, "text": "x"}, {}, {"id": 5}, [KEY_CMD]):
+            st, _, _ = self.post(body, path="/api/confirm", token=tok)
+            self.assertEqual(st, 400, body)
+        self.assertEqual(self.sends(), [])
+
+    def test_hub_failure_falls_back_to_main_and_keeps_record(self):
+        os.environ["FAKE_SEND_FAIL"] = f"{td.HUBH}:terminal_handle_stale"
+        st, j = self.confirm(KEY_WIN)
+        self.assertEqual((st, j["via"]), (200, "proxy"))
+        self.assertEqual(self.items()[KEY_WIN]["state"], "done")
+
+    # ---- 전달 기록·재전달 ----
+    def deliveries(self):
+        with open(os.path.join(self.env.hub, "answer-delivery.jsonl"), encoding="utf-8") as f:
+            return [json.loads(x) for x in f if x.strip()]
+
+    def confirm_ts(self, key=KEY_CMD):
+        with open(os.path.join(self.env.hub, "confirm-log.jsonl"), encoding="utf-8") as f:
+            return str([json.loads(x) for x in f if json.loads(x)["key"] == key][-1]["at"])
+
+    def seed_delivery(self, state, ok, at, key=KEY_CMD):
+        """확인 직후 성공으로 남은 전달 기록을 시험용 상태로 바꿈"""
+        self.env.jsonl("answer-delivery.jsonl", [{"decision_id": key, "parent_ts": self.confirm_ts(key), "state": state, "ok": ok, "at": at}])
+        os.path.exists(self.env.hub)
+
+    def test_delivery_result_is_recorded_pending_then_result(self):
+        self.confirm(KEY_CMD)
+        self.assertEqual([(d["state"], d["ok"]) for d in self.deliveries()], [("pending", None), ("hub", True)])
+        self.assertEqual(self.deliveries()[0]["parent_ts"], self.confirm_ts())
+
+    def test_second_press_after_success_does_not_resend(self):
+        self.confirm(KEY_CMD)
+        self.confirm(KEY_CMD)
+        self.assertEqual(len(self.hub_sends()), 1)
+
+    def test_failed_delivery_is_redelivered_once_on_second_press(self):
+        self.confirm(KEY_CMD)
+        self.seed_delivery("lost", False, int(time.time()))
+        st, j = self.confirm(KEY_CMD)
+        self.assertEqual((st, j["ok"], j.get("already")), (200, True, None))
+        self.assertEqual(len(self.hub_sends()), 2)
+        self.assertEqual(self.audit()[-1]["result"], "redeliver:hub:ok")
+        self.assertTrue(self.confirm(KEY_CMD)[1]["already"])  # 재전달은 1회뿐
+        self.assertEqual(len(self.hub_sends()), 2)
+
+    def test_stale_pending_is_redelivered_but_fresh_pending_is_not(self):
+        self.confirm(KEY_CMD)
+        self.seed_delivery("pending", None, int(time.time()))
+        self.assertTrue(self.confirm(KEY_CMD)[1]["already"])
+        self.assertEqual(len(self.hub_sends()), 1)
+        self.seed_delivery("pending", None, 1)
+        self.assertEqual(self.confirm(KEY_CMD)[1]["via"], "hub")
+        self.assertEqual(len(self.hub_sends()), 2)
+
+    def test_timeout_unknown_is_never_redelivered(self):
+        self.confirm(KEY_CMD)
+        self.seed_delivery("unknown", False, 1)
+        self.assertTrue(self.confirm(KEY_CMD)[1]["already"])
+        self.assertEqual(len(self.hub_sends()), 1)
+
+    def test_confirm_without_delivery_rows_is_not_resent(self):
+        self.confirm(KEY_CMD)
+        os.remove(os.path.join(self.env.hub, "answer-delivery.jsonl"))
+        self.assertTrue(self.confirm(KEY_CMD)[1]["already"])
+        self.assertEqual(len(self.hub_sends()), 1)
+
+    # ---- 원천 읽기 실패 ----
+    def test_missing_or_broken_snapshot_keeps_previous_list_and_registry(self):
+        before = self.items()
+        seen_path = os.path.join(self.env.hub, "confirm-seen.json")
+        seen = open(seen_path, encoding="utf-8").read()
+        for breaker in (lambda: os.remove(self.snap), lambda: open(self.snap, "w").write("{깨짐")):
+            breaker()
+            self.app.checklist.refresh(use_pr=False)
+            j = json.loads(self.req("GET", "/api/confirm")[2])
+            self.assertEqual({k: v["state"] for k, v in self.items().items()}, {k: v["state"] for k, v in before.items()})
+            self.assertTrue(any("원천 읽기 실패" in n for n in j["notes"]), j["notes"])
+            self.assertEqual(open(seen_path, encoding="utf-8").read(), seen)  # 명부를 건드리지 않음
+        self.write_snap(SNAP_ITEMS)
+        self.app.checklist.refresh(use_pr=False)
+        self.assertEqual(json.loads(self.req("GET", "/api/confirm")[2])["notes"], [])
+
+    def test_same_text_reappearing_is_todo_again_and_can_be_confirmed_again(self):
+        """키가 문구 해시라 같은 문구가 다시 오면 옛 확인으로 바로 '함'이 되면 안 되고, 다시 확인할 수 있어야 함"""
+        self.confirm(KEY_CMD)
+        clock = [time.time() + 10]
+        self.app.checklist.now = lambda: clock[0]
+        self.write_snap([i for i in SNAP_ITEMS if i["key"] != KEY_CMD])
+        self.app.checklist.refresh(use_pr=False)
+        clock[0] += 10
+        self.write_snap(SNAP_ITEMS)
+        self.app.checklist.refresh(use_pr=False)
+        self.assertEqual(self.items()[KEY_CMD]["state"], "todo")
+        clock[0] += 10
+        st, j = self.confirm(KEY_CMD)
+        self.assertEqual((st, j.get("already"), len(self.hub_sends())), (200, None, 2))
+        self.assertEqual(self.items()[KEY_CMD]["state"], "done")
+
+    def test_audit_has_key_and_result_without_text(self):
+        self.confirm(KEY_CMD)
+        rec = self.audit()[-1]
+        self.assertEqual((rec["source"], rec["kind"], rec["key"], rec["result"]), ("docsite", "confirm", KEY_CMD, "hub:ok"))
+        self.assertNotIn("사용자 원문", json.dumps(self.audit(), ensure_ascii=False))
+
+    def test_csrf_origin_host_and_fetch_site_checks_apply(self):
+        tok = self.page_token()
+        self.assertEqual(self.post({"id": KEY_CMD}, path="/api/confirm", token="bad")[0], 403)
+        self.assertEqual(self.post({"id": KEY_CMD}, path="/api/confirm", token=tok, origin="http://evil.example")[0], 403)
+        self.assertEqual(self.post({"id": KEY_CMD}, path="/api/confirm", token=tok, extra={"Sec-Fetch-Site": "cross-site"})[0], 403)
+        h = {"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{self.port}", "X-CSRF-Token": tok}
+        self.assertEqual(self.req("POST", "/api/confirm", json.dumps({"id": KEY_CMD}).encode(), h, host="evil.example")[0], 403)
+        self.assertEqual(self.sends(), [])
+
+    def test_confirm_handler_called_only_from_post_handler(self):
+        src = open(os.path.join(os.path.dirname(self.db.__file__), "doc_browser.py"), encoding="utf-8").read()
+        self.assertEqual(src.count("checklist.handle("), 1)
+
+    def test_ui_sends_only_item_key_and_has_per_kind_actions(self):
+        ui = open(os.path.join(os.path.dirname(self.db.__file__), "doc_browser_ui.html"), encoding="utf-8").read()
+        self.assertIn('JSON.stringify({id: it.key})', ui)
+        for needle in ('"/api/confirm"', 'openDecision(it.did)', "PR 열기", "복사", "했음", 'rel: "noopener noreferrer"'):
+            self.assertIn(needle, ui)
+
+
+if __name__ == "__main__":
+    unittest.main()

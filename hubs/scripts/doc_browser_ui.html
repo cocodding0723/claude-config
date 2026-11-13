@@ -70,15 +70,44 @@ dialog textarea{min-height:170px;resize:vertical}
 .empty{padding:40px;text-align:center;color:var(--muted)}
 .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:8px 14px;border-radius:8px;display:none}
 .hint{font-size:11px;color:var(--muted)}
+.pane{flex:1;display:flex;flex-direction:column;min-height:0}
+.pane[hidden]{display:none}
+.tabs{display:flex;gap:4px}
+.tabs button[aria-selected=true]{background:var(--text);color:var(--bg);border-color:var(--text)}
+.check{flex:1;overflow:auto;padding:12px 16px;max-width:980px;width:100%;margin:0 auto}
+.check h2{font-size:14px;margin:18px 0 6px;display:flex;gap:8px;align-items:baseline}
+.check h2 small{color:var(--muted);font-weight:400}
+.item{display:flex;gap:12px;align-items:flex-start;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;background:var(--bg)}
+.item .body{flex:1;min-width:0}
+.item .t{font-weight:600;overflow-wrap:anywhere}
+.item .acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.item.done{background:var(--surface);color:var(--muted)}
+.item.done .t{font-weight:400;text-decoration:line-through}
+.item .basis{color:var(--ok);font-size:12px}
+.cmd{display:block;margin-top:4px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font:12px ui-monospace,Menlo,monospace;overflow-wrap:anywhere}
+.links{margin-top:3px;font-size:12px}
+.links a,.links button{font-size:12px;padding:0 6px;margin-right:4px}
+a.btn{font:inherit;color:var(--text);border:1px solid var(--border);border-radius:6px;padding:4px 10px;text-decoration:none;white-space:nowrap}
+a.btn:hover{background:var(--row-hover)}
+.sum{color:var(--muted);font-size:13px}
+.notes{color:var(--warn);font-size:12px;margin:6px 0}
 @media (max-width:900px){.viewer.open{position:fixed;inset:0;width:100%;background:var(--bg);z-index:5}.col-meta,.col-sent{display:none}.thumb{width:64px;height:44px}}
 </style>
 <header>
   <h1>문서 모아보기</h1>
+  <nav class="tabs" role="tablist" aria-label="화면">
+    <button type="button" role="tab" id="tab-check" aria-selected="true">확인 목록 <small id="tab-n"></small></button>
+    <button type="button" role="tab" id="tab-docs" aria-selected="false">문서</button>
+  </nav>
   <input id="q" type="search" placeholder="제목 검색  ( / )" aria-label="제목 검색" autocomplete="off">
   <span class="sp"></span>
   <span class="status" id="status" role="status"></span>
   <button id="theme" type="button" aria-label="라이트·다크 전환">🌓</button>
 </header>
+<div class="pane" id="v-check" role="tabpanel" aria-labelledby="tab-check">
+  <div class="check" id="check"></div>
+</div>
+<div class="pane" id="v-docs" role="tabpanel" aria-labelledby="tab-docs" hidden>
 <div class="filters">
   <span id="hubs" role="group" aria-label="허브 필터"></span>
   <label class="meta">도식 <select id="f-diagram"><option value="">전체</option><option value="has">있음</option><option value="none">없음</option><option value="unknown">판정 불가</option></select></label>
@@ -99,6 +128,7 @@ dialog textarea{min-height:170px;resize:vertical}
     <iframe id="v-frame" sandbox="" title="문서 열람"></iframe>
   </section>
 </main>
+</div>
 
 <dialog id="dlg" aria-labelledby="dlg-h">
   <h2 id="dlg-h">문서 보내기</h2>
@@ -129,7 +159,7 @@ dialog textarea{min-height:170px;resize:vertical}
 "use strict";
 const TOKEN = document.querySelector('meta[name=csrf]').content;
 const $ = (id) => document.getElementById(id);
-const state = {hub: "", docs: [], sel: null, sending: null, recipients: []};
+const state = {hub: "", docs: [], sel: null, sending: null, recipients: [], tab: "check", check: null};
 
 function el(tag, attrs, ...kids) {
   const e = document.createElement(tag);
@@ -165,9 +195,9 @@ async function load() {
     const key = JSON.stringify([j.docs, j.hubs, state.sel]);
     state.docs = j.docs;
     if (key !== state.key) { state.key = key; renderHubs(j.hubs, j.total); renderRows(); }  // 바뀐 게 없으면 다시 그리지 않아 키보드 포커스 유지
-    $("status").textContent = (j.scanning ? "수집 중… " : "") + `${j.docs.length} / ${j.total}건`;
+    if (state.tab === "docs") $("status").textContent = (j.scanning ? "수집 중… " : "") + `${j.docs.length} / ${j.total}건`;
   } catch (e) {
-    $("status").textContent = "목록 불러오기 실패: " + e.message;
+    if (state.tab === "docs") $("status").textContent = "목록 불러오기 실패: " + e.message;
   }
 }
 
@@ -292,6 +322,82 @@ async function commitPick() {
     $("dec").close(); toast(j.via === "hub" ? `${j.hub} 허브에 전달함` : "전달함"); load();
   } catch (e) { $("dec-err").textContent = e.message; decReset(); }
 }
+
+// ---- 확인 목록(첫 화면): 안 함 먼저 · 종류별 묶음. 줄마다 바로 처리 ----
+function setTab(t) {
+  state.tab = t;
+  for (const n of ["check", "docs"]) { $("v-" + n).hidden = n !== t; $("tab-" + n).setAttribute("aria-selected", String(n === t)); }
+  $("q").style.visibility = t === "docs" ? "visible" : "hidden";
+  if (t === "docs") load(); else loadCheck();
+}
+async function loadCheck() {
+  try {
+    state.check = await api("/api/confirm");
+    renderCheck();
+    $("status").textContent = state.tab === "check" ? (state.check.scanning ? "수집 중…" : `안 함 ${state.check.todo} · 함 ${state.check.done}`) : $("status").textContent;
+  } catch (e) { if (state.tab === "check") $("status").textContent = "확인 목록 불러오기 실패: " + e.message; }
+}
+function copyText(text, btn) {
+  const done = () => { btn.textContent = "복사됨"; setTimeout(() => btn.textContent = "복사", 1500); };
+  if (navigator.clipboard && window.isSecureContext !== false) navigator.clipboard.writeText(text).then(done, () => toast("복사 실패 — 직접 선택해 복사"));
+  else toast("복사 불가 — 직접 선택해 복사");
+}
+async function markDone(it, btn) {
+  btn.disabled = true;
+  try {
+    const j = await api("/api/confirm", {method: "POST", headers: {"Content-Type": "application/json", "X-CSRF-Token": TOKEN}, body: JSON.stringify({id: it.key})});
+    toast(j.already ? "이미 확인됨" : (j.via === "hub" ? `${j.hub} 허브에 전달함` : "메인에 전달함"));
+  } catch (e) { toast(e.message); }
+  loadCheck();
+}
+function openRelated(d) {
+  setTab("docs");
+  const full = state.docs.find((x) => x.id === d.id) || d;
+  openDoc(full);
+}
+function checkRow(it) {
+  const body = el("div", {class: "body"}, el("div", {class: "t", text: it.title}));
+  const meta = [it.hub && it.hub !== "미상" ? it.hub + " 허브" : "", it.state === "done" ? "" : it.how].filter(Boolean).join(" · ");
+  if (meta) body.append(el("div", {class: "meta", text: meta}));
+  if (it.state === "done") body.append(el("div", {class: "basis", text: "✓ " + it.basis}));
+  if (it.kind === "command" && it.command && it.state !== "done") body.append(el("code", {class: "cmd", text: it.command}));
+  if (it.docs && it.docs.length) {
+    const links = el("div", {class: "links"}, document.createTextNode("관련 문서 "));
+    for (const d of it.docs) { const b = el("button", {type: "button", text: d.title, title: "문서 열기"}); b.onclick = () => openRelated(d); links.append(b); }
+    body.append(links);
+  }
+  const acts = el("div", {class: "acts"});
+  if (it.state !== "done") {
+    if (it.kind === "decision") { const b = el("button", {type: "button", class: "primary", text: "답하기"}); b.onclick = () => openDecision(it.did); acts.append(b); }
+    else if (it.kind === "merge") { if (it.url) acts.append(el("a", {class: "btn primary", href: it.url, target: "_blank", rel: "noopener noreferrer", text: "PR 열기"})); }
+    else {
+      if (it.kind === "command" && it.command) { const c = el("button", {type: "button", text: "복사"}); c.onclick = () => copyText(it.command, c); acts.append(c); }
+      const b = el("button", {type: "button", class: "primary", text: "했음", title: "확인 기록을 남기고 담당 허브에 한 줄 전달"}); b.onclick = () => markDone(it, b); acts.append(b);
+    }
+  }
+  return el("div", {class: "item" + (it.state === "done" ? " done" : ""), "data-key": it.key}, body, acts);
+}
+function renderCheck() {
+  const c = state.check, box = $("check"); box.replaceChildren();
+  $("tab-n").textContent = c.todo ? `(${c.todo})` : "";
+  box.append(el("div", {class: "sum", text: c.scanning ? "수집 중…" : `내가 확인할 것 ${c.todo}건 안 함 · ${c.done}건 함`}));
+  for (const n of c.notes) box.append(el("div", {class: "notes", text: "⚠ " + n}));
+  const todo = c.items.filter((i) => i.state !== "done"), done = c.items.filter((i) => i.state === "done");
+  if (!todo.length && !c.scanning) box.append(el("div", {class: "empty", text: "확인할 것 없음"}));
+  for (const k of c.kinds) {
+    const rows = todo.filter((i) => i.kind === k.kind);
+    if (!rows.length) continue;
+    box.append(el("h2", {}, document.createTextNode(k.label), el("small", {text: `${rows.length}건`})));
+    rows.forEach((i) => box.append(checkRow(i)));
+  }
+  if (done.length) {
+    box.append(el("h2", {}, document.createTextNode("✅ 함"), el("small", {text: `${done.length}건`})));
+    done.forEach((i) => box.append(checkRow(i)));
+  }
+}
+$("tab-check").onclick = () => setTab("check");
+$("tab-docs").onclick = () => setTab("docs");
+
 $("dec-ok").onclick = commitPick;
 $("dec-cancel").onclick = () => $("dec").close();
 
@@ -316,11 +422,12 @@ document.addEventListener("keydown", (ev) => {
 });
 
 // 주소 조각으로 바로 열기: #open=<id> 열람, #send=<id> 보내기 창(확인 전까지 전송 없음)
+const hashOpen = location.hash.match(/^#(open|send)=([0-9a-f]{12})$/);
+if (hashOpen) setTab("docs"); else setTab("check");
 load().then(() => {
-  const m = location.hash.match(/^#(open|send)=([0-9a-f]{12})$/);
-  const d = m && state.docs.find((x) => x.id === m[2]);
-  if (d) (m[1] === "open" ? openDoc : openSend)(d);
+  const d = hashOpen && state.docs.find((x) => x.id === hashOpen[2]);
+  if (d) (hashOpen[1] === "open" ? openDoc : openSend)(d);
 });
-setInterval(() => { if (!$("dlg").open && !$("dec").open) load(); }, 30000);
+setInterval(() => { if (!$("dlg").open && !$("dec").open) (state.tab === "docs" ? load : loadCheck)(); }, 30000);
 </script>
 </html>

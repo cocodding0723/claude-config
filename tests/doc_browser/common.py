@@ -33,7 +33,7 @@ class Env:
             "LRM_HUB_DIR": self.hub, "LRM_DOC_CHECK": CHECKER,
             "LRM_DOC_ROOTS": os.pathsep.join([self.docs + "/**/*.html", self.ws + "/**/*.html"]),
         })
-        for m in [m for m in sys.modules if m in ("doc_index", "doc_send", "doc_browser", "doc_decide", "panel_collect", "answer_store", "answer_route", "card_actions", "main_terminal", "hub_dups", "ci_review", "todo_facts", "progress_collect")]:
+        for m in [m for m in sys.modules if m in ("doc_index", "doc_send", "doc_browser", "doc_decide", "doc_confirm", "confirm_items", "todo_items", "panel_collect", "answer_store", "answer_route", "card_actions", "main_terminal", "hub_dups", "ci_review", "todo_facts", "progress_collect")]:
             del sys.modules[m]
 
     def write(self, folder, name, html):
