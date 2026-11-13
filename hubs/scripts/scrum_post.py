@@ -35,6 +35,11 @@ LOCK = DIR / "scrum.lock"
 DRAFT_DIR = Path(os.environ.get("LRM_SCRUM_DRAFT_DIR", Path.home() / "Documents/90_정리기록/scrum-draft"))
 LOG = Path(os.environ.get("LRM_SCRUM_LOG", Path.home() / "orca/archive/scrum_post.log"))
 ENV_FILE = DIR / "scrum.env"  # SCRUM_NAME=<회의록 본인 칸 제목>. 예시는 hubs/scrum.env.example
+SHARE_FILE = Path(os.environ.get("LRM_SCRUM_SHARE_FILE", DIR / "scrum-share.md"))  # 팀 공유 사항 원본. 예시는 hubs/scrum-share.example.md
+SHARE_TITLE = "팀 공유 사항"
+SHARE_MAX_LINES = 12
+SHARE_LINE_MAX = 200
+SHARE_DATE_RE = re.compile(r"^날짜\s*:\s*(\d{4}-\d{2}-\d{2})\s*$")  # 선택 머리 줄. 있으면 초안 날짜와 같을 때만 씀(어제 공유 사항 재게시 방지)
 
 
 def load_name():
@@ -83,6 +88,8 @@ SECRET_RE = re.compile(r"(?i)\b(?:token|secret|passw(?:or)?d|api[_-]?key|authori
                        r"|bearer\s+[A-Za-z0-9._~+/=-]{8,}|\bxox[abprs]-|\bsk-[A-Za-z0-9]{8,}|\bgh[pousr]_[A-Za-z0-9]{10,}"
                        r"|\bAKIA[0-9A-Z]{12,}|-----BEGIN|\beyJ[A-Za-z0-9_-]{15,}\.")
 INTERNAL_ID_RE = re.compile(r"\b(?:LRM-\d+|D-[A-Za-z0-9]{1,16}|T-[A-Za-z0-9]{1,16}|ctx_[0-9a-f]+|task_[0-9a-f]+|term_[0-9a-f-]+)\b")
+# 공유 사항에 나가면 안 되는 로컬 작업 용어(팀원이 모르는 말). 허브·워커·코디네이터와 내부 번호
+LOCAL_TERM_RE = re.compile(r"허브|워커|코디네이터|묶음 번호|결정 번호|\b(?:ctx|task|term)_[0-9a-f-]+|\b[DT]-[A-Za-z0-9]{1,16}\b")
 SLACK_TAG = "scrum"
 NO_ATLASSIAN = "@@atlassian-unavailable@@"  # 초안 작성 claude 가 Jira·Confluence 를 못 읽었을 때 맨 끝에 붙이는 표시
 PREFLIGHT_TIMEOUT = int(os.environ.get("LRM_SCRUM_PREFLIGHT_TIMEOUT", "60"))
@@ -238,6 +245,42 @@ def ask_claude(model, prompt):
     return out.stdout, ""
 
 
+def load_share(date):
+    """(공유 사항 줄 목록, 뺀 줄 수). 파일이 없거나 비면 ([], 0): 칸을 만들지 않음. 날짜 줄이 오늘이 아니면 낡은 파일이라 생략.
+    비밀·내부 용어가 든 줄, 상한 초과 줄은 빼고 뺀 수만 알림(원문은 로그에도 안 남김)"""
+    try:
+        raw = SHARE_FILE.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return [], 0
+    lines, dropped = [], 0
+    for ln in raw:
+        t = ln.strip()
+        m = SHARE_DATE_RE.match(t)
+        if m:
+            if m.group(1) != date.isoformat():
+                log("공유 사항 파일 날짜(%s)가 오늘(%s)과 달라 생략" % (m.group(1), date))
+                return [], 0
+            continue
+        t = re.sub(r"^[-*]\s+", "", t)
+        if not t or t.startswith(("#", "<!--")):
+            continue
+        if SECRET_RE.search(t) or LOCAL_TERM_RE.search(t) or len(t) > SHARE_LINE_MAX or len(lines) >= SHARE_MAX_LINES:
+            dropped += 1
+            continue
+        lines.append(t)
+    return lines, dropped
+
+
+def add_share(draft, lines):
+    """'팀 공유 사항' 최상위 불릿을 마지막 '막힌 것' 줄 앞(없으면 끝)에 끼움"""
+    if not lines:
+        return draft
+    block = ["- **%s**" % SHARE_TITLE] + ["    - %s" % t for t in lines]
+    body = draft.splitlines()
+    at = next((i for i, ln in enumerate(body) if ln.startswith("- **막힌 것**")), len(body))
+    return "\n".join(body[:at] + block + body[at:]) + "\n"
+
+
 def write_draft(text, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -336,7 +379,7 @@ def local_alert(msg):
         pass
 
 
-def summary_message(date, since, draft, model, missed, no_atl, lost=(), media=0):
+def summary_message(date, since, draft, model, missed, no_atl, lost=(), media=0, share_dropped=0):
     ts = topics(draft)
     n = sum(1 for ln in draft.splitlines() if ln.startswith("    - "))
     lines = ["%s 스크럼 초안 도착" % date.strftime("%m-%d"),
@@ -344,6 +387,8 @@ def summary_message(date, since, draft, model, missed, no_atl, lost=(), media=0)
              "• 주제: %s" % " · ".join(ts)]
     if media:
         lines.append("• 첨부 %d개(오늘·어제 만든 화면·영상). 초안 파일과 함께 이 글의 스레드에 있음" % media)
+    if share_dropped:
+        lines.append("• 경고: 팀 공유 사항 %d줄을 뺌(비밀·내부 용어·길이·개수 상한). 공유 사항 파일 확인" % share_dropped)
     if missed:
         lines.append("• 경고: %s 초안이 안 나갔음(그날 Mac 이 자고 있었을 수 있음)" % missed)
     if no_atl:
@@ -523,6 +568,8 @@ def run(a, date, state):
                 local_alert("초안 작성 실패 — 로그 확인")
         return 1
 
+    share, share_dropped = load_share(date)
+    draft = add_share(draft, share)
     path = Path(a.out) if a.out else DRAFT_DIR / ("%s.%smd" % (date, "dry." if a.dry_run else ""))
     write_draft(draft, path)
     if a.dry_run:
@@ -533,7 +580,7 @@ def run(a, date, state):
     state["pending"][date.isoformat()] = intent  # 전송 전에 의도를 남겨 중간에 죽어도 재실행이 중복 게시하지 않게 함
     save_state(state)
     media = pick_media(mat.stdout)
-    msg = summary_message(date, since, draft, model, missed, no_atl, lost, len(media))
+    msg = summary_message(date, since, draft, model, missed, no_atl, lost, len(media), share_dropped)
     if media:
         rc, text = send_threaded(["--kind", "doc", "--tag", SLACK_TAG, msg], path, media, intent)
     else:

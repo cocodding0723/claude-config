@@ -203,6 +203,35 @@ reset; post --date $WK; [ "$(sent)" = 1 ] && grep -q -- "--kind doc" "$D/sent.lo
 reset; echo media > "$D/plan-collect"; echo 5 > "$D/send-fails"; post --date $WK; rc=$?
 [ $rc = 1 ] && ! sent_has 2026-11-12 && ok "요약 글이 끝내 거절되면 실패(보냄 기록 없음)" || ko "요약 거절" "rc=$rc"
 
+# ---- 팀 공유 사항 칸 ----
+SH="$D/share.md"; export LRM_SCRUM_SHARE_FILE="$SH"; rm -f "$SH"
+reset; post --date $WK; ! grep -q "팀 공유 사항" "$D"/draft/2026-11-12.md && ! grep -q "경고: 팀 공유" "$D/sent.log" && ok "공유 사항 파일이 없으면 칸·경고 모두 생략" || ko "공유 파일 없음"
+printf '# 주석만\n\n' > "$SH"; reset; post --date $WK; ! grep -q "팀 공유 사항" "$D"/draft/2026-11-12.md && ok "주석·빈 줄뿐인 파일도 칸 생략" || ko "빈 공유 파일"
+cat > "$SH" <<'J'
+# 시험
+날짜: 2026-11-12
+- 앱 설치 안내 [문서](https://example.com/a) 정리함
+매점 2일차부터 열림
+- 허브 내부 사정 공유
+- 키 token=FAKE_TEST_SECRET 노출
+- 결정 D-ABC123 안내
+J
+reset; post --date $WK; f="$D/draft/2026-11-12.md"
+python3 - "$f" <<'PY' && ok "공유 사항: 막힌 것 앞에 한 칸(4칸 들여쓰기), 불릿 표시 유무 모두 허용" || ko "공유 칸 위치" "$(cat "$f")"
+import sys
+L = open(sys.argv[1], encoding="utf-8").read().splitlines()
+i = L.index("- **팀 공유 사항**")
+assert L[i + 1] == "    - 앱 설치 안내 [문서](https://example.com/a) 정리함" and L[i + 2] == "    - 매점 2일차부터 열림", L
+assert L[i + 3].startswith("- **막힌 것**"), L
+PY
+! grep -q "허브 내부\|FAKE_TEST_SECRET\|D-ABC123" "$f" "$D/sent.log" && grep -q "경고: 팀 공유 사항 3줄을 뺌" "$D/sent.log" && ok "로컬 용어·비밀·내부 번호 줄은 빼고 뺀 줄 수만 경고(원문은 Slack·초안에 없음)" || ko "공유 줄 거름" "$(cat "$D/sent.log")"
+! grep -q "FAKE_TEST_SECRET\|허브 내부" "$D/scrum.log" && ok "빼는 줄의 원문은 로그에도 없음" || ko "로그 원문"
+sed -i.bak 's/2026-11-12/2026-11-11/' "$SH"; rm -f "$SH.bak"; reset; post --date $WK
+! grep -q "팀 공유 사항" "$D/draft/2026-11-12.md" && grep -q "날짜(2026-11-11)가 오늘" "$D/scrum.log" && ok "날짜 줄이 오늘이 아니면 낡은 공유 사항으로 보고 생략" || ko "낡은 공유"
+{ echo '날짜: 2026-11-12'; for i in $(seq 15); do echo "- 줄 $i"; done; } > "$SH"; reset; post --date $WK
+[ "$(grep -c '^    - 줄 ' "$D/draft/2026-11-12.md")" = 12 ] && grep -q "경고: 팀 공유 사항 3줄을 뺌" "$D/sent.log" && ok "공유 사항 12줄 상한" || ko "공유 상한"
+rm -f "$SH"; unset LRM_SCRUM_SHARE_FILE
+
 # ---- --preflight(첫 실행 전 점검) ----
 cat > "$D/pf_gh.sh" <<'G'
 #!/bin/bash

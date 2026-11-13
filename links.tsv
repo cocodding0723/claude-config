@@ -106,6 +106,7 @@ hubs/scripts/adv_review.py	.config/lrm-hubs/adv_review.py	link
 hubs/ci-review-hubs.tsv	.config/lrm-hubs/ci-review-hubs.tsv	link
 hubs/panel.env.example	.config/lrm-hubs/panel.env.example	link
 hubs/scrum.env.example	.config/lrm-hubs/scrum.env.example	link
+hubs/scrum-share.example.md	.config/lrm-hubs/scrum-share.example.md	link
 hubs/scripts/set_main_terminal.sh	.config/lrm-hubs/set_main_terminal.sh	link
 hubs/scripts/unity_slot.sh	.config/lrm-hubs/unity_slot.sh	link
 hubs/roles/role-arch.txt	.config/lrm-hubs/roles/role-arch.txt	link
