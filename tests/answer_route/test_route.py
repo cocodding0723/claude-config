@@ -217,6 +217,102 @@ class FakeOrcaRoute(Base):
             self.assertNotIn("terminal list", f.read())
 
 
+class BlockedRetry(FakeOrcaRoute):
+    """허브 창 입력 막힘(agent_prompt_blocked): 같은 핸들에 재시도, 끝내 막히면 메인 대리 + 창 확인 문구, 시간 초과는 재시도 없음"""
+
+    def setUp(self):
+        super().setUp()
+        self.terms([("term_a", 900)])
+        self.actions.BLOCK_GAP_S = 0
+        self.done = []
+
+    def route(self):
+        import threading
+        ev = threading.Event()
+        out = self.route_mod.Router(self.store, self.route_mod.main_line_sender()).route(
+            "D-0001", "1.1", "slack", BODY, on_done=lambda o: (self.done.append(o), ev.set()))
+        if out.via == "pending":
+            self.assertTrue(ev.wait(10))
+        return out
+
+    def test_blocked_twice_then_sent_once_to_hub_and_nothing_proxied(self):
+        os.environ["FAKE_SEND_BLOCK"] = "term_a:2"
+        out = self.route()
+        self.assertEqual(out.via, "pending")
+        self.assertEqual((self.done[0].ok, self.done[0].via), (True, "hub"))
+        rows = self.sends()
+        self.assertEqual([r[0] for r in rows].count("term_a"), 1)
+        self.assertEqual([r for r in rows if r[0] == MAINH and "사용자 원문" in r[1]], [])
+        self.assertEqual([r[0] for r in rows].count(MAINH), 1)  # 참고 한 줄만
+        self.assertEqual([d["state"] for d in self.store.deliveries("D-0001", "1.1")], ["pending", "hub"])
+
+    def test_blocked_to_the_end_proxies_once_with_note(self):
+        os.environ["FAKE_SEND_BLOCK"] = "term_a:99"
+        self.route()
+        self.assertEqual((self.done[0].ok, self.done[0].via), (True, "proxy"))
+        rows = self.sends()
+        self.assertEqual([r[0] for r in rows], [MAINH])
+        self.assertIn("alpha 허브 창이 확인 창·질문 화면에서 멈춰 있음 — 그 창 확인 필요", rows[0][1])
+        self.assertIn(f"사용자 원문: {BODY}", rows[0][1])
+        with open(os.path.join(self.fake, "failed.log"), encoding="utf-8") as f:
+            self.assertEqual(f.read().split().count("term_a"), 1 + self.actions.BLOCK_RETRIES)
+
+    def test_retry_only_same_handle_not_other_candidates(self):
+        self.terms([("term_a", 900), ("term_b", 500)])
+        os.environ["FAKE_SEND_BLOCK"] = "term_a:99"
+        os.environ["FAKE_SEND_FAIL"] = "term_b:terminal_handle_stale"
+        self.route()
+        with open(os.path.join(self.fake, "failed.log"), encoding="utf-8") as f:
+            fails = f.read().split()
+        self.assertEqual(fails.count("term_b"), 1)  # 막힘 아닌 실패는 재시도하지 않음
+        self.assertEqual(fails.count("term_a"), 1 + self.actions.BLOCK_RETRIES)
+
+    def test_timeout_is_not_retried(self):
+        os.environ["FAKE_SEND_HANG"] = "term_a"
+        self.actions.ORCA_TIMEOUT_S = 1
+        out = self.route()
+        self.assertEqual((out.via, self.done), ("unknown", []))
+        self.assertEqual([r[0] for r in self.sends()].count("term_a"), 1)
+
+    def test_tell_does_not_wait_for_retry(self):
+        os.environ["FAKE_SEND_BLOCK"] = "term_a:99"
+        out = self.route_mod.Router(self.store, self.route_mod.main_line_sender()).tell("alpha", "k", "docsite", "확인 완료")
+        self.assertEqual(out.via, "proxy")
+        self.assertIn("그 창 확인 필요", self.sends()[0][1])
+
+
+class NotifyBlocked(Base):
+    """멈춘 워커 알림(run_notify)도 같은 규칙"""
+
+    def setUp(self):
+        super().setUp()
+        for name in ("workers_retained", "workers_active"):
+            self.write(name + ".json", "[]", self.fake)
+        self.write("terminals.json", json.dumps([{"handle": "term_a", "title": "알파 코디", "worktreePath": "/x/coord-alpha-hub", "agentIdentity": "claude",
+                                                  "connected": True, "writable": True, "orphaned": False, "lastOutputAt": 1}]), self.fake)
+        for log in ("sends.log", "calls.log"):
+            self.write(log, "", self.fake)
+        self.actions.BLOCK_GAP_S = 0
+
+    def sends(self):
+        with open(os.path.join(self.fake, "sends.log"), encoding="utf-8") as f:
+            return [ln.rstrip("\n").split("\t", 1) for ln in f if ln.strip()]
+
+    def test_blocked_then_sent_no_proxy(self):
+        os.environ["FAKE_SEND_BLOCK"] = "term_a:2"
+        rc, msg = self.actions.run_notify({"hubs": [{"slug": "alpha", "lines": ["w1"]}]})
+        self.assertEqual((rc, [r[0] for r in self.sends()]), (0, ["term_a"]))
+        self.assertIn("허브 1곳 알림", msg)
+
+    def test_blocked_to_the_end_proxies_with_note(self):
+        os.environ["FAKE_SEND_BLOCK"] = "term_a:99"
+        rc, msg = self.actions.run_notify({"hubs": [{"slug": "alpha", "lines": ["w1"]}]})
+        rows = self.sends()
+        self.assertEqual((rc, [r[0] for r in rows]), (0, [MAINH]))
+        self.assertIn("alpha 허브 창이 확인 창·질문 화면에서 멈춰 있음 — 그 창 확인 필요", rows[0][1])
+        self.assertIn("메인에 대리 전달", msg)
+
+
 class SlugFolder(Base):
     """hubs.tsv slug(끝이 -hub 인 것·옛 coord-*-hub 형식 포함) → 전달 slug → 실제 폴더 in_hub 일치"""
     CASES = (("automa-hub", "automa-hub", "/w/coord-automa-hub-hub"), ("data-source-hub", "data-source-hub", "/w/coord-data-source-hub-hub"),
