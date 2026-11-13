@@ -21,13 +21,25 @@ git init -q --bare -b dev "$SB/origin.git"
 git clone -q "$SB/origin.git" "$SB/seed" 2>/dev/null; echo hi > "$SB/seed/README.md"; git -C "$SB/seed" add -A; git -C "$SB/seed" commit -q -m seed; git -C "$SB/seed" push -q origin HEAD:dev 2>/dev/null
 git clone -q "$SB/origin.git" "$SB/repo" 2>/dev/null
 
-# 가짜 orca: list 는 $F/list.json, set 은 기록. FAKE_LIST_FAIL=1 이면 list 실패
+# 가짜 orca: list 는 $F/list.json, set·show 는 등록 상태를 흉내냄. FAKE_LIST_FAIL=1 이면 list 실패
+#  FAKE_REG_AFTER=n: show 가 n 번 실패한 뒤에야 등록된 것으로 응답(등록 지연). FAKE_NEVER_REG=1: 끝내 미등록
+#  FAKE_SET_FAIL=1: set 이 실패. FAKE_SET_NOOP=1: set 이 성공을 말하지만 부모는 반영 안 됨(--json 이 거짓 성공을 내던 현상)
 cat > "$BIN/orca" <<'EOS'
 #!/bin/bash
 echo "$*" >> "$FAKE_DIR/orca.calls"
-case "$1 $2" in
+cmd="$1 $2"; wt="" par=""
+while [ $# -gt 0 ]; do case "$1" in --worktree) wt="${2#path:}"; shift 2;; --parent-worktree) par="${2#path:}"; shift 2;; *) shift;; esac; done
+key="$FAKE_DIR/parent.$(basename "$wt")"
+case "$cmd" in
   "worktree list") [ "${FAKE_LIST_FAIL:-}" = 1 ] && exit 1; cat "$FAKE_DIR/list.json" ;;
-  "worktree set") echo '{"ok":true}' ;;
+  "worktree show")
+    n=$(($(cat "$FAKE_DIR/show.n" 2>/dev/null || echo 0) + 1)); echo "$n" > "$FAKE_DIR/show.n"
+    if [ "${FAKE_NEVER_REG:-}" = 1 ] || [ "$n" -le "${FAKE_REG_AFTER:-0}" ]; then echo '{"ok":false,"error":{"code":"selector_not_found"}}'; exit 1; fi
+    jq -nc --arg p "$(cat "$key" 2>/dev/null)" '{ok:true,result:{worktree:{parentWorktreeId:(if $p == "" then null else "r::" + $p end)}}}' ;;
+  "worktree set")
+    [ "${FAKE_SET_FAIL:-}" != 1 ] || { echo '{"ok":false}'; exit 1; }
+    [ "${FAKE_SET_NOOP:-}" = 1 ] || { [ -z "$par" ] || printf '%s' "$par" > "$key"; }
+    echo '{"ok":true}' ;;
   *) exit 1 ;;
 esac
 EOS
@@ -53,7 +65,7 @@ setlist() { # 허브 하위 n 개인 목록
 }
 run() { # 이름 [env…]. 결과: RC, $SB/out, $SB/err
   : > "$F/orca.calls"; : > "$F/gc.calls"; : > "$F/report.calls"
-  env "${@:2}" PATH="$BIN:$PATH" FAKE_DIR="$F" REPO="$SB/repo" WS_ROOT="$WSR" LRM_WS_GC="$BIN/ws_gc.sh" LRM_HUB_REPORT="$BIN/hub_report.py" \
+  env LRM_WS_REG_WAIT=3 LRM_WS_REG_INTERVAL=0.1 "${@:2}" PATH="$BIN:$PATH" FAKE_DIR="$F" REPO="$SB/repo" WS_ROOT="$WSR" LRM_WS_GC="$BIN/ws_gc.sh" LRM_HUB_REPORT="$BIN/hub_report.py" \
     bash "$CW" --hub "$HUBP" --name "$1" --paths README.md > "$SB/out" 2>"$SB/err"
   RC=$?
 }
@@ -91,7 +103,7 @@ chk "[P2] TERM 무시 자식이 그룹 KILL 로 종료됨(4초 뒤 표시 없음
 # ---- 한글 이름·--json·중복 거부 ----
 runx() { # 인자 그대로 전달(환경은 LOC 로 로케일 지정). 결과: RC, $SB/out, $SB/err
   : > "$F/orca.calls"; : > "$F/gc.calls"
-  env LC_ALL="${LOC:-ko_KR.UTF-8}" PATH="$BIN:$PATH" FAKE_DIR="$F" REPO="$SB/repo" WS_ROOT="$WSR" LRM_WS_GC="$BIN/ws_gc.sh" LRM_HUB_REPORT="$BIN/hub_report.py" \
+  env LRM_WS_REG_WAIT=3 LRM_WS_REG_INTERVAL=0.1 LC_ALL="${LOC:-ko_KR.UTF-8}" PATH="$BIN:$PATH" FAKE_DIR="$F" REPO="$SB/repo" WS_ROOT="$WSR" LRM_WS_GC="$BIN/ws_gc.sh" LRM_HUB_REPORT="$BIN/hub_report.py" \
     bash "$CW" --hub "$HUBP" --paths README.md "$@" > "$SB/out" 2>"$SB/err"
   RC=$?
 }
@@ -132,6 +144,18 @@ runx --name "[LRM-515] 등록됨"
 chk "폴더는 없어도 Orca 에 같은 경로가 등록돼 있으면 거부(종료 3)" '[ "$RC" = 3 ] && [ ! -e "$WSR/LRM-515-등록됨" ]' "rc=$RC"
 runx --name "[LRM-514] 기존" --json
 chk "--json 도 중복이면 거부(JSON 출력 없음)" '[ "$RC" = 3 ] && [ ! -s "$SB/out" ]'
+
+# ---- 부모 허브 연결 경합(등록 지연·영구 실패) ----
+setlist 1; rm -f "$F"/show.n; run p1 FAKE_REG_AFTER=3
+chk "등록 지연(show 3회 실패): 기다렸다 연결, 종료 0" '[ "$RC" = 0 ] && made p1 && [ "$(cat "$F/parent.p1")" = "$HUBP" ]' "rc=$RC $(cat "$SB/err")"
+setlist 1; rm -f "$F"/show.n; run p2 FAKE_NEVER_REG=1 LRM_WS_REG_WAIT=1
+chk "끝내 미등록: 종료 1, 원인·수동 명령 출력, 경로 출력 없음" '[ "$RC" = 1 ] && grep -q "부모 허브 연결 실패" "$SB/err" && grep -qF -- "orca worktree set --worktree path:$WSR/p2 --display-name '"'"'p2'"'"' --parent-worktree path:$HUBP" "$SB/err" && [ ! -s "$SB/out" ]' "rc=$RC $(cat "$SB/err")"
+setlist 1; rm -f "$F"/show.n; run p3 FAKE_SET_FAIL=1 LRM_WS_REG_WAIT=1
+chk "set 이 계속 실패: 종료 1" '[ "$RC" = 1 ] && grep -q "부모 허브 연결 실패" "$SB/err"'
+setlist 1; rm -f "$F"/show.n; FAKE_SET_NOOP=1 LRM_WS_REG_WAIT=1 runx --name p4 --json
+chk "set 이 성공을 말해도 부모가 비면 실패(종료 1, JSON 출력 없음)" '[ "$RC" = 1 ] && [ ! -s "$SB/out" ]'
+setlist 1; rm -f "$F"/show.n; runx --name p5 --json
+chk "--json 의 parent 는 show 로 확인한 값" '[ "$RC" = 0 ] && jq -e --arg h "$HUBP" ".parent == \$h" "$SB/out" >/dev/null' "$(cat "$SB/out" "$SB/err")"
 
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]

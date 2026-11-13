@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 허브 하위 워커용 워크스페이스 생성(기본 sparse·detached). 출력: 경로 한 줄(--json 이면 path·branch·displayName·parent JSON 한 줄)
-# 종료 코드: 0 생성, 2 인자 오류, 3 같은 이름 폴더가 이미 있음(덮어쓰지 않음)
+# 종료 코드: 0 생성(부모 연결 확인됨), 1 부모 허브 연결 실패(폴더는 남음, stderr 에 수동 명령), 2 인자 오류, 3 같은 이름 폴더가 이미 있음(덮어쓰지 않음)
 # 허브는 출력(경로·JSON)을 그대로 쓴다. 'LRM-507-*' 같은 폴더를 추측해 고르면 다른 허브의 작업 공간을 고를 수 있음.
 set -euo pipefail
 REPO="${REPO:-$HOME/orca/LoveRevolutionMaker}"
@@ -17,6 +17,8 @@ CFG_WS_GC="${LRM_WS_GC:-$HOME/.config/lrm-hubs/ws_gc.sh}"
 CFG_GC_TIMEOUT="${LRM_HUB_GC_TIMEOUT:-60}"   # 상한 정리에 줄 제한 시간(초). 넘기면 정리를 끊고 생성을 계속함
 CFG_GC_GRACE="${LRM_HUB_GC_GRACE:-5}"        # 시간 초과 때 TERM 뒤 KILL 까지 유예(초)
 CFG_HUB_REPORT="${LRM_HUB_REPORT:-$HOME/.config/lrm-hubs/hub_report.py}"
+CFG_REG_WAIT="${LRM_WS_REG_WAIT:-30}"          # 새 작업 공간이 Orca 에 등록·부모 연결되길 기다리는 최대 시간(초)
+CFG_REG_INTERVAL="${LRM_WS_REG_INTERVAL:-1.5}"  # 재시도 간격(초)
 count_kids() { # 허브 경로 → 등록된 하위 수. 조회 실패 시 빈 값
   orca worktree list --limit 1000 --json 2>/dev/null | jq -r --arg h "$1" \
     '[.result.worktrees[].id] as $ids | [.result.worktrees[] | select(.path == $h) | (.childWorktreeIds // []) | map(select(. as $c | $ids | index($c))) | length][0] // empty' 2>/dev/null || true
@@ -83,9 +85,25 @@ else
   git -C "$P" sparse-checkout set --no-cone $PATHS
   GIT_LFS_SKIP_SMUDGE=1 git -C "$P" checkout -q
 fi
-orca worktree set --worktree "path:$P" --display-name "$NAME" --parent-worktree "path:$HUB" --json >/dev/null
+# git worktree add 직후엔 Orca 가 새 작업 공간을 아직 등록하지 않아 set 이 실패할 수 있음(11-13 실측). 등록·부모 반영을 확인할 때까지 재시도하고, 끝내 실패하면 부모 없이 끝내지 않고 종료 1
+link_parent() { # 등록돼 있으면 set 실행. 성공 기준은 show 가 돌려준 부모 id 가 허브 경로로 끝나는 것
+  local out
+  out=$(orca worktree show --worktree "path:$P" --json 2>/dev/null) && echo "$out" | jq -e '.ok' >/dev/null 2>&1 || return 1
+  orca worktree set --worktree "path:$P" --display-name "$NAME" --parent-worktree "path:$HUB" --json >/dev/null 2>&1 || return 1
+  out=$(orca worktree show --worktree "path:$P" --json 2>/dev/null) || return 1
+  PARENT_OK=$(echo "$out" | jq -r --arg h "::$HUB" '(.result.worktree.parentWorktreeId // "") | select(endswith($h)) | sub("^.*::"; "")' 2>/dev/null) && [ -n "$PARENT_OK" ]
+}
+PARENT_OK=""
+deadline=$((SECONDS + CFG_REG_WAIT))
+until link_parent; do
+  if [ "$SECONDS" -ge "$deadline" ]; then
+    echo "부모 허브 연결 실패: ${CFG_REG_WAIT}초 안에 Orca 가 $P 를 등록·연결하지 않음. 작업 공간 폴더는 만들어졌음 — Orca 실행 여부(orca status) 확인 뒤 수동 연결: orca worktree set --worktree path:$P --display-name '$NAME' --parent-worktree path:$HUB" >&2
+    exit 1
+  fi
+  sleep "$CFG_REG_INTERVAL"
+done
 if [ "$JSON" = 1 ]; then
-  jq -nc --arg path "$P" --arg branch "$BRANCH" --arg displayName "$NAME" --arg parent "$HUB" \
+  jq -nc --arg path "$P" --arg branch "$BRANCH" --arg displayName "$NAME" --arg parent "$PARENT_OK" \
     '{path:$path, branch:(if $branch == "" then null else $branch end), displayName:$displayName, parent:$parent}'
 else
   echo "$P"
