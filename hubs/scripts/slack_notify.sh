@@ -121,7 +121,7 @@ if ! CHK="$(printf '%s' "$1" | "$PY" -I "$HR" check-text ${ATT[@]+"${ATT[@]}"} 2
 # 결정 카드 필수 항목(배경·용어·선택지 결과). 경로 검사처럼 우회 불가. 규칙은 decide_card.py 한 곳
 if [ "$KIND" = decide ]; then
   DC=(); [ "$OPT_SET" = 0 ] || DC=(--options "$OPTIONS"); [ "$DID_SET" = 0 ] || DC+=(--decision-id "$DECISION_ID")  # 번호 재사용(다른 질문)도 같은 검사에서 거부
-  if ! CHK="$(printf '%s' "$1" | "$PY" -I "$HR" check-decide ${DC[@]+"${DC[@]}"} 2>&1)"; then die "${CHK#오류: }"; fi
+  if ! CHK="$(printf '%s' "$1" | "$PY" -I "$HR" check-decide ${DC[@]+"${DC[@]}"} ${ATT[@]+"${ATT[@]}"} 2>&1)"; then die "${CHK#오류: }"; fi
   [ -z "$CHK" ] || echo "$CHK" >&2
 fi
 LRM_SCRIPT_DIR="$(dirname "$HR")"; export LRM_SCRIPT_DIR  # FORM_PY 가 decide_card 를 찾는 곳

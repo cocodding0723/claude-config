@@ -6,6 +6,7 @@ input=$(cat)
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
 # heredoc 본문·따옴표 안 문구(echo·python 문자열 등)는 명령이 아니므로 지우고 판정. 실패하면 원문 그대로
 GUARD_DIR=$(cd "$(dirname "$(perl -MCwd=realpath -e 'print realpath shift' "${BASH_SOURCE[0]}")")" && pwd -P)
+raw_cmd=$cmd
 stripped=$(printf '%s' "$cmd" | python3 -I "$GUARD_DIR/lib/strip_text.py" 2>/dev/null) && [ -n "$stripped" ] && cmd="$stripped"
 cwd=$(printf '%s' "$input" | jq -r '.cwd // ""')
 
@@ -35,6 +36,28 @@ printf '%s' "$cmd" | grep -Eq "${G}(branch)[^|;&]*[[:space:]]-D\b"  && deny "git
 printf '%s' "$cmd" | grep -Eq "${G}(stash)[^|;&]*(drop|clear)"    && deny "git stash drop/clear 차단됨."
 printf '%s' "$cmd" | grep -Eq "${G}(filter-branch|filter-repo)([[:space:]]|$)|${G}(update-ref)[^|;&]*[[:space:]]-d([[:space:]]|$)" && deny "히스토리 재작성 명령 차단됨."
 printf '%s' "$cmd" | grep -Eq "${G}(push)[^|;&]*(--delete|[[:space:]]:[a-zA-Z])" && deny "원격 브랜치 삭제 차단됨."
+
+# ---- 로컬 게이트 우회 금지 (게임 저장소, 사용자 11-13 D-LOCALGATE) ----
+# push --no-verify(-n 은 dry-run 이라 제외)·-c core.hooksPath·GIT_CONFIG_KEY_n 환경 변수·hooksPath/hooks.localGate 설정 변경을 막음
+. "$GUARD_DIR/lib/local_gate_repo.sh"
+LG_DENY="로컬 게이트 우회 금지(사용자 11-13 D-LOCALGATE). 게임 저장소 push 는 Tools/ci/local-gate.sh 통과가 필수. 게이트가 실패하면 원인을 고치거나 coordinator 에 보고."
+if printf '%s' "$raw_cmd" | grep -Eq '(^|[^[:alnum:]_-])push([^[:alnum:]_-]|$)'; then
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    d=$(printf '%s' "$line" | jq -r '.dir // empty' 2>/dev/null); [ -n "$d" ] && lg_applies "$d" || continue
+    printf '%s' "$line" | jq -e '(.flags // []) | any(test("^--no-v[a-z]*$"))' >/dev/null 2>&1 && deny "$LG_DENY (--no-verify)"
+    # -c·환경 변수는 push_targets 가 따옴표를 푼 값으로 검사. 문구 속 글자(commit -m "…")는 push 명령이 아니라 여기 안 옴
+    printf '%s' "$line" | jq -e '((.cfg // []) | any(test("^core\\.hookspath";"i"))) or ((.env // []) | any(test("^GIT_CONFIG_(KEY_[0-9]+=core\\.hookspath|PARAMETERS=.*core\\.hookspath)";"i")))' >/dev/null 2>&1 && deny "$LG_DENY (core.hooksPath 변경)"
+    printf '%s' "$line" | jq -e '(.cfg // []) | any(test("^hooks\\.localgate=(off|false|0)";"i"))' >/dev/null 2>&1 && deny "$LG_DENY (hooks.localGate=off)"
+    # bash -c "…" 안처럼 push_targets 가 못 푸는 곳은 정리본(따옴표 문구 제거, bash -c 내용은 유지)으로 보조 검사
+    printf '%s' "$cmd" | grep -Eiq -- '(^|[[:space:]])(-c[[:space:]]*|--config-env[=[:space:]]*)core\.hookspath|GIT_CONFIG_(KEY_[0-9]+=|PARAMETERS=)[^[:space:]]*core\.hookspath' && deny "$LG_DENY (core.hooksPath 변경)"
+    printf '%s' "$cmd" | grep -Eiq -- '(^|[[:space:]])-c[[:space:]]*hooks\.localgate=(off|false|0)' && deny "$LG_DENY (hooks.localGate=off)"
+  done < <(printf '%s' "$raw_cmd" | python3 -I "$GUARD_DIR/lib/push_targets.py" "$cwd" 2>/dev/null)
+fi
+if [ -n "$cwd" ] && lg_applies "$cwd" && printf '%s' "$cmd" | grep -Eq "(^|[[:space:];&|(])git[[:space:]]([^|;&]*[[:space:]])?config[[:space:]]"; then
+  printf '%s' "$cmd" | grep -Eiq 'core\.hookspath' && ! printf '%s' "$cmd" | grep -Eq -- '--(get|get-all|list|show-origin)\b|[[:space:]]-l\b' && deny "$LG_DENY (core.hooksPath 설정)"
+  printf '%s' "$cmd" | grep -Eiq 'hooks\.localgate([[:space:]]+(off|false|0|no)|.*--unset)|--unset[^|;&]*hooks\.localgate' && deny "$LG_DENY (hooks.localGate 끄기)"
+fi
 
 # ---- 공유 브랜치 히스토리 보호 (rebase / amend) ----
 # "서로 공유하는 브랜치의 커밋 그래프는 함부로 변경하지 않습니다"
