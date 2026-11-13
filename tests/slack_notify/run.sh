@@ -33,7 +33,7 @@ newhome main
 
 run_n() { # 인자를 slack_notify.sh 에 그대로 전달. 결과: RC, $SB/out, $SB/err, $LOG/post.json
   : > "$LOG/calls.log"; : > "$LOG/post.json"; : > "$LOG/posts.log"
-  HOME="$HOME_DIR" PATH="$BIN:$PATH" SLACK_API_BASE="$API" FAKE_CURL_LOG="$LOG" bash "$NOTIFY" "$@" > "$SB/out" 2> "$SB/err"
+  HOME="$HOME_DIR" PATH="$BIN:$PATH" SLACK_API_BASE="$API" FAKE_CURL_LOG="$LOG" python3 "$HERE/augment.py" "$NOTIFY" "$@" > "$SB/out" 2> "$SB/err"  # decide 필수 항목은 augment.py 가 채움(DECIDE_RAW=1 이면 그대로)
   RC=$?
 }
 # 본문 조회. 색 띠 본문(attachments[0].text)이 있으면 그것을, 첫 줄 자동 굵게(*…*)는 풀어서 반환. 없으면 text·initial_comment
@@ -230,7 +230,7 @@ run_n --kind done "실패 응답"
 
 # ---- F. --choices 안내 줄 -----------------------------------------------------------------------
 newhome f
-BODY=$'주제\n\n• 무엇: 정할 것'
+BODY=$'주제\n배경: 시험용 배경 설명 문장입니다\n용어: 없음\n\n• 무엇: 정할 것'
 HEAD=":비서-선택해주세요: $BODY"
 G2="👉 답: :비서-a: A · :비서-b: B · :비서-추천대로: 추천대로 · :비서-보류: 보류"
 G3="👉 답: :비서-a: A · :비서-b: B · :비서-c: C · :비서-추천대로: 추천대로 · :비서-보류: 보류"
@@ -240,11 +240,11 @@ for n in 2 3 4; do
   run_n --kind decide --no-doc --choices "$n" "$BODY"
   [ "$RC" = 0 ] && [ "$(text)" = "$HEAD"$'\n\n'"$g" ] && [ "$(errn)" = 0 ] && ok "F --choices $n → 끝에 안내 줄 정확히 일치, 👉 검사 통과(경고 없음)" || ko "F --choices $n" "rc=$RC $(text | tail -1) / $(cat "$SB/err")"
 done
-run_n --kind decide --no-doc --choices 3 $'주제\n\n• 무엇: 정할 것\n\n참고: 샘플-123'
+run_n --kind decide --no-doc --choices 3 $'주제\n배경: 시험용 배경 설명 문장입니다\n용어: 없음\n\n• 무엇: 정할 것\n\n참고: 샘플-123'
 [ "$(text)" = "$HEAD"$'\n\n'"$G3"$'\n\n참고: 샘플-123' ] && ok "F '참고:' 줄이 있으면 안내 줄을 그 앞에 끼움(참고가 맨 아래 유지)" || ko "F 참고 앞" "$(text)"
-run_n --kind decide --no-doc --choices 4 $'주제\n\n👉 답: 직접 쓴 줄'
-[ "$(text)" = $':비서-선택해주세요: 주제\n\n👉 답: 직접 쓴 줄' ] && [ "$(text | grep -c 👉)" = 1 ] && ok "F 본문에 👉 줄이 이미 있으면 안내 줄을 붙이지 않음" || ko "F 중복 방지" "$(text)"
-run_n --kind decide --no-doc --choices 2 $'주제\n\n```\n👉 코드 안\n```'
+run_n --kind decide --no-doc --choices 4 $'주제\n배경: 시험용 배경 설명 문장입니다\n용어: 없음\n\n👉 답: 직접 쓴 줄'
+[ "$(text)" = $':비서-선택해주세요: 주제\n배경: 시험용 배경 설명 문장입니다\n용어: 없음\n\n👉 답: 직접 쓴 줄' ] && [ "$(text | grep -c 👉)" = 1 ] && ok "F 본문에 👉 줄이 이미 있으면 안내 줄을 붙이지 않음" || ko "F 중복 방지" "$(text)"
+run_n --kind decide --no-doc --choices 2 $'주제\n배경: 시험용 배경 설명 문장입니다\n용어: 없음\n\n```\n👉 코드 안\n```'
 [ "$(text | grep -c '^👉 답:')" = 1 ] && ok "F 코드 블록 안의 👉 는 직접 쓴 줄로 치지 않음(안내 줄 부착)" || ko "F 코드 안 👉" "$(text)"
 run_n --kind decide --no-doc "주제"; ! text | grep -q '👉' && ok "F --choices 없으면 안내 줄 없음(기존 동작)" || ko "F choices 없음" ""
 for bad in 1 5 0 abc ""; do
@@ -271,8 +271,8 @@ run_n "$C1 $D1 $C1$VS $D1$VS 🅰️"
 [ "$(text)" = "$C1 $D1 $C1$VS $D1$VS :비서-a:" ] && ok "F --kind 없는 🅲·🅳 는 치환하지 않음(🅰️ 기존 치환은 유지)" || ko "F kind 없는 🅲🅳" "$(text)"
 run_n --kind progress "🔄 $C1 $D1 $C1$VS $D1$VS 🅰️"
 [ "$(text)" = ":비서-진행중: :비서-c: :비서-d: :비서-c: :비서-d: :비서-a:" ] && ok "F --kind 지정 시 🅲·🅳 → :비서-c:·:비서-d: 치환(변형 선택자 유무 모두)" || ko "F kind 🅲🅳 치환" "$(text)"
-run_n --kind decide --no-doc --choices 3 $'주제\n\n• 안 '"$C1"
-[ "$(text | sed -n 3p)" = "• 안 :비서-c:" ] && ok "F --kind decide --no-doc --choices 본문의 🅲 도 치환" || ko "F choices 🅲" "$(text)"
+run_n --kind decide --no-doc --choices 3 $'주제\n배경: 시험용 배경 설명 문장입니다\n용어: 없음\n\n• 안 '"$C1"
+[ "$(text | sed -n 5p)" = "• 안 :비서-c:" ] && ok "F --kind decide --no-doc --choices 본문의 🅲 도 치환" || ko "F choices 🅲" "$(text)"
 legacy_cmp() { # 🅲·🅳 규칙 도입 전(402039d) 치환표 8종. --kind 없는 호출은 이 결과와 같아야 함
   printf '%s' "$1" | sed -e 's/🅰️/:비서-a:/g' -e 's/🅱️/:비서-b:/g' -e 's/✅/:비서-추천대로:/g' -e 's/❌/:비서-보류:/g' -e 's/🙋/:비서-선택해주세요:/g' -e 's/📄/:비서-공유합니다:/g' -e 's/🔄/:비서-진행중:/g' -e 's/⚠️/:비서-긴급:/g'
 }
@@ -281,13 +281,13 @@ for inp in "🅲 안 C" "$D1$VS 안 D" "선택: ✅ 추천대로 🅲" $'첫줄\
   run_n "$inp"; [ "$(text)" = "$(legacy_cmp "$inp")" ] || { same=0; ko "F 이전 치환표와 다름" "$inp → $(text)"; }
 done
 [ "$same" = 1 ] && ok "F --kind 없는 호출은 🅲·🅳 포함 5개 입력에서 이전 치환표(줄머리 ✅ 예외 제외)와 같은 결과" || true
-run_n --kind decide --no-doc --choices 2 $'주제\n\n✅ 완료 표시'
-[ "$(text | sed -n 3p)" = ":white_check_mark: 완료 표시" ] && [ "$(text | tail -n 1)" = "$G2" ] && ok "F 본문 줄머리 ✅ 는 완료 표시, 안내 줄의 :비서-추천대로: 는 그대로" || ko "F 줄머리 ✅ + 안내 줄" "$(text)"
-run_n --kind decide --no-doc --choices 2 $'참고: ✅ 문서\n\n본문'
-[ "$(text)" = $'참고: :비서-추천대로: 문서\n\n본문\n\n'"$G2" ] && [ "$(lastrec | jq -r '.title')" = "참고: :비서-추천대로: 문서" ] && ok "F 첫 줄이 '참고:' 면 안내 줄을 끝에 붙임(맨 위 삽입·빈 제목 없음)" || ko "F 첫 줄 참고" "$(text) / $(lastrec | jq -r '.title')"
-run_n --kind decide --no-doc --choices 2 $'주제\n\n참고: a\n\n• 무엇: x\n\n참고: b'
-[ "$(text)" = $':비서-선택해주세요: 주제\n\n참고: a\n\n• 무엇: x\n\n'"$G2"$'\n\n참고: b' ] && ok "F '참고:' 가 둘이면 마지막 참고 앞에 안내 줄" || ko "F 참고 둘" "$(text)"
-run_n --kind decide --no-doc --choices 2 $'주제\n\n👉 참고 링크'
+run_n --kind decide --no-doc --choices 2 $'주제\n배경: 시험용 배경 설명 문장입니다\n용어: 없음\n\n✅ 완료 표시'
+[ "$(text | sed -n 5p)" = ":white_check_mark: 완료 표시" ] && [ "$(text | tail -n 1)" = "$G2" ] && ok "F 본문 줄머리 ✅ 는 완료 표시, 안내 줄의 :비서-추천대로: 는 그대로" || ko "F 줄머리 ✅ + 안내 줄" "$(text)"
+run_n --kind decide --no-doc --choices 2 $'참고: ✅ 문서\n배경: 시험용 배경 설명 문장입니다\n용어: 없음\n\n본문'
+[ "$(text)" = $'참고: :비서-추천대로: 문서\n배경: 시험용 배경 설명 문장입니다\n용어: 없음\n\n본문\n\n'"$G2" ] && [ "$(lastrec | jq -r '.title')" = "참고: :비서-추천대로: 문서" ] && ok "F 첫 줄이 '참고:' 면 안내 줄을 끝에 붙임(맨 위 삽입·빈 제목 없음)" || ko "F 첫 줄 참고" "$(text) / $(lastrec | jq -r '.title')"
+run_n --kind decide --no-doc --choices 2 $'주제\n배경: 시험용 배경 설명 문장입니다\n용어: 없음\n\n참고: a\n\n• 무엇: x\n\n참고: b'
+[ "$(text)" = $':비서-선택해주세요: 주제\n배경: 시험용 배경 설명 문장입니다\n용어: 없음\n\n참고: a\n\n• 무엇: x\n\n'"$G2"$'\n\n참고: b' ] && ok "F '참고:' 가 둘이면 마지막 참고 앞에 안내 줄" || ko "F 참고 둘" "$(text)"
+run_n --kind decide --no-doc --choices 2 $'주제\n배경: 시험용 배경 설명 문장입니다\n용어: 없음\n\n👉 참고 링크'
 [ "$(text | tail -n 1)" = "$G2" ] && ok "F '답:' 없는 👉 줄이 있어도 안내 줄을 붙임" || ko "F 👉 엄격 부착" "$(text)"
 newhome pyfail2
 FAKE_PY_FAIL=attach run_n --kind decide --no-doc --choices 2 "$BODY"
@@ -437,23 +437,23 @@ run_n "$two_ans"
 
 # ---- H. 번호 이모지 결정 카드(--options) ·할 일 번호(--todo-id) ------------------------------------
 newhome h
-OK3='1=오전 9시,2=오전 10시,3=지금처럼'
-CBODY=$'알림 시각\n\n- 왜: 제각각'
-CARD=$':비서-선택해주세요: 알림 시각\n\n- 왜: 제각각\n\n:one: 오전 9시\n:two: 오전 10시\n:three: 지금처럼\n:star: 추천: :two: · 되돌리기: 쉬움\n👉 답: :one: :two: :three: 중 하나 · :white_check_mark: 추천대로 · :x: 보류\n\n참고: 결정 D-0001 · 3/9'
+OK3='1=오전 9시 => 출근 전에 도착,2=오전 10시 => 업무 시작 뒤에 도착,3=지금처럼 => 변화 없음'
+CBODY=$'알림 시각\n배경: 알림 개편 중이라 시각을 하나로 맞추려 함\n용어: 푸시 — 앱 밖 알림\n이유: 출근 전 열람률이 높음\n- 왜: 제각각'
+CARD=$':비서-선택해주세요: 알림 시각\n\n- 배경: 알림 개편 중이라 시각을 하나로 맞추려 함\n- 왜: 제각각\n\n:one: 오전 9시\n    ↳ 고르면: 출근 전에 도착\n:two: 오전 10시\n    ↳ 고르면: 업무 시작 뒤에 도착\n:three: 지금처럼\n    ↳ 고르면: 변화 없음\n:star: 추천: :two: · 이유: 출근 전 열람률이 높음 · 되돌리기: 쉬움\n- 용어: 푸시 — 앱 밖 알림\n👉 답: :one: :two: :three: 중 하나 · :white_check_mark: 추천대로 · :x: 보류\n\n참고: 결정 D-0001 · 3/9'
 run_n --kind decide --no-doc --options "$OK3" --recommend 2 --reversible 쉬움 --decision-id D-0001 --seq 3/9 "$CBODY"
 [ "$RC" = 0 ] && [ "$(text)" = "$CARD" ] && [ "$(errn)" = 0 ] && ok "H 카드: 선택지·추천·되돌리기·답 줄·결정 번호 줄을 도구가 생성(정확히 일치, 경고 없음)" || ko "H 카드 모양" "rc=$RC $(text) / $(cat "$SB/err")"
 r=$(lastrec)
 [ "$(printf '%s' "$r" | jq -c '[.form_kind,.decision_id,.options,.recommended,.reversible,.seq]')" = '["decide","D-0001",{"1":"오전 9시","2":"오전 10시","3":"지금처럼"},2,"쉬움","3/9"]' ] && [ "$(printf '%s' "$r" | jq -r '.title')" = ":비서-선택해주세요: 알림 시각" ] \
   && ok "H sent 기록: decision_id·options(번호→문구)·recommended(숫자)·reversible·seq" || ko "H sent 기록" "$r"
-run_n --kind decide --no-doc --options '1=가 안,2=나 안' --recommend 1 --decision-id D-0002 $'주제\n\n- 왜: 배경\n\n참고: 샘플-1'
-[ "$(text)" = $':비서-선택해주세요: 주제\n\n- 왜: 배경\n\n:one: 가 안\n:two: 나 안\n:star: 추천: :one:\n👉 답: :one: :two: 중 하나 · :white_check_mark: 추천대로 · :x: 보류\n\n참고: 샘플-1\n결정 D-0002' ] \
+run_n --kind decide --no-doc --options '1=가 안,2=나 안' --recommend 1 --decision-id D-0002 $'주제\n- 왜: 배경\n\n참고: 샘플-1'
+[ "$(text)" = $':비서-선택해주세요: 주제\n\n- 배경: 시험용 배경 설명 문장입니다\n- 왜: 배경\n\n:one: 가 안\n    ↳ 고르면: 시험 결과\n:two: 나 안\n    ↳ 고르면: 시험 결과\n:star: 추천: :one:\n- 용어: 없음\n👉 답: :one: :two: 중 하나 · :white_check_mark: 추천대로 · :x: 보류\n\n참고: 샘플-1\n결정 D-0002' ] \
   && [ "$(lastrec | jq -c 'has("reversible"), has("seq")' | tr '\n' ,)" = "false,false," ] && ok "H '참고:' 가 있으면 선택지는 그 앞, 결정 번호는 참고 블록 끝. 되돌리기·순번 없으면 줄·필드 없음" || ko "H 참고 앞" "$(text) / $(lastrec)"
 run_n --kind decide --no-doc --options '1=가,2=나,3=다,4=라' --recommend 4 --decision-id D-0003 "$CBODY"
 [ "$(payload '[.attachments[0].blocks[1].elements[].action_id] | join(",")')" = "pick_1,pick_2,pick_3,pick_4,custom" ] \
   && [ "$(payload '.attachments[0].blocks[1].elements[3].style')" = primary ] && [ "$(payload '.attachments[0].blocks[1].elements[0].style')" = null ] \
   && [ "$(payload '.attachments[0].blocks[1].block_id')" = "lrm_decide:D-0003" ] && [ "$(payload '.attachments[0].blocks[1].elements[1].value')" = "D-0003|2" ] \
   && ok "Z 번호 카드 → 버튼 4개(추천 primary)·직접 입력·결정 번호 값" || ko "Z 버튼" "$(payload '.attachments[0].blocks[1]' | head -c 300)"
-[ "$RC" = 0 ] && text | grep -qx ':four: 라' && text | grep -qxF '👉 답: :one: :two: :three: :four: 중 하나 · :white_check_mark: 추천대로 · :x: 보류' && text | grep -qx ':star: 추천: :four:' && ok "H 선택지 4개·추천 4" || ko "H 4개" "rc=$RC $(text)"
+[ "$RC" = 0 ] && text | grep -qx ':four: 라' && text | grep -qxF '👉 답: :one: :two: :three: :four: 중 하나 · :white_check_mark: 추천대로 · :x: 보류' && text | grep -q '^:star: 추천: :four:' && ok "H 선택지 4개·추천 4" || ko "H 4개" "rc=$RC $(text)"
 run_n --kind decide --no-doc --options '1=9시, 10시 사이,2=b' --recommend 1 --decision-id D-0004 "$CBODY"
 [ "$(lastrec | jq -r '.options["1"]')" = "9시, 10시 사이" ] && ok "H 문구 안 쉼표(뒤에 '숫자=' 없음)는 문구로 유지" || ko "H 쉼표" "$(lastrec)"
 run_n --kind decide --no-doc --options ' 1 = 가 , 2=나 ' --recommend 1 --decision-id D-0005 "$CBODY"
@@ -767,5 +767,32 @@ run_n --kind progress $'진행 목록\n\n- 항목 <https://example.slack.com/arc
 printf '가나다라마바사아자차카타파하가나다라마바사아자차 %s' "xo$(printf xb)-1234567890-abcdefghij" > "$LOG/history.text"
 run_n --kind done --quote "$Q" $'완료\n\n- 무엇: 끝'
 [ "$RC" = 0 ] && text | grep -qxF "<$URL|원본>" && ! text | grep -q 'xo' && ok "N 비밀 검사는 40자 자르기 전에(경계에서 잘린 비밀 조각도 인용 안 됨)" || ko "N 검사 순서" "$(text)"
+# ---- P. 결정 카드 필수 항목(배경·용어·선택지 결과). DECIDE_RAW=1 로 보조 채움 없이 호출 ------------------
+newhome p
+PO='1=오전 9시 => 출근 전에 도착,2=오전 10시 => 업무 시작 뒤에 도착'
+PB=$'알림 시각\n배경: 알림 개편 중이라 시각을 하나로 맞추려 함\n용어: 푸시 — 앱 밖 알림'
+raw_n() { DECIDE_RAW=1 run_n "$@"; }
+raw_n --kind decide --no-doc --options "$PO" --recommend 1 --decision-id D-0901 "$PB"
+[ "$RC" = 0 ] && posted && ok "P 배경·용어·결과 모두 있음 → 전송" || ko "P 통과" "rc=$RC $(cat "$SB/err")"
+raw_n --kind decide --no-doc --options "$PO" --recommend 1 --decision-id D-0902 $'알림 시각\n용어: 푸시 — 앱 밖 알림'
+[ "$RC" = 2 ] && nocall && grep -q '없는 항목: 배경' "$SB/err" && grep -q '예:' "$SB/err" && ok "P 배경 없음 → 종료 코드 2·원인·조치·예시, 전송 없음" || ko "P 배경 없음" "rc=$RC $(cat "$SB/err")"
+raw_n --kind decide --no-doc --options "$PO" --recommend 1 --decision-id D-0903 $'알림 시각\n배경: 알림 개편 중이라 시각을 하나로 맞추려 함'
+[ "$RC" = 2 ] && nocall && grep -q '없는 항목: 용어' "$SB/err" && ok "P 용어 없음 → 종료 코드 2" || ko "P 용어 없음" "rc=$RC $(cat "$SB/err")"
+raw_n --kind decide --no-doc --options '1=오전 9시,2=오전 10시 => 업무 시작 뒤' --recommend 1 --decision-id D-0904 "$PB"
+[ "$RC" = 2 ] && nocall && grep -q '선택지 결과(1번)' "$SB/err" && ok "P 선택지 결과 칸 없음(1번) → 종료 코드 2" || ko "P 결과 없음" "rc=$RC $(cat "$SB/err")"
+raw_n --kind decide --no-doc --options "$PO" --recommend 1 --decision-id D-0905 $'알림 시각\n배경: 없음\n용어: 없음'
+[ "$RC" = 2 ] && nocall && grep -q '배경이 2자' "$SB/err" && ok "P 배경 '없음' 같은 빈 껍데기 → 종료 코드 2" || ko "P 빈 배경" "rc=$RC $(cat "$SB/err")"
+raw_n --no-check --kind decide --no-doc --options "$PO" --recommend 1 --decision-id D-0906 $'알림 시각'
+r1=$RC; LRM_FORMAT=off raw_n --kind decide --no-doc --choices 2 $'알림 시각'
+[ "$r1" = 2 ] && [ "$RC" = 2 ] && nocall && ok "P --no-check·LRM_FORMAT=off 로도 못 우회(options·choices 모두)" || ko "P 우회" "r1=$r1 rc=$RC"
+raw_n --kind decide --no-doc --choices 2 "$PB"
+[ "$RC" = 0 ] && posted && ok "P --choices 카드는 배경·용어만 검사(결과 칸 없음)" || ko "P choices 통과" "rc=$RC $(cat "$SB/err")"
+raw_n --kind decide --no-doc --options "$PO" --recommend 1 --decision-id D-0907 $'알림 시각\n배경: 알림 개편 중이라 시각을 하나로 맞추려 함\n용어: 푸시 — 앱 밖 알림\n이유: 출근 전 열람률이 높음'
+t="$(text)"
+ord="$(printf '%s\n' "$t" | grep -n -e '^- 배경' -e '^:one:' -e '^:star:' -e '^- 용어' -e '^👉 답' | cut -d: -f2- | cut -c1-6 | tr '\n' ' ')"
+[ "$RC" = 0 ] && printf '%s' "$t" | grep -q '이유: 출근 전 열람률이 높음' && [ "$ord" = "- 배경:  :one:  :star: - 용어:  👉 답: : " ] && ok "P 렌더 순서: 배경 → 선택지(결과) → 추천(+이유) → 용어 → 답 줄" || ko "P 렌더 순서" "$ord"
+L=$(printf '가%.0s' $(seq 1 101))
+raw_n --kind decide --no-doc --options "1=가 => $L,2=나 => $L" --recommend 1 --decision-id D-0908 "$PB"
+[ "$RC" = 2 ] && nocall && grep -q '결과가 [0-9]*자' "$SB/err" && ok "P 결과 100자 초과 → 종료 코드 2" || ko "P 결과 길이" "rc=$RC $(cat "$SB/err")"
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

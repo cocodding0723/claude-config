@@ -140,6 +140,7 @@ hubs/scripts/ledger.py	.config/lrm-hubs/ledger.py	copy
 hubs/scripts/ledger_sync.py	.config/lrm-hubs/ledger_sync.py	copy
 hubs/scripts/intake.py	.config/lrm-hubs/intake.py	copy
 hubs/scripts/hub_report.py	.config/lrm-hubs/hub_report.py	copy
+hubs/scripts/decide_card.py	.config/lrm-hubs/decide_card.py	copy
 hubs/scripts/report_sender.py	.config/lrm-hubs/report_sender.py	copy
 hubs/intake-routes.tsv	.config/lrm-hubs/intake-routes.tsv	link
 hubs/launchd/ai.lrm.slacksocket.plist	.config/lrm-hubs/ai.lrm.slacksocket.plist	copy

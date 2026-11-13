@@ -90,7 +90,7 @@ class AttachTest(unittest.TestCase):
         self.assertTrue(all(v.startswith("F") for v in done.values()))  # 업로드 완료 file_id 저장
 
     def test_decide_card_first_then_files_in_card_thread(self):
-        self.report(text="알림 시각 정하기\n배경", kind="decide", files=[self.png], options="1=9시,2=10시", recommend="1", decision_id="D-0101")
+        self.report(text="알림 시각 정하기\n배경: 시험용 배경 설명 문장입니다\n용어: 없음", kind="decide", files=[self.png], options="1=9시 => 일찍 도착,2=10시 => 늦게 도착", recommend="1", decision_id="D-0101")
         res = report_sender.run(self.conf)
         self.assertEqual(res["sent"], 1)
         calls = self.calls()
@@ -183,7 +183,7 @@ class AttachTest(unittest.TestCase):
         self.assertIn("leg1", self.state()["bad"])
 
     def test_sender_stops_legacy_decide_without_doc(self):
-        self.legacy(kind="decide", text="제목\n배경", options="1=가,2=나", recommend="1", decision_id="D-0301")
+        self.legacy(kind="decide", text="제목\n배경: 시험용 배경 설명 문장입니다\n용어: 없음", options="1=가 => 결과 가,2=나 => 결과 나", recommend="1", decision_id="D-0301")
         res = report_sender.run(self.conf)
         self.assertEqual(res["stopped"], 1)
         self.assertNotIn("decide", [x for c in self.calls() for x in c if x == "decide" and "--options" in c])
@@ -273,8 +273,8 @@ class AttachTest(unittest.TestCase):
         self.assertIn(report_sender.safe_text("a /x/y/한글(1).pdf b"), "a 한글(1) b")
 
     def test_decide_no_doc_flag_reaches_card_only_without_files(self):
-        self.report(text="제목\n배경", kind="decide", no_doc=True, options="1=가,2=나", recommend="1", decision_id="D-0501")
-        self.report(text="제목2\n배경", kind="decide", files=[self.png], options="1=가,2=나", recommend="1", decision_id="D-0502")
+        self.report(text="제목\n배경: 시험용 배경 설명 문장입니다\n용어: 없음", kind="decide", no_doc=True, options="1=가 => 결과 가,2=나 => 결과 나", recommend="1", decision_id="D-0501")
+        self.report(text="제목2\n배경: 시험용 배경 설명 문장입니다\n용어: 없음", kind="decide", files=[self.png], options="1=가 => 결과 가,2=나 => 결과 나", recommend="1", decision_id="D-0502")
         report_sender.run(self.conf)
         cards = [c for c in self.calls() if "decide" in c]
         self.assertIn("--no-doc", cards[0])
@@ -348,8 +348,8 @@ class PathRuleTest(unittest.TestCase):
         self.assertEqual(self.cli("참고:/tmp/a.pdf").returncode, 2)
 
     def test_decide_requires_doc_or_no_doc(self):
-        base = ["--options", "1=가,2=나", "--recommend", "1", "--decision-id", "D-0401"]
-        a = ["add", "--hub", "ui-layer", "--task", "C0012", "--kind", "decide", "--text", "제목\n배경", *base]
+        base = ["--options", "1=가 => 결과 가,2=나 => 결과 나", "--recommend", "1", "--decision-id", "D-0401"]
+        a = ["add", "--hub", "ui-layer", "--task", "C0012", "--kind", "decide", "--text", "제목\n배경: 시험용 배경 설명 문장입니다\n용어: 없음", *base]
         r = subprocess.run([sys.executable, "-I", CLI, *a], env=self.env, capture_output=True, text=True)
         self.assertEqual(r.returncode, 2)
         self.assertIn("--no-doc", r.stderr)

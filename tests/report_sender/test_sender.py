@@ -242,8 +242,8 @@ class SenderTest(unittest.TestCase):
         """설치 전 접수돼 큐·상태에 이미 걸린 형식 오류 결정 카드(62회 재시도 중이던 것)가 다음 회차에 영구 실패로 처리됨"""
         ids = []
         for did in ("D-data design!", "D-" + "x" * 17):
-            rec = {"hub": "data-design", "task": "없음", "kind": "decide", "text": "제목\n배경", "files": [],
-                   "options": "1=a,2=b", "recommend": "1", "decision_id": did}
+            rec = {"hub": "data-design", "task": "없음", "kind": "decide", "text": "제목\n배경: 시험용 배경 설명 문장입니다\n용어: 없음", "files": [],
+                   "options": "1=a => 결과 가,2=b => 결과 나", "recommend": "1", "decision_id": did}
             rec = {"id": hub_report.report_id(rec), "at": 1, **rec}
             ids.append(rec["id"])
             with open(self.conf.outbox, "a", encoding="utf-8") as f:
@@ -259,12 +259,12 @@ class SenderTest(unittest.TestCase):
         self.assertEqual(len(self.warns()), 1)
 
     def test_decide_uses_button_card_form_without_thread(self):
-        self.report(text="알림 시각 정하기\n지금은 시각이 제각각", kind="decide", no_doc=True,
-                    options="1=오전 9시,2=오전 10시", recommend="1", decision_id="D-0101")
+        self.report(text="알림 시각 정하기\n지금은 시각이 제각각\n배경: 시험용 배경 설명 문장입니다\n용어: 없음", kind="decide", no_doc=True,
+                    options="1=오전 9시 => 일찍 도착,2=오전 10시 => 늦게 도착", recommend="1", decision_id="D-0101")
         report_sender.run(self.conf)
         card, line = self.calls()
         self.assertEqual(card[card.index("--kind") + 1], "decide")
-        self.assertEqual(card[card.index("--options") + 1], "1=오전 9시,2=오전 10시")
+        self.assertEqual(card[card.index("--options") + 1], "1=오전 9시 => 일찍 도착,2=오전 10시 => 늦게 도착")
         self.assertEqual(card[card.index("--recommend") + 1], "1")
         self.assertEqual(card[card.index("--decision-id") + 1], "D-0101")
         self.assertNotIn("--thread", card)  # 버튼 카드는 스레드 답글로 못 보냄
