@@ -9,6 +9,7 @@ HERE=$(cd "$(dirname "$SRC")" && pwd -P)
 TSV="${HUBS_TSV:-$HERE/../hubs.tsv}"
 [ -f "$TSV" ] || TSV="$HERE/hubs.tsv"
 STATUS_PY="${HUB_STATUS_PY:-$HERE/hub_status.py}"
+DUPS_PY="${HUB_DUPS_PY:-$HERE/hub_dups.py}"
 CREATE="${CREATE_HUB:-$HOME/.claude/skills/orca-hub-create/scripts/create_hub.sh}"
 DRY=0 ONLY=()
 
@@ -18,11 +19,12 @@ usage() {
 
   hubs.tsv 의 허브마다 코디네이터를 --resume 으로 다시 띄운다. 이어받기 문구는
   hub_status.py prompt(상태 파일 ~/.config/lrm-hubs/hub-status/<slug>.json)가 만든다.
-  이미 살아 있는 claude 터미널이 있는 허브는 건너뛴다.
+  살아 있는 claude 코디네이터(연결·쓰기 가능·고아 아님·마지막 출력 HUB_ALIVE_MIN 분 이내, 워커 제외)가 있는 허브는 건너뛴다.
+  한 허브에 코디네이터 터미널이 여럿이면 중복 경고 1줄과 정리 제안(hub_dups.py clean)을 낸다. 닫지는 않는다.
   --dry-run       띄우지 않고 허브별 실행할 명령·문구만 출력(터미널 목록은 읽기만)
   --only <slug>   지정한 허브만(반복 가능)
 
-환경: HUBS_TSV 허브 목록 파일, LRM_HUB_STATUS_DIR 상태 폴더, CREATE_HUB create_hub.sh 경로
+환경: HUB_ALIVE_MIN 살아 있음 기준 분(기본 240), HUB_DUPS_PY hub_dups.py 경로, HUBS_TSV 허브 목록 파일, LRM_HUB_STATUS_DIR 상태 폴더, CREATE_HUB create_hub.sh 경로
 종료 코드: 0 성공, 1 허브 기동 실패 있음, 2 인자·목록 오류
 예: resume_all.sh --dry-run
 E
@@ -40,6 +42,7 @@ while [ $# -gt 0 ]; do
 done
 [ -f "$TSV" ] || die "허브 목록 없음: $TSV — HUBS_TSV 로 경로 지정"
 [ -f "$STATUS_PY" ] || die "hub_status.py 없음: $STATUS_PY"
+[ -f "$DUPS_PY" ] || die "hub_dups.py 없음: $DUPS_PY — HUB_DUPS_PY 로 경로 지정"
 
 # 터미널 목록은 한 번만 조회. 조회 실패를 "허브 없음"으로 착각해 살아 있는 허브를 중복 기동하지 않게 실패 시 중단
 TERMS=$(mktemp "${TMPDIR:-/tmp}/resume-terms.XXXXXX") || die "임시 파일 생성 실패 — TMPDIR 확인"
@@ -61,21 +64,9 @@ if ! orca terminal list --json > "$TERMS" 2>"$TERMS.err" || ! python3 -c "$CHECK
 fi
 rm -f "$TERMS.err"
 
-# 살아 있는 claude 코디네이터 터미널 여부. connected 만 본다: orphaned(탭 닫힘)여도 세션이 살아 있으면 connected=true 이고,
-# connected=false 는 연결이 끊긴 죽은 세션
-# 종료 코드: 0 살아 있음, 1 없음, 2 예상 밖 실패(없음으로 해석하면 중복 기동 위험)
-alive() {
-  python3 -c '
-import json, sys
-try:
-    slug = sys.argv[2]
-    ts = json.load(open(sys.argv[1]))["result"]["terminals"]
-    hit = any(t["worktreePath"].endswith("/coord-%s-hub" % slug) and t.get("agentIdentity") == "claude" and t.get("connected") is True for t in ts)
-except Exception:
-    sys.exit(2)
-sys.exit(0 if hit else 1)
-' "$TERMS" "$1"
-}
+# 살아 있는 claude 코디네이터 여부(연결·쓰기 가능·고아 아님·마지막 출력 HUB_ALIVE_MIN 분 이내, 워커 터미널 제외). 판정은 hub_dups.py alive
+# 종료 코드: 0 살아 있음, 1 없음, 2 예상 밖 실패(없음으로 해석하면 중복 기동 위험). 출력: "<살아 있음> <전체> <유지 후보 핸들>"
+alive() { python3 "$DUPS_PY" alive --slug "$1" --terms "$TERMS" 2>/dev/null; }
 
 # 명령 한 줄 출력용 셸 인용. printf %q 는 C 로케일에서 한글을 바이트로 깨뜨려 파이썬 사용. 줄바꿈·탭 값은 $'..' 로 한 줄 유지
 quote_cmd() {
@@ -107,8 +98,12 @@ while IFS=$'\t' read -r SLUG NAME ROLE WSROOT REPO _PARENT; do
     hit=0; for o in "${ONLY[@]}"; do [ "$o" = "$SLUG" ] && hit=1; done
     [ "$hit" = 1 ] || continue
   fi
-  alive "$SLUG"; A=$?
+  AOUT=$(alive "$SLUG"); A=$?
   [ "$A" -le 1 ] || { echo "ERROR: $NAME 생존 판정 실패 — orca terminal list 응답을 해석하지 못함. 중복 기동을 막으려 중단, Orca 상태 확인 후 재시도" >&2; exit 1; }
+  read -r N_LIVE N_ALL KEEP <<< "$AOUT"
+  if [ "${N_ALL:-0}" -gt 1 ]; then
+    echo "경고: $NAME 코디네이터 ${N_ALL}개(살아 있음 ${N_LIVE}) 중복 — 정리 제안: python3 $DUPS_PY clean --slug $SLUG --keep ${KEEP:--} --dry-run (확인 뒤 --dry-run 제거)"
+  fi
   if [ "$A" = 0 ]; then echo "== $NAME: 살아 있음, 건너뜀"; continue; fi
   echo "== $NAME"
   PROMPT=$(python3 "$STATUS_PY" prompt --slug "$SLUG") || PROMPT="상태 파일 확인 실패 — HANDOFF.md 와 run-list 로 이어받기"
