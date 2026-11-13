@@ -141,7 +141,7 @@ chk "코디네이터 최근 출력이 같으면 판정 불가로 제외(목록 �
 # ---- 7. launchd: 짧은 PATH·임시 HOME 에서 실행 -----------------------------------------------------------
 PL="$REPO/hubs/launchd/ai.lrm.sessiongc.plist"
 python3 -c "import plistlib,sys; plistlib.load(open(sys.argv[1],'rb'))" "$PL" 2>/dev/null; chk "plist: XML 파서(주석 안 '--' 금지 포함)로 읽힘" '[ $? = 0 ]'
-chk "plist: python 은 __PYTHON3__ 자리표시(설치 때 확인한 절대 경로), --apply 없음, 30분" 'grep -q "<string>__PYTHON3__</string>" "$PL" && ! grep -q "/usr/bin/python3\|--apply" "$PL" && grep -q "<integer>1800</integer>" "$PL" && plutil -lint "$PL" > /dev/null'
+chk "plist: python 은 __PYTHON3__ 자리표시(설치 때 확인한 절대 경로), --apply 있음(11-13 D-CFGAPPLY 승인), 30분" 'grep -q "<string>__PYTHON3__</string>" "$PL" && ! grep -q "/usr/bin/python3" "$PL" && grep -q "<string>--apply</string>" "$PL" && grep -q "<integer>1800</integer>" "$PL" && plutil -lint "$PL" > /dev/null'
 FAKEHOME="$SB/home"; mkdir -p "$FAKEHOME/.config/lrm-hubs"
 cp "$SCRIPTS"/*.py "$FAKEHOME/.config/lrm-hubs/" 2>/dev/null
 sed -e "s#__HOME__#$FAKEHOME#g" -e "s#__PYTHON3__#$(command -v python3)#g" "$PL" > "$SB/sessiongc.plist"
