@@ -26,6 +26,10 @@ while read -r lref lsha rref rsha; do
   if ! git cat-file -e "$lsha:$LG_SCRIPT" 2>/dev/null; then
     echo "local-gate 경고: $short 에 $LG_SCRIPT 없음(게이트 도입 전 브랜치) — 검사 없이 통과. dev 를 받아오면 다음 push 부터 검사" >&2; continue
   fi
+  # 계약(--base·--report) 이전 옛 스크립트는 인자를 무시하고 네트워크 단계를 돌려 push 를 막을 수 있음. 본문에 '--report' 표식이 없으면 도입 전으로 처리
+  if ! git show "$lsha:$LG_SCRIPT" 2>/dev/null | grep -qF -- '--report'; then
+    echo "local-gate 경고: $short 의 $LG_SCRIPT 는 게이트 도입 전 스크립트 — 검사 없이 통과. dev 를 받아오면 다음 push 부터 검사" >&2; continue
+  fi
   branch=${rref#refs/heads/}; base=
   for c in "$remote/$branch" origin/dev; do git rev-parse -q --verify "refs/remotes/$c" >/dev/null && { base=$c; break; }; done
   [ -n "$base" ] || die "환경 오류: 기준 브랜치($remote/$branch·origin/dev) 없음" "조치: git fetch origin dev"

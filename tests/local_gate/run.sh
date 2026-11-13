@@ -90,6 +90,14 @@ out=$(push "$G" feat/old); rc=$?
 [ $rc = 0 ] && [ "$(calls)" = "$n" ] && printf '%s' "$out" | grep -q '게이트 도입 전' && ok "옛 브랜치: 경고만·통과" || ko "옛 브랜치" "rc=$rc $out"
 git -C "$G" checkout -q feat/a
 
+# 7b) 계약 없는 옛 스크립트(인자 무시·종료 1): 경고만 하고 통과
+git -C "$G" checkout -q -b feat/legacy feat/old
+mkdir -p "$G/Tools/ci"; printf '#!/usr/bin/env bash\necho "네트워크 인증 실패" >&2\nexit 1\n' > "$G/Tools/ci/local-gate.sh"
+git -C "$G" add -A; git -C "$G" commit -q -n -m legacy-gate
+n=$(calls); out=$(push "$G" feat/legacy); rc=$?
+[ $rc = 0 ] && [ "$(calls)" = "$n" ] && printf '%s' "$out" | grep -q '게이트 도입 전 스크립트' && ok "계약 없는 옛 스크립트: 경고·통과" || ko "옛 스크립트" "rc=$rc $out"
+git -C "$G" checkout -q feat/a
+
 # 8) 다른 저장소는 실행 안 함, hooks.localGate=on 이면 실행
 n=$(calls); out=$(push "$O" feat/a); rc=$?
 [ $rc = 0 ] && [ "$(calls)" = "$n" ] && ok "다른 저장소: 게이트 실행 안 함" || ko "다른 저장소" "rc=$rc $out"
