@@ -133,4 +133,5 @@ def main():
         emit({"dir": d, "flags": flags, "remote": pos[0] if pos else "", "refs": pos[1:]})
 
 
-main()
+if __name__ == "__main__":
+    main()

@@ -129,6 +129,12 @@
           },
           {
             "type": "command",
+            "command": "~/.claude/hooks/pr-draft-guard.sh",
+            "timeout": 10,
+            "statusMessage": "pr-draft-guard 검사 중"
+          },
+          {
+            "type": "command",
             "command": "~/.claude/hooks/slack-format-guard.sh",
             "timeout": 10,
             "statusMessage": "slack-format-guard 검사 중"

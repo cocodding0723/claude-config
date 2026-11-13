@@ -167,5 +167,50 @@ exp "git-guard: heredoc 뒤의 실제 reset --hard 도 차단" $GG $'cat <<\'E\'
 exp "git-guard: bash -c 안의 실제 push --force 는 차단" $GG 'bash -c "git push --force origin x"' "$R" deny
 exp "git-guard: 따옴표 안 \$( ) 로 실행되는 push --force 는 차단" $GG 'echo "$(git push --force origin x)"' "$R" deny
 
+# ---- pr-draft-guard: 새 PR 은 draft, ready 는 그 PR 승인 기록 뒤에만 ----
+PD=pr-draft-guard.sh; HUB="$SB/home/.config/lrm-hubs"
+PR="$SB/prrepo"; mk "$PR" feat/x; git -C "$PR" remote add origin git@github.com:Org/RepoA.git
+exp "pr-draft: create --draft 없음 거부" $PD 'gh pr create --title t --body-file b.md' "$PR" deny
+exp "pr-draft: create --draft 통과" $PD 'gh pr create --draft --title t --body-file b.md' "$PR"
+exp "pr-draft: create -d 통과" $PD 'gh pr create -d -t t' "$PR"
+exp "pr-draft: create --draft=false 는 거부" $PD 'gh pr create --draft=false -t t' "$PR" deny
+exp "pr-draft: gh 아닌 명령 통과" $PD 'git status' "$PR"
+exp "pr-draft: 따옴표 안 gh pr create 글자 무시" $PD "echo 'gh pr create --title x'" "$PR"
+exp "pr-draft: heredoc 본문 안 gh pr create 글자 무시" $PD $'cat > m.md <<\'EOF\'\ngh pr create -t x\ngh pr ready 5\nEOF\ngit status' "$PR"
+exp "pr-draft: heredoc 뒤 실제 create 는 거부" $PD $'cat <<\'E\'\n문구\nE\ngh pr create -t x' "$PR" deny
+exp "pr-draft: bash -c 안 create 는 거부" $PD 'bash -c "gh pr create -t x"' "$PR" deny
+exp "pr-draft: 연결 명령 뒤 create 는 거부" $PD 'git push -u origin HEAD && gh pr create --fill' "$PR" deny
+exp "pr-draft: gh api 로 PR 생성(draft 아님)은 거부" $PD 'gh api repos/Org/RepoA/pulls -f title=t -f head=x -f base=main' "$PR" deny
+exp "pr-draft: gh api 로 draft PR 생성은 통과" $PD 'gh api repos/Org/RepoA/pulls -f title=t -F draft=true' "$PR"
+exp "pr-draft: ready 는 기록 폴더 없으면 ask" $PD 'gh pr ready 12' "$PR" ask
+mkdir -p "$HUB"
+exp "pr-draft: ready 승인 기록 없음 거부" $PD 'gh pr ready 12' "$PR" deny
+exp "pr-draft: ready 브랜치 인자는 번호 해석 못해 ask" $PD 'gh pr ready feat/x' "$PR" ask
+exp "pr-draft: ready 인자 없음은 ask" $PD 'gh pr ready' "$PR" ask
+exp "pr-draft: ready --undo(draft 로 되돌림)는 통과" $PD 'gh pr ready 12 --undo' "$PR"
+exp "pr-draft: gh api PATCH draft=false 승인 없음 거부" $PD 'gh api -X PATCH repos/Org/RepoA/pulls/12 -F draft=false' "$PR" deny
+exp "pr-draft: GraphQL markPullRequestReadyForReview 는 ask" $PD "gh api graphql -f query='mutation { markPullRequestReadyForReview(input:{pullRequestId:\"X\"}) { clientMutationId } }'" "$PR" ask
+# D-RDY 카드 답
+cardrow() { printf '{"type":"button","parent_ts":"%s","channel":"C","title":"%s","decision_id":"%s","kind":"decide","option_text":"열기","action":"pick","pick":%s,"source":"slack"}\n' "$1" "$2" "$3" "$4"; }
+cardrow 100.1 "PR Org/RepoA#12 ready 승인" D-RDY12 2 > "$HUB/slack-inbox.jsonl"
+exp "pr-draft: D-RDY 카드가 pick 2(보류)면 거부" $PD 'gh pr ready 12' "$PR" deny
+cardrow 100.2 "PR Org/RepoA#12 ready 승인" D-RDY12 1 >> "$HUB/slack-inbox.jsonl"
+exp "pr-draft: D-RDY 카드 pick 1 답이면 통과" $PD 'gh pr ready 12' "$PR"
+exp "pr-draft: URL 인자도 통과" $PD 'gh pr ready https://github.com/Org/RepoA/pull/12' "$PR"
+exp "pr-draft: -R 로 다른 저장소의 같은 번호는 카드가 달라 거부" $PD 'gh pr ready 12 -R Org/RepoB' "$PR" deny
+exp "pr-draft: 다른 번호는 거부" $PD 'gh pr ready 13' "$PR" deny
+exp "pr-draft: gh api PATCH draft=false 도 승인 있으면 통과" $PD 'gh api -X PATCH repos/Org/RepoA/pulls/12 -F draft=false' "$PR"
+cardrow 100.3 "PR Org/RepoA#12 ready 승인" D-RDY12 2 >> "$HUB/slack-inbox.jsonl"
+exp "pr-draft: 같은 번호 새 카드의 가장 최근 답이 보류면 거부" $PD 'gh pr ready 12' "$PR" deny
+# 문서 사이트 병합 승인 기록
+printf '{"kind":"pr-approve","key":"pr:Org/RepoA#20","source":"docsite","head":"abc1234","at":1}\n' > "$HUB/pr-approve.jsonl"
+exp "pr-draft: 병합 승인 기록 있으면 통과" $PD 'gh pr ready 20' "$PR"
+exp "pr-draft: 병합 승인도 저장소가 다르면 거부(-R)" $PD 'gh pr ready 20 -R Org/RepoB' "$PR" deny
+exp "pr-draft: cd 로 옮긴 저장소 기준으로 판정" $PD "cd $PR && gh pr ready 20" /tmp
+# 기록 읽기 실패
+chmod 000 "$HUB/slack-inbox.jsonl"
+exp "pr-draft: 승인 기록을 못 읽으면 ask" $PD 'gh pr ready 12' "$PR" ask
+chmod 600 "$HUB/slack-inbox.jsonl"
+
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
