@@ -47,16 +47,33 @@ chk "--only 는 지정 허브만" '! printf "%s" "$OUT2" | grep -q -- "--slug ui
 chk "--only 없는 slug: 종료 코드 2 + 조치" 'bash "$RA" --dry-run --only zzz 2>"$SB/e" >/dev/null; [ $? = 2 ] && grep -q "hubs.tsv" "$SB/e"'
 
 # 살아 있는 허브 건너뛰기
-printf '{"result":{"terminals":[{"worktreePath":"/x/coord-vfx-hub","agentIdentity":"claude","connected":true},{"worktreePath":"/x/coord-test-qa-hub","agentIdentity":"codex","connected":true}]}}' > "$SB/terms-live.json"
+printf '{"result":{"terminals":[%s,%s]}}' "$(tm /x/coord-vfx-hub claude true true false 5)" "$(tm /x/coord-test-qa-hub codex true true false 5)" > "$SB/terms-live.json"
 OUT3=$(FAKE_TERMINALS="$SB/terms-live.json" bash "$RA" --dry-run 2>&1)
 chk "살아 있는 허브(claude)는 건너뜀" 'printf "%s" "$OUT3" | grep -q "== 연출·VFX 폴리싱: 살아 있음, 건너뜀" && ! printf "%s" "$OUT3" | grep -q -- "--slug vfx "'
 chk "codex 터미널은 살아 있는 허브로 안 침" 'printf "%s" "$OUT3" | grep -q -- "--slug test-qa "'
 # 생존 판정: connected=true 만 살아 있음. orphaned 는 판정에 쓰지 않음
-printf '{"result":{"terminals":[{"worktreePath":"/x/coord-vfx-hub","agentIdentity":"claude","connected":false,"orphaned":false},{"worktreePath":"/x/coord-test-qa-hub","agentIdentity":"claude","connected":true,"orphaned":true},{"worktreePath":"/x/coord-scrum-hub","agentIdentity":"claude","orphaned":false}]}}' > "$SB/terms-mixed.json"
+printf '{"result":{"terminals":[%s,%s,%s]}}' "$(tm /x/coord-vfx-hub claude false true false 5)" "$(tm /x/coord-test-qa-hub claude true true true 5)" '{"worktreePath":"/x/coord-scrum-hub","agentIdentity":"claude","orphaned":false}' > "$SB/terms-mixed.json"
 OUT4=$(FAKE_TERMINALS="$SB/terms-mixed.json" bash "$RA" --dry-run 2>&1)
 chk "connected=false claude 는 죽은 허브로 보고 재기동 대상" 'printf "%s" "$OUT4" | grep -q -- "--slug vfx "'
-chk "connected=true·orphaned=true 는 살아 있음(탭만 닫힘)" 'printf "%s" "$OUT4" | grep -q "== 테스트·QA: 살아 있음, 건너뜀"'
+chk "connected=true·orphaned=true 는 고아라 살아 있지 않음(재기동 대상)" 'printf "%s" "$OUT4" | grep -q -- "--slug test-qa "'
 chk "connected 필드 없음은 살아 있음으로 단정하지 않음" 'printf "%s" "$OUT4" | grep -q -- "--slug scrum "'
+
+# 생존 판정 세부: 쓰기 불가·마지막 출력 오래됨은 죽은 허브, 워커 터미널은 코디네이터가 아님
+printf '{"result":{"terminals":[%s,%s,%s]}}' "$(tm /x/coord-vfx-hub claude true false false 5)" "$(tm /x/coord-test-qa-hub claude true true false 999)" "$(tm /x/coord-scrum-hub claude true true false 5 term_wk1)" > "$SB/terms-stale.json"
+printf '{"result":{"workers":[{"dispatchId":"d1","terminal":"term_wk1","liveness":"live","terminalState":"active"}]}}' > "$SB/workers.json"
+OUTS=$(FAKE_TERMINALS="$SB/terms-stale.json" FAKE_WORKERS="$SB/workers.json" bash "$RA" --dry-run 2>&1)
+chk "쓰기 불가(writable=false) claude 는 죽은 허브" 'printf "%s" "$OUTS" | grep -q -- "--slug vfx "'
+chk "마지막 출력이 기준(HUB_ALIVE_MIN) 초과면 죽은 허브" 'printf "%s" "$OUTS" | grep -q -- "--slug test-qa "'
+chk "워커 터미널(worker-list 의 Dispatch)은 허브 코디네이터로 안 침" 'printf "%s" "$OUTS" | grep -q -- "--slug scrum "'
+OUTM=$(HUB_ALIVE_MIN=2000 FAKE_TERMINALS="$SB/terms-stale.json" bash "$RA" --dry-run --only test-qa 2>&1)
+chk "HUB_ALIVE_MIN 상향 시 오래된 출력도 살아 있음" 'printf "%s" "$OUTM" | grep -q "살아 있음, 건너뜀"'
+
+# 중복 경고: 같은 허브에 코디네이터 여럿이면 경고 1줄 + 정리 제안(닫지 않음). 워커는 세지 않음
+printf '{"result":{"terminals":[%s,%s,%s,%s]}}' "$(tm /x/coord-vfx-hub claude true true false 5 term_a1)" "$(tm /x/coord-vfx-hub claude true true false 1 term_a2)" "$(tm /x/coord-vfx-hub claude true true false 1 term_wk1)" "$(tm /x/coord-scrum-hub claude true true false 1 term_s1)" > "$SB/terms-dup.json"
+OUTD=$(FAKE_TERMINALS="$SB/terms-dup.json" FAKE_WORKERS="$SB/workers.json" bash "$RA" --dry-run 2>&1)
+chk "중복 경고 1줄: 코디네이터 2개(워커 제외)·유지 후보는 최근 출력" '[ "$(printf "%s" "$OUTD" | grep -c "^경고: .*코디네이터 2개")" = 1 ] && printf "%s" "$OUTD" | grep "^경고: " | grep -q -- "--slug vfx --keep term_a2 --dry-run"'
+chk "단독 허브(scrum)는 중복 경고 없음" '! printf "%s" "$OUTD" | grep "^경고: " | grep -q -- "--slug scrum"'
+chk "중복 경고는 닫기 명령을 실행하지 않음(orca close 미호출)" '! grep -q "terminal close" "$SB/orca.log" 2>/dev/null'
 
 # 조회 실패: 허브 없음과 구분, 명령 출력 없이 비정상 종료
 OUT5=$(FAKE_ORCA_FAIL=1 bash "$RA" --dry-run 2>"$SB/e5"); RC5=$?

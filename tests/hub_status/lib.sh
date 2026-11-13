@@ -15,9 +15,20 @@ SB=$(mktemp -d "${TMPDIR:-/tmp}/cc-hubstatus.XXXXXX")
 trap 'rm -rf "${SB:?}"' EXIT
 export LRM_HUB_STATUS_DIR="$SB/status"; mkdir -p "$SB/status"
 BIN="$SB/bin"; mkdir -p "$BIN"
-printf '#!/bin/bash\n[ "${FAKE_ORCA_FAIL:-}" = 1 ] && exit 1\ncat "${FAKE_TERMINALS:?}"\n' > "$BIN/orca"; chmod +x "$BIN/orca"
+# worker-list 는 FAKE_WORKERS 파일이 있을 때만 응답(없으면 실패), 그 밖 호출은 터미널 목록 응답
+cat > "$BIN/orca" <<'FAKE'
+#!/bin/bash
+echo "$*" >> "${FAKE_LOG:-/dev/null}"
+[ "${FAKE_ORCA_FAIL:-}" = 1 ] && exit 1
+if [ "$1 $2" = "orchestration worker-list" ]; then cat "${FAKE_WORKERS:-/nonexistent}" 2>/dev/null || exit 1; exit 0; fi
+cat "${FAKE_TERMINALS:?}"
+FAKE
+chmod +x "$BIN/orca"
 echo '{"result":{"terminals":[]}}' > "$SB/terms-empty.json"
-export FAKE_TERMINALS="$SB/terms-empty.json" PATH="$BIN:$PATH"
+export FAKE_LOG="$SB/orca.log" FAKE_TERMINALS="$SB/terms-empty.json" PATH="$BIN:$PATH"
+NOW_MS=$(python3 -c "import time;print(int(time.time()*1000))")
+# 터미널 JSON 한 개: tm <경로> <agent> <connected> <writable> <orphaned> <출력 경과 분> [handle]
+tm() { printf '{"handle":"%s","worktreePath":"%s","agentIdentity":"%s","connected":%s,"writable":%s,"orphaned":%s,"lastOutputAt":%s,"title":"t"}' "${7:-term_$RANDOM}" "$1" "$2" "$3" "$4" "$5" "$((NOW_MS - $6 * 60000))"; }
 FAKE_TOKEN="xo""xb-1234""56789012-abcdef"  # 비밀 패턴 검사기에 안 걸리게 조립
 hs() { python3 "$HS" "$@"; }
 OLDT=$(python3 -c "from datetime import datetime,timedelta,timezone;print((datetime.now(timezone.utc)-timedelta(hours=25)).isoformat(timespec='seconds'))")
