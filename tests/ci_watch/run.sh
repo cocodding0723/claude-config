@@ -265,6 +265,37 @@ rm -f "$D/intake-routes.jsonl"
 fresh; log "not ok 3 - eye"; prs "$(pj 721 feat/mine 7a7a7a7a7a7a7a7a)"; wt feat/mine; cycle 721
 grep -q "근거: PR 브랜치의 작업 공간 허브" "$D/orca.log" && ok "작업 공간 허브가 티켓보다 우선" || ko "우선순위" "$(cat "$D/orca.log")"
 
+# ---- 담당 덮어쓰기 표(ci-ticket-owners.tsv): 공통 원인 다음, 작업 공간 허브보다 먼저 ----
+printf 'automa-hub\t오토마 허브\t-\t-\t-\ndata-source-hub\t데이터 읽기 허브\t-\t-\t-\n' >> "$D/hubs.tsv"
+printf '# 패턴\t허브\t메모\nLRM-461,464,557..567\tautoma-hub\t오토마\nLRM-520,521\tdata-source-hub\t데이터\npr:717..719\tautoma-hub\tPR 번호\n' > "$D/ci-ticket-owners.tsv"
+own() { fresh; log "not ok 3 - eye"; prs "$(pj "$1" feat/mine "$1$1$1$1$1$1$1$1" ",\"title\":\"$2\"")"; wt feat/mine; cycle "$1"; }
+own 800 "[LRM-461] x"
+grep -q "담당 허브 오토마 허브 (근거: 담당 덮어쓰기 표 LRM-461 → automa-hub)" "$D/orca.log" && ok "덮어쓰기: 티켓 단일 → 작업 공간 허브보다 우선" || ko "덮어쓰기 단일" "$(cat "$D/orca.log")"
+own 801 "[LRM-560] x"
+grep -q "담당 허브 오토마 허브 (근거: 담당 덮어쓰기 표 LRM-560 → automa-hub)" "$D/orca.log" && ok "덮어쓰기: 범위(557..567) 안" || ko "덮어쓰기 범위" "$(cat "$D/orca.log")"
+own 802 "[LRM-568] x"
+grep -q "담당 허브 UI 계층 통합 설계 (근거: PR 브랜치의 작업 공간 허브)" "$D/orca.log" && ok "덮어쓰기: 범위 밖 티켓은 작업 공간 허브" || ko "덮어쓰기 범위 밖" "$(cat "$D/orca.log")"
+own 718 "[LRM-1] x"
+grep -q "담당 허브 오토마 허브 (근거: 담당 덮어쓰기 표 PR#718 → automa-hub)" "$D/orca.log" && ok "덮어쓰기: PR 번호(pr:717..719)" || ko "덮어쓰기 PR" "$(cat "$D/orca.log")"
+own 803 "[LRM-461][LRM-520] x"
+grep -q "담당 허브 미배정(메인 판단) (근거: 담당 덮어쓰기 표에서 티켓이 여러 허브로 갈림" "$D/orca.log" && ok "덮어쓰기: 티켓이 다른 허브로 갈림 → 미배정" || ko "덮어쓰기 갈림" "$(cat "$D/orca.log")"
+fresh; log "not ok 3 - eye"; echo '[{"number":804,"title":"x","headRefName":"feat/LRM-521-a","headRefOid":"8484848484848484"}]' > "$D/prs.json"; wt feat/mine; cycle 804
+grep -q "담당 허브 데이터 읽기 허브 (근거: 담당 덮어쓰기 표 LRM-521 → data-source-hub)" "$D/orca.log" && ok "덮어쓰기: 브랜치 이름 티켓도 대상" || ko "덮어쓰기 브랜치" "$(cat "$D/orca.log")"
+# 공통 원인(QA)이 덮어쓰기보다 먼저
+python3 - "$S" "$D" <<'PY' && ok "덮어쓰기: 공통 원인이 먼저, 형식 오류 줄은 건너뛰고 경고" || ko "덮어쓰기 단위"
+import sys,io,contextlib;sys.path.insert(0,sys.argv[1]);import ci_review as r
+D=sys.argv[2];n=r.load_hub_names(D+"/hubs.tsv");o=r.load_owners(D+"/ci-ticket-owners.tsv",n)
+assert r.assign_hub("b","[LRM-461]",[],[],n,["9"],"테스트·QA",owners=o,pr_number="800")[0]=="테스트·QA"
+open(D+"/bad.tsv","w").write("LRM-abc\tautoma-hub\nLRM-900..1\tautoma-hub\nLRM-901\tnope-hub\nLRM-902\nXYZ-1\tautoma-hub\nLRM-903\tautoma-hub\n")
+e=io.StringIO()
+with contextlib.redirect_stderr(e): b=r.load_owners(D+"/bad.tsv",n)
+assert list(b["lrm"])==["903"] and e.getvalue().count("건너뜀")==5, (b,e.getvalue())
+assert r.load_owners(D+"/없음.tsv",n)=={"lrm":{},"pr":{}}
+PY
+# 표 없음 → 기존 순위(작업 공간 허브)
+rm -f "$D/ci-ticket-owners.tsv"; own 805 "[LRM-461] x"
+grep -q "담당 허브 UI 계층 통합 설계 (근거: PR 브랜치의 작업 공간 허브)" "$D/orca.log" && ok "덮어쓰기 표 없음 → 기존 순위 유지" || ko "표 없음" "$(cat "$D/orca.log")"
+
 # ---- Codex 재확인 4건 ----
 python3 -c '
 import sys;sys.path.insert(0,sys.argv[1]);import ci_review as r

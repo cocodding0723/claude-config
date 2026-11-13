@@ -34,6 +34,7 @@ WT_LIMIT = int(os.environ.get("LRM_WT_LIMIT", "1000"))  # worktree list 행 상�
 CAUSES = "_causes"  # PR 별 마지막 실패 검사·원인(공통 원인 판정용)
 STATUS_DIR = Path(os.environ.get("LRM_HUB_STATUS_DIR") or DIR / "hub-status")  # 티켓→허브 근거 1: 허브 상태 파일
 ROUTES = DIR / "intake-routes.jsonl"  # 티켓→허브 근거 2: 접수 경로
+OWNER_TABLE = DIR / "ci-ticket-owners.tsv"  # 티켓 패턴<TAB>허브 slug<TAB>메모. 작업 공간 소유 표(.orca-owner)가 생기기 전 덮어쓰기
 HUB_TABLE = DIR / "ci-review-hubs.tsv"  # 정규식<TAB>허브. 브랜치·제목에 위에서부터 맞춤
 REVIEW_OUT = DIR / "ci-review"
 REVIEW_INIT = "_review_init"
@@ -203,6 +204,7 @@ def reviewer_errors(pr):
         return 0
 
 
+_OWN_ROUND = []  # 회차당 덮어쓰기 표 1회 읽기(경고 중복 방지). main() 이 회차 시작에 비움
 _WT_ROUND = []  # 회차당 orca 작업 공간 조회 1회. main() 이 회차 시작에 비움
 
 
@@ -213,6 +215,12 @@ def round_worktrees():
     return _WT_ROUND[0]
 
 
+def round_owners(names):
+    if not _OWN_ROUND:
+        _OWN_ROUND.append(review.load_owners(OWNER_TABLE, names))
+    return _OWN_ROUND[0]
+
+
 def pick_hub(pr, state, with_common=False):
     """담당 허브와 근거. 작업 공간 조회가 불완전하면 그 단계를 건너뛰고 표·미배정으로 진행"""
     names = review.load_hub_names(HUBS_TSV)
@@ -221,7 +229,8 @@ def pick_hub(pr, state, with_common=False):
     return review.assign_hub(pr.get("headRefName", ""), pr.get("title", ""), review.load_table(HUB_TABLE),
                              wts, names, common, names.get(QA_SLUG, ""), REPO,
                              review.ticket_hubs(STATUS_DIR, ROUTES, HUBS_TSV, REPO, GAME_REPO, wts),
-                             review.workspace_tickets(wts, names, REPO))
+                             review.workspace_tickets(wts, names, REPO),
+                             round_owners(names), str(pr.get("number", "")))
 
 
 def relay_fail(pr, fails, prev, state, slack_ts=""):
@@ -277,6 +286,7 @@ def start_adv(pr, prev, baseline, dry):
 def main():
     dry = "--dry-run" in sys.argv[1:]
     _WT_ROUND.clear()
+    _OWN_ROUND.clear()
     try:
         state = json.loads(STATE.read_text())
     except (OSError, ValueError):

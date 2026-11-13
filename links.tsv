@@ -111,6 +111,7 @@ hubs/scripts/bot_alive.py	.config/lrm-hubs/bot_alive.py	link
 hubs/scripts/ci_review.py	.config/lrm-hubs/ci_review.py	link
 hubs/scripts/adv_review.py	.config/lrm-hubs/adv_review.py	link
 hubs/ci-review-hubs.tsv	.config/lrm-hubs/ci-review-hubs.tsv	link
+hubs/ci-ticket-owners.tsv	.config/lrm-hubs/ci-ticket-owners.tsv	link
 hubs/panel.env.example	.config/lrm-hubs/panel.env.example	link
 hubs/scrum.env.example	.config/lrm-hubs/scrum.env.example	link
 hubs/scrum-share.example.md	.config/lrm-hubs/scrum-share.example.md	link

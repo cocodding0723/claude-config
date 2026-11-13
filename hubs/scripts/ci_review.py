@@ -8,6 +8,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -303,12 +304,91 @@ def hub_for(branch, title, table):
     return assign_hub(branch, title, table)[0]
 
 
-def assign_hub(branch, title, table, worktrees=None, names=None, common=(), qa_hub="", repo="", tmap=None, ws=None):
+OWNER_KINDS = {"lrm": re.compile(r"(?i)^LRM-"), "pr": re.compile(r"(?i)^pr:")}
+RANGE_MAX = 1000  # 범위 한 줄이 이만큼 넘으면 오타로 보고 줄을 건너뜀
+
+
+def parse_owner_key(key):
+    """'LRM-461,464,557..567' · 'pr:717..719' → (종류, 번호 집합). 형식 오류는 ValueError.
+    접두사는 맨 앞에 한 번만, 뒤는 숫자 또는 'A..B' 범위를 쉼표로 이음"""
+    key = key.strip()
+    kind = next((k for k, rx in OWNER_KINDS.items() if rx.match(key)), None)
+    if not kind:
+        raise ValueError("접두사 LRM- 또는 pr: 필요")
+    nums = set()
+    for tok in OWNER_KINDS[kind].sub("", key).split(","):
+        m = re.fullmatch(r"\s*(\d+)(?:\.\.(\d+))?\s*", tok)
+        if not m:
+            raise ValueError(f"번호 형식 오류 '{tok.strip()}'")
+        lo, hi = int(m.group(1)), int(m.group(2) or m.group(1))
+        if hi < lo or hi - lo >= RANGE_MAX:
+            raise ValueError(f"범위 오류 '{tok.strip()}'")
+        nums.update(str(n) for n in range(lo, hi + 1))
+    return kind, nums
+
+
+def load_owners(path, names=None):
+    """담당 덮어쓰기 표(티켓 패턴<TAB>허브 slug<TAB>메모) → {"lrm": {번호: {slug}}, "pr": {번호: {slug}}}.
+    읽기 실패·형식 오류·hubs.tsv 에 없는 slug 줄은 건너뛰고 stderr 에 경고(전체 실패 아님)"""
+    out = {"lrm": {}, "pr": {}}
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return out
+    except OSError as e:
+        print(f"[ci] 담당 덮어쓰기 표 읽기 실패({path}): {e}", file=sys.stderr)
+        return out
+    for i, ln in enumerate(lines, 1):
+        if not ln.strip() or ln.lstrip().startswith("#"):
+            continue
+        cols = ln.split("\t")
+        try:
+            if len(cols) < 2 or not cols[1].strip():
+                raise ValueError("허브 slug 칸 없음")
+            slug = cols[1].strip()
+            if names is not None and slug not in names:
+                raise ValueError(f"hubs.tsv 에 없는 slug '{slug}'")
+            kind, nums = parse_owner_key(cols[0])
+        except ValueError as e:
+            print(f"[ci] 담당 덮어쓰기 표 {i}번째 줄 건너뜀: {e}", file=sys.stderr)
+            continue
+        for n in nums:
+            out[kind].setdefault(n, set()).add(slug)
+    return out
+
+
+def owner_override(owners, pr_number, branch, title, names):
+    """덮어쓰기 표 판정. 없으면 None, 있으면 (허브, 근거). PR 번호가 먼저, 그다음 제목·브랜치 티켓.
+    표에서 서로 다른 허브로 갈리면 미배정"""
+    if not owners:
+        return None
+    pr_hit = owners["pr"].get(str(pr_number or ""), set())
+    if len(pr_hit) > 1:
+        return UNASSIGNED, f"근거: 담당 덮어쓰기 표에서 PR#{pr_number} 가 여러 허브로 갈림(" + ", ".join(sorted(pr_hit)) + ")"
+    if pr_hit:
+        slug = next(iter(pr_hit))
+        return names.get(slug, slug), f"근거: 담당 덮어쓰기 표 PR#{pr_number} → {slug}"
+    pairs = [(f"LRM-{t}", sl) for t in sorted({t for t in TICKET.findall(f"{title} {branch}") if t in owners["lrm"]}, key=lambda t: (len(t), t))
+             for sl in sorted(owners["lrm"][t])]
+    slugs = {sl for _, sl in pairs}
+    if len(slugs) == 1:
+        slug = next(iter(slugs))
+        return names.get(slug, slug), f"근거: 담당 덮어쓰기 표 {pairs[0][0]} → {slug}"
+    if slugs:
+        return UNASSIGNED, "근거: 담당 덮어쓰기 표에서 티켓이 여러 허브로 갈림(" + ", ".join(f"{t} → {sl}" for t, sl in pairs) + ")"
+    return None
+
+
+def assign_hub(branch, title, table, worktrees=None, names=None, common=(), qa_hub="", repo="", tmap=None, ws=None, owners=None, pr_number=""):
     """담당 허브와 근거 (허브, 근거 문구). 1순위 같은 원인의 PR 이 여럿이면 qa_hub(소유 허브보다 먼저),
+    1.5순위 담당 덮어쓰기 표(owners: load_owners 결과. PR 번호 → 제목·브랜치 티켓),
     2순위 head 브랜치 작업 공간의 허브, 3순위 제목 티켓(tmap: 티켓→허브 집합)이 한 허브로 모일 때,
     4순위 표(정규식\t허브) 첫 일치. ws: 작업 공간 근거({티켓: {slug}}, workspace_tickets 결과)로, 있으면 근거 문구에 '작업 공간 [LRM-n] → slug' 를 씀. 티켓이 여러 허브로 갈리면 즉시 미배정, 모두 실패해도 미배정"""
     if common and qa_hub:
         return qa_hub, f"근거: 같은 원인이 PR {', '.join('#' + str(n) for n in common)} 에도 있음 → 테스트·QA 허브"
+    forced = owner_override(owners, pr_number, branch, title, names or {})
+    if forced:
+        return forced
     hub = parent_hub(branch, worktrees or [], names or {}, repo)
     if hub:
         return hub, "근거: PR 브랜치의 작업 공간 허브"
