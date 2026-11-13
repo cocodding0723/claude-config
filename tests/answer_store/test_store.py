@@ -45,15 +45,17 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(self.lines("slack-done.txt"), ["1.1"])
 
     def test_old_readers_see_it_as_a_closed_card(self):
-        """기존 리더(panel_collect.card_state·todo_facts.closed_cards)가 문서 사이트 답도 닫힘으로 읽음"""
+        """기존 리더(panel_collect.card_state)·카드 단위 판정(closed_by_did)가 문서 사이트 답도 닫힘으로 읽음"""
         import panel_collect
-        import todo_facts
         self.store.claim(self.ans(source=self.st.DOCSITE))
         inbox = [json.loads(x) for x in self.lines("slack-inbox.jsonl")]
         card = {"form_kind": "decide", "decision_id": "D-0001", "ts": "1.1", "options": {"1": "가", "2": "나"}}
         reactions = {"1.1": [d for d in inbox if d["parent_ts"] == "1.1"]}
         self.assertEqual(panel_collect.card_state(card, reactions["1.1"]), "closed")
-        self.assertEqual(todo_facts.closed_cards([card], inbox, set(self.lines("slack-done.txt")), panel_collect.card_state), {"D-0001": True})
+        self.assertEqual(self.store.closed_by_did(), {})  # 카드 기록(slack-sent)이 없으면 판정 대상 없음
+        with open(os.path.join(self.hub, "slack-sent.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps(card) + "\n")
+        self.assertEqual(self.store.closed_by_did(), {"D-0001": True})
 
     def test_late_answer_is_rejected_and_writes_nothing(self):
         self.store.claim(self.ans(source=self.st.SLACK))

@@ -196,7 +196,7 @@ def make_handler(app: App):
             if p == "/api/draft":
                 return self._draft((q.get("id") or [""])[0])
             if p == "/api/decision":
-                return self._decision((q.get("id") or [""])[0])
+                return self._decision((q.get("id") or [""])[0], (q.get("ts") or [""])[0])
             if p.startswith("/doc/"):
                 return self._doc(p[len("/doc/"):])
             if p.startswith("/thumb/") and p.endswith(".svg"):
@@ -219,9 +219,9 @@ def make_handler(app: App):
             title = next((r.title for r in app.index.snapshot() if r.id == did), os.path.basename(path))
             self._json(200, doc_send.draft(path, title))
 
-        def _decision(self, did):
+        def _decision(self, did, ts=""):
             try:
-                self._json(200, app.decider.view(did))
+                self._json(200, app.decider.view(did, ts))
             except doc_decide.DecideError as e:
                 self._deny(e.why, e.status)
 

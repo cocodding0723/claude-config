@@ -282,17 +282,18 @@ async function confirmSend() {
 }
 
 // 결정 답: 선택(preview) → '이 답으로 전달'(commit). 보내는 값은 결정 번호·선택 번호·intent 뿐이고 문구는 서버가 만듦
-const decide = {did: "", pick: null, intent: ""};
+const decide = {did: "", ts: "", pick: null, intent: ""};
 function decPost(body) {
   return api("/api/decide", {method: "POST", headers: {"Content-Type": "application/json", "X-CSRF-Token": TOKEN}, body: JSON.stringify(body)});
 }
 function decReset() { decide.pick = null; decide.intent = ""; $("dec-confirm").hidden = true; $("dec-ok").disabled = true; $("dec-err").textContent = ""; }
-async function openDecision(did) {
-  decide.did = did; decReset();
+async function openDecision(did, ts) {
+  decide.did = did; decide.ts = ts || ""; decReset();
   $("dec-h").textContent = "결정 " + did; $("dec-title").textContent = "불러오는 중…"; $("dec-opts").replaceChildren();
   if (!$("dec").open) $("dec").showModal();
   try {
-    const v = await api("/api/decision?id=" + encodeURIComponent(did));
+    const v = await api("/api/decision?id=" + encodeURIComponent(did) + (decide.ts ? "&ts=" + encodeURIComponent(decide.ts) : ""));
+    decide.ts = v.ts || decide.ts;
     $("dec-title").textContent = v.title;
     if (v.answered) { $("dec-err").textContent = v.answered + " — 더 답할 수 없음"; return; }
     if (!v.actionable) { $("dec-err").textContent = "감시기 카드는 Slack 에서 답하세요"; return; }
@@ -301,13 +302,13 @@ async function openDecision(did) {
       b.onclick = () => previewPick(o.n, b);
       $("dec-opts").append(b);
     }
-  } catch (e) { $("dec-title").textContent = ""; $("dec-err").textContent = "불러오기 실패: " + e.message; }
+  } catch (e) { $("dec-title").textContent = "열 수 없음"; $("dec-err").textContent = "불러오기 실패: " + e.message; }  // 원인 한 줄 + 닫기 버튼은 창에 항상 있음
 }
 async function previewPick(n, btn) {
   decReset();
   document.querySelectorAll("#dec-opts button").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
   try {
-    const j = await decPost({id: decide.did, pick: n});
+    const j = await decPost({id: decide.did, ts: decide.ts, pick: n});
     decide.pick = n; decide.intent = j.intent;
     $("dec-target").textContent = `전달 대상: ${j.target} · ${j.ttl}초 안에 확인`;
     $("dec-say").textContent = j.text;
@@ -318,7 +319,7 @@ async function commitPick() {
   if (!decide.intent) return;
   $("dec-ok").disabled = true; $("dec-err").textContent = "";
   try {
-    const j = await decPost({id: decide.did, pick: decide.pick, intent: decide.intent});
+    const j = await decPost({id: decide.did, ts: decide.ts, pick: decide.pick, intent: decide.intent});
     $("dec").close(); toast(j.via === "hub" ? `${j.hub} 허브에 전달함` : "전달함"); load();
   } catch (e) { $("dec-err").textContent = e.message; decReset(); }
 }
@@ -368,7 +369,10 @@ function checkRow(it) {
   }
   const acts = el("div", {class: "acts"});
   if (it.state !== "done") {
-    if (it.kind === "decision") { const b = el("button", {type: "button", class: "primary", text: "답하기"}); b.onclick = () => openDecision(it.did); acts.append(b); }
+    if (it.kind === "decision") {
+      if (it.ts) { const b = el("button", {type: "button", class: "primary", text: "답하기"}); b.onclick = () => openDecision(it.did, it.ts); acts.append(b); }
+      else acts.append(el("span", {class: "meta", text: "카드 없음 — Slack/허브로 답" + (it.hub && it.hub !== "미상" ? " · " + it.hub + " 허브" : "")}));
+    }
     else if (it.kind === "merge") { if (it.url) acts.append(el("a", {class: "btn primary", href: it.url, target: "_blank", rel: "noopener noreferrer", text: "PR 열기"})); }
     else {
       if (it.kind === "command" && it.command) { const c = el("button", {type: "button", text: "복사"}); c.onclick = () => copyText(it.command, c); acts.append(c); }

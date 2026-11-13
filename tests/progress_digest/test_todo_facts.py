@@ -17,17 +17,26 @@ class CardsTest(unittest.TestCase):
     def card(self, did, ts, tag="data-design"):
         return {"ts": ts, "decision_id": did, "form_kind": "decide", "options": ["A", "B"], "tag": tag}
 
+    def store(self, sent, inbox, done=()):
+        """임시 허브 폴더에 기록을 써서 answer_store 의 카드 단위 판정을 읽음(결정 완료 판정은 그 한 곳)"""
+        import answer_store
+        t = tempfile.TemporaryDirectory()
+        self.addCleanup(t.cleanup)
+        for name, rows in (("slack-sent.jsonl", sent), ("slack-inbox.jsonl", inbox)):
+            write_text(os.path.join(t.name, name), "".join(json.dumps(r) + "\n" for r in rows))
+        write_text(os.path.join(t.name, "slack-done.txt"), "".join(x + "\n" for x in done))
+        return answer_store.AnswerStore(t.name)
+
     def test_closed_by_done_file_or_reaction_not_by_hold(self):
         sent = [self.card("D-A", "1.1"), self.card("D-B", "2.1"), self.card("D-C", "3.1"), self.card("D-D", "4.1")]
         inbox = [{"type": "reaction", "parent_ts": "2.1", "kind": "decide", "decision_id": "D-B", "action": "approve", "pick": 1},
                  {"type": "reaction", "parent_ts": "3.1", "kind": "decide", "decision_id": "D-C", "action": "hold"}]
-        got = todo_facts.closed_cards(sent, inbox, {"1.1"}, panel_collect.card_state)
-        self.assertEqual(got, {"D-A": True, "D-B": True, "D-C": False, "D-D": False})
+        self.assertEqual(self.store(sent, inbox, {"1.1"}).closed_by_did(), {"D-A": True, "D-B": True, "D-C": False, "D-D": False})
 
     def test_resent_card_stays_open_until_all_closed(self):
         sent = [self.card("D-A", "1.1"), self.card("D-A", "2.1")]
-        self.assertFalse(todo_facts.closed_cards(sent, [], {"1.1"}, panel_collect.card_state)["D-A"])
-        self.assertTrue(todo_facts.closed_cards(sent, [], {"1.1", "2.1"}, panel_collect.card_state)["D-A"])
+        self.assertFalse(self.store(sent, [], {"1.1"}).closed_by_did()["D-A"])
+        self.assertTrue(self.store(sent, [], {"1.1", "2.1"}).closed_by_did()["D-A"])
 
     def test_decision_hub_prefers_reports_and_ignores_non_hub_tag(self):
         sent = [self.card("D-A", "1.1", "ci-watch"), self.card("D-B", "2.1", "server"), self.card("D-C", "3.1", "")]
