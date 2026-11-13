@@ -24,6 +24,7 @@ if [ -n "${FAKE_NOTIFY_GATE:-}" ]; then for _ in $(seq 200); do [ -e "$FAKE_NOTI
 SH
 chmod +x "$BIN/notify"
 export FAKE_DIR="$SB/fake" LRM_HUB_DIR="$SB/hub" LRM_ORCA="$BIN/orca" LRM_NOTIFY="$BIN/notify" HUBS_TSV="$SB/hubs.tsv" FAKE_NOTIFY_LOG="$SB/notify.log" LRM_MAIN_ENV="$SB/hub/main.env"
+export HUB_PROC_TABLE="$SB/no-proc-table"  # 없는 파일 = 프로세스 확인 불가 → Orca 플래그로 대체(실제 프로세스·소켓을 보지 않음)
 mkdir -p "$FAKE_DIR" "$LRM_HUB_DIR"; : > "$FAKE_NOTIFY_LOG"
 printf 'alpha\t알파 허브\t-\t-\t-\nbeta\t베타 허브\t-\t-\t-\n' > "$HUBS_TSV"
 MAINH=term_0000aaaa-0000-4000-8000-000000000001
@@ -237,7 +238,47 @@ import sys; sys.path.insert(0, "$SCRIPTS")
 import card_actions as c
 print(c.run_notify({"hubs": [{"slug": "gamma", "lines": ["x"]}]}))
 PY
-chk "후보 0개: '코디네이터 터미널 없음'" 'grep -q "gamma: 코디네이터 터미널 없음" "$SB/o" && [ ! -s "$FAKE_DIR/sends.log" ]'
+chk "후보 0개: '코디네이터 터미널 없음' + 메인에 대리 전달(rc 0)" 'grep -q "gamma: 코디네이터 터미널 없음 · 메인에 대리 전달" "$SB/o" && [ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 1 ] && grep -q "^$MAINH	.*gamma 허브에 전달하지 못해 메인에 대리 전달" "$FAKE_DIR/sends.log"'
+# ---- 10b. 전송 실패 복구: 생존 판정·다음 후보·메인 대리 전달 ------------------------------------------------
+python3 - <<'PY'
+import json, os
+d = os.environ["FAKE_DIR"]
+def t(h, out, **kw):
+    r = {"handle": h, "title": "c", "worktreePath": "/x/coord-delta-hub", "agentIdentity": "claude", "connected": True, "writable": True, "orphaned": False, "lastOutputAt": out}
+    r.update(kw); return r
+json.dump([t("term_old", 900), t("term_new", 100), t("term_mid", 500)], open(os.path.join(d, "terminals.json"), "w"))
+PY
+note() { python3 - <<PY
+import sys; sys.path.insert(0, "$SCRIPTS")
+import card_actions as c
+rc, msg = c.run_notify({"hubs": [{"slug": "delta", "lines": ["x"]}]})
+print(rc, msg)
+PY
+}
+: > "$FAKE_DIR/sends.log"
+printf '1 term_new\n2 term_mid\n' > "$SB/proc"
+HUB_PROC_TABLE="$SB/proc" note > "$SB/o"
+chk "① 연결됨 플래그지만 프로세스 없는 옛 세션(term_old) 건너뛰고 살아 있는 최근 출력(term_mid)에 전송" '[ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 1 ] && grep -q "^term_mid	" "$FAKE_DIR/sends.log" && head -c1 "$SB/o" | grep -q 0'
+: > "$FAKE_DIR/sends.log"; : > "$FAKE_DIR/failed.log"
+FAKE_SEND_FAIL="term_mid:terminal_handle_stale" HUB_PROC_TABLE="$SB/proc" note > "$SB/o"
+chk "② 첫 후보 stale 실패 → 다음 후보(term_new) 성공, rc 0" 'grep -qx term_mid "$FAKE_DIR/failed.log" && grep -q "^term_new	" "$FAKE_DIR/sends.log" && [ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 1 ] && head -c1 "$SB/o" | grep -q 0'
+: > "$FAKE_DIR/sends.log"; : > "$FAKE_DIR/failed.log"
+FAKE_SEND_FAIL="term_mid:terminal_handle_stale,term_new:terminal_handle_stale" HUB_PROC_TABLE="$SB/proc" note > "$SB/o"
+chk "③ 전부 실패 → 메인에 대리 전달, rc 0, 오류 코드·대리 표시 기록, 같은 핸들 재전송 없음" 'grep -q "^$MAINH	.*delta 허브에 전달하지 못해" "$FAKE_DIR/sends.log" && head -c1 "$SB/o" | grep -q 0 && grep -q "전송 실패(terminal_handle_stale)" "$SB/o" && grep -q "메인에 대리 전달" "$SB/o" && [ "$(sort "$FAKE_DIR/failed.log" | uniq -d | wc -l | tr -d " ")" = 0 ]'
+: > "$FAKE_DIR/sends.log"
+FAKE_SEND_FAIL="term_mid:terminal_handle_stale,term_new:terminal_handle_stale,$MAINH:terminal_not_found" HUB_PROC_TABLE="$SB/proc" note > "$SB/o"
+chk "④ 메인까지 실패 → rc 1, 허브·메인 오류 코드 모두 기록" 'head -c1 "$SB/o" | grep -q 1 && grep -q "전송 실패(terminal_handle_stale)" "$SB/o" && grep -q "메인 대리 전달도 실패(terminal_not_found)" "$SB/o"'
+: > "$FAKE_DIR/sends.log"
+HUB_PROC_TABLE="$SB/proc-nolive" note > "$SB/o"; : > "$SB/proc-nolive"
+HUB_PROC_TABLE="$SB/proc-nolive" note > "$SB/o"
+chk "생존 프로세스 0개(표는 읽힘): 플래그가 연결됨이어도 허브 후보 없음 → 메인 대리 전달" 'grep -q "코디네이터 터미널 없음 · 메인에 대리 전달" "$SB/o"'
+chk "stall_watch.coordinators 도 같은 판정(프로세스 표 기준 2개)" '[ "$(HUB_PROC_TABLE="$SB/proc" python3 -I -c "
+import sys; sys.path.insert(0, \"$SCRIPTS\")
+import stall_watch as s
+print(len(s.coordinators(\"delta\")))")" = 2 ]'
+# 다음 시험(10 의 후반)을 위해 원래 픽스처 상태로
+python3 -c 'import json,os;json.dump([],open(os.path.join(os.environ["FAKE_DIR"],"terminals.json"),"w"))'
+
 # launchd 최소 PATH(env -i): orca 경로를 bare 'orca' 로 두면 rc 127 → '없음' 오판. 후보 경로 탐색 결과와 같아야 함
 PYBIN=$(command -v python3)
 MINI=$(env -i PATH=/usr/bin:/bin "$PYBIN" -I -c "

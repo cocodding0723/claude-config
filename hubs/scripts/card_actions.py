@@ -15,6 +15,7 @@ import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import hub_dups  # noqa: E402
 import main_terminal as mt  # noqa: E402
 
 DIR = os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
@@ -142,53 +143,90 @@ def orca_json(args: list):
     return res if isinstance(res, dict) else None
 
 
-def send_line(handle: str, text: str) -> bool:
-    rc, _ = mt.run_orca(ORCA, ["terminal", "send", "--terminal", handle, "--text", text, "--enter", "--json"], ORCA_TIMEOUT_S)
-    return rc == 0
+def send_line(handle: str, text: str):
+    """한 줄 전송. 성공이면 None, 실패면 orca 오류 코드(없으면 rc=N·timeout)"""
+    rc, d = mt.run_orca(ORCA, ["terminal", "send", "--terminal", handle, "--text", text, "--enter", "--json"], ORCA_TIMEOUT_S)
+    if rc == 0:
+        return None
+    return mt.error_code(d) or ("timeout" if rc is None else f"rc={rc}")
 
 
-def hub_terminals(slug: str) -> list:
-    """허브 폴더(coord-<slug>-hub)의 claude 터미널 정보 목록(연결됨·고아 아님·쓰기 가능만). 조회 실패는 None"""
+def hub_terminals(slug: str):
+    """허브 폴더(coord-<slug>-hub)의 쓰기 가능한 claude 터미널 목록. 조회 실패는 None.
+    살아 있음은 hub_dups 와 같은 기준(실제 claude 프로세스). 프로세스를 확인하지 못할 때만 Orca 의 연결됨·고아 아님 플래그로 대체"""
     res = orca_json(["terminal", "list", "--json", "--limit", "1000"])
     if res is None or not isinstance(res.get("terminals"), list):
         return None
-    return [t for t in res["terminals"] if isinstance(t, dict) and str(t.get("worktreePath", "")).endswith(f"/coord-{slug}-hub")
-            and t.get("agentIdentity") == "claude" and t.get("connected") is True and not t.get("orphaned")
-            and t.get("writable") is True and t.get("handle")]
+    terms = [t for t in res["terminals"] if isinstance(t, dict) and hub_dups.in_hub(t, slug=slug)
+             and t.get("agentIdentity") == "claude" and t.get("writable") is True and t.get("handle")]
+    try:
+        live = hub_dups.live_handles()
+    except hub_dups.Unavailable:
+        return [t for t in terms if t.get("connected") is True and not t.get("orphaned")]
+    return [t for t in terms if hub_dups.is_alive(t, live)]
+
+
+def by_recent(terms: list) -> list:
+    """마지막 출력(lastOutputAt)이 최근인 순. 값이 없으면 가장 오래된 것으로 봄, 같으면 목록 순서 유지"""
+    return sorted(terms, key=lambda t: -(t.get("lastOutputAt") if isinstance(t.get("lastOutputAt"), (int, float)) else 0))
 
 
 def pick_latest(terms: list) -> dict:
-    """마지막 출력(lastOutputAt)이 가장 최근인 터미널. 값이 없으면 가장 오래된 것으로 봄, 같으면 목록 앞쪽"""
-    return max(terms, key=lambda t: t.get("lastOutputAt") if isinstance(t.get("lastOutputAt"), (int, float)) else 0)
+    return by_recent(terms)[0]
+
+
+def deliver(slug: str, text: str):
+    """허브 코디네이터에 전송: (성공 여부, 시도한 수, 실패 코드 목록, 후보 수).
+    후보를 최근 출력 순으로 시도 → 모두 실패하면 목록을 1회 재조회해 아직 안 보낸 핸들만 시도(같은 핸들에 같은 요청 반복 금지)"""
+    tried, codes, first = set(), [], None
+    for rnd in range(2):
+        terms = hub_terminals(slug)
+        if terms is None:
+            codes.append("terminal_list_failed")
+            break
+        if first is None:
+            first = len(terms)
+        for t in by_recent([t for t in terms if t["handle"] not in tried]):
+            tried.add(t["handle"])
+            err = send_line(t["handle"], text)
+            if err is None:
+                return True, len(tried), codes, first
+            codes.append(err)
+    return False, len(tried), codes, first or 0
 
 
 def run_notify(args: dict) -> tuple[int, str]:
     """멈춘 워커 알림: 허브 코디네이터 터미널 한 곳에 한 줄만 전송. 워커·창은 건드리지 않음.
-    코디네이터가 여럿이면(재시작으로 남은 옛 세션) 마지막 출력이 가장 최근인 1개를 고르고 근거를 결과에 남김. 조회 실패·후보 0개만 '없음'"""
-    sent, notes = 0, []
+    허브 전송이 끝내 실패하면 메인 터미널에 원문을 대리 전달. 메인까지 실패할 때만 실패(rc=1)"""
+    sent, notes, lost = 0, [], 0
+    main_handle = mt.read_handle(os.environ.get("LRM_MAIN_ENV") or os.path.join(DIR, "main.env"))
     for hub in args.get("hubs", []):
         slug, lines = hub.get("slug", ""), hub.get("lines", [])
-        terms = hub_terminals(slug) if slug else []
-        if not terms:
-            notes.append(f"{slug or '허브 미확인'}: 코디네이터 터미널 없음")
-            continue
-        pick = pick_latest(terms)
-        if send_line(pick["handle"], "[멈춘 워커 감시] 응답 없는 워커: " + " / ".join(lines)[:600] + " — 상태 확인 후 조치 판단(확인 창은 사용자만 누름)"):
+        body = "응답 없는 워커: " + " / ".join(lines)[:600] + " — 상태 확인 후 조치 판단(확인 창은 사용자만 누름)"
+        ok, tries, codes, found = deliver(slug, "[멈춘 워커 감시] " + body) if slug else (False, 0, [], 0)
+        if ok:
             sent += 1
-            if len(terms) > 1:
-                notes.append(f"{slug}: 코디네이터 {len(terms)}개 중 마지막 출력이 가장 최근인 1개에 전송")
+            if tries > 1:
+                notes.append(f"{slug}: 앞선 {tries - 1}곳 전송 실패({', '.join(dict.fromkeys(codes))}) 뒤 {tries}번째 후보에 전송")
+            elif found > 1:
+                notes.append(f"{slug}: 코디네이터 {found}개 중 마지막 출력이 가장 최근인 1개에 전송")
+            continue
+        why = f"전송 실패({', '.join(dict.fromkeys(codes))})" if codes else "코디네이터 터미널 없음"
+        proxy = f"[멈춘 워커 감시] ({slug or '허브 미확인'} 허브에 전달하지 못해 메인에 대리 전달) " + body
+        err = send_line(main_handle, proxy) if main_handle else "main_handle_missing"
+        if err is None:
+            notes.append(f"{slug or '허브 미확인'}: {why} · 메인에 대리 전달")
         else:
-            notes.append(f"{slug}: 전송 실패")
+            lost += 1
+            notes.append(f"{slug or '허브 미확인'}: {why} · 메인 대리 전달도 실패({err})")
     dups = args.get("dups", [])
-    main_handle = mt.read_handle(os.environ.get("LRM_MAIN_ENV") or os.path.join(DIR, "main.env")) if dups else None
     if dups:
         text = "[멈춘 워커 감시] 중복 코디네이터: " + "; ".join(f"{d['slug']} ({' / '.join(d['titles'])})" for d in dups) + " — 닫지 않았음, 정리 여부 판단 필요"
-        if main_handle and send_line(main_handle, text[:600]):
+        if main_handle and send_line(main_handle, text[:600]) is None:
             notes.append("중복 코디네이터를 메인에 알림")
         else:
             notes.append("중복 코디네이터 메인 알림 실패")
-    bad = [n for n in notes if "없음" in n or "실패" in n]
-    return (1 if bad and not sent else 0), f"허브 {sent}곳 알림" + (f" · {'; '.join(notes)}" if notes else "")
+    return (1 if lost else 0), f"허브 {sent}곳 알림" + (f" · {'; '.join(notes)}" if notes else "")
 
 
 KINDS = {"resume": run_resume, "notify": run_notify}
