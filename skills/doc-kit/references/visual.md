@@ -16,3 +16,5 @@
 - 받는 사람은 기획자 독자다. SKILL.md «독자 규칙» 의 기획자 규칙을 따른다.
 - 받는 사람에게 직접 보내지 않는다. 설정이 직접 전달을 허용하지 않으면 사용자 채널로만 보낸다.
 - 구조도의 상세 규칙은 SKILL.md «도식 3장 + 화면 샷».
+
+- 종류 표식 `<meta name="doc-kit-kind" content="비주얼">` 과 전/후 이미지 쌍(`data-check="shot-before"`·`"shot-after"`)이 없으면 `check.py` 가 실패시킨다. 샷을 못 얻으면 `doc-kit-no-diagram` 예외에 사유를 적는다.
