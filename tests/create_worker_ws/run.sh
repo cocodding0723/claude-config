@@ -133,5 +133,26 @@ chk "폴더는 없어도 Orca 에 같은 경로가 등록돼 있으면 거부(�
 runx --name "[LRM-514] 기존" --json
 chk "--json 도 중복이면 거부(JSON 출력 없음)" '[ "$RC" = 3 ] && [ ! -s "$SB/out" ]'
 
+# deny 규칙: 게임 저장소는 Read+Bash 2개, claude-config 저장소는 Read 만(11-13 D-CFGAPPLY)
+denyof() { jq -r '.permissions.deny | join("|")' "$WSR/$1/.claude/settings.local.json"; }
+setlist 1; run wd1
+chk "게임 저장소: deny 에 토큰 Read·Bash 2개 모두" 'd=$(denyof wd1); [[ "$d" == *"slack-bot.env)"* && "$d" == *"Bash(*slack-bot.env*)"* && "$d" == *"Bash(*slack_notify.sh*)"* ]]' "$(denyof wd1)"
+mkdir -p "$SB/claude-config"; git clone -q "$SB/origin.git" "$SB/claude-config" 2>/dev/null
+setlist 1; : > "$F/orca.calls"
+env PATH="$BIN:$PATH" FAKE_DIR="$F" REPO="$SB/claude-config" WS_ROOT="$WSR" LRM_WS_GC="$BIN/ws_gc.sh" LRM_HUB_REPORT="$BIN/hub_report.py" bash "$CW" --hub "$HUBP" --name wd2 --paths README.md >/dev/null 2>&1
+chk "claude-config 저장소: 토큰 Read 만 남고 Bash 2개 없음" 'd=$(denyof wd2); [[ "$d" == *"Read("*"slack-bot.env)"* && "$d" != *Bash* ]]' "$(denyof wd2)"
+FX="$HERE/../../scripts/fix_config_ws_deny.sh"; FR="$SB/cfgroot"; mkdir -p "$FR/a/.claude" "$FR/b/.claude" "$FR/c"
+echo '{"permissions":{"deny":["Read(//x/slack-bot.env)","Bash(*slack-bot.env*)","Bash(*slack_notify.sh*)","Bash(rm *)"]}}' > "$FR/a/.claude/settings.local.json"
+echo '{"permissions":{"deny":["Read(//x/slack-bot.env)"]}}' > "$FR/b/.claude/settings.local.json"
+cp "$FR/a/.claude/settings.local.json" "$SB/a.orig"
+out=$(bash "$FX" --root "$FR" 2>&1)
+chk "1회 스크립트 기본은 dry-run: 파일 불변, 대상 1개 안내" 'cmp -s "$SB/a.orig" "$FR/a/.claude/settings.local.json" && [[ "$out" == *"수정 예정 1개"* ]]' "$out"
+out=$(bash "$FX" --apply --root "$FR" 2>&1)
+chk "--apply: a 만 수정(Read·다른 규칙 유지), 백업 생성, b 불변" 'jq -e ".permissions.deny == [\"Read(//x/slack-bot.env)\",\"Bash(rm *)\"]" "$FR/a/.claude/settings.local.json" >/dev/null && [ -f "$FR/a/.claude/settings.local.json.bak-deny" ] && [ ! -f "$FR/b/.claude/settings.local.json.bak-deny" ]' "$out"
+out=$(bash "$FX" --apply --root "$FR" 2>&1)
+chk "재실행은 변경 0(멱등)" '[[ "$out" == *"수정 0개"* ]]' "$out"
+bash "$FX" --root "$SB/nope" >/dev/null 2>&1; chk "루트 없으면 종료 2" '[ $? = 2 ]'
+bash "$FX" --bogus >/dev/null 2>&1; chk "알 수 없는 인자는 종료 2" '[ $? = 2 ]'
+
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
