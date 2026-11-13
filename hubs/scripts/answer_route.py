@@ -76,8 +76,14 @@ class Router:
         return out
 
     def send(self, did: str, ts: str, source: str, body: str) -> Outcome:
+        return self.send_hub(self.hub_of(did), ts, source, body)
+
+    def tell(self, hub: str, ref: str, source: str, body: str) -> Outcome:
+        """결정이 아닌 한 줄(확인 완료 등)을 담당 허브에 전달. 허브를 모르면(빈 값) 메인으로. 전달 기록은 남기지 않음(호출자가 따로 기록)"""
+        return self.send_hub(hub, ref, source, " ".join(body.split()))
+
+    def send_hub(self, hub: str, ts: str, source: str, body: str) -> Outcome:
         src = answer_store.SOURCE_NAME.get(source, source)
-        hub = self.hub_of(did)
         if not hub:
             ok = self.to_main(MAIN_LINE.format(source=src, body=body, ts=ts))
             return Outcome(ok, "main", "", "" if ok else "메인 전달 실패")

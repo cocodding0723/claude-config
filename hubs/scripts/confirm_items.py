@@ -88,7 +88,7 @@ def pr_url(key: str) -> str:
 
 
 class Store:
-    """확인 기록(추가 전용)과 명부(항목·처음 본 시각·근거 캐시). 파일 접근은 이 클래스 한 곳"""
+    """확인 기록(추가 전용)과 명부(항목·처음 본 시각). 파일 접근은 이 클래스 한 곳"""
 
     def __init__(self, hub_dir: str | None = None) -> None:
         self.dir = hub_dir or os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
@@ -127,7 +127,7 @@ class Store:
         except (OSError, ValueError):
             d = {}
         d = d if isinstance(d, dict) else {}
-        for k in ("entries", "first", "facts"):
+        for k in ("entries", "first"):
             if not isinstance(d.get(k), dict):
                 d[k] = {}
         return d
