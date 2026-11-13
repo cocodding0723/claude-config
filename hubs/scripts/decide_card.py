@@ -8,6 +8,8 @@
 import json
 import os
 import re
+import subprocess
+import sys
 import unicodedata
 
 RESULT_SEP = "=>"  # --options 의 문구와 결과 사이 구분
@@ -95,6 +97,17 @@ def gate_record_exists(prefix: str) -> bool:
         return False
 
 
+def pr_head(number: str) -> "str | None":
+    """PR 의 head 커밋 전체 해시. gh 실패(미설치·인증·네트워크·PR 없음)면 None"""
+    try:
+        r = subprocess.run(["gh", "pr", "view", number, "--json", "headRefOid", "-q", ".headRefOid"],
+                           capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    head = r.stdout.strip()
+    return head if r.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", head) else None
+
+
 def local_qa_problem(body: str, decision_id: "str | None", attached=()) -> str:
     """D-RDY 카드의 '로컬 QA:' 줄 검사. 대상이 아니면 빈 문자열.
     (a) '명령 — 결과' + 녹화·캡처 경로(파일 존재) 또는 --file 첨부, (b) '해당 없음(도구·CI·문서)' + 게이트 통과 기록이 있는 커밋 해시"""
@@ -106,6 +119,15 @@ def local_qa_problem(body: str, decision_id: "str | None", attached=()) -> str:
         return f"{decision_id} 카드는 '{QA}:' 줄 필수(전송 안 함) — 없는 항목: {QA}. {tail}"
     if qa.startswith(QA_NONE):
         shas = QA_SHA.findall(qa[len(QA_NONE):])
+        number = RDY_ID.match(decision_id).group(0)[len("D-RDY"):]
+        head = pr_head(number) if shas else None
+        if shas and head is None:
+            print(f"경고: PR #{number} head 를 gh 로 확인 못 함 — 해시 일치 검사는 접두 일치(게이트 기록)로 대체함", file=sys.stderr)
+        elif head is not None:
+            matched = [h for h in shas if head.startswith(h)]
+            if not matched:
+                return f"'{QA}: {QA_NONE}' 의 해시({shas[0]})가 PR #{number} head({head[:8]})와 다름(전송 안 함). 조치: head 커밋 해시 {head[:8]} 를 씀(그 커밋의 게이트 통과 기록 필요). {tail}"
+            shas = matched
         if any(gate_record_exists(h) for h in shas):
             return ""
         return f"'{QA}: {QA_NONE}' 은 게이트 통과 기록 커밋 해시가 필요(전송 안 함) — 해시 {'없음' if not shas else shas[0] + ' 의 기록 없음(' + gate_store() + ')'}. {tail}"

@@ -1,4 +1,5 @@
 """명령 문자열에서 git push 대상(작업 디렉터리·원격·refspec)을 해석해 JSON 한 줄씩 출력.
+cfg = git -c·--config-env 로 준 설정('키=값'), env = 앞서 지정한 환경 변수('이름=값'). 따옴표를 푼 값이라 우회 검사에 씀.
 인자: 시작 cwd. stdin: 원본 명령. 따옴표 안 문구·heredoc 본문의 push 글자는 무시.
 cd <dir>·git -C <dir> 로 바뀐 디렉터리를 따라감. 해석 불가(변수·치환 포함 경로 등)는 {"err": 사유}."""
 import json
@@ -89,9 +90,11 @@ def emit(obj):
 
 def main():
     cwd = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] else os.getcwd()
-    here = cwd
+    here, envs = cwd, []
     for toks in segments(drop_heredoc(sys.stdin.read())):
-        while toks and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[0]):
+        while toks and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[0]) or toks[0] in ("export", "env")):
+            if "=" in toks[0]:
+                envs.append(toks[0])
             toks = toks[1:]
         if not toks:
             continue
@@ -104,7 +107,7 @@ def main():
             continue
         if toks[0] != "git":
             continue
-        d, k = here, 1
+        d, k, cfg = here, 1, []
         while k < len(toks) and toks[k].startswith("-"):
             t = toks[k]
             if t == "-C" and k + 1 < len(toks):
@@ -112,7 +115,11 @@ def main():
                 if r is None:
                     emit({"err": "-C 경로에 변수·치환: " + toks[k + 1]}); return
                 d, k = r, k + 2
-            elif t in ("-c", "--exec-path", "--namespace") and k + 1 < len(toks):
+            elif t in ("-c", "--config-env") and k + 1 < len(toks):
+                cfg.append(toks[k + 1]); k += 2
+            elif t.startswith("--config-env=") or (t.startswith("-c") and not t.startswith("--") and len(t) > 2):
+                cfg.append(t.split("=", 1)[1] if t.startswith("--") else t[2:]); k += 1
+            elif t in ("--exec-path", "--namespace") and k + 1 < len(toks):
                 k += 2
             else:
                 k += 1
@@ -130,7 +137,7 @@ def main():
             else:
                 pos.append(t)
             k += 1
-        emit({"dir": d, "flags": flags, "remote": pos[0] if pos else "", "refs": pos[1:]})
+        emit({"dir": d, "flags": flags, "remote": pos[0] if pos else "", "refs": pos[1:], "cfg": cfg, "env": envs})
 
 
 if __name__ == "__main__":

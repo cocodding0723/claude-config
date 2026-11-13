@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.getcwd())
 os.environ.setdefault("LRM_HUB_DIR", tempfile.mkdtemp(prefix="cc-decidecard."))  # 모듈 import 가 실제 작업 폴더를 건드리지 않게
@@ -143,7 +144,12 @@ class LocalQaTest(unittest.TestCase):
         self.sha = "1a2b3c4d5e6f"
         open(os.path.join(os.environ["LRM_LOCAL_GATE_DIR"], self.sha + "0" * 28 + ".json"), "w").close()
 
+        self.head = self.sha + "0" * 28  # PR head 로 가정할 전체 해시(기록 파일과 같은 커밋)
+        self.gh = mock.patch.object(dc, "pr_head", side_effect=lambda n: self.head)
+        self.gh.start()
+
     def tearDown(self):
+        self.gh.stop()
         if self.old is None:
             os.environ.pop("LRM_LOCAL_GATE_DIR", None)
         else:
@@ -175,8 +181,26 @@ class LocalQaTest(unittest.TestCase):
         self.assertEqual(self.check(f"해당 없음(도구·CI·문서) — 게이트 통과 커밋 {self.sha[:8]}"), "")
 
     def test_not_applicable_without_gate_record_rejected(self):
+        self.head = "deadbeef" + "0" * 32  # head 와는 일치하지만 게이트 기록이 없는 경우
         self.assertIn("기록 없음", self.check("해당 없음(도구·CI·문서) — 게이트 통과 커밋 deadbeef"))
         self.assertIn("해시", self.check("해당 없음(도구·CI·문서)"))
+
+    def test_hash_must_match_pr_head(self):
+        other = "deadbeef" + "0" * 32
+        open(os.path.join(os.environ["LRM_LOCAL_GATE_DIR"], other + ".json"), "w").close()  # 기록은 있으나 PR head 아님
+        why = self.check("해당 없음(도구·CI·문서) — 게이트 통과 커밋 deadbeef")
+        self.assertIn("head", why)
+        self.assertIn(self.sha[:8], why)
+        self.assertEqual(self.check(f"해당 없음(도구·CI·문서) — 게이트 통과 커밋 {self.sha[:8]}"), "")
+
+    def test_gh_failure_warns_and_falls_back_to_prefix(self):
+        import io
+        from contextlib import redirect_stderr
+        buf = io.StringIO()
+        with mock.patch.object(dc, "pr_head", return_value=None), redirect_stderr(buf):
+            self.assertEqual(self.check(f"해당 없음(도구·CI·문서) — 게이트 통과 커밋 {self.sha[:8]}"), "")
+            self.assertIn("기록 없음", self.check("해당 없음(도구·CI·문서) — 게이트 통과 커밋 cafebabe"))
+        self.assertIn("경고", buf.getvalue())
 
     def test_other_cards_unaffected(self):
         self.assertEqual(self.check(None, did="D-0001"), "")
