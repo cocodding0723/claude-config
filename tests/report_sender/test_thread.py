@@ -57,6 +57,16 @@ class ThreadTest(unittest.TestCase):
         with open(self.p("state.json")) as f:
             self.assertEqual(json.load(f)["topics"], {})
 
+    def test_info_reply_to_goes_to_given_thread(self):
+        """Slack 에서 온 질문의 답: --reply-to 로 info 를 그 스레드에 답글(채널 새 글·진행 줄 없음)"""
+        self.assertEqual(self.add("--reply-to", THREAD, kind="info", text="질문 답: 캐시 문제").returncode, 0)
+        r = self.cli("--once", script="report_sender.py")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        call, = self.calls()
+        self.assertEqual(call[call.index("--thread") + 1], THREAD)
+        self.assertEqual(call[call.index("--kind") + 1], "progress")
+        self.assertIn("질문 답", call[-1])
+
     def test_done_follow_up_goes_to_same_thread(self):
         self.add("--thread", THREAD)
         self.add("--thread", THREAD, kind="done", text="수정 push 완료")
@@ -70,9 +80,8 @@ class ThreadTest(unittest.TestCase):
             self.assertEqual(r.returncode, 2, bad)
         self.assertEqual(self.rows(), [])
 
-    def test_thread_only_for_warn_and_done(self):
-        for kind in ("info", "block"):
-            self.assertEqual(self.add("--thread", THREAD, kind=kind).returncode, 2, kind)
+    def test_thread_only_for_info_done_and_warn(self):
+        self.assertEqual(self.add("--thread", THREAD, kind="block").returncode, 2)
         r = self.add("--thread", THREAD, kind="decide", text="제목\n배경")
         self.assertEqual(r.returncode, 2)
 

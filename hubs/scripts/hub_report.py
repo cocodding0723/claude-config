@@ -38,7 +38,7 @@ KINDS = {
     "info": ("🔄", "정보", "progress"),
     "warn": ("⚠️", "경고", "warn"),
 }
-THREAD_KINDS = ("warn", "done")  # 기존 스레드에 답글로 올릴 수 있는 종류. decide 버튼 카드는 스레드 답글이 안 됨
+THREAD_KINDS = ("info", "done", "warn")  # 기존 스레드에 답글로 올릴 수 있는 종류. Slack 에서 온 질문의 답(info·done·warn)이 그 스레드로 감. decide 버튼 카드는 스레드 답글이 안 됨
 DECISION_ID_RE = re.compile(r"D-[0-9A-Za-z]{1,16}", re.A)  # slack_notify.sh 의 decision_id 규칙과 같은 정의. 접수·전송 양쪽이 이걸 씀
 DECISION_ID_ERR = "--decision-id 형식 오류: D-영문·숫자 1~16자 — 예 D-0001"
 TS_RE = re.compile(r"^\d{1,12}\.\d{1,9}$")
@@ -418,6 +418,7 @@ def build_parser() -> argparse.ArgumentParser:
                "  hub_report.py add --hub ui-layer --task 없음 --kind info --text '리뷰 대기 중'\n"
                "  hub_report.py add --hub ui-layer --task C0012 --kind decide --no-doc --text $'알림 시각 정하기\\n배경: 알림 개편 중, 시각이 화면마다 달라 하나로 맞추려 함\\n용어: 푸시 — 앱 밖 알림' \\\n"
                "      --options '1=오전 9시 => 출근 전에 도착,2=오전 10시 => 업무 시작 뒤에 도착' --recommend 1 --decision-id D-0101\n"
+               "  hub_report.py add --hub ui-layer --task 없음 --kind info --reply-to 1730790000.123456 --text 'Slack 질문 답: 원인은 캐시'\n"
                "  hub_report.py add --hub ci-hub --task 없음 --kind warn --thread 1730790000.123456 --text 'CI 실패 원인: 시험 X' --now\n"
                "환경: LRM_HUB_DIR, LRM_REPORT_OUTBOX\n"
                "종료 코드: 0 기록(중복 무시 포함), 1 파일 읽기·쓰기 실패, 2 인자·입력 오류(비밀 값 포함)")
@@ -432,7 +433,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--recommend", help="(decide) 추천 번호")
     a.add_argument("--decision-id", help="(decide) 결정 번호 D-영문·숫자")
     a.add_argument("--reversible", help="(decide) 쉬움|보통|어려움")
-    a.add_argument("--thread", help="봇 DM 안의 기존 Slack 스레드 ts(숫자.숫자)에 답글로 올림(채널 지정 불가). warn·done 만. 진행 스레드 한 줄은 생략")
+    a.add_argument("--thread", "--reply-to", dest="thread", help="봇 DM 안의 기존 Slack 스레드 ts(숫자.숫자)에 답글로 올림(채널 지정 불가). info·done·warn 만. 하달문 '답할 곳: thread <ts>' 의 ts 를 씀. 진행 스레드 한 줄은 생략")
     a.add_argument("--no-doc", action="store_true", help="(decide) 근거 문서 없는 결정임을 명시. decide 는 --file 없이는 이게 있어야 기록됨")
     a.add_argument("--now", action="store_true", help="기록 직후 전송기를 1회 실행. 다른 전송기가 돌고 있으면 다음 폴러 회차가 올림")
     a.add_argument("--dry-run", action="store_true", help="쓰지 않고 기록될 보고만 출력")

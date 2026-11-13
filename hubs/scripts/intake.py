@@ -459,10 +459,16 @@ def is_partial(text: str, attached: bool) -> bool:
     return attached or len(ledger.clean(text)) > LINE_MAX
 
 
-def line_for(rid: str, text: str, attached: bool = False) -> str:
+REPLY_NOTE = " (답할 곳: Slack thread {ts} — hub_report.py add --kind info --reply-to {ts} --text '답')"
+TS_RE = re.compile(r"\d{1,12}\.\d{1,9}")
+
+
+def line_for(rid: str, text: str, attached: bool = False, ts: str = "") -> str:
+    """허브 하달문 한 줄. ts(원본 Slack 메시지)가 있으면 답을 그 스레드로 올릴 수 있게 끝에 답할 곳과 사용 예를 붙임"""
     one = ledger.clean(text)
     line = f"[접수 #{rid}] " + (one if len(one) <= LINE_MAX else one[: LINE_MAX - 1] + "…")
-    return line + PARTIAL_NOTE if is_partial(text, attached) else line
+    line = line + PARTIAL_NOTE if is_partial(text, attached) else line
+    return line + REPLY_NOTE.format(ts=ts) if TS_RE.fullmatch(ts or "") else line
 
 
 def mark_failed(conf: Conf, rid: str, hub: str, why: str, now: float) -> None:
@@ -518,7 +524,7 @@ def deliver(conf: Conf, now: float, run=None, dry: bool = False) -> dict:
                         if not dry:
                             save_sent(conf.sent, st)  # 전송 직전 저장: 이 뒤에 죽으면 재전송 없이 도착 불명 처리
                         attached = bool(e.get("files"))
-                        res = send_confirmed(run, handle, line_for(rid, e.get("text") or "", attached), hub_target)
+                        res = send_confirmed(run, handle, line_for(rid, e.get("text") or "", attached, str(e.get("ts") or "")), hub_target)
                         if res == "sent":
                             st[rid] = {"st": ST_SENT, "hub": hub, "at": int(now), **({"partial": True} if is_partial(e.get("text") or "", attached) else {})}
                             out["sent"].append(rid)

@@ -377,7 +377,8 @@ def render(items, batch_path, react):
         body = body[:min(MSG_CHARS, room)]
         used += len(body)
         said = reply_text(it)
-        out.append(f"- #{ln} [{label(it)}] ts={ts_text(it)}{kind_text(it)}" + (f" → {said}" if said else ""))
+        reply = f" · 답할 곳: thread {ts_text(it)}" if ts_text(it) != "?" else ""  # 사용자 질문의 답은 이 스레드로(hub_report.py --reply-to)
+        out.append(f"- #{ln} [{label(it)}] ts={ts_text(it)}{kind_text(it)}" + (f" → {said}" if said else "") + reply)
         out += quote(body) if body else []
         if cut:
             out.append("> " + CUT_NOTE)

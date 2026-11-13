@@ -102,6 +102,17 @@ class ReportTest(unittest.TestCase):
         ok = self.add(text=f"시각\n{bg}\n{terms}\n이유: 출근 전 열람률이 높음", kind="decide", extra=opts)
         self.assertEqual(ok.returncode, 0, ok.stderr)  # 줄 상한은 decide 만 8줄
 
+    def test_reply_to_alias_accepts_info_done_warn_and_rejects_block(self):
+        ts = "1730790000.123456"
+        for kind in ("info", "done", "warn"):
+            r = self.add(text=f"답 {kind}", kind=kind, extra=["--reply-to", ts])
+            self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual({row["thread"] for row in self.rows()}, {ts})
+        r = self.add(text="차단", kind="block", extra=["--reply-to", ts])
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("info|done|warn", r.stderr)
+        self.assertEqual(self.add(text="형식", kind="info", extra=["--reply-to", "abc"]).returncode, 2)
+
     def test_dry_run_writes_nothing(self):
         r = self.cli("add", "--hub", "ui", "--task", "C1", "--kind", "info", "--text", "x", "--dry-run")
         self.assertEqual(r.returncode, 0)

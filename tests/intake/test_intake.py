@@ -365,7 +365,9 @@ class DeliverTest(Base):
     def test_delivers_one_line_to_hub_terminal_and_marks_ledger(self):
         _, dv = self.go(msg("ui: 로그인 버튼\n색 바꿔줘", 1))
         self.assertEqual(dv["sent"], ["C0001"])
-        self.assertEqual(self.sends(), [(HUB_H, "[접수 #C0001] 로그인 버튼 색 바꿔줘")])
+        ts = f"{NOW - 100 + 1:.6f}"  # 하달문 끝에 원본 스레드 ts 와 답 명령 예가 붙음
+        self.assertEqual(self.sends(), [(HUB_H, "[접수 #C0001] 로그인 버튼 색 바꿔줘" + intake.REPLY_NOTE.format(ts=ts))])
+        self.assertIn(f"--reply-to {ts}", self.sends()[0][1])
         self.assertEqual(self.row()["state"], "진행")
         self.assertIn("ui 허브에 하달", self.row()["note"])
 
@@ -666,6 +668,9 @@ class DeliverTest(Base):
     def test_long_text_marks_partial_and_notes_hub_line(self):
         self.assertTrue(self.deliver_one("가" * (intake.LINE_MAX + 50))["partial"])
         self.assertIn(intake.PARTIAL_NOTE.strip(), intake.line_for("C0001", "가" * (intake.LINE_MAX + 50)))
+        self.assertNotIn("답할 곳", intake.line_for("C0001", "질문"))  # ts 없으면 기존 문구 그대로
+        self.assertNotIn("답할 곳", intake.line_for("C0001", "질문", ts="line3"))  # ts 형식이 아니면 싣지 않음
+        self.assertIn("thread 1730790000.123456", intake.line_for("C0001", "질문", ts="1730790000.123456"))
 
     def test_attachment_marks_partial(self):
         self.assertTrue(self.deliver_one("사진", files=[{"path": "/x.png"}])["partial"])
