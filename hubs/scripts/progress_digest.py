@@ -30,14 +30,19 @@ from dataclasses import dataclass, field
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import hub_report  # noqa: E402
 import progress_collect as pc  # noqa: E402
+import slack_list_create  # noqa: E402
 import tls_ctx  # noqa: E402
+import todo_items  # noqa: E402
 
 HUB_DIR = os.path.expanduser(os.environ.get("LRM_HUB_DIR") or "~/.config/lrm-hubs")
-DEFAULT_LIST_ID = "F0CH72MJKBN"
-DEFAULT_LIST_URL = "https://w1709475506-et9433868.slack.com/lists/T06M7SZGSP9/F0CH72MJKBN"
+DEFAULT_LIST_ID = "F0CH5KARYBB"
+DEFAULT_LIST_URL = "https://w1709475506-et9433868.slack.com/lists/T06M7SZGSP9/F0CH5KARYBB"
 DEFAULT_API = "https://slack.com/api"
-# 목록 열 ID: 할 일(text)·완료(checkbox). 종류 열은 선택지 ID 가 필요해 쓰지 않음
+# 옛 목록(칸 3개)의 열 ID. 새 목록은 봇 목록 상태 파일(bot-list.json)의 columns·options 를 씀
 COL_TITLE, COL_DONE, COL_LINK = "Col0CHXNEMP1N", "Col0CH58810LR", "Col0CGN0B5WT1"
+LEGACY_COLS = {"title": COL_TITLE, "done": COL_DONE, "link": COL_LINK}
+ARCHIVE_AFTER_S = 6 * 3600  # 완료 표시 뒤 이만큼 지나면 보관 칸 체크(보기 필터로 숨김)
+DONE_PREFIX = "done:"  # 상태 파일에서 완료 표시한 행의 키 접두사
 API_TIMEOUT_S = 15
 LIST_FATAL = ("list_not_found", "not_in_channel", "missing_scope", "invalid_auth", "token_revoked")  # 목록 접근 자체가 막힌 오류
 GH_TIMEOUT_S = 30
@@ -67,6 +72,7 @@ class Item:
     ref: dict = None  # 원본 메시지 위치. 링크 해석 전 값
     quote: str = ""  # 원본 첫 줄(DM 에 보이는 항목만 조회)
     since: float = 0.0  # 생긴 시각(epoch). 목록 정렬용, 모르면 0
+    row: object = None  # 사용자 할 일이면 todo_items.Row. 목록에는 row 가 있는 항목만 올림
 
     def wants_link(self):
         """원본 메시지가 있어야 하는 항목(장부·허브·결정). PR 은 제목에 번호가 있어 제외"""
@@ -83,7 +89,12 @@ class Item:
         return self.title
 
     def line(self):
-        return f"{ICON[self.bucket]} {self.list_title()}"
+        return self.row.title if self.row else f"{ICON[self.bucket]} {self.list_title()}"
+
+    def sig(self):
+        """목록 행에 보이는 값 묶음. 바뀌면 행을 고침"""
+        r = self.row
+        return [self.line() if r else self.title, self.bucket, self.link] + ([r.kind, r.urgency, r.hub, r.answer] if r else [])
 
 
 @dataclass
@@ -95,6 +106,8 @@ class Conf:
     api: str = ""
     token: str = ""
     local_only: bool = False
+    cols: dict = None  # 열 key → Slack 열 ID
+    options: dict = None  # 열 key → {선택 key: Slack 선택지 값}
 
     def __post_init__(self):
         env = os.environ.get
@@ -105,9 +118,24 @@ class Conf:
         self.api = (self.api or env("SLACK_API_BASE") or DEFAULT_API).rstrip("/")
         self.token = self.token or env("SLACK_BOT_TOKEN") or ""
         self.local_only = self.local_only or env("LRM_DIGEST_LOCAL_ONLY") == "1"
+        if self.cols is None:
+            self.cols, self.options = list_columns(env("LRM_BOTLIST_STATE") or slack_list_create.DEFAULT_STATE, self.list_id)
 
 
 one_line = pc.one_line
+
+
+def list_columns(state_path, list_id):
+    """봇 목록 상태 파일에서 list_id 의 (열 ID, 선택지 값). 기록이 없으면 옛 목록의 열 3개"""
+    try:
+        with open(os.path.expanduser(state_path), encoding="utf-8") as f:
+            lists = (json.load(f) or {}).get("lists") or {}
+    except (OSError, ValueError):
+        return dict(LEGACY_COLS), {}
+    rec = next((r for r in lists.values() if isinstance(r, dict) and r.get("id") == list_id), None)
+    if not rec or not isinstance(rec.get("columns"), dict):
+        return dict(LEGACY_COLS), {}
+    return rec["columns"], rec.get("options") if isinstance(rec.get("options"), dict) else {}
 
 
 def load_items(use_pr):
@@ -413,46 +441,67 @@ def dm_visible(items, limit=NAMES_MAX):
     return [i for b in (WAIT, BLOCK) for i in [x for x in items if x.bucket == b][:limit]]
 
 
-def plan_list(items, state):
-    """상태 파일 기준 차이 → [('create'|'update'|'done', item, record_id)]. 손으로 넣은 행은 상태에 없어 대상 아님"""
+def plan_list(items, state, now=0.0):
+    """상태 파일 기준 차이 → [('create'|'update'|'done'|'archive', item, record_id)]. 손으로 넣은 행은 상태에 없어 대상 아님.
+    끝난 행은 상태의 done: 키로 옮겨 ARCHIVE_AFTER_S 뒤 보관 처리"""
     ops, current = [], {i.key: i for i in items}
     for it in items:
         old = state["items"].get(it.key)
         if old is None:
             ops.append(("create", it, ""))
-        elif old["title"] != it.title or old["bucket"] != it.bucket or old.get("link", "") != it.link:
+        elif (old.get("sig") or [old["title"], old["bucket"], old.get("link", "")]) != it.sig():  # sig 없는 옛 기록은 제목·종류·링크로 비교
             ops.append(("update", it, old["record"]))
     for key, old in state["items"].items():
-        if key not in current:
+        if key.startswith(DONE_PREFIX):
+            if now and now - old.get("done_at", now) >= ARCHIVE_AFTER_S:
+                ops.append(("archive", Item(key, old["bucket"], old["title"]), old["record"]))
+        elif key not in current:
             ops.append(("done", Item(key, old["bucket"], old["title"]), old["record"]))
-    # 새 행은 사용자가 먼저 볼 순서(답 대기 → 막힘 → 진행, 같은 종류는 오래된 것 먼저)로 만듦. 목록은 만든 순서로 보임
+    # 새 행은 사용자가 먼저 볼 순서(급함 높은 것 → 오래된 것 먼저)로 만듦. 목록은 만든 순서로 보임
     order = {WAIT: 0, BLOCK: 1, DOING: 2}
-    creates = sorted((o for o in ops if o[0] == "create"), key=lambda o: (order.get(o[1].bucket, 3), o[1].since or float("inf"), o[1].key))
+    urg = lambda it: -(it.row.urgency if it.row else 0)  # noqa: E731
+    creates = sorted((o for o in ops if o[0] == "create"), key=lambda o: (urg(o[1]), order.get(o[1].bucket, 3), o[1].since or float("inf"), o[1].key))
     return creates + [o for o in ops if o[0] != "create"]
 
 
-def apply_list(conf, ops, state):
+def row_fields(conf, it):
+    """행 값 → {열 key: 값}. 목록에 없는 열은 뺌(옛 목록 호환)"""
+    out = {"title": {"rich_text": rich(it.line())}}
+    if it.link:
+        out["link"] = {"rich_text": rich_link(it.link, link_label(it))}
+    r = it.row
+    if r:
+        out["urgency"] = {"number": [r.urgency]}
+        out["hub"] = {"rich_text": rich(r.hub)} if r.hub else None
+        out["answer"] = {"rich_text": rich(r.answer)}
+        pick = (conf.options.get("kind") or {}).get(r.kind)
+        out["kind"] = {"select": [pick]} if pick else None
+    return {k: v for k, v in out.items() if v and k in conf.cols}
+
+
+def apply_list(conf, ops, state, now=0.0):
     """차이를 보내고 성공한 것만 상태에 반영. 실패하면 나머지는 다음 회차로 넘김. 반환: 오류 목록"""
     errors = []
+    mark = lambda rec, key, **v: {"row_id": rec, "column_id": conf.cols[key], **v}  # noqa: E731
     for op, it, rec in ops:
         try:
             if op == "create":
-                fields = [{"column_id": COL_TITLE, "rich_text": rich(it.line())}]
-                if it.link:
-                    fields.append({"column_id": COL_LINK, "rich_text": rich_link(it.link, link_label(it))})
+                fields = [{"column_id": conf.cols[k], **v} for k, v in row_fields(conf, it).items()]
                 d = api(conf, "slackLists.items.create", {"list_id": conf.list_id, "initial_fields": fields})
                 rid = (d.get("item") or {}).get("id") or d.get("id")
                 if not rid:
                     raise Fail("slackLists.items.create 응답에 행 ID 없음", 1)
-                state["items"][it.key] = {"record": rid, "title": it.title, "bucket": it.bucket, "link": it.link}
+                state["items"][it.key] = {"record": rid, "title": it.title, "bucket": it.bucket, "link": it.link, "sig": it.sig()}
             elif op == "update":
-                cells = [{"row_id": rec, "column_id": COL_TITLE, "rich_text": rich(it.line())}]
-                if it.link:
-                    cells.append({"row_id": rec, "column_id": COL_LINK, "rich_text": rich_link(it.link, link_label(it))})
+                cells = [{"row_id": rec, "column_id": conf.cols[k], **v} for k, v in row_fields(conf, it).items()]
                 api(conf, "slackLists.items.update", {"list_id": conf.list_id, "cells": cells})
-                state["items"][it.key].update(title=it.title, bucket=it.bucket, link=it.link)
-            else:
-                api(conf, "slackLists.items.update", {"list_id": conf.list_id, "cells": [{"row_id": rec, "column_id": COL_DONE, "checkbox": True}]})
+                state["items"][it.key].update(title=it.title, bucket=it.bucket, link=it.link, sig=it.sig())
+            elif op == "done":
+                api(conf, "slackLists.items.update", {"list_id": conf.list_id, "cells": [mark(rec, "done", checkbox=True)]})
+                state["items"][DONE_PREFIX + rec] = {**state["items"].pop(it.key), "done_at": now or time.time()}
+            else:  # archive
+                if "archive" in conf.cols:
+                    api(conf, "slackLists.items.update", {"list_id": conf.list_id, "cells": [mark(rec, "archive", checkbox=True)]})
                 del state["items"][it.key]
         except Fail as e:
             if e.code == 2:
@@ -483,11 +532,21 @@ def run(conf, a):
     if sync_list_id(state, conf.list_id):
         print(f"목록이 바뀌어 행 매핑을 새로 시작함(새 목록 {conf.list_id})", file=sys.stderr)
     items, notes, groups = load_items(use_pr=not a.no_pr)
+    now = time.time()
+    seen = state.setdefault("seen", {})  # 허브 항목의 대기 시간 기준(처음 본 시각)
+    rows = {r.key: r for r in todo_items.build_rows([(i.key, i.bucket, i.title, i.since) for i in items], now, seen)}
+    todo = [i for i in items if i.key in rows]
+    for i in todo:
+        i.row = rows[i.key]
+        seen.setdefault(i.key, now)
+    for k in [k for k in seen if k not in rows]:
+        del seen[k]
     links = Links(conf, state["links"], offline=a.dry_run)
-    resolve_links(items, links, dm_visible(items))
+    shown = dm_visible(items)
+    resolve_links(todo + [i for i in shown if i not in todo], links, shown)  # 링크 조회는 목록·DM 에 나가는 항목만
     links.prune()
     digest = digest_hash(items, groups)
-    ops = plan_list(items, state)
+    ops = plan_list(todo, state, now)
     text = dm_text(items, conf.list_url, groups)
     # 해시가 같아도 못 보낸 목록 작업이 남았으면 동기화(--no-list 로 건너뛴 행, 링크만 바뀐 행)
     changed = a.force or digest != state["hash"] or (bool(ops) and not a.no_list)
@@ -513,7 +572,7 @@ def run(conf, a):
     errors = []
     if not a.no_list:
         try:
-            errors += apply_list(conf, ops, state)
+            errors += apply_list(conf, ops, state, now)
         finally:
             save_state(conf.state, state)  # 성공한 행은 실패가 있어도 기억해 중복 생성 방지
     if not a.no_dm and state["dm_hash"] != digest:

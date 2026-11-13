@@ -24,7 +24,8 @@ class Fake(BaseHTTPRequestHandler):
         if m in Fake.fail:
             out = {"ok": False, "error": Fake.fail[m], "needed": "lists:write"}
         elif m == "slackLists.create":
-            out = {"ok": True, "list_id": "FNEW001", "list_metadata": {"schema": [{"key": "title", "id": "ColA"}, {"key": "done", "id": "ColB"}]}}
+            out = {"ok": True, "list_id": "FNEW001", "list_metadata": {"schema": [{"key": "title", "id": "ColA"}, {"key": "done", "id": "ColB"},
+                 {"key": "kind", "id": "ColK", "options": {"choices": [{"value": "OptD", "label": "🙋 결정"}, {"value": "OptM", "label": "🔀 머지"}, {"value": "OptI", "label": "✍️ 직접 입력"}, {"value": "OptR", "label": "👀 검수"}]}}]}}
         elif m == "auth.test":
             out = {"ok": True, "url": "https://ws.slack.com/", "team_id": "T123"}
         else:
@@ -80,11 +81,22 @@ class ListCreate(Base):
         self.assertEqual(self.methods(), ["slackLists.create", "auth.test", "slackLists.access.set"])
         create, share = Fake.calls[0][1], Fake.calls[2][1]
         self.assertEqual(create["name"], "강비서 할 일")
-        self.assertEqual([c["key"] for c in create["schema"]], ["title", "done", "link"])
+        self.assertEqual([c["key"] for c in create["schema"]], ["title", "kind", "urgency", "hub", "answer", "done", "link", "archive"])
         self.assertEqual(share, {"list_id": "FNEW001", "access_level": "owner", "user_ids": ["UFAKEUSER1"]})
         st = json.loads(self.read_state())["lists"]["강비서 할 일"]
         self.assertTrue(st["shared"])
-        self.assertEqual(st["columns"], {"title": "ColA", "done": "ColB"})
+        self.assertEqual(st["columns"], {"title": "ColA", "done": "ColB", "kind": "ColK"})
+        self.assertEqual(st["options"]["kind"], {"decision": "OptD", "merge": "OptM", "input": "OptI", "review": "OptR"})  # Slack 이 값을 새로 매긴 경우
+
+    def test_replace_keeps_old_record(self):
+        self.run_cli()
+        Fake.calls = []
+        r = self.run_cli("--replace")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.methods(), ["slackLists.create", "auth.test", "slackLists.access.set"])
+        st = json.loads(self.read_state())
+        self.assertEqual(len(st["replaced"]), 1)
+        self.assertEqual(st["replaced"][0]["id"], "FNEW001")
 
     def test_rerun_no_change(self):
         self.run_cli()

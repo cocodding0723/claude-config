@@ -306,8 +306,8 @@ class ListRows(unittest.TestCase):
 
 class ListChange(unittest.TestCase):
     def test_defaults_point_to_new_list(self):
-        self.assertEqual(pd.DEFAULT_LIST_ID, "F0CH72MJKBN")
-        self.assertTrue(pd.DEFAULT_LIST_URL.endswith("/F0CH72MJKBN"))
+        self.assertEqual(pd.DEFAULT_LIST_ID, "F0CH5KARYBB")
+        self.assertTrue(pd.DEFAULT_LIST_URL.endswith("/F0CH5KARYBB"))
         self.assertEqual((pd.COL_TITLE, pd.COL_DONE, pd.COL_LINK), ("Col0CHXNEMP1N", "Col0CH58810LR", "Col0CGN0B5WT1"))
 
     def test_other_list_id_resets_row_mapping(self):
