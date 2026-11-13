@@ -108,6 +108,27 @@ exp "ai-trace: --body-file 내용 검사" $AT "gh pr edit 3 --body-file $SB/body
 exp "ai-trace: git push 아닌 명령은 통과" $AT 'echo Co-Authored-By: Claude' "$SB/g"
 exp "ai-trace: 사람 공저자는 통과" $AT 'gh pr create --body "Co-Authored-By: Kim <kim@x.com>"' "$SB/g"
 
+# 범위·대상 해석: 명령의 cd·-C·refspec 이 hook cwd 보다 우선, 낡은 origin/dev 무시, 문구 속 push 무시
+CC="$SB/claude-config"   # feat/a 에 흔적 커밋, main 은 깨끗
+mkdir -p "$SB/oth"; mk "$SB/oth" chore/x   # upstream 없는 다른 저장소(허브 작업 공간 역할)
+git -C "$CC" checkout -q main
+git -C "$CC" update-ref refs/remotes/origin/dev "$(git -C "$CC" rev-list --max-parents=0 main | head -1)"
+git -C "$CC" commit -q --allow-empty -m "정상 커밋"
+exp "ai-trace: cd 로 옮긴 저장소의 main 범위만 검사(다른 cwd 통과)" $AT "cd $CC && git push origin main" "$SB/oth"
+exp "ai-trace: git -C 형태 통과" $AT "git -C $CC push origin main" "$SB/oth"
+git -C "$CC" checkout -q feat/a
+exp "ai-trace: 흔적 커밋이 든 브랜치는 cd 형태도 거부" $AT "cd $CC && git push origin feat/a" "$SB/oth" deny
+exp "ai-trace: -u 형태 거부" $AT "git -C $CC push -u origin feat/a" "$SB/oth" deny
+exp "ai-trace: HEAD:refs/heads/x 형태 거부" $AT "git -C $CC push origin HEAD:refs/heads/feat/a" "$SB/oth" deny
+exp "ai-trace: 로컬 main:main refspec 은 main 범위만 검사" $AT "git -C $CC push origin main:main" "$SB/oth"
+exp "ai-trace: 낡은 origin/dev 가 있어도 범위에 안 들어감" $AT "git -C $CC push origin main" "$SB/oth"
+exp "ai-trace: heredoc 본문 속 push 글자 무시" $AT "cat > $SB/x.md <<'EOF'
+git -C $CC push origin feat/a
+EOF" "$SB/oth"
+exp "ai-trace: 따옴표 속 push 글자 무시" $AT "echo 'git -C $CC push origin feat/a'" "$SB/oth"
+exp "ai-trace: 저장소 아닌 경로는 확인(ask)" $AT "cd /nonexistent-zz && git push origin main" "$SB/oth" ask
+exp "ai-trace: 변수 경로는 확인(ask)" $AT 'cd "$X" && git push origin main' "$SB/oth" ask
+
 # ---- 저장소 commit-msg 훅(claude-config) ----
 CM="$HERE/../../git/repo-hooks/commit-msg"
 cm() { printf '%b' "$1" > "$SB/msg"; bash "$CM" "$SB/msg"; cat "$SB/msg"; }
