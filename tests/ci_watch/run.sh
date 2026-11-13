@@ -179,8 +179,8 @@ fresh; log "not ok 9 - shared"; prs "$(pj 750 feat/mine 9090909090909090)"; cycl
 prs "$(pj 750 feat/mine 9090909090909090 ',"state":"CLOSED"')"; ck pending 11 750; run
 python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));assert "750" not in d.get("_causes",{}),d' "$D/ci-watch.state.json" && ok "닫힌 PR 원인 제거" || ko "닫힌 PR"
 
-# 래퍼 검사만 같으면 공통 원인 아님(요약 줄이 모든 PR 에 같음)
-CKN="Run Unity validation / Unity validation"; fresh; log "not ok 9 - shared"; wt feat/mine; prs "$(pj 722 feat/mine 4141414141414141),$(pj 723 feat/o 5151515151515151)"
+# 래퍼 검사가 요약 줄뿐이면 공통 원인 아님(요약 줄이 모든 PR 에 같음)
+CKN="Run Unity validation / Unity validation"; fresh; log "FAILED: 0"; wt feat/mine; prs "$(pj 722 feat/mine 4141414141414141),$(pj 723 feat/o 5151515151515151)"
 cycle 722 723
 ! grep -q "테스트·QA" "$D/orca.log" && grep -q "담당 허브 UI 계층" "$D/orca.log" && ok "래퍼 검사만 같음 → 공통 원인 아님" || ko "래퍼 검사" "$(cat "$D/orca.log")"
 # 같은 워크플로의 앞 잡이 취소되면 요약 잡 실패는 취소 여파라 알리지 않음
@@ -188,6 +188,16 @@ fresh; log "not ok 9 - x"; prs "$(pj 724 feat/mine 6161616161616161)"
 cc() { printf '[{"name":"Unity Tests / EditMode","workflow":"PR Test Pipeline","bucket":"%s","link":""},{"name":"Unity Tests / Summary","workflow":"PR Test Pipeline","bucket":"%s","link":"https://x/actions/runs/11/job/22"}]' "$1" "$2" > "$D/checks-724.json"; }
 cc pending pending; run; rm -f "$D/sent.log"; cc cancel fail; run
 [ "$(sent)" = 0 ] && ok "같은 워크플로 취소 여파 실패 → 알림 없음" || ko "취소 여파" "$(cat "$D/sent.log")"
+# 취소 + 진짜 실패 혼합 → 진짜 실패는 알림, prev 를 cancel 로 덮지 않아 다음 회차도 유지
+fresh; log "not ok 9 - x"; prs "$(pj 724 feat/mine 6161616161616161)"
+cc2() { printf '[{"name":"Unity Tests / EditMode","workflow":"PR Test Pipeline","bucket":"cancel","link":""},{"name":"Build / Android","workflow":"PR Test Pipeline","bucket":"fail","link":"https://x/actions/runs/11/job/22"},{"name":"Unity Tests / Summary","workflow":"PR Test Pipeline","bucket":"fail","link":""}]' > "$D/checks-724.json"; }
+cc pending pending; run; rm -f "$D/sent.log"; cc2; run
+[ "$(sent)" = 1 ] && ok "취소 + 진짜 실패 혼합 → 진짜 실패 알림" || ko "혼합 실패" "$(cat "$D/sent.log" 2>/dev/null)"
+# workflow 키 없는 cancel 이 있어도 workflow 없는 fail 은 숨지 않음
+fresh; log "not ok 9 - x"; prs "$(pj 724 feat/mine 6161616161616161)"
+cc3() { printf '[{"name":"AI Review Gate a","bucket":"cancel","link":""},{"name":"AI Review Gate b","bucket":"fail","link":"https://x/actions/runs/11/job/22"}]' > "$D/checks-724.json"; }
+cc pending pending; run; rm -f "$D/sent.log"; cc3; run
+[ "$(sent)" = 1 ] && ok "workflow 없는 cancel → workflow 없는 fail 은 알림" || ko "workflow 없음" "$(cat "$D/sent.log" 2>/dev/null)"
 # run 스크립트 원문(ECHO)·통과 TAP 줄은 원인에서 제외
 fresh; printf 'x\t2026-11-11T05:00:01.1Z \033[36;1mecho error here\033[0m\nx\t2026-11-11T05:00:02.1Z ok 3 - 설정 없음 처리\nx\t2026-11-11T05:00:03.1Z not ok 7 - real\n' > "$D/log.txt"
 python3 -c '
@@ -195,6 +205,14 @@ import sys;sys.path.insert(0,sys.argv[1]);import ci_watch as w
 c,_=w.cause("https://x/actions/runs/11/job/22","Build")
 assert c.endswith("not ok 7 - real"),c
 ' "$S" && ok "스크립트 원문·통과 시험 줄은 원인 제외" || ko "ECHO 제외"
+python3 -c '
+import sys;sys.path.insert(0,sys.argv[1]);import ci_watch as w
+E=w.ECHO.search
+for ln in ("abc1234..def5678  feat/error-x -> origin/feat/error-x","+ abc1234...def5678 feat/error-x -> origin/feat/error-x (forced update)"," * [new branch]      feat/error-y -> origin/feat/error-y"):
+    assert E(ln),ln
+for ln in ("fatal: error: cannot lock ref -> origin/main"," ! [rejected]        x -> origin/main (non-fast-forward)","error: failed to push -> origin/x"):
+    assert not E(ln),ln
+' "$S" && ok "ECHO: fetch 참조 갱신 줄만 제외, git 오류 줄 보존" || ko "ECHO fetch"
 # ---- 공통 원인은 시험 이름이 아니라 실패 메시지(정규화 전체) 기준 ----
 python3 -c '
 import sys;sys.path.insert(0,sys.argv[1]);import ci_review as r
@@ -291,7 +309,27 @@ e=io.StringIO()
 with contextlib.redirect_stderr(e): b=r.load_owners(D+"/bad.tsv",n)
 assert list(b["lrm"])==["903"] and e.getvalue().count("건너뜀")==5, (b,e.getvalue())
 assert r.load_owners(D+"/없음.tsv",n)=={"lrm":{},"pr":{}}
+# 소문자 접두·제목 티켓 대소문자 무시
+open(D+"/low.tsv","w").write("lrm-461\tautoma-hub\nPR:717\tautoma-hub\n")
+lo=r.load_owners(D+"/low.tsv",n)
+assert list(lo["lrm"])==["461"] and list(lo["pr"])==["717"], lo
+assert r.owner_override(lo,"1","b","[lrm-461] x",n)[1].endswith("LRM-461 → automa-hub")
+# LRM-46 경계: 461 표에 46 은 없음
+assert r.owner_override(lo,"1","b","[LRM-46] x",n) is None and r.owner_override(lo,"1","b","[LRM-4610] x",n) is None
+# hubs.tsv 읽기 실패(빈 names) → 줄을 버리지 않고 slug 검사 생략, 경고 1회
+e=io.StringIO()
+with contextlib.redirect_stderr(e): z=r.load_owners(D+"/low.tsv",{})
+assert list(z["lrm"])==["461"] and e.getvalue().count("slug 검사를 건너뜀")==1, (z,e.getvalue())
 PY
+# 래퍼 검사: 요약 줄이면 제외, 구체 원인이 같으면 공통 원인
+python3 -c '
+import sys;sys.path.insert(0,sys.argv[1]);import ci_review as r
+W="Run Unity validation / Unity validation"
+L=lambda c:{"head":"h","fails":[{"key":W,"cause":c}],"hub":""}
+assert r.common_cause({"1":L("CS0103: name x does not exist"),"2":L("CS0103: name x does not exist")},"1")==["2"], "래퍼 + 구체 원인 같음"
+assert r.common_cause({"1":L("FAILED: 0"),"2":L("FAILED: 0")},"1")==[], "래퍼 + 요약 줄"
+assert r.common_cause({"1":L("Process completed with exit code 1."),"2":L("Process completed with exit code 1.")},"1")==[]
+' "$S" && ok "래퍼 검사: 구체 원인만 공통 원인으로 비교" || ko "래퍼 구체 원인"
 # 표 없음 → 기존 순위(작업 공간 허브)
 rm -f "$D/ci-ticket-owners.tsv"; own 805 "[LRM-461] x"
 grep -q "담당 허브 UI 계층 통합 설계 (근거: PR 브랜치의 작업 공간 허브)" "$D/orca.log" && ok "덮어쓰기 표 없음 → 기존 순위 유지" || ko "표 없음" "$(cat "$D/orca.log")"

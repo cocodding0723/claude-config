@@ -63,8 +63,9 @@ VERDICT = "_verdict"  # PR 단위로 마지막에 보낸 결론(pass|fail)
 # 실패 로그에서 원인 한 줄로 쓸 줄. 앞쪽 패턴일수록 우선
 CAUSE = [re.compile(p) for p in (r"Shader error.*", r"not ok \d+.*", r"[^\s].*없음.*", r"##\[error\].*", r"(?i)\berror\b[: ].*", r"(?i)failed(?! 0\b).*")]  # 'FAILED 0' 요약 줄은 원인 아님
 TS_PREFIX = re.compile(r"^.*?\d{4}-\d\d-\d\dT[\d:.]+Z ?")  # gh --log-failed 줄머리(잡·단계·시각) 제거
-TICKET = re.compile(r"\[?LRM-\d+\]?\s*")
-ECHO = re.compile(r"(?:\x1b|\^\[)\[36;1m|^(?:# Subtest:|ok \d)|->\s+origin/")  # run 스크립트 원문(청록색 재출력)·통과한 TAP 시험 줄·git fetch 참조 갱신 줄(브랜치 이름의 error 가 걸림). 이름에 '없음' 이 든 통과 시험이 원인으로 잡힘(11-12)
+TICKET = re.compile(r"(?i)\[?LRM-\d+\]?\s*")
+SUMMARY_JOB = re.compile(r"(?:Summary|결과 모음)\s*(?:\(\d+/\d+\))?$")  # 다른 잡 결과를 모으는 요약 잡의 이름 꼴(취소 여파 판정용)
+ECHO = re.compile(r"(?:\x1b|\^\[)\[36;1m|^(?:# Subtest:|ok \d)|^\s*(?:[+*=-]\s+)?(?:[0-9a-f]{7,}\.\.\.?[0-9a-f]{7,}|\[(?:new branch|new tag|up to date)\])\s.*->\s+origin/")  # run 스크립트 원문(청록색 재출력)·통과한 TAP 시험 줄·git fetch 참조 갱신 줄('abc1234..def5678 name -> origin/x', ' * [new branch] x -> origin/x'. 브랜치 이름의 error 가 걸림). 오류 줄('fatal: … -> origin/', '! [rejected]')은 보존. 이름에 '없음' 이 든 통과 시험이 원인으로 잡힘(11-12)
 
 
 def watched(check):
@@ -313,12 +314,13 @@ def main():
         if sha:
             prev[HEAD] = sha
         mine = list(filter(watched, checks))
-        # 같은 워크플로의 앞 잡이 취소되면 결과를 모으는 요약 잡(Unity Tests 등)만 실패로 찍힌다. 코드 실패가 아니라 취소 여파라 알리지 않음
-        cancelled = {c.get("workflow") for c in mine if c["bucket"] == "cancel"}
+        # 같은 워크플로의 앞 잡이 취소되면 결과를 모으는 요약 잡(SUMMARY_JOB)만 실패로 찍힌다. 코드 실패가 아니라 취소 여파라 알리지 않음.
+        # 일반 잡 실패는 같은 회차에 취소가 섞여도 진짜 실패라 알림. workflow 값이 없으면 같은 워크플로로 볼 근거가 없어 제외 안 함
+        cancelled = {c["workflow"] for c in mine if c["bucket"] == "cancel" and c.get("workflow")}
         fails = []
         for c in mine:
             k = key(c)
-            if c["bucket"] == "fail" and c.get("workflow") in cancelled:
+            if c["bucket"] == "fail" and c.get("workflow") in cancelled and SUMMARY_JOB.search(c["name"]):
                 prev[k] = "cancel"
                 continue
             if c["bucket"] == "fail" and prev.get(k) != "fail":

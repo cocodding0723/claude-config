@@ -20,7 +20,7 @@ SECTION = re.compile(r"^###\s*아쉬운 점.*?$(.*?)(?=^###|^\*\*반드시|\Z)",
 ITEM = re.compile(r"\*\*무엇:\*\*\s*(.+?)(?=\n\s*\*\*무엇:\*\*|\Z)", re.S)
 MUST = re.compile(r"\*\*반드시 수정해야 하는 점:\*\*\s*(.+?)(?=\n\s*\*\*팀 규칙|\n\[실행 기록|\Z)", re.S)
 COMMIT = re.compile(r"`([0-9a-f]{7,40})`")
-TICKET = re.compile(r"LRM-(\d+)")
+TICKET = re.compile(r"(?i)LRM-(\d+)")
 ERROR = re.compile(r"^##\s.*—\s*ERROR\s*$", re.M)  # 리뷰어 자체가 실패한 코멘트(지적 아님, 재실행 대상)
 EMPTY = ("없음", "평가 결과 없음")
 REVIEW_DONE = ("Claude Code Review",)  # 이 워크플로 검사가 전부 끝나야 수집
@@ -278,7 +278,8 @@ def fail_sigs(c):
     return {signature(text)} | ({signature(rest)} if named and specific(rest) else set())
 
 
-# 다른 검사를 감싸기만 하는 작업. 요약 줄('FAILED: 0' 등)이 모든 PR 에 같아 공통 원인으로 오분류됨(11-12~13 5회) → 비교에서 뺌
+# 다른 검사를 감싸는 작업. 요약 줄('FAILED: 0' 등)이 모든 PR 에 같아 공통 원인으로 오분류됨(11-12~13 5회).
+# 원인이 GENERIC(요약 줄)일 때만 비교에서 뺌. 컴파일 오류로 하위 잡이 없어 래퍼만 실패하면 구체 원인은 그대로 비교
 WRAPPER_CHECKS = {"Run Unity validation / Unity validation"}
 
 
@@ -287,7 +288,7 @@ def common_cause(causes, own):
     시험 이름만 같고 메시지가 다르면 공통이 아님. 구형 상태(msg 없음)는 fail_sigs 로 이관 없이 비교. 구체 식별자가 없으면(종료 코드 요약 등) 제외.
     번호 순 정렬이라 처리 순서와 무관"""
     def ids(e):
-        return {(c["key"], g) for c in (e or {}).get("fails", []) if c["key"] not in WRAPPER_CHECKS for g in fail_sigs(c)}
+        return {(c["key"], g) for c in (e or {}).get("fails", []) if not (c["key"] in WRAPPER_CHECKS and not specific(c.get("msg") or c.get("cause", ""))) for g in fail_sigs(c)}
 
     mine = ids(causes.get(own))
     return sorted((n for n, e in causes.items() if n != own and mine & ids(e)), key=lambda n: (len(n), n))
@@ -329,8 +330,12 @@ def parse_owner_key(key):
 
 def load_owners(path, names=None):
     """담당 덮어쓰기 표(티켓 패턴<TAB>허브 slug<TAB>메모) → {"lrm": {번호: {slug}}, "pr": {번호: {slug}}}.
-    읽기 실패·형식 오류·hubs.tsv 에 없는 slug 줄은 건너뛰고 stderr 에 경고(전체 실패 아님)"""
+    읽기 실패·형식 오류·hubs.tsv 에 없는 slug 줄은 건너뛰고 stderr 에 경고(전체 실패 아님).
+    names 가 빈 표면(hubs.tsv 읽기 실패) 허브 이름 검사를 건너뜀. 정상 줄까지 버리면 담당 덮어쓰기가 통째로 꺼짐"""
     out = {"lrm": {}, "pr": {}}
+    if names is not None and not names:
+        print("[ci] hubs.tsv 허브 목록이 비어 slug 검사를 건너뜀", file=sys.stderr)
+        names = None
     try:
         lines = Path(path).read_text(encoding="utf-8").splitlines()
     except FileNotFoundError:
