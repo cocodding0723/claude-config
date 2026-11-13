@@ -31,6 +31,8 @@ usage() {
   --quote      해당 ts 메시지의 첫 줄 인용 + Slack 정식 링크(chat.getPermalink)를 본문 끝(참고 줄 앞)에 넣음. 링크 조회 실패하면 '원본: 링크 없음'(전송은 함).
                인용은 첫 줄만 40자 이내, 비밀·로컬 경로가 있으면 인용 없이 링크만. 링크가 든 메시지는 unfurl_links=true 로 보내 미리보기가 펼쳐지게 함
   --no-doc     (--kind decide 전용) 근거 문서 없는 결정임을 명시. decide 는 파일 인자·--attached 가 없으면 이게 있어야 보냄
+  --to-user    받는 사람 Slack ID. 그 사람과의 DM 에 보냄(기본은 사용자 본인). doc-recipients.json 에 등록된 ID 만 허용.
+               카드·스레드·링크 옵션과 함께 못 씀. 보낸 기록에 to_user 로 남김. 문서 페이지(doc_browser.py)의 보내기가 씀
   --no-check   양식 검사 생략(slack-sent.jsonl 에 unchecked:true 기록)
 환경 변수: LRM_BTN_WARN=off 는 '버튼 없음' 경고를 끔(시험용). LRM_FORMAT=warn|strict|off (기본 warn). warn 은 위반해도 전송하고 stderr 경고, strict 는 위반 시 미전송·종료 코드 2
   --kind decide 는 결정이 2개 이상이거나 python3 검사가 실패하면 모드와 무관하게 미전송·종료 코드 2(결정 1건 = 메시지 1개). --no-check·off 로 우회하면 로그에 한 줄 남음
@@ -47,7 +49,7 @@ usage() {
 EOF
 }
 die() { echo "$1" >&2; exit 2; }
-ATTACHED=() LINK_TO="" QUOTE="" NO_DOC=0
+ATTACHED=() LINK_TO="" QUOTE="" NO_DOC=0 TO_USER=""
 TAG="" TITLE="" THREAD="" KIND="" NOCHECK=0 ALIVE=0CHOICES="" CHOICES_SET=0 EMOJISET=custom
 # 번호 카드 인자. 값 검증은 FORM_PY opts 가 함. *_SET 은 빈 값으로 준 경우도 '준 것'으로 보기 위함
 OPTIONS="" OPT_SET=0 RECOMMEND="" REC_SET=0 REVERSIBLE="" REV_SET=0 DECISION_ID="" DID_SET=0 SEQ="" SEQ_SET=0 TODO_ID="" TID_SET=0
@@ -72,6 +74,7 @@ while [ $# -gt 0 ]; do
     --no-doc) NO_DOC=1; shift ;;
     --no-check) NOCHECK=1; shift ;;
     --alive) ALIVE=1; shift ;;
+    --to-user) [ $# -ge 2 ] || die "--to-user 값 필요 — 받는 사람 Slack ID"; TO_USER="$2"; shift 2 ;;
     --) shift; break ;;
     -*) echo "알 수 없는 옵션: $1 — --help 참고" >&2; exit 2 ;;
     *) break ;;
@@ -116,11 +119,22 @@ if [ -n "$LINK_TO" ]; then printf '%s' "$LINK_TO" | grep -Eq '^[0-9]{1,12}\.[0-9
 if [ -n "$QUOTE" ]; then printf '%s' "$QUOTE" | grep -Eq '^[0-9]{1,12}\.[0-9]{1,9}$' || die "--quote 형식 오류 — Slack 메시지 ts(숫자.숫자)"; fi
 DIR="$HOME/.config/lrm-hubs"
 ENV="$DIR/slack-bot.env"
+RECIPIENTS="$DIR/doc-recipients.json"
 SENT="$DIR/slack-sent.jsonl"
 FMTLOG="$DIR/slack-format.log"
 [ -f "$ENV" ] || { echo "slack-bot.env 없음 — 사용자 설정 필요" >&2; exit 2; }
 . "$ENV"
 : "${SLACK_BOT_TOKEN:?}" "${SLACK_USER_ID:?}"
+# 다른 사람 DM 은 등록된 받는 사람만. 등록부 없음·미등록·카드/스레드 옵션 혼용은 미전송(닫힌 쪽으로)
+if [ -n "$TO_USER" ]; then
+  printf '%s' "$TO_USER" | grep -Eq '^[UW][A-Z0-9]{6,20}$' || die "--to-user 형식 오류 — Slack ID(U·W 로 시작, 영문 대문자·숫자)"
+  [ "$OPT_SET$TID_SET$CHOICES_SET" = 000 ] && [ -z "$THREAD$LINK_TO$QUOTE" ] && [ "$ALIVE" != 1 ] || die "--to-user 는 카드·스레드·링크·--alive 옵션과 함께 못 씀 — 일반 글·파일 전송에만 사용"
+  python3 -I -c 'import sys,json
+try: ids={r.get("slack_id") for r in json.load(open(sys.argv[1],encoding="utf-8")).get("recipients",[])}
+except (OSError,ValueError,AttributeError): sys.exit(1)
+sys.exit(0 if sys.argv[2] in ids else 1)' "$RECIPIENTS" "$TO_USER" || die "--to-user 미등록 — $RECIPIENTS 의 recipients 에 있는 ID 만 허용(파일 없음 포함)"
+fi
+export LRM_TO_USER="$TO_USER"
 API="${SLACK_API_BASE:-https://slack.com/api}"  # SLACK_API_BASE: 시험용 주소 재정의
 MSG="$1"
 # 결정 카드 본문은 전송기와 같은 줄 양식(제목 + '- ' 배경). 직접 호출도 같은 모양으로 나가게 함
@@ -555,7 +569,7 @@ if [ -n "$CARD_JSON" ]; then
 fi
 
 [ -n "$TITLE" ] || TITLE="${MSG%%$'\n'*}"
-CH=$(curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -d "users=$SLACK_USER_ID" $API/conversations.open | python3 -c 'import sys,json;print(json.load(sys.stdin)["channel"]["id"])')
+CH=$(curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -d "users=${TO_USER:-$SLACK_USER_ID}" $API/conversations.open | python3 -c 'import sys,json;print(json.load(sys.stdin)["channel"]["id"])')
 # 다른 메시지로 가는 링크(--link-to)·원본 인용(--quote). 링크는 chat.getPermalink 정식 주소만 씀(손수 만든 주소 금지). 조회 실패는 링크만 생략(전송은 계속)
 UNFURL=""
 permalink_of() {
@@ -621,6 +635,7 @@ if not d.get("ok"):
 rec={"at":int(time.time()),"channel":ch,"ts":d.get("ts",""),"thread_ts":thread,"kind":kind,"title":title[:200],"tag":tag}
 if fkind: rec["form_kind"]=fkind
 if unchecked=="1": rec["unchecked"]=True
+if os.environ.get("LRM_TO_USER"): rec["to_user"]=os.environ["LRM_TO_USER"]
 if card: rec.update(json.loads(card))
 if kind=="file":
     rec["file_id"]=(d.get("files") or [{}])[0].get("id","")
