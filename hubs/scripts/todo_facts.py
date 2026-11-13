@@ -139,7 +139,7 @@ class Facts:
             self.errors.append(f"작업 공간 목록 조회 불완전 — #{num} 허브 판정 보류")
             return info.get("hub", "")
         found = ci_review.parent_hub(info["branch"], wts, {s: s for s in self.hub_slugs}, repo)
-        info.update(hub=pc.hub_slug(found) if found else "", hub_at=self.now)
+        info.update(hub=pc.hub_slug(found, self.hub_slugs) if found else "", hub_at=self.now)
         return info["hub"]
 
     # ---------- 종합 ----------
@@ -188,7 +188,7 @@ def load_local(facts, hub_dir, ledger_path):
     p = lambda name: os.path.join(hub_dir, name)  # noqa: E731
     names = ci_review.load_hub_names(p("hubs.tsv"))
     facts.hub_slugs = set(names)
-    known = set(names) | {pc.hub_slug(s) for s in names}
+    known = set(names) | {pc.status_key(s) for s in names} | {pc.legacy_slug(s) for s in names}  # 보고의 hub 값은 slug·상태 파일 이름·옛 별칭 모두 있음
     try:
         sent, inbox = panel_collect.jsonl(p("slack-sent.jsonl")), panel_collect.jsonl(p("slack-inbox.jsonl"))
         try:

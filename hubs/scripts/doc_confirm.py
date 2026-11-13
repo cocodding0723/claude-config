@@ -114,7 +114,7 @@ class Checklist:
                 store.mark(key, ts, answer_store.PENDING, None, self.now())  # 전달 전에 프로세스가 죽으면 이 줄만 남음
             except OSError:
                 pass  # 기록 실패가 확인 전달을 막지 않음
-        hub = "" if item.hub in ("", todo_items.UNKNOWN_HUB) else pc.hub_slug(item.hub)
+        hub = "" if item.hub in ("", todo_items.UNKNOWN_HUB) else pc.hub_slug(item.hub, pc.load_slugs(os.path.join(store.dir, "hubs.tsv")))
         out = self.router.tell(hub, key, answer_store.DOCSITE, SAY.format(title=item.title, kind=KIND_TEXT[item.kind]))
         store.record_delivery(key, ts, out.via, out.ok)
         self.audit(key, f"{'redeliver:' if retry else ''}{out.via}:{'ok' if out.ok else 'fail'}")

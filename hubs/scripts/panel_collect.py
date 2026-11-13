@@ -256,9 +256,10 @@ def hub_state(t, quiet, get):
     return classify("\n".join(str(x) for x in tail), quiet)
 
 
-def hub_name(base):
+def hub_name(base, slugs=None):
+    """옆 패널 허브 칸 이름(표시용). 작업 공간 수 키(workspace_counts)·상태 파일 이름과 같은 규칙"""
     import progress_collect  # 지연 가져오기(순환 방지)
-    return progress_collect.hub_slug(base)  # 작업 공간 수 집계 키(workspace_counts)와 같은 규칙
+    return progress_collect.status_key(progress_collect.hub_slug(base, slugs))
 
 
 def terminal_list(get):
@@ -283,6 +284,8 @@ def collect_hubs(conf, now, get):
     if not isinstance(terms, list):
         raise SourceError("parse")
     root = (conf.get("PANEL_HUB_ROOT") or "").rstrip("/")
+    import progress_collect  # 지연 가져오기(순환 방지)
+    slugs = progress_collect.load_slugs()
     rows = []
     for t in terms:
         if not isinstance(t, dict):
@@ -299,7 +302,7 @@ def collect_hubs(conf, now, get):
         connected = bool(t.get("connected"))
         rows.append({
             "hub": base,
-            "name": hub_name(base),
+            "name": hub_name(base, slugs),
             "agent": str(t.get("agentIdentity"))[:20],
             "state": hub_state(t, quiet, get) if connected else "unknown",
             "quietMin": max(quiet, 0) if quiet is not None else None,
@@ -739,7 +742,7 @@ def collect_progress(src, repos, write, get):
     workers = (src["workers"].get("value") or {})
     snap = progress_collect.refresh(pending=src["pending"].get("value"), workers={"live": workers["live"]} if "live" in workers else None,
                                     write=write, use_pr=bool(repos), conf=conf,
-                                    workspaces=lambda: progress_collect.workspace_counts(get("worktree", "list", "--limit", LIST_LIMIT).get("worktrees"), terminals(get)))
+                                    workspaces=lambda: progress_collect.workspace_counts(get("worktree", "list", "--limit", LIST_LIMIT).get("worktrees"), terminals(get), progress_collect.load_slugs()))
     return {"counts": snap["counts"], "items": snap["items"], "notes": snap["notes"], "groups": snap["groups"]}
 
 
