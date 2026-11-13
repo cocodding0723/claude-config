@@ -233,7 +233,7 @@ def list_worktrees(orca, repo="", limit=1000, timeout=30):
     return wts
 
 
-GENERIC = re.compile(r"(?i)exit(ed)?( with)? (code|status) \d+|^(##\[error\])?\s*(error)?\.?\s*$")  # 종료 코드만 있는 요약은 원인 식별자가 아님
+GENERIC = re.compile(r"(?i)exit(ed)?( with)? (code|status) \d+|^(##\[error\])?\s*(error)?\.?\s*$|^\d*\s*failed,\s*\d+\s*skipped\b|^(?:test run\s+)?failed:?\s*\d+\s*$")  # 종료 코드·시험 개수 요약('failed, 2 skipped', 'FAILED: 0')은 원인 식별자가 아님. 모든 PR 에 같아 공통 원인으로 오분류됨(11-13)
 
 
 def specific(cause):
@@ -277,12 +277,16 @@ def fail_sigs(c):
     return {signature(text)} | ({signature(rest)} if named and specific(rest) else set())
 
 
+# 다른 검사를 감싸기만 하는 작업. 요약 줄('FAILED: 0' 등)이 모든 PR 에 같아 공통 원인으로 오분류됨(11-12~13 5회) → 비교에서 뺌
+WRAPPER_CHECKS = {"Run Unity validation / Unity validation"}
+
+
 def common_cause(causes, own):
     """다른 열린 PR 에도 같은 검사가 같은 실패 메시지(정규화 전체)로 실패했는지. causes: {PR 번호: {head, fails:[{key, cause, msg}], hub}}, own: 이 PR 번호.
     시험 이름만 같고 메시지가 다르면 공통이 아님. 구형 상태(msg 없음)는 fail_sigs 로 이관 없이 비교. 구체 식별자가 없으면(종료 코드 요약 등) 제외.
     번호 순 정렬이라 처리 순서와 무관"""
     def ids(e):
-        return {(c["key"], g) for c in (e or {}).get("fails", []) for g in fail_sigs(c)}
+        return {(c["key"], g) for c in (e or {}).get("fails", []) if c["key"] not in WRAPPER_CHECKS for g in fail_sigs(c)}
 
     mine = ids(causes.get(own))
     return sorted((n for n, e in causes.items() if n != own and mine & ids(e)), key=lambda n: (len(n), n))

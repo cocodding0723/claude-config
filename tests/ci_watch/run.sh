@@ -108,7 +108,8 @@ prs() { echo "[$1]" > "$D/prs.json"; }
 pj() { printf '{"number":%s,"title":"[LRM-1] t","headRefName":"%s","headRefOid":"%s"%s}' "$1" "$2" "$3" "${4:-}"; }
 fresh() { rm -f "$D/ci-watch.state.json" "$D/orca.log" "$D/worktrees.json"; : > "$D/orca.log"; }
 # 검사 결과·로그: 710 계열은 같은 검사, 로그 마지막 줄만 다름
-ck() { printf '[{"name":"Run Unity validation / Unity validation","workflow":"PR Test Pipeline","bucket":"%s","link":"https://x/actions/runs/%s/job/22"}]' "$1" "$2" > "$D/checks-$3.json"; }
+CKN="Run Unity validation / Unity validation"  # 래퍼 검사. 공통 원인 시험은 실제 검사 이름으로 바꿔 씀
+ck() { printf '[{"name":"%s","workflow":"PR Test Pipeline","bucket":"%s","link":"https://x/actions/runs/%s/job/22"}]' "$CKN" "$1" "$2" > "$D/checks-$3.json"; }
 cycle() { for n in "$@"; do ck pending 11 $n; done; run; for n in "$@"; do ck fail 11 $n; done; run; }
 log() { printf 'x\t2026-11-11T05:00:01.1Z %s\n' "$1" > "$D/log.txt"; }
 fresh; log "not ok 3 - eye"; prs "$(pj 710 feat/mine aaaaaaaaaaaaaaaa)"; wt feat/mine; cycle 710
@@ -144,6 +145,7 @@ grep -q "담당 허브 VFX 허브(vfx) (근거: 허브 표" "$D/orca.log" && ! g
 echo '{"result":{"repos":[{"id":"r2","path":"/p/LoveRevolutionMaker","displayName":"LoveRevolutionMaker"}]}}' > "$D/repos.json"
 
 # 공통 원인: 서로 다른 PR 의 같은 시험 실패 → QA 허브. 처리 순서를 바꿔도 같은 결과
+CKN="Unity Tests / EditMode"
 for order in "720 721" "721 720"; do
   fresh; log "not ok 9 - shared"; wt feat/mine; prs "$(pj 720 feat/mine 4040404040404040),$(pj 721 feat/o 5050505050505050)"
   set -- $order; first=$1
@@ -151,6 +153,7 @@ for order in "720 721" "721 720"; do
   cycle 720 721
   [ "$(grep -c "담당 허브 테스트·QA" "$D/orca.log")" -ge 1 ] && grep -q "담당 변경 PR#" "$D/orca.log" && ok "공통 원인 → QA 허브 + 먼저 간 PR 담당 변경 ($order)" || ko "공통 원인 $order" "$(cat "$D/orca.log")"
 done
+CKN="Unity Tests / EditMode"  # 아래 시험도 실제 검사 이름 사용
 # 같은 종료 요약, 서로 다른 assert → 공통 아님
 fresh; wt feat/mine; prs "$(pj 730 feat/mine 6060606060606060),$(pj 731 feat/o 7070707070707070)"
 printf 'x\t2026-11-11T05:00:01.1Z ##[error]Process completed with exit code 1.\n' > "$D/log.txt"
@@ -168,6 +171,7 @@ assert r.common_cause(f,"710")==[], "제거 뒤 공통 아님"
 h,w=r.assign_hub("feat/zzz","t",[],[],n,["711"],"테스트·QA"); assert h=="테스트·QA" and "711" in w, "QA"
 assert r.assign_hub("feat/zzz","t",[],[],n,[],"테스트·QA")[0].startswith("미배정"), "공통 없음"
 ' "$S" && ok "공통 원인 판정: 대칭·종료 요약 제외·닫힌 PR/옛 head 제거" || ko "공통 원인 단위"
+CKN="Run Unity validation / Unity validation"
 fresh; log "##[error]Process completed with exit code 1."; printf 'x\t2026-11-11T05:00:02.1Z not ok 5 - real\n' >> "$D/log.txt"; prs "$(pj 740 feat/mine 8080808080808080)"; cycle 740
 grep -q "원인 Run Unity validation / Unity validation: not ok 5 - real" "$D/orca.log" && ok "일반 종료 요약은 건너뛰고 구체 원인 추출" || ko "원인 추출" "$(cat "$D/orca.log")"
 # 닫힌 PR 은 상태 파일 원인 표에서 제거
@@ -175,6 +179,22 @@ fresh; log "not ok 9 - shared"; prs "$(pj 750 feat/mine 9090909090909090)"; cycl
 prs "$(pj 750 feat/mine 9090909090909090 ',"state":"CLOSED"')"; ck pending 11 750; run
 python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));assert "750" not in d.get("_causes",{}),d' "$D/ci-watch.state.json" && ok "닫힌 PR 원인 제거" || ko "닫힌 PR"
 
+# 래퍼 검사만 같으면 공통 원인 아님(요약 줄이 모든 PR 에 같음)
+CKN="Run Unity validation / Unity validation"; fresh; log "not ok 9 - shared"; wt feat/mine; prs "$(pj 722 feat/mine 4141414141414141),$(pj 723 feat/o 5151515151515151)"
+cycle 722 723
+! grep -q "테스트·QA" "$D/orca.log" && grep -q "담당 허브 UI 계층" "$D/orca.log" && ok "래퍼 검사만 같음 → 공통 원인 아님" || ko "래퍼 검사" "$(cat "$D/orca.log")"
+# 같은 워크플로의 앞 잡이 취소되면 요약 잡 실패는 취소 여파라 알리지 않음
+fresh; log "not ok 9 - x"; prs "$(pj 724 feat/mine 6161616161616161)"
+cc() { printf '[{"name":"Unity Tests / EditMode","workflow":"PR Test Pipeline","bucket":"%s","link":""},{"name":"Unity Tests / Summary","workflow":"PR Test Pipeline","bucket":"%s","link":"https://x/actions/runs/11/job/22"}]' "$1" "$2" > "$D/checks-724.json"; }
+cc pending pending; run; rm -f "$D/sent.log"; cc cancel fail; run
+[ "$(sent)" = 0 ] && ok "같은 워크플로 취소 여파 실패 → 알림 없음" || ko "취소 여파" "$(cat "$D/sent.log")"
+# run 스크립트 원문(ECHO)·통과 TAP 줄은 원인에서 제외
+fresh; printf 'x\t2026-11-11T05:00:01.1Z \033[36;1mecho error here\033[0m\nx\t2026-11-11T05:00:02.1Z ok 3 - 설정 없음 처리\nx\t2026-11-11T05:00:03.1Z not ok 7 - real\n' > "$D/log.txt"
+python3 -c '
+import sys;sys.path.insert(0,sys.argv[1]);import ci_watch as w
+c,_=w.cause("https://x/actions/runs/11/job/22","Build")
+assert c.endswith("not ok 7 - real"),c
+' "$S" && ok "스크립트 원문·통과 시험 줄은 원인 제외" || ko "ECHO 제외"
 # ---- 공통 원인은 시험 이름이 아니라 실패 메시지(정규화 전체) 기준 ----
 python3 -c '
 import sys;sys.path.insert(0,sys.argv[1]);import ci_review as r
