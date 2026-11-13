@@ -5,8 +5,8 @@ pre  <입력.json>   발급 직전 입력 검사. 오류 있으면 종료 1, 경
 post <결과.json>   발급 직후 다시 읽은 티켓들의 점검 표 출력. 칸이 비면 종료 1
 
 입력(pre): {"type","summary","parent":{"key","reason"} 또는 "new_epic":{"description","children":[]},
-  "assignee","due","due_reason","status","evidence":{"branch","commits":[],"pr"}}
-결과(post): [{"key","type","parent","status","due","assignee","evidence","description","children"}]
+  "assignee","due","due_reason","status","evidence":{"branch","commits":[],"pr","merged","comment","workspace"}}
+결과(post): [{"key","type","parent","status","due","assignee","evidence","description","children":[상태 문자열 또는 {"status"}]}]  에픽 상태는 하위로 판정
 """
 import json
 import re
@@ -25,6 +25,7 @@ STAGE_STATUS = {
     "merged": {"확인 대기", "완료"},
 }
 HUMAN_ONLY = "완료"
+DOING_EVIDENCE = ("branch", "commits", "pr", "comment", "workspace")
 # 병합 전에 나오면 안 되는 상태. 불일치가 아니라 오류로 다룸
 MERGE_ONLY = {"확인 대기", "완료"}
 # 사람이 정하는 상태. 어느 단계에서도 불일치로 보지 않음
@@ -38,9 +39,22 @@ def stage_of(ev):
     ev = ev or {}
     if ev.get("merged"):
         return "merged"
-    if ev.get("pr") or ev.get("commits") or ev.get("branch"):
+    # 브랜치 없는 조사·설계 작업은 진행 댓글·작업 공간(이름에 티켓 번호)도 진행 근거로 인정
+    if any(ev.get(k) for k in DOING_EVIDENCE):
         return "doing"
     return "todo"
+
+
+def epic_stage(children):
+    """에픽 단계는 하위 상태로 판정. 하위 0개면 None(판정 보류)."""
+    sts = [c.get("status") if isinstance(c, dict) else c for c in children or []]
+    if not sts:
+        return None
+    if all(x in MERGE_ONLY for x in sts):
+        return "merged"
+    if all(x == "해야 할 일" for x in sts):
+        return "todo"
+    return "doing"
 
 
 def check_pre(d):
@@ -82,19 +96,23 @@ def check_pre(d):
 
 
 def check_post(items):
-    """티켓별 (행, 빈 칸 목록). 에픽은 설명·하위도 검사."""
+    """티켓별 (행, 빈 칸 목록). 에픽은 설명·하위도 검사하고 상태는 하위로 판정."""
     rows = []
     for it in items:
-        miss = [f for f in FIELDS if not it.get(f) and not (f == "parent" and it.get("type") == EPIC)]
-        if it.get("type") == EPIC:
-            for f, label in (("description", "설명"), ("children", "하위")):
-                if not it.get(f):
-                    miss.append(label)
-        if it.get("status") and it.get("evidence") is not None:
-            stage = stage_of(it["evidence"])
-            if it["status"] in MERGE_ONLY and stage != "merged":
-                miss.append(f"상태({it['status']} 는 dev 병합 뒤 상태, 근거는 {stage} 단계)")
-            elif it["status"] != HOLD_STATUS and it["status"] not in STAGE_STATUS[stage]:
+        epic = it.get("type") == EPIC
+        exempt = {"parent", "evidence"} if epic else set()
+        miss = [f for f in FIELDS if not it.get(f) and f not in exempt]
+        if epic:
+            if not it.get("description"):
+                miss.append("설명")
+            if not it.get("children"):
+                miss.append("하위(0개, 상태 판정 보류)")
+        stage = epic_stage(it.get("children")) if epic else (stage_of(it["evidence"]) if it.get("evidence") is not None else None)
+        status = it.get("status")
+        if status and stage:
+            if status in MERGE_ONLY and stage != "merged":
+                miss.append(f"상태({status} 는 병합 뒤 상태, 근거는 {stage} 단계)")
+            elif status != HOLD_STATUS and status not in STAGE_STATUS[stage]:
                 miss.append(f"상태({stage} 단계와 불일치)")
         rows.append((it, miss))
     return rows
@@ -104,6 +122,8 @@ def render(rows):
     out = ["| " + " | ".join(LABELS[f] for f in FIELDS) + " | 점검 |", "|" + "---|" * (len(FIELDS) + 1)]
     for it, miss in rows:
         ev = it.get("evidence")
+        if it.get("type") == EPIC and not ev:
+            ev = {"하위": len(it.get("children") or [])}
         ev_txt = ", ".join(f"{k}={v}" for k, v in ev.items() if v) if isinstance(ev, dict) else (ev or "")
         cells = [str(it.get(f) or "비어 있음") for f in FIELDS[:-1]] + [ev_txt or "비어 있음"]
         out.append("| " + " | ".join(cells) + " | " + ("통과" if not miss else "고칠 것: " + ", ".join(miss)) + " |")

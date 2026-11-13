@@ -73,4 +73,20 @@ head -1 <<<"$out" | grep -q '키 | 상위 | 상태 | 기한 | 담당 | 근거' &
 printf '[]' > "$W/empty.json"; run post "$W/empty.json" >/dev/null; [ $? = 0 ] && ok "빈 목록 통과" || ko "빈 목록" ""
 run pre "$W/없음.json" >/dev/null 2>&1; [ $? = 2 ] && ok "입력 파일 없으면 종료 2" || ko "파일 없음" ""
 
+# ② 에픽은 하위 상태로 판정
+epic() { printf '[{"key":"LRM-9","type":"에픽","status":"%s","due":"2026-11-30","assignee":"a","description":"d","children":%s}]' "$1" "$2" > "$W/e.json"; }
+epic "진행 중" '["진행 중","해야 할 일"]'; out=$(run post "$W/e.json"); [ $? = 0 ] && ok "에픽: 하위 중 진행 중 있으면 진행 중 통과" || ko "에픽 진행 중" "$out"
+epic "해야 할 일" '["진행 중","해야 할 일"]'; run post "$W/e.json" >/dev/null; [ $? = 1 ] && ok "에픽: 하위 진행 중인데 해야 할 일 → 불일치" || ko "에픽 불일치" ""
+epic "확인 대기" '["확인 대기","완료"]'; run post "$W/e.json" >/dev/null; [ $? = 0 ] && ok "에픽: 하위 전부 확인 대기 이상 → 확인 대기 통과" || ko "에픽 확인 대기" ""
+epic "진행 중" '["확인 대기","확인 대기"]'; run post "$W/e.json" >/dev/null; [ $? = 1 ] && ok "에픽: 하위 전부 확인 대기인데 진행 중 → 불일치" || ko "에픽 전부 확인 대기" ""
+epic "진행 중" '[]'; out=$(run post "$W/e.json"); [ $? = 1 ] && echo "$out" | grep -q '판정 보류' && ok "에픽: 하위 0개 → 판정 보류 지적" || ko "에픽 하위 0" "$out"
+
+# ③ 브랜치 없는 진행 근거(댓글·작업 공간)
+for k in comment workspace; do
+  printf '[{"key":"LRM-5","type":"작업","parent":"LRM-9","status":"진행 중","due":"2026-11-20","assignee":"a","evidence":{"%s":"있음"}}]' "$k" > "$W/c.json"
+  run post "$W/c.json" >/dev/null; [ $? = 0 ] && ok "진행 근거 $k 만으로 진행 중 통과" || ko "근거 $k" ""
+done
+w nb "$BASE,\"status\":\"진행 중\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"workspace\":\"fix-LRM-5\"}"
+out=$(run pre "$W/nb.json"); echo "$out" | grep -q '통과' && ok "pre: 작업 공간 근거 + 진행 중 통과" || ko "pre 작업 공간" "$out"
+
 printf '\n%d 통과, %d 실패\n' "$PASS" "$FAIL"; [ "$FAIL" = 0 ]

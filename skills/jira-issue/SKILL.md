@@ -57,7 +57,8 @@ description: "버그·작업을 다른 사람이 티켓만 보고 재현·착수
 게임 저장소 `.github/workflows/jira-pr-status.yml` 자동화와 같은 규칙이다. **PR 열림은 진행 중**이며 확인 대기가 아니다.
 
 - 확인: `git branch --list '*티켓키*'`, `git log --oneline 기준브랜치..HEAD`, `gh pr list --head 브랜치 --state all`.
-- 입력 JSON `evidence` 에 `branch`·`commits`·`pr`·`merged` 를 넣는다. 근거와 상태가 다르면 검사기가 경고한다.
+- 입력 JSON `evidence` 에 `branch`·`commits`·`pr`·`merged` 를 넣는다. 브랜치 없는 조사·설계 작업은 `comment`(티켓의 작업 진행 댓글) 또는 `workspace`(이름에 티켓 번호가 든 Orca 작업 공간) 도 진행 근거로 인정한다. 근거와 상태가 다르면 검사기가 경고한다.
+- **에픽은 하위 티켓 상태로 판정**: 하위 중 진행 중이 있거나 일부만 끝났으면 진행 중, 전부 확인 대기 이상이면 확인 대기, 전부 해야 할 일이면 해야 할 일. 하위가 0개면 판정 보류로 지적한다(하위 먼저 만든다). 점검 입력 `children` 에 하위 상태를 넣는다.
 - LRM 상태 이름: `해야 할 일`·`진행 중`·`확인 대기`·`보류`(분류는 완료)·`완료`. `리뷰 중` 은 없다. `보류` 는 사람이 정하며 단계 검사에서 제외한다.
 - **`완료` 는 사람만 전환한다.** 입력 상태가 `완료` 이거나, 병합 전인데 `확인 대기` 면 검사기가 오류로 거부한다. 이름이 바뀌면 `getTransitionsForJiraIssue` 로 확인하고 `issue_check.py` 의 `STAGE_STATUS` 를 고친다.
 
