@@ -34,6 +34,7 @@ WT_LIMIT = int(os.environ.get("LRM_WT_LIMIT", "1000"))  # worktree list 행 상�
 CAUSES = "_causes"  # PR 별 마지막 실패 검사·원인(공통 원인 판정용)
 STATUS_DIR = Path(os.environ.get("LRM_HUB_STATUS_DIR") or DIR / "hub-status")  # 티켓→허브 근거 1: 허브 상태 파일
 ROUTES = DIR / "intake-routes.jsonl"  # 티켓→허브 근거 2: 접수 경로
+OWNER_TABLE = DIR / "ci-ticket-owners.tsv"  # 티켓 패턴<TAB>허브 slug<TAB>메모. 작업 공간 소유 표(.orca-owner)가 생기기 전 덮어쓰기
 HUB_TABLE = DIR / "ci-review-hubs.tsv"  # 정규식<TAB>허브. 브랜치·제목에 위에서부터 맞춤
 REVIEW_OUT = DIR / "ci-review"
 REVIEW_INIT = "_review_init"
@@ -62,7 +63,9 @@ VERDICT = "_verdict"  # PR 단위로 마지막에 보낸 결론(pass|fail)
 # 실패 로그에서 원인 한 줄로 쓸 줄. 앞쪽 패턴일수록 우선
 CAUSE = [re.compile(p) for p in (r"Shader error.*", r"not ok \d+.*", r"[^\s].*없음.*", r"##\[error\].*", r"(?i)\berror\b[: ].*", r"(?i)failed(?! 0\b).*")]  # 'FAILED 0' 요약 줄은 원인 아님
 TS_PREFIX = re.compile(r"^.*?\d{4}-\d\d-\d\dT[\d:.]+Z ?")  # gh --log-failed 줄머리(잡·단계·시각) 제거
-TICKET = re.compile(r"\[?LRM-\d+\]?\s*")
+TICKET = re.compile(r"(?i)\[?LRM-\d+\]?\s*")
+SUMMARY_JOB = re.compile(r"(?:Summary|결과 모음)\s*(?:\(\d+/\d+\))?$")  # 다른 잡 결과를 모으는 요약 잡의 이름 꼴(취소 여파 판정용)
+ECHO = re.compile(r"(?:\x1b|\^\[)\[36;1m|^(?:# Subtest:|ok \d)|^\s*(?:[+*=-]\s+)?(?:[0-9a-f]{7,}\.\.\.?[0-9a-f]{7,}|\[(?:new branch|new tag|up to date)\])\s.*->\s+origin/")  # run 스크립트 원문(청록색 재출력)·통과한 TAP 시험 줄·git fetch 참조 갱신 줄('abc1234..def5678 name -> origin/x', ' * [new branch] x -> origin/x'. 브랜치 이름의 error 가 걸림). 오류 줄('fatal: … -> origin/', '! [rejected]')은 보존. 이름에 '없음' 이 든 통과 시험이 원인으로 잡힘(11-12)
 
 
 def watched(check):
@@ -91,16 +94,22 @@ def pr_list():
     return json.loads(gh("pr", "list", "-R", REPO, "--author", "@me", "--state", "open", "--json", "number,title,headRefName,headRefOid,isDraft,labels,state"))
 
 
-def cause(link):
-    """실패 잡 로그에서 (원인 한 줄, 실패 메시지). 메시지는 공통 원인 비교용으로 시험 이름을 뺀 값. 못 찾으면 빈 문자열"""
+def cause(link, name=""):
+    """실패 잡 로그에서 (원인 한 줄, 실패 메시지). 메시지는 공통 원인 비교용으로 시험 이름을 뺀 값. 못 찾으면 빈 문자열.
+    Unity 검사는 결과 xml 의 첫 실패를 먼저 씀. 로그 줄 패턴은 git fetch·스크립트 원문 같은 무관한 줄에 걸려 공통 원인으로 오분류됨(11-12)"""
     m = re.search(r"/runs/(\d+)/job/(\d+)", link or "")
     if not m:
         return "", ""
+    if "Unity" in name:
+        found = xml_cause(m.group(1))
+        if found[0]:
+            return found
     try:
         log = gh("run", "view", m.group(1), "-R", REPO, "--job", m.group(2), "--log-failed")
     except (RuntimeError, subprocess.TimeoutExpired):
         return "", ""
     lines = [TS_PREFIX.sub("", ln).strip() for ln in log.splitlines()]
+    lines = [ln for ln in lines if not ECHO.search(ln)]  # 실행 스크립트 원문(주석 포함)은 원인 아님. 모든 PR 에 같은 줄이 있어 공통 원인으로 오분류됨(11-12)
     for rx in CAUSE:
         for ln in lines:
             hit = rx.search(ln)
@@ -196,6 +205,7 @@ def reviewer_errors(pr):
         return 0
 
 
+_OWN_ROUND = []  # 회차당 덮어쓰기 표 1회 읽기(경고 중복 방지). main() 이 회차 시작에 비움
 _WT_ROUND = []  # 회차당 orca 작업 공간 조회 1회. main() 이 회차 시작에 비움
 
 
@@ -206,6 +216,12 @@ def round_worktrees():
     return _WT_ROUND[0]
 
 
+def round_owners(names):
+    if not _OWN_ROUND:
+        _OWN_ROUND.append(review.load_owners(OWNER_TABLE, names))
+    return _OWN_ROUND[0]
+
+
 def pick_hub(pr, state, with_common=False):
     """담당 허브와 근거. 작업 공간 조회가 불완전하면 그 단계를 건너뛰고 표·미배정으로 진행"""
     names = review.load_hub_names(HUBS_TSV)
@@ -214,7 +230,8 @@ def pick_hub(pr, state, with_common=False):
     return review.assign_hub(pr.get("headRefName", ""), pr.get("title", ""), review.load_table(HUB_TABLE),
                              wts, names, common, names.get(QA_SLUG, ""), REPO,
                              review.ticket_hubs(STATUS_DIR, ROUTES, HUBS_TSV, REPO, GAME_REPO, wts),
-                             review.workspace_tickets(wts, names, REPO))
+                             review.workspace_tickets(wts, names, REPO),
+                             round_owners(names), str(pr.get("number", "")))
 
 
 def relay_fail(pr, fails, prev, state, slack_ts=""):
@@ -270,6 +287,7 @@ def start_adv(pr, prev, baseline, dry):
 def main():
     dry = "--dry-run" in sys.argv[1:]
     _WT_ROUND.clear()
+    _OWN_ROUND.clear()
     try:
         state = json.loads(STATE.read_text())
     except (OSError, ValueError):
@@ -296,9 +314,15 @@ def main():
         if sha:
             prev[HEAD] = sha
         mine = list(filter(watched, checks))
+        # 같은 워크플로의 앞 잡이 취소되면 결과를 모으는 요약 잡(SUMMARY_JOB)만 실패로 찍힌다. 코드 실패가 아니라 취소 여파라 알리지 않음.
+        # 일반 잡 실패는 같은 회차에 취소가 섞여도 진짜 실패라 알림. workflow 값이 없으면 같은 워크플로로 볼 근거가 없어 제외 안 함
+        cancelled = {c["workflow"] for c in mine if c["bucket"] == "cancel" and c.get("workflow")}
         fails = []
         for c in mine:
             k = key(c)
+            if c["bucket"] == "fail" and c.get("workflow") in cancelled and SUMMARY_JOB.search(c["name"]):
+                prev[k] = "cancel"
+                continue
             if c["bucket"] == "fail" and prev.get(k) != "fail":
                 fails.append({"key": k, "bucket": "fail", "link": c.get("link", "")})
             if c["bucket"] in DONE:
@@ -322,7 +346,7 @@ def main():
                         # 게이트 실패가 리뷰어 오류 때문이면 고칠 코드가 없음. 오류 알림이 이미 메인에 가므로 원인만 한 줄로
                         c["cause"], c["reviewer_error"] = REVIEWER_ERROR, True
                         continue
-                c["cause"], c["msg"] = cause(c["link"])
+                c["cause"], c["msg"] = cause(c["link"], c.get("name", ""))
             kind, msg = message(pr, fails)
         else:
             kind, msg = passed_message(pr)

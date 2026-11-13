@@ -111,12 +111,15 @@ hubs/scripts/bot_alive.py	.config/lrm-hubs/bot_alive.py	link
 hubs/scripts/ci_review.py	.config/lrm-hubs/ci_review.py	link
 hubs/scripts/adv_review.py	.config/lrm-hubs/adv_review.py	link
 hubs/ci-review-hubs.tsv	.config/lrm-hubs/ci-review-hubs.tsv	link
+hubs/ci-ticket-owners.tsv	.config/lrm-hubs/ci-ticket-owners.tsv	link
 hubs/panel.env.example	.config/lrm-hubs/panel.env.example	link
 hubs/scrum.env.example	.config/lrm-hubs/scrum.env.example	link
 hubs/scrum-share.example.md	.config/lrm-hubs/scrum-share.example.md	link
 hubs/scripts/set_main_terminal.sh	.config/lrm-hubs/set_main_terminal.sh	link
 hubs/scripts/unity_slot.sh	.config/lrm-hubs/unity_slot.sh	link
 hubs/roles/role-arch.txt	.config/lrm-hubs/roles/role-arch.txt	link
+hubs/roles/role-automa.txt	.config/lrm-hubs/roles/role-automa.txt	link
+hubs/roles/role-datasrc.txt	.config/lrm-hubs/roles/role-datasrc.txt	link
 hubs/roles/role-doc-kit.txt	.config/lrm-hubs/roles/role-doc-kit.txt	link
 hubs/roles/handoff-template.md	.config/lrm-hubs/roles/handoff-template.md	link
 hubs/scripts/create_doc_hub.sh	.config/lrm-hubs/create_doc_hub.sh	link

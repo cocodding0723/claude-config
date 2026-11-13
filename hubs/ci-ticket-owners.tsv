@@ -1,0 +1,8 @@
+# 담당 덮어쓰기 표. 작업 공간 소유 표(.orca-owner) 도입 전까지 CI 알림 담당 허브를 티켓·PR 번호로 지정함
+# 순위: 공통 원인(QA) → 이 표(PR 번호 → 제목·브랜치 티켓) → 작업 공간 허브 → 티켓 근거 → ci-review-hubs.tsv
+# 패턴: LRM-461 단일 · LRM-557..567 범위 · LRM-461,464,557..567 쉼표 목록 · pr:717..719 PR 번호(접두사는 맨 앞 한 번). 티켓이 서로 다른 허브로 갈리면 미배정
+# slug 는 hubs.tsv 에 있어야 함. 형식 오류·없는 slug 줄은 건너뛰고 경고
+# 티켓 패턴	허브 slug	메모
+LRM-461,464,552,557..567	automa-hub	오토마 작업(coord-automa-hub-hub 로 이관)
+LRM-501,520,521,522,524,525	data-source-hub	데이터 읽기 창구(coord-data-source-hub-hub 로 이관)
+pr:717..719	automa-hub	PR#718 이 ui-layer 로 분류된 건 보정
