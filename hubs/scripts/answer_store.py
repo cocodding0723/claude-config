@@ -30,7 +30,7 @@ DELIVERY_NAME = "answer-delivery.jsonl"
 PENDING = "pending"
 APPROVE_NAME = "pr-approve.jsonl"  # PR 병합 승인 기록(종류 pr-approve)
 APPROVE_KIND = "pr-approve"
-PENDING_TTL_S = 300  # 이 시간이 지나도 전달 결과가 없으면 전달 전에 종료된 것으로 봄
+PENDING_TTL_S = max(300, actions.BLOCK_WINDOW_S + 120)  # 이 시간이 지나도 전달 결과가 없으면 전달 전에 종료된 것으로 봄. 막힘 재시도 중(BLOCK_WINDOW_S)에는 넘지 않게
 LABEL_MAX = 80  # inbox option_text 길이 상한(Slack 버튼 때와 같음)
 
 

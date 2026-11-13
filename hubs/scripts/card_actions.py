@@ -182,15 +182,36 @@ def pick_latest(terms: list) -> dict:
     return by_recent(terms)[0]
 
 
-SENT, FAILED, UNKNOWN = "sent", "failed", "unknown"  # UNKNOWN = 시간 초과. 이미 전달됐을 수 있어 재전송 금지
+SENT, FAILED, UNKNOWN, BLOCKED = "sent", "failed", "unknown", "blocked"  # UNKNOWN = 시간 초과. 이미 전달됐을 수 있어 재전송 금지
+BLOCK_CODE = "agent_prompt_blocked"  # 허브 창이 확인 창·질문 화면이라 Orca 가 입력을 막음. 보통 몇 분 뒤 풀리는 일시 막힘
+BLOCK_RETRIES, BLOCK_GAP_S = 5, 60  # BLOCKED 재시도 횟수·간격. 이 값만 고치면 수신 경로·알림 경로가 같이 바뀜
+BLOCK_WINDOW_S = BLOCK_RETRIES * BLOCK_GAP_S  # 재시도에 드는 최대 시간(answer_store 의 pending 만료 기준에 반영)
 
 
-def deliver(slug: str, text: str):
-    """허브 코디네이터에 전송: (상태, 시도한 수, 실패 코드 목록, 후보 수).
+def block_note(label: str) -> str:
+    return f"{label} 허브 창이 확인 창·질문 화면에서 멈춰 있음 — 그 창 확인 필요"
+
+
+class Result(tuple):
+    """deliver 결과 4-튜플(상태, 시도한 수, 실패 코드 목록, 후보 수). blocked = 입력이 막힌 핸들(BLOCKED 재시도 대상)"""
+    blocked: tuple = ()
+
+    def __new__(cls, items, blocked=()):
+        self = super().__new__(cls, items)
+        self.blocked = tuple(blocked)
+        return self
+
+
+def deliver(slug: str, text: str, only=None):
+    """허브 코디네이터에 전송: (상태, 시도한 수, 실패 코드 목록, 후보 수). only 를 주면 그 핸들만 시도(막힘 재시도용).
+    실패 중 agent_prompt_blocked 가 있으면 FAILED 대신 BLOCKED(나중에 같은 핸들에 다시 보낼 수 있음) — 막힌 핸들은 결과의 .blocked.
     후보를 최근 출력 순으로 시도 → 모두 실패하면 목록을 1회 재조회해 아직 안 보낸 핸들만 시도(같은 핸들에 같은 요청 반복 금지).
     시간 초과는 UNKNOWN 으로 즉시 멈춤. 전체 마감(DELIVER_DEADLINE_S) 뒤에는 남은 호출 시간이 모자라면 후보를 생략"""
     end = time.monotonic() + DELIVER_DEADLINE_S
-    tried, codes, first = set(), [], None
+    tried, codes, first, blocked = set(), [], None, []
+
+    def res(status, n, found):
+        return Result((BLOCKED if status == FAILED and blocked else status, n, codes, found), blocked)
 
     def out_of_time() -> bool:
         if end - time.monotonic() >= ORCA_TIMEOUT_S:
@@ -205,19 +226,35 @@ def deliver(slug: str, text: str):
         if terms is None:
             codes.append("terminal_list_failed")
             break
+        if only is not None:
+            terms = [t for t in terms if t["handle"] in only]
         if first is None:
             first = len(terms)
         for t in by_recent([t for t in terms if t["handle"] not in tried]):
             if out_of_time():
-                return FAILED, len(tried), codes, first or 0
+                return res(FAILED, len(tried), first or 0)
             tried.add(t["handle"])
             err = send_line(t["handle"], text)
             if err is None:
-                return SENT, len(tried), codes, first
+                return res(SENT, len(tried), first)
             codes.append(err)
+            if err == BLOCK_CODE:
+                blocked.append(t["handle"])
             if err == "timeout":
-                return UNKNOWN, len(tried), codes, first
-    return FAILED, len(tried), codes, first or 0
+                return res(UNKNOWN, len(tried), first)
+    return res(FAILED, len(tried), first or 0)
+
+
+def redeliver(slug: str, text: str, handles) -> Result:
+    """막힌 핸들에만 BLOCK_GAP_S 간격으로 최대 BLOCK_RETRIES 회 재전송. 성공·시간 초과(불명)·막힘 아닌 실패가 나오면 즉시 멈추고 그 결과를 돌려줌.
+    끝까지 막히면 마지막 BLOCKED 결과. 호출 스레드를 그만큼 블록하므로 백그라운드 스레드에서만 부를 것"""
+    res = Result((BLOCKED, 0, [BLOCK_CODE], 0), handles)
+    for _ in range(BLOCK_RETRIES):
+        time.sleep(BLOCK_GAP_S)
+        res = deliver(slug, text, only=set(res.blocked))
+        if res[0] != BLOCKED:
+            return res
+    return res
 
 
 def str_list(v) -> list:
@@ -226,10 +263,39 @@ def str_list(v) -> list:
 
 def run_notify(args: dict) -> tuple[int, str]:
     """멈춘 워커 알림: 허브 코디네이터 터미널 한 곳에 한 줄만 전송. 워커·창은 건드리지 않음.
-    허브 전송이 끝내 실패하면 메인 터미널에 원문을 대리 전달. 시간 초과(전달 불명)는 원문을 다시 보내지 않고 메인에 '확인 필요' 한 줄만.
-    메인 전달 실패·전달 불명·중복 알림 실패는 rc=1"""
-    sent, notes, lost = 0, [], 0
+    입력 막힘(BLOCKED)은 막힌 핸들에만 BLOCK_GAP_S 간격 최대 BLOCK_RETRIES 회 재시도(허브 여러 곳은 한 라운드에 같이). 성공하면 즉시 중단.
+    끝내 실패하면 메인 터미널에 원문을 대리 전달(막힘이면 '창 확인 필요' 문구 포함). 시간 초과(전달 불명)는 재시도 없이
+    원문을 다시 보내지 않고 메인에 '확인 필요' 한 줄만. 메인 전달 실패·전달 불명·중복 알림 실패는 rc=1"""
+    st = {"sent": 0, "lost": 0}
+    notes = []
     main_handle = mt.read_handle(os.environ.get("LRM_MAIN_ENV") or os.path.join(DIR, "main.env"))
+
+    def settle(label: str, slug: str, body: str, res) -> None:
+        status, tries, codes, found = res
+        if status == SENT:
+            st["sent"] += 1
+            if tries > 1:
+                notes.append(f"{slug}: 앞선 {tries - 1}곳 전송 실패({', '.join(dict.fromkeys(codes))}) 뒤 {tries}번째 후보에 전송")
+            elif found > 1:
+                notes.append(f"{slug}: 코디네이터 {found}개 중 마지막 출력이 가장 최근인 1개에 전송")
+            return
+        if status == UNKNOWN:
+            st["lost"] += 1  # 확인 필요도 성공이 아님
+            msg = f"[멈춘 워커 감시] {label} 허브 알림이 시간 초과로 전달 여부 불명 — 확인 필요(원문은 다시 보내지 않았음)"
+            err = send_line(main_handle, msg) if main_handle else "main_handle_missing"
+            notes.append(f"{label}: 전달 불명(시간 초과), 확인 필요 · " + ("메인에 확인 요청 전달" if err is None else f"메인 확인 요청도 실패({err})"))
+            return
+        why = f"전송 실패({', '.join(dict.fromkeys(codes))})" if codes else "코디네이터 터미널 없음"
+        extra = f" · {block_note(label)}" if status == BLOCKED else ""
+        proxy = f"[멈춘 워커 감시] ({label} 허브에 전달하지 못해 메인에 대리 전달{extra}) " + body
+        err = send_line(main_handle, proxy) if main_handle else "main_handle_missing"
+        if err is None:
+            notes.append(f"{label}: {why} · 메인에 대리 전달" + extra)
+        else:
+            st["lost"] += 1
+            notes.append(f"{label}: {why} · 메인 대리 전달도 실패({err})" + (" — 전달 불명, 확인 필요" if err == "timeout" else "") + extra)
+
+    waiting = []  # 입력이 막혀 재시도 중인 허브: [라벨, slug, 본문, 알림 문구, 결과]
     hubs = args.get("hubs")
     for hub in hubs if isinstance(hubs, list) else []:
         if not isinstance(hub, dict):
@@ -237,37 +303,36 @@ def run_notify(args: dict) -> tuple[int, str]:
         slug = hub.get("slug") if isinstance(hub.get("slug"), str) else ""
         body = "응답 없는 워커: " + " / ".join(str_list(hub.get("lines")))[:600] + " — 상태 확인 후 조치 판단(확인 창은 사용자만 누름)"
         label = slug or "허브 미확인"
-        status, tries, codes, found = deliver(slug, "[멈춘 워커 감시] " + body) if slug else (FAILED, 0, [], 0)
-        if status == SENT:
-            sent += 1
-            if tries > 1:
-                notes.append(f"{slug}: 앞선 {tries - 1}곳 전송 실패({', '.join(dict.fromkeys(codes))}) 뒤 {tries}번째 후보에 전송")
-            elif found > 1:
-                notes.append(f"{slug}: 코디네이터 {found}개 중 마지막 출력이 가장 최근인 1개에 전송")
-            continue
-        if status == UNKNOWN:
-            lost += 1  # 확인 필요도 성공이 아님
-            msg = f"[멈춘 워커 감시] {label} 허브 알림이 시간 초과로 전달 여부 불명 — 확인 필요(원문은 다시 보내지 않았음)"
-            err = send_line(main_handle, msg) if main_handle else "main_handle_missing"
-            notes.append(f"{label}: 전달 불명(시간 초과), 확인 필요 · " + ("메인에 확인 요청 전달" if err is None else f"메인 확인 요청도 실패({err})"))
-            continue
-        why = f"전송 실패({', '.join(dict.fromkeys(codes))})" if codes else "코디네이터 터미널 없음"
-        proxy = f"[멈춘 워커 감시] ({label} 허브에 전달하지 못해 메인에 대리 전달) " + body
-        err = send_line(main_handle, proxy) if main_handle else "main_handle_missing"
-        if err is None:
-            notes.append(f"{label}: {why} · 메인에 대리 전달")
+        text = "[멈춘 워커 감시] " + body
+        res = deliver(slug, text) if slug else Result((FAILED, 0, [], 0))
+        if res[0] == BLOCKED:
+            waiting.append([label, slug, body, text, res])
         else:
-            lost += 1
-            notes.append(f"{label}: {why} · 메인 대리 전달도 실패({err})" + (" — 전달 불명, 확인 필요" if err == "timeout" else ""))
+            settle(label, slug, body, res)
+    for _ in range(BLOCK_RETRIES):
+        if not waiting:
+            break
+        time.sleep(BLOCK_GAP_S)
+        still = []
+        for w in waiting:
+            res = deliver(w[1], w[3], only=set(w[4].blocked))
+            w[4] = res
+            if res[0] == BLOCKED:
+                still.append(w)
+            else:
+                settle(w[0], w[1], w[2], res)
+        waiting = still
+    for w in waiting:
+        settle(w[0], w[1], w[2], w[4])
     dups = [d for d in args.get("dups", []) if isinstance(d, dict) and isinstance(d.get("slug"), str)] if isinstance(args.get("dups"), list) else []
     if dups:
         text = "[멈춘 워커 감시] 중복 코디네이터: " + "; ".join(f"{d['slug']} ({' / '.join(str_list(d.get('titles')))})" for d in dups) + " — 닫지 않았음, 정리 여부 판단 필요"
         if main_handle and send_line(main_handle, text[:600]) is None:
             notes.append("중복 코디네이터를 메인에 알림")
         else:
-            lost += 1
+            st["lost"] += 1
             notes.append("중복 코디네이터 메인 알림 실패")
-    return (1 if lost else 0), f"허브 {sent}곳 알림" + (f" · {'; '.join(notes)}" if notes else "")
+    return (1 if st["lost"] else 0), f"허브 {st['sent']}곳 알림" + (f" · {'; '.join(notes)}" if notes else "")
 
 
 KINDS = {"resume": run_resume, "notify": run_notify}
