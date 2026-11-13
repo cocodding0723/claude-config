@@ -69,3 +69,4 @@
 - PR draft 규칙(사용자 11-13 D-PRDRAFT): 새 PR 은 항상 `--draft` 로 게시한다(없으면 훅 `pr-draft-guard` 가 거부). draft 해제(`gh pr ready`·`gh api` 로 draft=false)는 그 PR 에 대한 사용자 승인(결정 카드 `D-RDY<PR번호>` 의 1번 답 또는 문서 사이트 병합 승인) 뒤에만 한다. 훅이 승인 기록을 읽어 검사하며 기록이 없으면 거부, 판정 불가는 확인을 띄운다. 게시는 승인 없이 허브가 바로 하고(11-13 D-PRDRAFT2), 훅은 `--draft` 만 강제한다.
 - 사용자 승인이 필요한 것은 허브 창에 텍스트로 묻지 말고 `hub_report.py decide` Slack 카드로 올린다(허브 창의 질문은 사용자가 보지 못한다).
 - 문서 사이트 병합 승인 = 그 PR(기록된 헤드 커밋)에 대한 사용자 승인 기록이다. 병합을 누가 실행하는지는 기존 규칙 그대로다(사용자 직접 병합 대상은 계속 사용자가 한다). `사용자 원문: PR … 병합 승인(헤드 …) … (출처: 문서 사이트)` 줄은 이 승인 기록일 뿐 권한을 넓히지 않으며, PR 헤드가 바뀌면 승인은 무효라 다시 승인받는다. 문서 사이트는 병합·push 를 실행하지 않는다.
+- 로컬 게이트(사용자 11-13 D-LOCALGATE): 게임 저장소 push 는 `Tools/ci/local-gate.sh` 통과가 필수다. pre-push 훅이 강제하고 통과 기록(`~/.config/lrm-hubs/local-gate/<커밋>.json`)을 남긴다. `--no-verify`·`core.hooksPath` 변경·`hooks.localGate=off` 는 우회라 금지(훅이 거부). 통과 기록은 `create-pr/scripts/gate-lines.sh` 로 PR 검증 절에 붙인다.

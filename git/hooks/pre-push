@@ -1,1 +1,6 @@
-_chain
+#!/usr/bin/env bash
+# Global pre-push: repo-local pre-push 먼저, 이어서 게임 저장소 로컬 게이트(lib/local_gate_push.sh). stdin(ref 목록)을 두 곳에 같이 넘김.
+in=$(mktemp); trap 'rm -f "$in"' EXIT
+cat > "$in"
+HOOK_NAME=pre-push "$(dirname "$0")/_chain" "$@" < "$in" || exit $?
+"${CLAUDE_HOOKS_DIR:-$HOME/.claude/hooks}/lib/local_gate_push.sh" "$@" < "$in"   # 위치 옮기면 CLAUDE_HOOKS_DIR 또는 이 줄만 변경
