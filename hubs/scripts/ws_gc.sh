@@ -11,6 +11,8 @@ CFG_ARCHIVE="${WS_GC_ARCHIVE:-$HOME/orca/archive}"       # 결과물 보관·로
 CFG_LOG="${WS_GC_LOG:-$CFG_ARCHIVE/ws_gc.log}"
 CFG_MIN_IDLE_DAYS="${WS_GC_MIN_IDLE_DAYS:-2}"            # 마지막 활동 후 이 일수 이상 지나야 후보
 CFG_HUB_PREFIX="coord-"                                  # 허브 폴더 접두사(항상 제외)
+CFG_GAME_REPO_DIR="${WS_GC_GAME_REPO:-LoveRevolutionMaker}"  # 부모 자동 연결 대상 저장소 폴더(<root>/ 바로 아래)
+CFG_TICKET_RE='LRM-[0-9]+'                               # 같은 티켓 판정에 쓰는 이름·브랜치·폴더 패턴
 CFG_PROTECTED_BRANCHES="main master develop dev"         # 이 브랜치(와 release/*)가 붙은 곳은 PR 이력이 있어도 제외
 # Unity 재임포트 부산물: 미커밋 0 으로 치는 경로. .meta 와 TMP 폰트 아틀라스 파일만(폴더 이름만으로는 부산물이 아님)
 CFG_NOISE_RE='(\.meta$)|(SDF[^/]*\.asset$)'
@@ -58,6 +60,10 @@ usage() {
   → orca worktree rm(브랜치는 지우지 않음) → 허브 색인 한 줄(~/.config/lrm-hubs/hub-inbox/<허브 slug>.tsv: 시각·작업 공간·보관 경로·파일 수)
   → 쉬고 있는 워커 기록 worker-release.
   rm 거부 시 서브모듈이 깨끗하거나 확인된 사운드 LICENSE 줄바꿈만 남은 곳은 보관·변경 재확인 후 --force 로 재시도함.
+
+부모 없는 작업 공간 연결(전체 점검에서만): <root>/LoveRevolutionMaker/ 아래 허브가 아닌 작업 공간 중 부모가 없고 같은 티켓(LRM-n, 표시 이름·브랜치·폴더에서 찾음)의
+  다른 작업 공간들이 가진 부모 허브가 하나로 정해지면 --apply 때 그 허브에 연결하고 경고 한 줄을 남김(--dry-run 은 ADOPT_CANDIDATE 기록만).
+  티켓 근거가 없거나 허브가 갈리면 연결하지 않고 WARN_NO_PARENT·WARN_PARENT_SPLIT 경고만 남김.
 
 옵션:
   --dry-run        (기본) 후보·건너뜀 이유만 기록
@@ -346,6 +352,35 @@ release_workers() { # 이 워크스페이스에 붙었던 쉬는 워커 기록 �
     if orca orchestration worker-release --dispatch "$d" --json >/dev/null 2>&1; then log "WORKER_RELEASE $d"; else log "WORKER_RELEASE_FAIL $d (워커 기록은 Orca 가 자동 해제)"; fi
   done < "$TMP/workers.tsv"
 }
+
+# ── 부모 없는 작업 공간 자동 연결 ────────────────────────────────────────────────────────
+# create_worker_ws.sh 의 부모 연결이 경합으로 빠지면(11-13 실측) 허브 하위가 아닌 채 남음. 같은 티켓(LRM-n)을 가진 다른 작업 공간들의
+# 부모 허브가 하나로 정해지면 그 허브에 연결하고, 근거가 없거나 허브가 갈리면 연결하지 않고 경고만 남김. 전체 점검에서만 실행(--only·--path·--parent 제외)
+adopt_orphans() {
+  echo "$WL" | jq -r --arg root "$CFG_ROOT/$CFG_GAME_REPO_DIR/" --arg hub "$CFG_HUB_PREFIX" --arg tre "$CFG_TICKET_RE" '
+    ([.result.worktrees[] | .path as $pp | (.childWorktreeIds // [])[] | {key: ., value: $pp}] | from_entries) as $par
+    | def base: split("/") | last;
+    def ticket: ([.displayName, .branch, (.path | base)] | map(. // "") | join(" ") | capture("(?<t>" + $tre + ")") | .t) // "";
+    [.result.worktrees[] | {id, path, t: ticket, par: ($par[.id] // "")}] as $all
+    | $all[] | select((.path | startswith($root)) and (.path | base | startswith($hub) | not) and .par == "" and .t != "") as $o
+    | [$all[] | select(.t == $o.t and .par != "" and (.par | base | startswith($hub))) | .par] | unique as $hubs
+    | [$o.path, $o.t, ($hubs | join(","))] | @tsv' | while IFS=$'\t' read -r op ot oh; do
+    [ -n "$op" ] || continue
+    case "$oh" in
+      "") log "WARN_NO_PARENT ${op#"$CFG_ROOT"/} — 부모 없음, 같은 티켓($ot) 작업 공간에서 허브 근거를 못 찾아 연결 안 함"
+          echo "⚠️ 부모 없는 작업 공간: $op — 허브를 정해 수동 연결: orca worktree set --worktree path:$op --parent-worktree path:<허브 경로>" >&2 ;;
+      *,*) log "WARN_PARENT_SPLIT ${op#"$CFG_ROOT"/} — 같은 티켓($ot) 작업 공간의 허브가 갈려 연결 안 함: $oh"
+          echo "⚠️ 부모 없는 작업 공간: $op — 같은 티켓($ot)의 허브가 여럿($oh). 하나를 골라 수동 연결: orca worktree set --worktree path:$op --parent-worktree path:<허브 경로>" >&2 ;;
+      *)  if [ "$APPLY" = 0 ]; then log "ADOPT_CANDIDATE ${op#"$CFG_ROOT"/} → ${oh#"$CFG_ROOT"/} (티켓 $ot, 시험이라 연결 안 함)"
+          elif orca worktree set --worktree "path:$op" --parent-worktree "path:$oh" --json >/dev/null 2>&1; then
+            log "ADOPT ${op#"$CFG_ROOT"/} → ${oh#"$CFG_ROOT"/} (같은 티켓 $ot 의 부모 허브)"
+            echo "⚠️ 부모 없던 작업 공간을 같은 티켓($ot) 허브에 연결함: $op → $oh" >&2
+          else log "ADOPT_FAIL ${op#"$CFG_ROOT"/} → $oh — orca worktree set 실패, 수동 연결 필요"
+            echo "⚠️ 부모 연결 실패: orca worktree set --worktree path:$op --parent-worktree path:$oh" >&2; fi ;;
+    esac
+  done
+}
+[ -n "$ONLY$ONLYPATH$PARENT" ] || adopt_orphans
 
 # ── 본 흐름 ───────────────────────────────────────────────────────────────────────────────
 : > "$TMP/skips"; : > "$TMP/items.jsonl"; : > "$TMP/keepcode.jsonl"; : > "$TMP/failed.txt"

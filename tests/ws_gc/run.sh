@@ -379,5 +379,6 @@ chk "[5] 동시 실행 4개: 하나만 실행" '[ "$(grep -c "START" "$SB/par/lo
 gc --only nothing_matches; chk "[5] 끝난 뒤 다시 실행 가능(잠금이 남지 않음)" '[ "$RC" = 0 ] && has "START"'
 chk "[5] 잠금은 pid 파일·잠금 폴더가 아님" '[ ! -d "$ARC/.ws_gc.lock" ] && [ -f "$ARC/.ws_gc.flock" ]'
 
+bash "$HERE/adopt.sh" || FAIL=$((FAIL + 1))
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
