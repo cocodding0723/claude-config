@@ -88,7 +88,7 @@ esac
     def test_pr_hub_is_parent_hub_of_head_branch_workspace(self):
         f = self.facts()
         self.assertEqual(f.hub(["pr:746"]), "ui-layer")
-        self.assertEqual(f.wt_calls if hasattr(f, "wt_calls") else self.wt_calls, ["Org/Repo"])
+        self.assertEqual(self.wt_calls, ["Org/Repo"])
         f.hub(["pr:746"])
         self.assertEqual(self.wt_calls, ["Org/Repo"])  # 목록 조회는 회차당 한 번
 

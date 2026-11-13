@@ -63,7 +63,7 @@ class Facts:
     """한 회차의 근거 모음. gh·orca·파일 조회는 필요할 때 한 번씩 하고 이 객체에 기억함.
     gh: gh 실행 파일 · repos: PR 조회 저장소 목록 · worktrees: repo → 작업 공간 목록(조회 불완전이면 None) 함수 · hub_slugs: 허브 slug 집합"""
 
-    def __init__(self, gh, repos, worktrees, hub_slugs, cache=None, now=None, budget_s=None):
+    def __init__(self, gh, repos, worktrees, hub_slugs, cache=None, now=None, budget_s=None, use_pr=True):
         self.gh, self.repos, self._worktrees, self.hub_slugs = gh, list(repos), worktrees, set(hub_slugs)  # hub_slugs 는 hubs.tsv 의 원래 slug
         self.cache = cache if cache is not None else {}
         self.now = time.time() if now is None else now
@@ -73,11 +73,14 @@ class Facts:
         self.cards = {}  # 결정 번호 → 닫힘 여부
         self.dec_hubs = {}
         self.ledger = set()
+        self.use_pr = use_pr  # False 면 gh 를 부르지 않음(--no-pr): PR 은 모두 '모름'
         self.errors = []  # 조회 실패 안내(사람이 읽는 문장)
 
     # ---------- PR ----------
     def _view(self, num):
         """gh pr view → {state, branch, repo} 또는 None. 저장소가 여럿이면 앞에서부터 시도"""
+        if not self.use_pr:
+            return None
         for repo in ([self.repo_hint[num]] if num in self.repo_hint else self.repos) or [""]:
             left = self.deadline - time.monotonic()
             if left <= 1:

@@ -81,7 +81,7 @@ class ListCreate(Base):
         self.assertEqual(self.methods(), ["slackLists.create", "auth.test", "slackLists.access.set"])
         create, share = Fake.calls[0][1], Fake.calls[2][1]
         self.assertEqual(create["name"], "강비서 할 일")
-        self.assertEqual([c["key"] for c in create["schema"]], ["title", "kind", "urgency", "hub", "answer", "done", "link", "archive"])
+        self.assertEqual([c["key"] for c in create["schema"]], ["title", "kind", "urgency", "hub", "answer", "done", "link", "archive", "order"])
         self.assertEqual(share, {"list_id": "FNEW001", "access_level": "owner", "user_ids": ["UFAKEUSER1"]})
         st = json.loads(self.read_state())["lists"]["강비서 할 일"]
         self.assertTrue(st["shared"])
