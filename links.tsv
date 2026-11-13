@@ -157,3 +157,9 @@ hubs/scripts/ask_user_press.sh	.config/lrm-hubs/ask_user_press.sh	link
 hubs/scripts/session_gc.py	.config/lrm-hubs/session_gc.py	link
 hubs/docs/session-gc.md	.config/lrm-hubs/docs/session-gc.md	link
 hubs/launchd/ai.lrm.sessiongc.plist	Library/LaunchAgents/ai.lrm.sessiongc.plist	copy
+hubs/scripts/doc_index.py	.config/lrm-hubs/doc_index.py	link
+hubs/scripts/doc_send.py	.config/lrm-hubs/doc_send.py	link
+hubs/scripts/doc_browser.py	.config/lrm-hubs/doc_browser.py	link
+hubs/scripts/doc_browser_ui.html	.config/lrm-hubs/doc_browser_ui.html	link
+hubs/doc-recipients.example.json	.config/lrm-hubs/doc-recipients.example.json	link
+hubs/launchd/ai.lrm.docbrowser.plist	Library/LaunchAgents/ai.lrm.docbrowser.plist	copy

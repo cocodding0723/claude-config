@@ -1,0 +1,5 @@
+{
+  "recipients": [
+    {"name": "받는사람 이름", "slack_id": "UXXXXXXXXXX"}
+  ]
+}
