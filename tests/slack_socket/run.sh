@@ -254,6 +254,14 @@ waitfor s26 out '원문 다시 전달' 4 && waitfor s26 out '결정 D-T1 버튼 
 [ "$(grep -c 'D-T1 = 선택 2(B 안)' "$SB/s26/orca.calls")" = 1 ] && ! grep -q 'D-T1 = 선택 1' "$SB/s26/orca.calls" && grep -q '이전 답의 전달 기록이 없어 다시 전달함' "$SB/s26/calls" && ok "전달 기록 없는 이전 답 → 늦은 클릭이 원문을 1회만 다시 전달·안내" || ko "재전달" "$(cut -c1-160 "$SB/s26/orca.calls" 2>/dev/null)"
 stop s26
 
+# 전달 중 예외(허브 보고 기록이 깨짐) → 스레드가 조용히 죽지 않고 종류만 로그 + 카드 스레드 경고. 본문·traceback 은 남기지 않음
+mkdir -p "$SB/s27/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/s27/hub/main.env"; printf 'alpha\t알파\t-\t-\t-\n' > "$SB/s27/hub/hubs.tsv"
+printf '%s\n' '{"decision_id":"D-T1","hub":["alpha"]}' > "$SB/s27/hub/hub-reports.jsonl"
+start s27 "{\"events\":[$(act 0.4 i1 $ME pick_2 'D-T1|2' '2. B 안')]}" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s27/orca.calls" LRM_NOTIFY="$SB/fake_notify.sh" FAKE_NOTIFY_LOG="$SB/s27/notify.calls" HUB_PROC_TABLE="$SB/none"
+waitfor s27 out '결정 D-T1 전달 예외 TypeError' 4 && waitfor s27 notify.calls '전달 예외' 4 && grep -q -- '--kind warn' "$SB/s27/notify.calls" && ! grep -q 'Traceback' "$SB/s27/out" && ok "전달 예외 → 종류만 로그(traceback 없음)·카드 스레드 warn, 답 기록은 유지" || ko "전달 예외" "$(tail -c 300 "$SB/s27/out")"
+[ "$(grep -c '"decision_id": "D-T1"' "$SB/s27/hub/slack-inbox.jsonl")" = 1 ] && ok "예외 뒤에도 inbox 답 기록 1건 유지(재전달 대상으로 남음)" || ko "예외 뒤 기록" ""
+stop s27
+
 # ---- 9. 토큰·ID 는 어떤 출력에도 없음 ----------------------------------------------------------
 leaks=$(cat "$SB"/*/out | grep -Ec "$APPTOK|$BOTTOK|$ME|$LEAK|Uother9|Bbot1" || true)
 [ "$leaks" = 0 ] && ok "모든 시나리오 로그·표준출력에 토큰·사용자 ID·예외 본문 0건" || ko "유출" "${leaks}줄"

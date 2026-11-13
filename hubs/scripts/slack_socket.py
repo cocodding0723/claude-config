@@ -239,7 +239,12 @@ class Decide:
         del Decide.workers[:-64]
 
     def send_out(self, did: str, ts: str, title: str, label: str, extra: dict, source: str = answer_store.SLACK) -> None:
-        out = self.router.route(did, ts, source, answer_route.said_text(did, extra, label))
+        try:
+            out = self.router.route(did, ts, source, answer_route.said_text(did, extra, label))
+        except Exception as err:  # 전송 예외가 스레드를 조용히 죽이지 않게 종류만 남김(본문·traceback 제외). pending 은 늦은 클릭의 재전달이 복구
+            log(f"결정 {did} 전달 예외 {type(err).__name__} — 답은 기록됨, 재전달 대기")
+            warn_slack(ts, f"전달 예외: {title or did}\n\n• 무엇: 답은 기록했지만 전달 중 오류({type(err).__name__})\n• 결과: 카드를 다시 누르면 재전달함. 급하면 메인에 직접 알려 주세요")
+            return
         if not out.ok:
             where = "메인 터미널" if out.via == "main" else f"{out.hub} 허브·메인 터미널"
             warn_slack(ts, f"{'메인' if out.via == 'main' else '허브'} 전달 실패: {title or did} = {label}\n\n• 무엇: 버튼 답은 기록했지만 {where}로 못 보냄 ({out.note})\n• 결과: 메인에 직접 알려 주세요")

@@ -153,8 +153,8 @@ class Decider:
         return card, f"{pick}. {text}"
 
     def ensure_open(self, did: str, card: dict) -> None:
-        by = self.store.first_answer(did, card["ts"])
-        if by:
+        by, rec = self.store.find_answer(did, card["ts"])
+        if by and not self.store.retry_due(did, card["ts"], rec, self.now()):  # 전달 전에 끊긴 답은 통과시켜 commit 이 재전달함
             raise DecideError(409, answer_store.LATE_TEXT.get(by, "이미 답함"))
         if self.has_action(did):
             raise DecideError(409, OPEN_ACTION)
