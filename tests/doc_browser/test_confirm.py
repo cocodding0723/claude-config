@@ -106,6 +106,93 @@ class ConfirmTest(ServerBase):
         self.assertEqual((st, j["via"]), (200, "proxy"))
         self.assertEqual(self.items()[KEY_WIN]["state"], "done")
 
+    # ---- 전달 기록·재전달 ----
+    def deliveries(self):
+        with open(os.path.join(self.env.hub, "answer-delivery.jsonl"), encoding="utf-8") as f:
+            return [json.loads(x) for x in f if x.strip()]
+
+    def confirm_ts(self, key=KEY_CMD):
+        with open(os.path.join(self.env.hub, "confirm-log.jsonl"), encoding="utf-8") as f:
+            return str([json.loads(x) for x in f if json.loads(x)["key"] == key][-1]["at"])
+
+    def seed_delivery(self, state, ok, at, key=KEY_CMD):
+        """확인 직후 성공으로 남은 전달 기록을 시험용 상태로 바꿈"""
+        self.env.jsonl("answer-delivery.jsonl", [{"decision_id": key, "parent_ts": self.confirm_ts(key), "state": state, "ok": ok, "at": at}])
+        os.path.exists(self.env.hub)
+
+    def test_delivery_result_is_recorded_pending_then_result(self):
+        self.confirm(KEY_CMD)
+        self.assertEqual([(d["state"], d["ok"]) for d in self.deliveries()], [("pending", None), ("hub", True)])
+        self.assertEqual(self.deliveries()[0]["parent_ts"], self.confirm_ts())
+
+    def test_second_press_after_success_does_not_resend(self):
+        self.confirm(KEY_CMD)
+        self.confirm(KEY_CMD)
+        self.assertEqual(len(self.hub_sends()), 1)
+
+    def test_failed_delivery_is_redelivered_once_on_second_press(self):
+        self.confirm(KEY_CMD)
+        self.seed_delivery("lost", False, int(time.time()))
+        st, j = self.confirm(KEY_CMD)
+        self.assertEqual((st, j["ok"], j.get("already")), (200, True, None))
+        self.assertEqual(len(self.hub_sends()), 2)
+        self.assertEqual(self.audit()[-1]["result"], "redeliver:hub:ok")
+        self.assertTrue(self.confirm(KEY_CMD)[1]["already"])  # 재전달은 1회뿐
+        self.assertEqual(len(self.hub_sends()), 2)
+
+    def test_stale_pending_is_redelivered_but_fresh_pending_is_not(self):
+        self.confirm(KEY_CMD)
+        self.seed_delivery("pending", None, int(time.time()))
+        self.assertTrue(self.confirm(KEY_CMD)[1]["already"])
+        self.assertEqual(len(self.hub_sends()), 1)
+        self.seed_delivery("pending", None, 1)
+        self.assertEqual(self.confirm(KEY_CMD)[1]["via"], "hub")
+        self.assertEqual(len(self.hub_sends()), 2)
+
+    def test_timeout_unknown_is_never_redelivered(self):
+        self.confirm(KEY_CMD)
+        self.seed_delivery("unknown", False, 1)
+        self.assertTrue(self.confirm(KEY_CMD)[1]["already"])
+        self.assertEqual(len(self.hub_sends()), 1)
+
+    def test_confirm_without_delivery_rows_is_not_resent(self):
+        self.confirm(KEY_CMD)
+        os.remove(os.path.join(self.env.hub, "answer-delivery.jsonl"))
+        self.assertTrue(self.confirm(KEY_CMD)[1]["already"])
+        self.assertEqual(len(self.hub_sends()), 1)
+
+    # ---- 원천 읽기 실패 ----
+    def test_missing_or_broken_snapshot_keeps_previous_list_and_registry(self):
+        before = self.items()
+        seen_path = os.path.join(self.env.hub, "confirm-seen.json")
+        seen = open(seen_path, encoding="utf-8").read()
+        for breaker in (lambda: os.remove(self.snap), lambda: open(self.snap, "w").write("{깨짐")):
+            breaker()
+            self.app.checklist.refresh(use_pr=False)
+            j = json.loads(self.req("GET", "/api/confirm")[2])
+            self.assertEqual({k: v["state"] for k, v in self.items().items()}, {k: v["state"] for k, v in before.items()})
+            self.assertTrue(any("원천 읽기 실패" in n for n in j["notes"]), j["notes"])
+            self.assertEqual(open(seen_path, encoding="utf-8").read(), seen)  # 명부를 건드리지 않음
+        self.write_snap(SNAP_ITEMS)
+        self.app.checklist.refresh(use_pr=False)
+        self.assertEqual(json.loads(self.req("GET", "/api/confirm")[2])["notes"], [])
+
+    def test_same_text_reappearing_is_todo_again_and_can_be_confirmed_again(self):
+        """키가 문구 해시라 같은 문구가 다시 오면 옛 확인으로 바로 '함'이 되면 안 되고, 다시 확인할 수 있어야 함"""
+        self.confirm(KEY_CMD)
+        clock = [time.time() + 10]
+        self.app.checklist.now = lambda: clock[0]
+        self.write_snap([i for i in SNAP_ITEMS if i["key"] != KEY_CMD])
+        self.app.checklist.refresh(use_pr=False)
+        clock[0] += 10
+        self.write_snap(SNAP_ITEMS)
+        self.app.checklist.refresh(use_pr=False)
+        self.assertEqual(self.items()[KEY_CMD]["state"], "todo")
+        clock[0] += 10
+        st, j = self.confirm(KEY_CMD)
+        self.assertEqual((st, j.get("already"), len(self.hub_sends())), (200, None, 2))
+        self.assertEqual(self.items()[KEY_CMD]["state"], "done")
+
     def test_audit_has_key_and_result_without_text(self):
         self.confirm(KEY_CMD)
         rec = self.audit()[-1]

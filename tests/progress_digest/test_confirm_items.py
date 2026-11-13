@@ -92,6 +92,22 @@ class StateTest(Base):
         self.assertIn("사용자 확인 — 문서 사이트", by["hub:alpha:1"].basis)
         self.assertFalse(by["hub:alpha:2"].done)
 
+    def test_old_confirm_does_not_close_reappearing_same_key(self):
+        """키가 문구 해시라 같은 문구가 나중에 다시 오면 옛 확인으로 바로 '함'이 되면 안 됨"""
+        self.build()
+        self.store.confirm("hub:alpha:3", answer_store.DOCSITE, NOW + 10)
+        gone = [r for r in RAW if r[0] != "hub:alpha:3"]
+        ci.build(gone, NOW + 20, self.facts(), self.store)  # 사라져 명부에서 완료
+        later = NOW + ci.DONE_KEEP_S + 100  # 완료 기록이 만료된 뒤 같은 문구 재출현
+        got = self.by_key(ci.build(gone, later, self.facts(), self.store))
+        self.assertNotIn("hub:alpha:3", got)
+        got = self.by_key(ci.build(RAW, later + 5, self.facts(), self.store))
+        self.assertFalse(got["hub:alpha:3"].done)
+        first = self.store.load_seen()["first"]["hub:alpha:3"]
+        self.assertTrue(self.store.confirm("hub:alpha:3", answer_store.DOCSITE, later + 50, first))  # 재출현 항목은 다시 확인할 수 있음
+        self.assertFalse(self.store.confirm("hub:alpha:3", answer_store.DOCSITE, later + 60, first))
+        self.assertTrue(self.by_key(ci.build(RAW, later + 70, self.facts(), self.store))["hub:alpha:3"].done)
+
     def test_confirm_log_does_not_close_decision_or_pr(self):
         self.store.confirm("decision:D-A", answer_store.DOCSITE, NOW)
         self.store.confirm(PR, answer_store.DOCSITE, NOW)
@@ -110,11 +126,33 @@ class VanishTest(Base):
         got = self.by_key(self.build(raw=[r for r in RAW if r[0] != PR], prs={746: "MERGED"}))
         self.assertEqual((got[PR].state, got[PR].basis, got[PR].url), (ci.DONE, "#746 병합됨", f"https://github.com/{REPO}/pull/746"))
 
-    def test_vanished_decision_without_evidence_is_dropped_not_done(self):
-        self.build()
-        got = self.by_key(self.build(raw=[r for r in RAW if not r[0].startswith("decision:")]))
+    def test_vanished_decision_known_open_is_dropped_not_done(self):
+        self.build(cards={"D-A": False})
+        got = self.by_key(self.build(raw=[r for r in RAW if not r[0].startswith("decision:")], cards={"D-A": False}))
         self.assertNotIn("decision:D-A", got)
         self.assertNotIn("decision:D-A", self.store.load_seen()["entries"])
+
+    def test_vanished_decision_with_unknown_cards_keeps_registry(self):
+        self.build()
+        gone = [r for r in RAW if not r[0].startswith("decision:")]
+        got = self.by_key(self.build(raw=gone))  # 카드 기록을 못 읽음(facts.cards 비어 있음)
+        self.assertNotIn("decision:D-A", got)
+        self.assertIn("decision:D-A", self.store.load_seen()["entries"])
+        got = self.by_key(self.build(raw=gone, cards={"D-A": True}))  # 다음 회차에 근거가 생기면 완료
+        self.assertEqual(got["decision:D-A"].state, ci.DONE)
+
+    def test_vanished_pr_keeps_registry_when_lookup_unknown(self):
+        """gh 실패·예산 초과·use_pr=False 는 PR 상태 모름 → 명부 유지, 병합이 확인되면 그때 완료"""
+        self.build()
+        gone = [r for r in RAW if r[0] != PR]
+        self.assertNotIn(PR, self.by_key(self.build(raw=gone)))
+        self.assertIn(PR, self.store.load_seen()["entries"])
+        self.assertEqual(self.by_key(self.build(raw=gone, prs={746: "MERGED"}))[PR].state, ci.DONE)
+
+    def test_vanished_pr_known_open_is_dropped(self):
+        self.build(prs={746: "OPEN"})
+        self.build(raw=[r for r in RAW if r[0] != PR], prs={746: "OPEN"})
+        self.assertNotIn(PR, self.store.load_seen()["entries"])
 
     def test_vanished_hub_item_is_done_by_hub_report(self):
         self.build()

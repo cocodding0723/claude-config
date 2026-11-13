@@ -83,6 +83,13 @@ def kind_of(row, raw_title: str) -> str:
     return SHEET if _SHEET.search(raw_title) else WINDOW
 
 
+def valid_log(log: dict, key: str, first_seen: float) -> bool:
+    """확인 기록이 이번 출현의 것인가. 키가 문구 해시라 같은 문구가 나중에 다시 오면 옛 기록이 새 항목을 덮음 → 처음 본 시각보다 이른 기록은 무시.
+    기록 시각은 초 단위로 내려 쓰므로 처음 본 시각도 초로 내려 비교"""
+    rec = log.get(key)
+    return rec is not None and rec.get("at", 0) >= int(first_seen)
+
+
 def pr_url(key: str) -> str:
     m = _PR_KEY.match(key)
     return f"https://github.com/{m.group(1)}/pull/{m.group(2)}" if m else ""
@@ -96,17 +103,18 @@ class Store:
         self.log, self.seen_path = os.path.join(self.dir, LOG_NAME), os.path.join(self.dir, SEEN_NAME)
         self.lock = os.path.join(self.dir, LOCK_NAME)
 
-    def confirm(self, key: str, source: str, now: float | None = None) -> bool:
-        """확인 기록 한 줄. 이미 있으면 False(중복 기록 없음)"""
+    def confirm(self, key: str, source: str, now: float | None = None, since: float = 0.0) -> bool:
+        """확인 기록 한 줄. since(이번 출현의 처음 본 시각) 이후 기록이 이미 있으면 False(중복 기록 없음).
+        그 이전 기록은 같은 문구의 지난 출현 것이라 새 줄을 더함"""
         with actions.flock(self.lock):
-            if key in self.confirmed():
+            if valid_log(self.confirmed(), key, since):
                 return False
             rec = {"key": key, "source": source, "at": int(time.time() if now is None else now)}
             answer_store.AnswerStore.append(self.log, json.dumps(rec, ensure_ascii=False) + "\n")
         return True
 
     def confirmed(self) -> dict:
-        """키 → 확인 기록. 깨진 줄은 건너뜀"""
+        """키 → 가장 최근 확인 기록(같은 문구의 재출현마다 새 줄이 쌓임). 깨진 줄은 건너뜀"""
         out = {}
         try:
             with open(self.log, encoding="utf-8") as f:
@@ -116,7 +124,7 @@ class Store:
                     except ValueError:
                         continue
                     if isinstance(d, dict) and isinstance(d.get("key"), str):
-                        out.setdefault(d["key"], d)
+                        out[d["key"]] = d
         except OSError:
             pass
         return out
@@ -204,7 +212,7 @@ def select(raw, now: float, first: dict, facts, store: Store, prefer=(), same_ti
     todo, done = [], []
     for r in kept:
         it = from_row(r, titles.get(r.key, r.title))
-        if it.kind in CONFIRMABLE and it.key in log:
+        if it.kind in CONFIRMABLE and valid_log(log, it.key, first.get(it.key, now)):
             it.state, it.basis, it.done_at = DONE, log_basis(log[it.key]), float(log[it.key].get("at", now))
             done.append(it)
         else:
@@ -240,7 +248,7 @@ def build(raw, now: float, facts, store: Store, persist: bool = True) -> list:
         for it in items:
             first.setdefault(it.key, now)
             entries[it.key] = {**it.public(), "done_at": it.done_at or (entries.get(it.key) or {}).get("done_at", 0.0)}
-        items = revive(items, entries, live, log, facts, store, now)
+        items = revive(items, entries, live, log, first, facts, store, now)
         for k in [k for k in first if k not in live]:
             del first[k]
         for k in [k for k, e in entries.items() if e.get("state") == DONE and now - e.get("done_at", 0) > DONE_KEEP_S]:
@@ -251,9 +259,19 @@ def build(raw, now: float, facts, store: Store, persist: bool = True) -> list:
     return [it for it in items if not it.done or now - it.done_at <= DONE_KEEP_S]
 
 
-def revive(items, entries, live, log, facts, store: Store, now: float) -> list:
+def unsure(targets, facts) -> bool:
+    """대상 중 끝났는지 알 수 없는 것이 있나. PR 은 조회 결과가 없을 때, 결정은 카드 기록에 없을 때"""
+    for t in targets:
+        if t.startswith(todo_facts.PR_PREFIX) and facts.pr(t[len(todo_facts.PR_PREFIX):]) is None:
+            return True
+        if t.startswith(todo_facts.DEC_PREFIX) and t[len(todo_facts.DEC_PREFIX):] not in facts.cards:
+            return True
+    return False
+
+
+def revive(items, entries, live, log, first, facts, store: Store, now: float) -> list:
     """수집 목록에서 사라진 명부 항목의 완료 판정을 덧붙임. 이미 완료로 기록한 것은 그대로 보임.
-    결정·병합은 끝난 근거가 있을 때만 함(없으면 명부에서도 지움). 그 밖은 확인 기록 또는 허브 상태에서 사라짐(허브 보고)을 근거로 함"""
+    결정·병합은 끝난 근거가 있을 때만 함: 끝나지 않은 것을 확인했으면 명부에서 지우고, 근거를 모르면(gh 실패·예산 초과·PR 조회 끔·카드 기록 읽기 실패) 명부에 둠. 그 밖은 확인 기록 또는 허브 상태에서 사라짐(허브 보고)을 근거로 함"""
     have = {it.key for it in items}
     for key, e in list(entries.items()):
         if key in live or key in have:
@@ -262,14 +280,16 @@ def revive(items, entries, live, log, facts, store: Store, now: float) -> list:
         args["targets"] = tuple(args.get("targets") or ())
         it = Item(**args)
         if e.get("state") != DONE:
-            if it.kind in CONFIRMABLE and key in log:
+            if it.kind in CONFIRMABLE and valid_log(log, key, first.get(key, now)):
                 it.basis, it.done_at = log_basis(log[key]), float(log[key].get("at", now))
             elif it.targets and facts.closed(it.targets) == set(it.targets):
                 it.basis, it.done_at = closed_basis(it.targets, facts, store.dir), now
             elif it.kind in CONFIRMABLE:
                 it.basis, it.done_at = "허브 상태에서 사라짐(허브 보고)", now
+            elif unsure(it.targets, facts):
+                continue  # 모름은 끝으로 보지 않음: 명부를 지우지 않고 다음 회차에 다시 판정
             else:
-                del entries[key]  # 근거 없이 사라진 결정·병합은 완료로 단정하지 않음
+                del entries[key]  # 끝나지 않은 게 확인된 결정·병합은 완료로 단정하지 않음
                 continue
             it.state = DONE
             e.update(state=DONE, basis=it.basis, done_at=it.done_at)
