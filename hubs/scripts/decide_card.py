@@ -6,6 +6,7 @@
 카드 렌더 순서: 제목 → 배경 → 선택지(각 결과) → 추천(+이유) → 용어 → 답 줄.
 """
 import json
+import os
 import re
 import unicodedata
 
@@ -16,6 +17,15 @@ LINE_MAX = 200  # 배경·용어 한 줄 상한
 RESULT_MAX = 100  # 선택지 결과 상한
 MAX_LINES, MAX_CHARS = 8, 1000  # decide 본문 상한(제목·배경·용어·이유·참고 포함). 카드 전체는 Slack 블록 3000자 안
 NO_TERMS = "없음"
+
+# D-RDY<PR번호>(draft 해제 요청) 카드는 본문에 '로컬 QA:' 줄 필수(사용자 11-13 D-LOCALQA)
+QA, RDY_ID = "로컬 QA", re.compile(r"D-RDY[0-9]+$")
+QA_NONE = "해당 없음(도구·CI·문서)"
+QA_MEDIA = re.compile(r"(\S+\.(?:mp4|mov|webm|gif|png|jpe?g))\b", re.I)  # 녹화·캡처 경로
+QA_SHA = re.compile(r"\b([0-9a-f]{7,40})\b")
+QA_SEP = " — "
+QA_EXAMPLE = ("'로컬 QA: EditMode 12 통과 — 장면 녹화 ~/qa/shop.mp4' (--file 로 녹화를 붙이면 경로 생략 가능) · "
+              f"도구·CI·문서 PR 은 '로컬 QA: {QA_NONE} — 게이트 통과 기록 커밋 1a2b3c4d'")
 
 OPT_SPLIT = re.compile(r",[ \t]*(?=[0-9]+[ \t]*=)")  # 문구 안 쉼표는 뒤에 '숫자=' 가 올 때만 구분자. 두 자리 번호도 구분자로 봐 범위 오류로 거부
 OPT_ITEM = re.compile(r"[ \t]*([0-9]+)[ \t]*=(.*)", re.S)
@@ -69,7 +79,42 @@ def _label_re(label: str) -> "re.Pattern":
     return re.compile(r"^[ \t]*(?:[-•*][ \t]*)?" + label + r"[ \t]*:[ \t]*(.*?)[ \t]*$", re.M)
 
 
-LINE_RE = {k: _label_re(k) for k in (BACKGROUND, TERMS, REASON)}
+LINE_RE = {k: _label_re(k) for k in (BACKGROUND, TERMS, REASON, QA)}
+
+
+def gate_store() -> str:
+    """로컬 게이트 통과 기록 폴더. pre-push 훅(lib/local_gate_repo.sh)과 같은 위치"""
+    return os.environ.get("LRM_LOCAL_GATE_DIR") or os.path.expanduser("~/.config/lrm-hubs/local-gate")
+
+
+def gate_record_exists(prefix: str) -> bool:
+    d = gate_store()
+    try:
+        return any(n.endswith(".json") and not n.endswith(".last.json") and n.startswith(prefix) for n in os.listdir(d))
+    except OSError:
+        return False
+
+
+def local_qa_problem(body: str, decision_id: "str | None", attached=()) -> str:
+    """D-RDY 카드의 '로컬 QA:' 줄 검사. 대상이 아니면 빈 문자열.
+    (a) '명령 — 결과' + 녹화·캡처 경로(파일 존재) 또는 --file 첨부, (b) '해당 없음(도구·CI·문서)' + 게이트 통과 기록이 있는 커밋 해시"""
+    if not RDY_ID.match(decision_id or ""):
+        return ""
+    qa = value_of(body, QA)
+    tail = f"조치: 본문에 '{QA}: …' 줄을 씀. 예: {QA_EXAMPLE}"
+    if not qa:
+        return f"{decision_id} 카드는 '{QA}:' 줄 필수(전송 안 함) — 없는 항목: {QA}. {tail}"
+    if qa.startswith(QA_NONE):
+        shas = QA_SHA.findall(qa[len(QA_NONE):])
+        if any(gate_record_exists(h) for h in shas):
+            return ""
+        return f"'{QA}: {QA_NONE}' 은 게이트 통과 기록 커밋 해시가 필요(전송 안 함) — 해시 {'없음' if not shas else shas[0] + ' 의 기록 없음(' + gate_store() + ')'}. {tail}"
+    if QA_SEP not in qa:
+        return f"'{QA}' 줄에 '명령{QA_SEP}결과' 형식이 없음(전송 안 함). {tail}"
+    media = [m for m in QA_MEDIA.findall(qa) if os.path.isfile(os.path.expanduser(m))]
+    if media or any(QA_MEDIA.fullmatch(str(a)) for a in attached or ()):
+        return ""
+    return f"'{QA}' 줄에 존재하는 녹화·캡처 파일 경로도 --file 첨부도 없음(전송 안 함). {tail}"
 
 
 def options(raw: str) -> list:
@@ -103,9 +148,10 @@ def take_lines(msg: str) -> tuple:
     return "\n".join(keep), terms, why
 
 
-def problem(body: str, options_raw: "str | None" = None) -> str:
+def problem(body: str, options_raw: "str | None" = None, decision_id: "str | None" = None, attached=()) -> str:
     """필수 항목 검사. 문제가 없으면 빈 문자열, 있으면 '원인 — 조치(예시)' 한 문장.
-    options_raw 가 None 이면 선택지 결과는 검사하지 않음(--choices 카드: 선택지가 글자 A·B 라 결과 칸이 없음)"""
+    options_raw 가 None 이면 선택지 결과는 검사하지 않음(--choices 카드: 선택지가 글자 A·B 라 결과 칸이 없음).
+    decision_id 가 D-RDY<숫자> 이면 '로컬 QA:' 줄도 검사(attached = 같이 붙는 --file 경로)"""
     miss, bad = [], []
     bg = value_of(body, BACKGROUND)
     if not bg:
@@ -131,7 +177,7 @@ def problem(body: str, options_raw: "str | None" = None) -> str:
             if len(r) > RESULT_MAX:
                 bad.append(f"{n}번 결과가 {len(r)}자 — {RESULT_MAX}자 이내로 줄임")
     if not (miss or bad):
-        return ""
+        return local_qa_problem(body, decision_id, attached)
     parts = []
     if miss:
         parts.append("없는 항목: " + ", ".join(miss))

@@ -249,7 +249,7 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
         if len(lines[0]) > MAX_TITLE:
             raise ReportError(f"decide 첫 줄(결정 제목)이 {len(lines[0])}자 — {MAX_TITLE}자 이내로, 배경은 둘째 줄부터")
         check_decision_id(decision_id)
-        if why := decide_card.problem("\n".join(lines), options):
+        if why := decide_card.problem("\n".join(lines), options, decision_id, files):
             raise ReportError(why)
         reuse_check(decision_id, lines[0])
         if not files and not no_doc:
@@ -453,9 +453,10 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--json", action="store_true", help="결과를 JSON 한 줄로 출력")
     ck = sub.add_parser("check-text", help="본문(표준 입력)의 로컬 경로·첨부 파일 검사", description="알림 스크립트가 부르는 검사. 본문에 로컬 문서·이미지·영상 경로가 있는데 같은 파일이 첨부로 오지 않거나 첨부가 민감 파일이면 종료 코드 2.")
     ck.add_argument("--attached", action="append", default=[], help="이 메시지가 첨부하거나 같은 보고에서 따로 첨부하는 파일(반복 가능)")
-    dc = sub.add_parser("check-decide", help="결정 카드 필수 항목 검사(본문은 표준 입력)", description="알림 스크립트가 부르는 검사. 본문에 '배경:'·'용어:' 줄이 없거나 --options 에 선택지 결과가 없으면 종료 코드 2.")
+    dc = sub.add_parser("check-decide", help="결정 카드 필수 항목 검사(본문은 표준 입력)", description="알림 스크립트가 부르는 검사. 본문에 '배경:'·'용어:' 줄이 없거나 --options 에 선택지 결과가 없으면, D-RDY 카드에 '로컬 QA:' 줄이 없으면 종료 코드 2.")
     dc.add_argument("--decision-id", help="있으면 이미 다른 질문에 쓰인 번호인지도 검사")
     dc.add_argument("--options", help="있으면 선택지마다 결과 칸도 검사. 없으면 본문만(--choices 카드)")
+    dc.add_argument("--attached", action="append", default=[], help="같은 카드에 붙는 파일(반복 가능). D-RDY 카드의 로컬 QA 줄이 녹화 첨부로 인정됨")
     sub.add_parser("bullet-body", help="결정 카드 본문 양식(표준 입력 → 표준 출력)", description="알림 스크립트가 직접 호출 카드 본문에 쓰는 줄 양식.")
     ls = sub.add_parser("list", help="outbox 목록", description="outbox 의 보고를 기록 순서로 출력.")
     ls.add_argument("--json", action="store_true", help="JSON 배열로 출력")
@@ -488,7 +489,7 @@ def main(argv=None) -> int:
             sys.stdout.write(bullet_body(sys.stdin.read()))
         elif args.cmd == "check-decide":
             body = sys.stdin.read()
-            if why := decide_card.problem(body, args.options):
+            if why := decide_card.problem(body, args.options, args.decision_id, args.attached):
                 raise ReportError(why)
             if args.decision_id:
                 reuse_check(args.decision_id, decide_card.first_line(body))

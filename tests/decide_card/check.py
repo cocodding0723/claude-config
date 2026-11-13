@@ -129,5 +129,72 @@ class AutoCardTest(unittest.TestCase):
             hub_report.make_report("hub-x", "없음", "decide", text, [], hs.APPROVE_OPTIONS, "1", "D-0001", "보통", None, True)
 
 
+class LocalQaTest(unittest.TestCase):
+    """D-RDY<PR번호> 카드만 '로컬 QA:' 줄 필수(사용자 11-13 D-LOCALQA)"""
+    HEAD = f"PR 열기\n{BG}\n{TERMS}"
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="cc-localqa.")
+        self.old = os.environ.get("LRM_LOCAL_GATE_DIR")
+        os.environ["LRM_LOCAL_GATE_DIR"] = os.path.join(self.tmp, "store")
+        os.makedirs(os.environ["LRM_LOCAL_GATE_DIR"])
+        self.video = os.path.join(self.tmp, "shop.mp4")
+        open(self.video, "w").close()
+        self.sha = "1a2b3c4d5e6f"
+        open(os.path.join(os.environ["LRM_LOCAL_GATE_DIR"], self.sha + "0" * 28 + ".json"), "w").close()
+
+    def tearDown(self):
+        if self.old is None:
+            os.environ.pop("LRM_LOCAL_GATE_DIR", None)
+        else:
+            os.environ["LRM_LOCAL_GATE_DIR"] = self.old
+
+    def check(self, qa, did="D-RDY746", attached=()):
+        body = self.HEAD + (f"\n로컬 QA: {qa}" if qa is not None else "")
+        return dc.problem(body, OPTS, did, attached)
+
+    def test_missing_line_rejected_with_example(self):
+        why = self.check(None)
+        for word in ("로컬 QA", "예:", "조치"):
+            self.assertIn(word, why)
+
+    def test_recording_path_passes(self):
+        self.assertEqual(self.check(f"EditMode 12 통과 — 장면 녹화 {self.video}"), "")
+
+    def test_missing_recording_file_rejected(self):
+        self.assertIn("녹화·캡처", self.check(f"EditMode 12 통과 — 녹화 {self.tmp}/none.mp4"))
+
+    def test_command_result_form_required(self):
+        self.assertIn("명령 — 결과", self.check(f"녹화 {self.video}"))
+
+    def test_attached_recording_replaces_path(self):
+        self.assertEqual(self.check("EditMode 12 통과 — 첨부 녹화 참고", attached=["/x/rec.mp4"]), "")
+        self.assertIn("녹화·캡처", self.check("EditMode 12 통과 — 첨부 없음", attached=["/x/doc.html"]))
+
+    def test_not_applicable_with_gate_record_passes(self):
+        self.assertEqual(self.check(f"해당 없음(도구·CI·문서) — 게이트 통과 커밋 {self.sha[:8]}"), "")
+
+    def test_not_applicable_without_gate_record_rejected(self):
+        self.assertIn("기록 없음", self.check("해당 없음(도구·CI·문서) — 게이트 통과 커밋 deadbeef"))
+        self.assertIn("해시", self.check("해당 없음(도구·CI·문서)"))
+
+    def test_other_cards_unaffected(self):
+        self.assertEqual(self.check(None, did="D-0001"), "")
+        self.assertEqual(self.check(None, did=None), "")
+        self.assertEqual(self.check(None, did="D-RDYX"), "")
+
+    def test_make_report_and_cli_apply_rule(self):
+        import hub_report
+        with self.assertRaises(hub_report.ReportError):
+            hub_report.make_report("hub-x", "없음", "decide", self.HEAD, [], OPTS, "1", "D-RDY746", "보통", None, True)
+        hub_report.make_report("hub-x", "없음", "decide", self.HEAD + f"\n로컬 QA: 시험 통과 — 녹화 {self.video}", [self.video], OPTS, "1", "D-RDY746", "보통", None, True)
+        import subprocess
+        base = [sys.executable, "-I", "hub_report.py", "check-decide", "--options", OPTS, "--decision-id", "D-RDY747"]
+        bad = subprocess.run(base, input=self.HEAD, capture_output=True, text=True)
+        self.assertEqual(bad.returncode, 2, bad.stderr)
+        good = subprocess.run(base + ["--attached", "/x/rec.mp4"], input=self.HEAD + "\n로컬 QA: 시험 통과 — 첨부", capture_output=True, text=True)
+        self.assertEqual(good.returncode, 0, good.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
