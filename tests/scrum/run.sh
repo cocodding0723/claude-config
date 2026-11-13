@@ -194,6 +194,7 @@ PY
 rm -rf "$M" "$H/hub-reports.jsonl"; mc; python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["attachments"]=={"files":[],"skipped":[]} and not d["errors"], d' "$D/mc.json" && ok "첨부 폴더·보고 기록이 없으면 빈 목록(오류 아님)" || ko "첨부 없음" "$(cat "$D/mc.json" | head -c 300)"
 
 # ---- 이미지·영상 첨부(발송) ----
+export LRM_SCRUM_MEDIA=on
 reset; echo media > "$D/plan-collect"; post --date $WK; rc=$?
 [ $rc = 0 ] && [ "$(sent)" = 5 ] && [ "$(sed -n 1p "$D/sent.log")" != "" ] && ! sed -n 1p "$D/sent.log" | grep -q "2026-11-12.md" && grep -c -- "--thread 1700000000.000100" "$D/sent.log" | grep -qx 4 && grep -q "초안 전체" "$D/sent.log" && grep -q "첨부 2개" "$D/sent.log" && ok "요약 글(첨부 파일 없음) → 스레드 4건(초안·첨부 2·실패 경고 1)" || ko "스레드 순서" "rc=$rc $(sent)"
 grep -q "첨부 일부 못 올림" "$D/sent.log" && grep -q -- "--kind warn" "$D/sent.log" && grep -q "첨부 2/2 실패" "$D/scrum.log" && sent_has 2026-11-12 && ok "첨부 하나 실패 → 스레드 경고 1건·로그, 초안은 보냄으로 확정" || ko "첨부 실패 처리"
@@ -202,6 +203,13 @@ reset; echo media-bad > "$D/plan-collect"; post --date $WK; rc=$?
 reset; post --date $WK; [ "$(sent)" = 1 ] && grep -q -- "--kind doc" "$D/sent.log" && grep -q "2026-11-12.md" "$D/sent.log" && ! grep -q "첨부 .*개" "$D/sent.log" && ok "첨부가 없으면 기존처럼 초안 파일 1건 발송(스레드 없음)" || ko "첨부 없음 발송"
 reset; echo media > "$D/plan-collect"; echo 5 > "$D/send-fails"; post --date $WK; rc=$?
 [ $rc = 1 ] && ! sent_has 2026-11-12 && ok "요약 글이 끝내 거절되면 실패(보냄 기록 없음)" || ko "요약 거절" "rc=$rc"
+unset LRM_SCRUM_MEDIA
+# 기본은 첨부 끔(11-13 사용자 요청): 후보가 있어도 안 올리고, 초안 작성 재료에서도 빠짐
+reset; echo media > "$D/plan-collect"; post --date $WK; rc=$?
+[ $rc = 0 ] && [ "$(sent)" = 1 ] && grep -q "2026-11-12.md" "$D/sent.log" && ! grep -q "첨부 .*개\|--thread" "$D/sent.log" && ! grep -q "b-fail-me\|\"attachments\"" "$D/claude.stdin" && ok "기본(설정 없음): 영상·이미지 첨부 없이 초안 파일 1건, 재료에 첨부 후보도 안 넘김" || ko "첨부 기본 끔" "rc=$rc $(sent)"
+reset; echo media > "$D/plan-collect"; LRM_SCRUM_MEDIA=on post --date $WK; grep -q "\"attachments\"" "$D/claude.stdin" && [ "$(sent)" = 5 ] && ok "LRM_SCRUM_MEDIA=on 이면 첨부 후보를 재료에 넘기고 스레드로 올림" || ko "첨부 켬"
+reset; echo "SCRUM_MEDIA=on" > "$D/scrum.env"; echo media > "$D/plan-collect"; post --date $WK; [ "$(sent)" = 5 ] && ok "scrum.env 의 SCRUM_MEDIA=on 으로도 켬" || ko "scrum.env 첨부"
+rm -f "$D/scrum.env"
 
 # ---- 팀 공유 사항 칸 ----
 SH="$D/share.md"; export LRM_SCRUM_SHARE_FILE="$SH"; rm -f "$SH"
@@ -217,20 +225,28 @@ cat > "$SH" <<'J'
 - 결정 D-ABC123 안내
 J
 reset; post --date $WK; f="$D/draft/2026-11-12.md"
-python3 - "$f" <<'PY' && ok "공유 사항: 막힌 것 앞에 한 칸(4칸 들여쓰기), 불릿 표시 유무 모두 허용" || ko "공유 칸 위치" "$(cat "$f")"
+python3 - "$f" <<'PY' && ok "공유 사항: 칸 맨 앞(제목 바로 아래, 4칸 들여쓰기), 불릿 표시 유무 모두 허용" || ko "공유 칸 위치" "$(cat "$f")"
 import sys
 L = open(sys.argv[1], encoding="utf-8").read().splitlines()
 i = L.index("- **팀 공유 사항**")
 assert L[i + 1] == "    - 앱 설치 안내 [문서](https://example.com/a) 정리함" and L[i + 2] == "    - 매점 2일차부터 열림", L
-assert L[i + 3].startswith("- **막힌 것**"), L
+assert L[i - 2] == "# 시험이름" and L[i - 1] == "", L   # 맨 앞: 제목 바로 아래
+assert L[i + 3].startswith("- **주제 A**"), L
 PY
 ! grep -q "허브 내부\|FAKE_TEST_SECRET\|D-ABC123" "$f" "$D/sent.log" && grep -q "경고: 팀 공유 사항 3줄을 뺌" "$D/sent.log" && ok "로컬 용어·비밀·내부 번호 줄은 빼고 뺀 줄 수만 경고(원문은 Slack·초안에 없음)" || ko "공유 줄 거름" "$(cat "$D/sent.log")"
 ! grep -q "FAKE_TEST_SECRET\|허브 내부" "$D/scrum.log" && ok "빼는 줄의 원문은 로그에도 없음" || ko "로그 원문"
 sed -i.bak 's/2026-11-12/2026-11-11/' "$SH"; rm -f "$SH.bak"; reset; post --date $WK
 ! grep -q "팀 공유 사항" "$D/draft/2026-11-12.md" && grep -q "날짜(2026-11-11)가 오늘" "$D/scrum.log" && ok "날짜 줄이 오늘이 아니면 낡은 공유 사항으로 보고 생략" || ko "낡은 공유"
-{ echo '날짜: 2026-11-12'; for i in $(seq 15); do echo "- 줄 $i"; done; } > "$SH"; reset; post --date $WK
-[ "$(grep -c '^    - 줄 ' "$D/draft/2026-11-12.md")" = 12 ] && grep -q "경고: 팀 공유 사항 3줄을 뺌" "$D/sent.log" && ok "공유 사항 12줄 상한" || ko "공유 상한"
+{ echo '날짜: 2026-11-12'; for i in $(seq 27); do echo "- 줄 $i"; done; } > "$SH"; reset; post --date $WK
+[ "$(grep -c '^    - 줄 ' "$D/draft/2026-11-12.md")" = 24 ] && grep -q "경고: 팀 공유 사항 3줄을 뺌" "$D/sent.log" && ok "공유 사항 24줄 상한" || ko "공유 상한"
 rm -f "$SH"; unset LRM_SCRUM_SHARE_FILE
+
+# ---- 수정본 답글(--reply-thread) ----
+TS=1794533351.285799
+reset; post --date $WK; post --date $WK --force --reply-thread $TS; rc=$?
+[ $rc = 0 ] && [ "$(sent)" = 2 ] && last=$(awk 'BEGIN{RS="===\n"} NF{b=$0} END{print b}' "$D/sent.log") && printf '%s' "$last" | grep -q -- "--thread $TS" && printf '%s' "$last" | grep -q "수정본 11-12 초안" && printf '%s' "$last" | grep -q "2026-11-12.수정본.md" && ! printf '%s' "$last" | grep -q "스크럼 초안 도착" && [ -s "$D/draft/2026-11-12.수정본.md" ] && sent_has 2026-11-12 && ok "--reply-thread: 요약 글 없이 그 스레드에 '수정본' 답글로 초안 파일만(첫 초안 파일과 이름 구분)" || ko "수정본 답글" "rc=$rc $(sent)"
+reset; echo media > "$D/plan-collect"; LRM_SCRUM_MEDIA=on post --date $WK --force --reply-thread $TS; [ "$(sent)" = 1 ] && ok "--reply-thread 는 첨부가 켜져 있어도 초안 파일만 올림" || ko "수정본 첨부" "$(sent)"
+post --date $WK --reply-thread 12345; [ $? = 2 ] && grep -q "숫자.숫자" "$D/err" && post --date $WK --dry-run --reply-thread $TS; [ $? = 2 ] && ok "--reply-thread 형식 오류·--dry-run 조합은 종료 코드 2 + 조치 안내" || ko "reply 인자 오류"
 
 # ---- --preflight(첫 실행 전 점검) ----
 cat > "$D/pf_gh.sh" <<'G'
