@@ -20,7 +20,7 @@
 | 12 | 완료 기록(`hub_report.py add --kind done`, 증거 경로) + Jira 댓글 | 허브 | `jira-issue` 댓글 규칙 |
 | 13 | 사용자 보고 | 메인 | `slack_notify.sh` + `html_preview.sh`, `slack_pending.sh` |
 | 14 | 사용자 검수 → fixup 반복 | 허브 | — |
-| 15 | push·PR (명시 승인 뒤) | 허브 | `create-pr`, `pr-review-game` |
+| 15 | 새 PR (사용자 검수 뒤, push 는 무승인) | 허브 | `create-pr`, `pr-review-game` |
 | 16 | 병합 확인 → 정리 | 허브 | `worktree-gc`, 허브 자동 정리 규칙, `orphan_check.sh` |
 
 ## 상시 장치
