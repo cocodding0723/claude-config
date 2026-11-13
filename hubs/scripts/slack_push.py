@@ -63,7 +63,7 @@ KEEP_DAYS, LOCK_STALE = 30, 900
 MAIN_ENV = os.environ.get("LRM_MAIN_ENV") or os.path.join(DIR, "main.env")  # 메인 터미널 핸들(MAIN_TERMINAL=…) 설정. 메인 재시작 때 set_main_terminal.sh 가 갱신
 HANDLE_LOG = 13                                       # 로그에 남기는 핸들 앞 글자 수
 SPEC = mt.Spec.from_env()                             # 메인 판정 기준(메인 체크아웃 LRM_PUSH_MAIN·claude·제목 보조 조건 LRM_PUSH_PANE). 판정·재탐색은 main_terminal 이 맡음
-ORCA = os.environ.get("LRM_PUSH_ORCA", "orca")
+ORCA = os.environ.get("LRM_PUSH_ORCA") or mt.find_orca()
 NOTIFY = os.environ.get("LRM_PUSH_NOTIFY") or os.path.join(SELF_DIR, "slack_notify.sh")
 ALERT = os.path.join(DIR, ".slack-push-alert.json")  # '메인 연결 끊김' 알림을 보낸 사유 목록. 연결이 확인되면 지움
 # 메인 핸들이 없거나 다른 터미널을 가리키는 사유. 사람이 main.env 를 고쳐야 풀리므로 알림 대상(화면 상태·조회 실패는 제외)

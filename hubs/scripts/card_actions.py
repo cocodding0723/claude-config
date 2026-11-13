@@ -21,7 +21,7 @@ DIR = os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
 STORE = os.path.join(DIR, "card-actions.json")
 TTL_S = 7 * 24 * 3600  # 답 없는 카드의 등록 보존 기간
 RUN_PICK = 1  # 실행을 뜻하는 선택지 번호
-ORCA = os.environ.get("LRM_ORCA") or "orca"
+ORCA = mt.find_orca()  # 수신기(launchd)의 짧은 PATH 에서도 찾음
 ORCA_TIMEOUT_S = 30
 EXEC_TIMEOUT_S = 600  # 허브 여러 개를 순서대로 띄우는 시간까지 감안한 상한
 

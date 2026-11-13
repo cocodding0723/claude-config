@@ -212,5 +212,19 @@ chk "여러 줄 JSON: 다음 줄의 password 값 가림" '! printf "%s" "$CARD" 
 chk "빈 줄을 사이에 둔 Authorization: / Bearer 값 가림" '! printf "%s" "$CARD" | grep -q "zzzz9999yyyy8888"'
 chk "token = 다음 줄 값 가림" '! printf "%s" "$CARD" | grep -q "plainsplit77"'
 
+# ---- 10. orca 경로 ----
+# launchd 최소 PATH(env -i): orca 경로를 bare 'orca' 로 두면 rc 127 → '없음' 오판. 후보 경로 탐색 결과와 같아야 함
+PYBIN=$(command -v python3)
+MINI=$(env -i PATH=/usr/bin:/bin "$PYBIN" -I -c "
+import sys; sys.path.insert(0, '$SCRIPTS')
+import card_actions as c, main_terminal as mt
+print(c.ORCA == mt.find_orca(), c.ORCA)")
+chk "env -i 최소 PATH: card_actions.ORCA 가 find_orca() 와 같음" 'printf "%s" "$MINI" | grep -q "^True"'
+chk "find_orca: PATH 에 없어도 후보 경로에서 찾음(bare 'orca' 아님)" '[ "$(env -i "$PYBIN" -I -c "
+import sys; sys.path.insert(0, \"$SCRIPTS\")
+import main_terminal as mt
+print(mt.find_orca(env={}, path=\"/usr/bin:/bin\", candidates=(\"$BIN/orca\",)))")" = "$BIN/orca" ]'
+chk "bare orca 하드코딩 없음(hubs/scripts 의 orca 실행 경로는 find_orca 경유)" '! grep -nE "(environ\.get\(\"[A-Z_]*ORCA\"(, \"orca\"\)|\) or \"orca\"))" "$SCRIPTS"/*.py | grep -v panel_collect'
+
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

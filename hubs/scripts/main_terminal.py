@@ -287,7 +287,7 @@ def main(argv):
     elif args:
         print("사용: main_terminal.py [--dry-run] [--env 경로]", file=sys.stderr)
         return 2
-    orca = os.environ.get("LRM_PUSH_ORCA", "orca")
+    orca = os.environ.get("LRM_PUSH_ORCA") or find_orca()
     f = rediscover(lambda a, t: run_orca(orca, a, t), Spec.from_env(), env, dry)
     if f.status == "current_ok":
         print("메인 연결이 이미 정상 — 바꾸지 않음")
