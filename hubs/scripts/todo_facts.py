@@ -78,11 +78,15 @@ class Facts:
         self.errors = []  # 조회 실패 안내(사람이 읽는 문장)
 
     # ---------- PR ----------
-    def _view(self, num):
-        """gh pr view → {state, branch, repo} 또는 None. 저장소가 여럿이면 앞에서부터 시도"""
+    def _cands(self, num, repo):
+        """조회할 저장소 후보: 명시 > 수집기가 아는 열린 PR > 감시 저장소 전부(없으면 현재 저장소 '')"""
+        return [repo] if repo else ([self.repo_hint[num]] if num in self.repo_hint else self.repos) or [""]
+
+    def _view(self, num, cands):
+        """gh pr view → {state, branch, repo} 또는 None. 후보 저장소를 앞에서부터 시도"""
         if not self.use_pr:
             return None
-        for repo in ([self.repo_hint[num]] if num in self.repo_hint else self.repos) or [""]:
+        for repo in cands:
             left = self.deadline - time.monotonic()
             if left <= 1:
                 self.errors.append(f"PR 조회 시간 예산 초과 — #{num} 이후는 다음 회차")
@@ -97,16 +101,20 @@ class Facts:
                 return {"state": d["state"], "branch": d.get("headRefName") or "", "repo": repo}
         return None
 
-    def pr(self, num):
-        """PR 번호 → {state, branch, repo, ...} 또는 None(모름). 병합·닫힘은 캐시에서 영구 재사용"""
-        key = PR_PREFIX + num
-        hit = self.cache.get(key)
-        if isinstance(hit, dict) and (hit.get("state") in CLOSED_STATES or self.now - hit.get("at", 0) < self.open_ttl):
-            return hit
-        got = self._view(num)
+    def pr(self, num, repo=""):
+        """PR 번호(+저장소) → {state, branch, repo, ...} 또는 None(모름). 캐시 키는 'pr:Owner/Repo#N'이라 저장소가 다르면 같은 번호도 따로 둠.
+        병합·닫힘은 캐시에서 영구 재사용. 저장소를 모르면 후보 저장소를 차례로 확인"""
+        cands = self._cands(num, repo)
+        hits = [h for h in (self.cache.get(f"{PR_PREFIX}{r}#{num}") for r in cands) if isinstance(h, dict)]
+        for hit in hits:
+            if hit.get("state") in CLOSED_STATES or self.now - hit.get("at", 0) < self.open_ttl:
+                return hit
+        got = self._view(num, cands)
         if got is None:
-            return hit if isinstance(hit, dict) and hit.get("state") in CLOSED_STATES else None
+            return next((h for h in hits if h.get("state") in CLOSED_STATES), None)
         got["at"] = self.now
+        key = f"{PR_PREFIX}{got['repo']}#{num}"
+        hit = self.cache.get(key)
         if isinstance(hit, dict) and hit.get("branch") == got["branch"] and "hub" in hit:  # 브랜치가 같으면 허브 판정 유지
             got.update(hub=hit["hub"], hub_at=hit.get("hub_at", 0))
         self.cache[key] = got

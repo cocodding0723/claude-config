@@ -48,7 +48,10 @@ ICON = {b: icon for b, _, icon in BUCKETS}
 WAIT_WORDS = ("병합 대기", "승인 대기", "답 대기", "결정 대기", "사용자 실행 대기", "사용자 답", "사용자 확인")
 STALE_TAG = "낡음"
 NO_EVIDENCE_TAG = "근거 없음·오래됨"
-EVIDENCE_CLOSED = "closed"  # blocker_evidence.CLOSED 와 같은 값(순환 가져오기 회피)
+UNMERGED_TAG = "PR 닫힘·미병합"
+SEEN_KEEP_S = 7 * 86400  # 사라진 막힘의 최초 관측 기록 보관 기간
+EVIDENCE_CLOSED = "closed"  # blocker_evidence.CLOSED·UNMERGED 와 같은 값(순환 가져오기 회피)
+EVIDENCE_UNMERGED = "unmerged"
 PR_PREFIX = "pr:"
 LEDGER_OPEN = ("접수", "진행")
 LEDGER_BLOCK = "보류"
@@ -163,11 +166,19 @@ def collect_ledger(path, refs=None):
     return out
 
 
-def collect_hubs(status_dir, old_items=(), refs=None, resolver=None, resolved=None):
+def blocker_id(text):
+    """막힘 문구 정규화 해시: 공백·대소문자 차이는 같은 막힘. 허브가 상태 파일을 다시 써도(updatedAt 갱신) 같은 문구면 같은 id"""
+    return short_hash(" ".join(str(text).split()).casefold())
+
+
+def collect_hubs(status_dir, old_items=(), refs=None, resolver=None, resolved=None, seen=None, now=None):
     """허브 상태 파일 전부 → (항목, 알림, 읽기 실패 허브). 낡은 허브는 제목에 '낡음'.
     막힘에 근거(refs)가 있고 resolver 가 '닫힘'으로 판정하면 막힘에서 빼고 resolved 목록에만 기록. 근거 없는 막힘이 낡았으면 제목에 '근거 없음·오래됨'(삭제는 안 함).
-    손상 파일은 그 허브의 이전 항목(old_items)을 그대로 두어 목록에서 완료 처리되지 않게 함"""
+    '오래됨' 기준은 막힘별 최초 관측 시각(seen: "슬러그:문구해시" → {first, last}, 수집기 소유). 상태 파일 updatedAt 은 허브가 다시 쓸 때마다 갱신돼 근거가 못 됨.
+    사라진 막힘 기록은 SEEN_KEEP_S 뒤 정리. 손상 파일은 그 허브의 이전 항목(old_items)을 그대로 두어 목록에서 완료 처리되지 않게 함"""
     out, notes, failed = [], [], []
+    seen = {} if seen is None else seen
+    now = time.time() if now is None else now
     try:
         names = sorted(n for n in os.listdir(status_dir) if n.endswith(".json"))
     except FileNotFoundError:
@@ -201,11 +212,17 @@ def collect_hubs(status_dir, old_items=(), refs=None, resolver=None, resolved=No
                 if resolved is not None:
                     resolved.append({"hub": slug, "text": one_line(blocker), "refs": brefs})
                 continue
-            btag = f"[{NO_EVIDENCE_TAG}] " if stale and not brefs else tag
+            mark = seen.setdefault(f"{slug}:{blocker_id(blocker)}", {"first": now})
+            mark["last"] = now
+            btag = f"[{NO_EVIDENCE_TAG}] " if not brefs and now - mark["first"] > limit_s else tag
+            if state == EVIDENCE_UNMERGED:
+                btag += f"[{UNMERGED_TAG}] "
             it = item(f"hub:{slug}:b:{short_hash(blocker)}", WAIT if needs_user(blocker) else BLOCK, f"{btag}{slug}: {blocker}", slug, ref=ref, since=since)
             if state:
                 it["evidence"] = state  # open·unknown(확인 불가 — 막힘 유지)
             out.append(it)
+    for k in [k for k, v in seen.items() if not isinstance(v, dict) or now - v.get("last", v.get("first", 0)) > SEEN_KEEP_S]:
+        del seen[k]
     return out, notes, failed
 
 
@@ -380,6 +397,7 @@ def build(conf, prev, now, pending=None, workers=None, use_pr=True, workspaces=N
     refs = ReportRefs(conf.get("report_state", ""))
 
     evidence_cache = dict(prev.get("evidence") or {}) if isinstance(prev, dict) and isinstance(prev.get("evidence"), dict) else {}
+    blocker_seen = {k: dict(v) for k, v in (prev.get("blockerSeen") or {}).items() if isinstance(v, dict) and isinstance(v.get("first"), (int, float))} if isinstance(prev, dict) and isinstance(prev.get("blockerSeen"), dict) else {}
     resolved = (prev.get("resolved") or []) if isinstance(prev, dict) and isinstance(prev.get("resolved"), list) else []
 
     def hubs():
@@ -387,7 +405,7 @@ def build(conf, prev, now, pending=None, workers=None, use_pr=True, workspaces=N
         old_value = (old.get("hubs") or {}).get("value") or []
         resolver = blocker_evidence.Resolver(conf, evidence_cache, now, use_pr)
         fresh_resolved = []
-        found, hub_notes[:], hub_failed[:] = collect_hubs(conf["status_dir"], old_value, refs, resolver, fresh_resolved)
+        found, hub_notes[:], hub_failed[:] = collect_hubs(conf["status_dir"], old_value, refs, resolver, fresh_resolved, blocker_seen, now)
         hub_notes.extend(resolver.notes())
         resolved[:] = fresh_resolved  # 이번 회차에 근거가 닫혀 빠진 막힘만(상태 파일에 남아 있는 동안 매 회차 다시 기록됨)
         return found
@@ -421,7 +439,7 @@ def build(conf, prev, now, pending=None, workers=None, use_pr=True, workspaces=N
     return {"version": VERSION, "updatedAt": now, "updatedAtText": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
             "counts": {b: sum(1 for i in items if i["bucket"] == b) for b, _, _ in BUCKETS},
             "groups": groups, "items": items, "notes": notes, "sources": src,
-            "resolved": resolved, "evidence": evidence_cache}
+            "resolved": resolved, "evidence": evidence_cache, "blockerSeen": blocker_seen}
 
 
 def valid_snapshot(d):

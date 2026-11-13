@@ -31,7 +31,7 @@ REF_ID = {
     "decision": re.compile(r"^D-[A-Z0-9][A-Z0-9-]*$"),
     "ticket": re.compile(r"^[A-Z][A-Z0-9]+-\d+$"),
 }
-REF_FORMAT = {"pr": "pr:Owner/Repo#746 또는 pr:#746", "decision": "decision:D-CFGAPPLY", "ticket": "ticket:LRM-436"}
+REF_FORMAT = {"pr": "pr:Owner/Repo#746", "decision": "decision:D-CFGAPPLY", "ticket": "ticket:LRM-436"}
 REF_TAG = re.compile(r"\[([a-z]+):([^\]]*)\]")
 GENERIC = "상태 파일 없음 — HANDOFF.md 와 run-list 로 이어받기"
 
@@ -150,6 +150,17 @@ def blocker_refs(b):
     return [] if isinstance(b, str) else list(b.get("refs") or [])
 
 
+def full_pr_id(short):
+    """'#746' → 'Owner/Repo#746'. 감시 저장소가 정확히 하나일 때만 허용(여럿이면 어느 PR 인지 알 수 없어 거부)"""
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # python -I 는 스크립트 폴더를 경로에 넣지 않음
+    import progress_collect  # 지연 가져오기: progress_collect 가 이 모듈을 가져옴
+    repos = progress_collect.conf_from_env()["repos"]
+    if len(repos) != 1:
+        why = f"감시 저장소가 {len(repos)}개라 '{short}' 는 어느 저장소 PR 인지 알 수 없음" if repos else f"감시 저장소 설정이 없어 '{short}' 의 저장소를 알 수 없음"
+        raise Fail(f"막힘 근거 [pr:{short}] 단축형 거부 — {why}. 전체 형식으로 다시 실행. 예: [{REF_FORMAT['pr']}]")
+    return repos[0] + short
+
+
 def parse_blocker(raw):
     """'문구 [pr:#746] [decision:D-X]' → 문자열(근거 없음) 또는 {text, refs}. 알 수 없는 종류·잘못된 ID 는 Fail"""
     refs = []
@@ -159,6 +170,8 @@ def parse_blocker(raw):
             raise Fail(f"막힘 근거 종류 '{kind}' 미지원 — {', '.join(REF_FORMAT.values())} 중 하나로 다시 실행")
         if not REF_ID[kind].match(rid):
             raise Fail(f"막힘 근거 [{kind}:{rid}] 형식 오류 — 예: {REF_FORMAT[kind]}")
+        if kind == "pr" and rid.startswith("#"):
+            rid = full_pr_id(rid)
         ref = {"kind": kind, "id": rid}
         if ref not in refs:
             refs.append(ref)
