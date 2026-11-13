@@ -41,15 +41,21 @@ out=$(run pre "$W/stale.json"); rc=$?
 [ "$rc" = 0 ] && echo "$out" | grep -q '경고: 상태 불일치' && ok "커밋 있는데 해야 할 일 → 경고" || ko "상태 불일치 경고" "rc=$rc $out"
 run pre --strict "$W/stale.json" >/dev/null; [ $? = 1 ] && ok "--strict 는 경고도 실패" || ko "strict" ""
 
-w pr "$BASE,\"status\":\"확인 대기\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"pr\":\"#12\"}"
-out=$(run pre "$W/pr.json"); echo "$out" | grep -q '통과' && ok "PR 있고 확인 대기 → 일치" || ko "PR 단계" "$out"
-
+w pr "$BASE,\"status\":\"진행 중\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"pr\":\"#12\"}"
+out=$(run pre "$W/pr.json"); echo "$out" | grep -q '통과' && ok "PR 열림 + 진행 중 → 일치" || ko "PR 열림 진행 중" "$out"
+w pr2 "$BASE,\"status\":\"확인 대기\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"pr\":\"#12\"}"
+out=$(run pre "$W/pr2.json"); rc=$?
+[ "$rc" = 1 ] && echo "$out" | grep -q '오류:.*dev 병합 뒤' && ok "PR 열림 + 확인 대기 → 오류" || ko "PR 열림 확인 대기" "rc=$rc $out"
+w mg "$BASE,\"status\":\"확인 대기\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"pr\":\"#12\",\"merged\":true}"
+out=$(run pre "$W/mg.json"); rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q '통과' && ok "dev 병합 + 확인 대기 → 통과" || ko "dev 병합 확인 대기" "rc=$rc $out"
+w dn "$BASE,\"status\":\"완료\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"pr\":\"#12\",\"merged\":true}"
+out=$(run pre "$W/dn.json"); rc=$?
+[ "$rc" = 1 ] && echo "$out" | grep -q '완료는 사람만' && ok "에이전트 입력 완료 → 오류" || ko "완료 입력" "rc=$rc $out"
 w hold "$BASE,\"status\":\"보류\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"commits\":[\"a\"]}"
 out=$(run pre "$W/hold.json"); echo "$out" | grep -q '통과' && ok "보류는 단계와 무관하게 허용" || ko "보류" "$out"
 w rv "$BASE,\"status\":\"리뷰 중\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"pr\":\"#12\"}"
-out=$(run pre "$W/rv.json"); echo "$out" | grep -q '경고: 상태 불일치.*확인 대기' && ok "없는 상태 '리뷰 중' → 경고, 전환 안내는 확인 대기" || ko "리뷰 중" "$out"
-w mg "$BASE,\"status\":\"확인 대기\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"pr\":\"#12\",\"merged\":true}"
-out=$(run pre "$W/mg.json"); echo "$out" | grep -q '통과' && ok "병합 직후 확인 대기 허용(완료는 사람 확인 뒤)" || ko "병합 확인 대기" "$out"
+out=$(run pre "$W/rv.json"); echo "$out" | grep -q '경고: 상태 불일치.*진행 중' && ok "없는 상태 '리뷰 중' → 경고, 전환 안내는 진행 중" || ko "리뷰 중" "$out"
 
 # 점검 표
 cat > "$W/post.json" <<'J'
@@ -66,5 +72,21 @@ head -1 <<<"$out" | grep -q '키 | 상위 | 상태 | 기한 | 담당 | 근거' &
 
 printf '[]' > "$W/empty.json"; run post "$W/empty.json" >/dev/null; [ $? = 0 ] && ok "빈 목록 통과" || ko "빈 목록" ""
 run pre "$W/없음.json" >/dev/null 2>&1; [ $? = 2 ] && ok "입력 파일 없으면 종료 2" || ko "파일 없음" ""
+
+# ② 에픽은 하위 상태로 판정
+epic() { printf '[{"key":"LRM-9","type":"에픽","status":"%s","due":"2026-11-30","assignee":"a","description":"d","children":%s}]' "$1" "$2" > "$W/e.json"; }
+epic "진행 중" '["진행 중","해야 할 일"]'; out=$(run post "$W/e.json"); [ $? = 0 ] && ok "에픽: 하위 중 진행 중 있으면 진행 중 통과" || ko "에픽 진행 중" "$out"
+epic "해야 할 일" '["진행 중","해야 할 일"]'; run post "$W/e.json" >/dev/null; [ $? = 1 ] && ok "에픽: 하위 진행 중인데 해야 할 일 → 불일치" || ko "에픽 불일치" ""
+epic "확인 대기" '["확인 대기","완료"]'; run post "$W/e.json" >/dev/null; [ $? = 0 ] && ok "에픽: 하위 전부 확인 대기 이상 → 확인 대기 통과" || ko "에픽 확인 대기" ""
+epic "진행 중" '["확인 대기","확인 대기"]'; run post "$W/e.json" >/dev/null; [ $? = 1 ] && ok "에픽: 하위 전부 확인 대기인데 진행 중 → 불일치" || ko "에픽 전부 확인 대기" ""
+epic "진행 중" '[]'; out=$(run post "$W/e.json"); [ $? = 1 ] && echo "$out" | grep -q '판정 보류' && ok "에픽: 하위 0개 → 판정 보류 지적" || ko "에픽 하위 0" "$out"
+
+# ③ 브랜치 없는 진행 근거(댓글·작업 공간)
+for k in comment workspace; do
+  printf '[{"key":"LRM-5","type":"작업","parent":"LRM-9","status":"진행 중","due":"2026-11-20","assignee":"a","evidence":{"%s":"있음"}}]' "$k" > "$W/c.json"
+  run post "$W/c.json" >/dev/null; [ $? = 0 ] && ok "진행 근거 $k 만으로 진행 중 통과" || ko "근거 $k" ""
+done
+w nb "$BASE,\"status\":\"진행 중\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"workspace\":\"fix-LRM-5\"}"
+out=$(run pre "$W/nb.json"); echo "$out" | grep -q '통과' && ok "pre: 작업 공간 근거 + 진행 중 통과" || ko "pre 작업 공간" "$out"
 
 printf '\n%d 통과, %d 실패\n' "$PASS" "$FAIL"; [ "$FAIL" = 0 ]
