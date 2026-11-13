@@ -16,7 +16,9 @@ BIN="$SB/bin"; mkdir -p "$BIN" "$SB/hubroot/coord-x-hub"
 echo "인계" > "$SB/hubroot/coord-x-hub/HANDOFF.md"
 HUB="$SB/hubroot/coord-x-hub"
 export HUB_ROOT="$SB/hubroot" ROLE_FILE="$SB/role.txt" COMMON_FILE="" LRM_HUB_INBOX="$SB/inbox" FAKE_DIR="$SB" LRM_ORCA="$BIN/orca" READY_TIMEOUT=2
-export HUB_DUPS_PY="$HD"
+export HUB_DUPS_PY="$HD" HUB_PROC_TABLE="$SB/procs.txt"
+# 가짜 프로세스 표("<pid> <핸들>"): 생존 판정 기준. Orca 표시와 무관하게 여기 있어야 살아 있음
+printf '1 term_old1\n2 term_old2\n3 term_wk\n4 term_other\n5 term_new\n' > "$SB/procs.txt"
 
 # 가짜 orca: 호출을 orca.log 에 기록. 응답은 $SB/terms.json(list), workers.json(worker-list), launch 는 NEW 핸들 반환
 # NEW_READY=0 이면 새 세션이 lastOutputAt 없이 목록에 나옴, LAUNCH_FAIL=1 이면 기동 실패, WORKERS_FAIL=1 이면 worker-list 실패
@@ -83,12 +85,21 @@ setup
 python3 "$HD" clean --path "$HUB" --keep term_new --also term_wk >/dev/null 2>&1
 chk "--also 에 워커를 줘도 닫지 않음" '! closed | grep -q term_wk'
 
-# 7) clean: 유지 세션이 살아 있지 않으면 거부
+# 7) clean: 유지 세션의 claude 프로세스가 없으면 거부. Orca 가 고아로 표시해도 프로세스가 있으면 유지 가능
 setup
+python3 "$HD" clean --path "$HUB" --keep term_old2 --dry-run >/dev/null 2>&1; RC=$?
+chk "Orca 고아(old2)여도 프로세스가 있으면 유지 대상으로 인정" '[ "$RC" = 0 ]' "rc=$RC"
+printf '1 term_old1\n3 term_wk\n5 term_new\n' > "$SB/procs.txt"
 python3 "$HD" clean --path "$HUB" --keep term_old2 >/dev/null 2>"$SB/err"; RC=$?
-chk "유지 대상이 죽은(고아) 세션이면 거부·닫기 0" '[ "$RC" = 2 ] && [ -z "$(closed)" ]' "rc=$RC"
+chk "유지 대상의 프로세스가 없으면 거부·닫기 0(Orca 표시와 무관)" '[ "$RC" = 2 ] && [ -z "$(closed)" ] && grep -q "프로세스를 찾지 못함" "$SB/err"' "rc=$RC"
 python3 "$HD" clean --path "$HUB" --keep term_nope >/dev/null 2>&1; RC=$?
 chk "유지 핸들이 목록에 없으면 거부" '[ "$RC" = 2 ] && [ -z "$(closed)" ]'
+rm "$SB/procs.txt"
+python3 "$HD" clean --path "$HUB" --keep term_new >/dev/null 2>"$SB/err"; RC=$?
+chk "프로세스 확인 실패: 판정 불가라 거부·닫기 0" '[ "$RC" = 2 ] && [ -z "$(closed)" ] && grep -q "정리하지 않음" "$SB/err"' "rc=$RC"
+bash "$RH" term_old1 coord-x-hub x >/dev/null 2>&1; RC=$?
+chk "restart_hub.sh: 프로세스 확인 실패면 옛 세션 유지(종료 코드 1)" '[ "$RC" = 1 ] && [ -z "$(closed)" ]' "rc=$RC"
+printf '1 term_old1\n2 term_old2\n3 term_wk\n4 term_other\n5 term_new\n' > "$SB/procs.txt"
 
 # 8) --dry-run: 닫지 않음
 setup

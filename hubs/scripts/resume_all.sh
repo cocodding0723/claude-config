@@ -19,12 +19,13 @@ usage() {
 
   hubs.tsv 의 허브마다 코디네이터를 --resume 으로 다시 띄운다. 이어받기 문구는
   hub_status.py prompt(상태 파일 ~/.config/lrm-hubs/hub-status/<slug>.json)가 만든다.
-  살아 있는 claude 코디네이터(연결·쓰기 가능·고아 아님·마지막 출력 HUB_ALIVE_MIN 분 이내, 워커 제외)가 있는 허브는 건너뛴다.
+  살아 있는 claude 코디네이터(그 터미널 핸들의 claude 프로세스가 실제로 떠 있음, 워커 제외)가 있는 허브는 건너뛴다.
+  Orca 의 connected·orphaned 는 재시작 뒤 낡을 수 있어 판정에 쓰지 않는다. 프로세스를 확인하지 못하면 중복 기동을 막으려 중단한다.
   한 허브에 코디네이터 터미널이 여럿이면 중복 경고 1줄과 정리 제안(hub_dups.py clean)을 낸다. 닫지는 않는다.
   --dry-run       띄우지 않고 허브별 실행할 명령·문구만 출력(터미널 목록은 읽기만)
   --only <slug>   지정한 허브만(반복 가능)
 
-환경: HUB_ALIVE_MIN 살아 있음 기준 분(기본 240), HUB_DUPS_PY hub_dups.py 경로, HUBS_TSV 허브 목록 파일, LRM_HUB_STATUS_DIR 상태 폴더, CREATE_HUB create_hub.sh 경로
+환경: HUB_DUPS_PY hub_dups.py 경로, HUBS_TSV 허브 목록 파일, LRM_HUB_STATUS_DIR 상태 폴더, CREATE_HUB create_hub.sh 경로
 종료 코드: 0 성공, 1 허브 기동 실패 있음, 2 인자·목록 오류
 예: resume_all.sh --dry-run
 E
@@ -64,7 +65,7 @@ if ! orca terminal list --json > "$TERMS" 2>"$TERMS.err" || ! python3 -c "$CHECK
 fi
 rm -f "$TERMS.err"
 
-# 살아 있는 claude 코디네이터 여부(연결·쓰기 가능·고아 아님·마지막 출력 HUB_ALIVE_MIN 분 이내, 워커 터미널 제외). 판정은 hub_dups.py alive
+# 살아 있는 claude 코디네이터 여부(핸들별 claude 프로세스 존재, 워커 터미널 제외). 판정은 hub_dups.py alive
 # 종료 코드: 0 살아 있음, 1 없음, 2 예상 밖 실패(없음으로 해석하면 중복 기동 위험). 출력: "<살아 있음> <전체> <유지 후보 핸들>"
 alive() { python3 "$DUPS_PY" alive --slug "$1" --terms "$TERMS" 2>/dev/null; }
 
