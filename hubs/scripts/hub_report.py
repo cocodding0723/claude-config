@@ -78,6 +78,18 @@ def outbox_path() -> str:
     return os.environ.get("LRM_REPORT_OUTBOX") or os.path.join(HUB_DIR, OUTBOX_NAME)
 
 
+def reuse_check(did: str, title: str) -> None:
+    """이미 다른 질문에 쓰인 결정 번호면 ReportError. 판정은 decide_card.reuse_problem 한 곳(접수와 slack_notify.sh 가 같이 씀).
+    원천: 이 outbox(허브 보고)·보낸 카드 기록(slack-sent.jsonl). 기록을 못 읽으면 경고만"""
+    why, warn = decide_card.reuse_problem(did, title, [
+        (outbox_path(), lambda r: decide_card.first_line(r.get("text")) if r.get("kind") == "decide" else ""),
+        (os.path.join(HUB_DIR, "slack-sent.jsonl"), lambda r: r.get("title"))])
+    if warn:
+        print(warn, file=sys.stderr)
+    if why:
+        raise ReportError(why)
+
+
 def check_decision_id(did) -> None:
     """형식이 틀리면 ReportError(종료 코드 2). 비밀 검사 뒤에 호출해 입력 값을 메시지에 되비추지 않음"""
     if not DECISION_ID_RE.fullmatch(did or ""):
@@ -239,6 +251,7 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
         check_decision_id(decision_id)
         if why := decide_card.problem("\n".join(lines), options):
             raise ReportError(why)
+        reuse_check(decision_id, lines[0])
         if not files and not no_doc:
             raise ReportError(NO_DOC_ERR)
         rep.update({"options": options, "recommend": recommend, "decision_id": decision_id})
@@ -441,6 +454,7 @@ def build_parser() -> argparse.ArgumentParser:
     ck = sub.add_parser("check-text", help="본문(표준 입력)의 로컬 경로·첨부 파일 검사", description="알림 스크립트가 부르는 검사. 본문에 로컬 문서·이미지·영상 경로가 있는데 같은 파일이 첨부로 오지 않거나 첨부가 민감 파일이면 종료 코드 2.")
     ck.add_argument("--attached", action="append", default=[], help="이 메시지가 첨부하거나 같은 보고에서 따로 첨부하는 파일(반복 가능)")
     dc = sub.add_parser("check-decide", help="결정 카드 필수 항목 검사(본문은 표준 입력)", description="알림 스크립트가 부르는 검사. 본문에 '배경:'·'용어:' 줄이 없거나 --options 에 선택지 결과가 없으면 종료 코드 2.")
+    dc.add_argument("--decision-id", help="있으면 이미 다른 질문에 쓰인 번호인지도 검사")
     dc.add_argument("--options", help="있으면 선택지마다 결과 칸도 검사. 없으면 본문만(--choices 카드)")
     sub.add_parser("bullet-body", help="결정 카드 본문 양식(표준 입력 → 표준 출력)", description="알림 스크립트가 직접 호출 카드 본문에 쓰는 줄 양식.")
     ls = sub.add_parser("list", help="outbox 목록", description="outbox 의 보고를 기록 순서로 출력.")
@@ -473,8 +487,11 @@ def main(argv=None) -> int:
         elif args.cmd == "bullet-body":
             sys.stdout.write(bullet_body(sys.stdin.read()))
         elif args.cmd == "check-decide":
-            if why := decide_card.problem(sys.stdin.read(), args.options):
+            body = sys.stdin.read()
+            if why := decide_card.problem(body, args.options):
                 raise ReportError(why)
+            if args.decision_id:
+                reuse_check(args.decision_id, decide_card.first_line(body))
         elif args.cmd == "check-text":
             for f in args.attached:
                 if why := secret_file_problem(f):
