@@ -16,7 +16,7 @@ import re
 import sys
 import tempfile
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, field, fields
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import answer_store  # noqa: E402
@@ -57,13 +57,14 @@ class Item:
     did: str = ""  # 결정 번호
     basis: str = ""  # done 일 때 근거 문장
     done_at: float = 0.0
+    row: object = field(default=None, repr=False, compare=False)  # 원본 todo_items.Row. 목록 화면(digest)이 씀. 저장·응답에는 넣지 않음
 
     @property
     def done(self) -> bool:
         return self.state == DONE
 
     def public(self) -> dict:
-        d = asdict(self)
+        d = {f.name: getattr(self, f.name) for f in fields(self) if f.name != "row"}
         d["kind_label"] = KIND_LABEL[self.kind]
         d["confirmable"] = self.kind in CONFIRMABLE
         return d
@@ -180,7 +181,7 @@ def from_row(row, raw_title: str) -> Item:
     kind = kind_of(row, raw_title)
     cmd = _COMMAND.search(raw_title)
     m = _DECISION_KEY.match(row.key)
-    return Item(row.key, kind, TODO, row.title, row.hub, row.urgency, row.since, row.answer, tuple(row.targets),
+    return Item(row.key, kind, TODO, row.title, row.hub, row.urgency, row.since, row.answer, tuple(row.targets), row=row,
                 command=cmd.group(1).strip() if cmd and kind == COMMAND else "", url=pr_url(row.key),
                 did=m.group(1) if m else next((t[len("decision:"):] for t in row.targets if t.startswith("decision:")), ""))
 
@@ -192,6 +193,36 @@ def sort_key(it: Item) -> tuple:
     return (0, KIND_ORDER.index(it.kind), -it.urgency, it.since or float("inf"), it.title)
 
 
+def select(raw, now: float, first: dict, facts, store: Store, prefer=(), same_title=None):
+    """세 화면(문서 사이트·Slack 할 일 목록·옆 패널)이 같은 항목 집합을 쓰게 하는 선별 한 곳.
+    행 규칙·근거는 todo_items·todo_facts 그대로, 거기에 확인 기록(store)을 반영함.
+    반환: (안 함 행 목록, 함 Item 목록(대상 종료·확인 기록), 버린 [(행, 'done'|'dup', 근거)]). 함 Item 의 done_at 은 아직 모름(0)"""
+    raw, log = list(raw), store.confirmed()
+    titles = {k: t for k, _b, t, _s in raw}
+    rows = todo_items.build_rows(raw, now, first, same_title)
+    kept, dropped = todo_facts.settle_rows(rows, facts, prefer)
+    todo, done = [], []
+    for r in kept:
+        it = from_row(r, titles.get(r.key, r.title))
+        if it.kind in CONFIRMABLE and it.key in log:
+            it.state, it.basis, it.done_at = DONE, log_basis(log[it.key]), float(log[it.key].get("at", now))
+            done.append(it)
+        else:
+            todo.append(r)
+    for r, kind, why in dropped:
+        if kind == "done":  # 수집 목록에는 남았지만 대상이 끝남
+            it = from_row(r, titles.get(r.key, r.title))
+            it.state, it.basis = DONE, closed_basis(r.targets, facts, store.dir)
+            done.append(it)
+    return todo, done, dropped
+
+
+def open_rows(raw, now: float, first: dict, facts, store: Store, prefer=(), same_title=None):
+    """할 일 목록(digest)·옆 패널용: 안 함 행만. 반환: (남은 행, 버린 [(행, 'done'|'dup', 근거)]) — 확인 기록으로 끝난 행은 'done' 으로 버림"""
+    todo, done, dropped = select(raw, now, first, facts, store, prefer, same_title)
+    return todo, [d for d in dropped if d[1] == "dup"] + [(it.row, "done", it.basis) for it in done]
+
+
 def build(raw, now: float, facts, store: Store, persist: bool = True) -> list:
     """(key, bucket, title, since) 목록 → 확인 항목 목록(안 함 먼저). 근거 조회는 facts, 기록은 store.
     persist=False 면 명부를 쓰지 않음(읽기 전용 호출·시험)"""
@@ -200,26 +231,14 @@ def build(raw, now: float, facts, store: Store, persist: bool = True) -> list:
         entries, first = seen["entries"], seen["first"]
         log = store.confirmed()
         raw = list(raw)
+        todo, done, dropped = select(raw, now, first, facts, store)
         titles = {k: t for k, _b, t, _s in raw}
-        rows = todo_items.build_rows(raw, now, first)
-        kept, dropped = todo_facts.settle_rows(rows, facts)
-        items, live = [], set()
-        for r in kept:
-            it = from_row(r, titles.get(r.key, r.title))
-            live.add(it.key)
-            if it.kind in CONFIRMABLE and it.key in log:
-                it.state, it.basis, it.done_at = DONE, log_basis(log[it.key]), float(log[it.key].get("at", now))
-            items.append(it)
-            first.setdefault(it.key, now)
-        for r, kind, _why in dropped:
-            if kind == "done":  # 수집 목록에는 남았지만 대상이 끝남
-                it = from_row(r, titles.get(r.key, r.title))
-                live.add(it.key)
-                it.state, it.basis, it.done_at = DONE, closed_basis(r.targets, facts, store.dir), now
-                items.append(it)
-            else:  # 합쳐진 중복은 이긴 행이 대신함
-                live.add(r.key)
+        items = [from_row(r, titles.get(r.key, r.title)) for r in todo] + done
+        for it in done:
+            it.done_at = it.done_at or now
+        live = {it.key for it in items} | {r.key for r, _k, _w in dropped}
         for it in items:
+            first.setdefault(it.key, now)
             entries[it.key] = {**it.public(), "done_at": it.done_at or (entries.get(it.key) or {}).get("done_at", 0.0)}
         items = revive(items, entries, live, log, facts, store, now)
         for k in [k for k in first if k not in live]:
@@ -239,9 +258,9 @@ def revive(items, entries, live, log, facts, store: Store, now: float) -> list:
     for key, e in list(entries.items()):
         if key in live or key in have:
             continue
-        fields = {k: e[k] for k in Item.__dataclass_fields__ if k in e}
-        fields["targets"] = tuple(fields.get("targets") or ())
-        it = Item(**fields)
+        args = {k: e[k] for k in Item.__dataclass_fields__ if k in e and k != "row"}
+        args["targets"] = tuple(args.get("targets") or ())
+        it = Item(**args)
         if e.get("state") != DONE:
             if it.kind in CONFIRMABLE and key in log:
                 it.basis, it.done_at = log_basis(log[key]), float(log[key].get("at", now))

@@ -711,6 +711,7 @@ def collect(conf, repos, interval, prev, now, mark_gh):
         "idle": collect_idle(conf, get, prev.get("idle"), now, mark_gh),
     }
     src["progress"] = run_source(lambda: collect_progress(src, repos, mark_gh, get), prev.get("progress"), now)
+    src["confirm"] = run_source(lambda: collect_confirm(src, now), prev.get("confirm"), now)
     gh = "off" if not repos else "run" if gh_due(interval, now) else "skip"
     if gh == "off":
         src["gh"] = {"ok": True, "err": None, "at": now, "tried": now, "stale": False, "value": None, "off": True}
@@ -739,6 +740,24 @@ def collect_progress(src, repos, write, get):
                                     write=write, use_pr=bool(repos), conf=conf,
                                     workspaces=lambda: progress_collect.workspace_counts(get("worktree", "list", "--limit", LIST_LIMIT).get("worktrees"), terminals(get)))
     return {"counts": snap["counts"], "items": snap["items"], "notes": snap["notes"], "groups": snap["groups"]}
+
+
+CONFIRM_FIELDS = ("key", "kind", "kind_label", "title", "hub", "urgency", "how")
+
+
+def collect_confirm(src, now, facts=None, store=None):
+    """확인 목록(confirm_items)의 안 함 항목. 문서 사이트·Slack 할 일 목록과 같은 원천이라 '내가 승인할 것' 칸이 세 화면에서 일치함.
+    진행 스냅샷이 원료. PR 은 gh 를 다시 부르지 않음(스냅샷이 열린 PR 만 담음). 명부는 읽기만 하고 쓰는 쪽은 문서 사이트 서버 하나"""
+    import confirm_items
+    import todo_facts
+    snap = src["progress"].get("value")
+    if not isinstance(snap, dict):
+        raise SourceError("no_progress")
+    raw = [(i["key"], i["bucket"], i["title"], i["since"] if isinstance(i.get("since"), (int, float)) else 0.0) for i in snap["items"]]
+    facts = facts or todo_facts.make_facts([r[0] for r in raw], {}, now, False)
+    items = confirm_items.build(raw, now, facts, store or confirm_items.Store(DIR), persist=False)
+    todo = [i.public() for i in items if not i.done]
+    return {"todo": len(todo), "done": len(items) - len(todo), "items": [{k: d[k] for k in CONFIRM_FIELDS} for d in todo]}
 
 
 def touch(path):

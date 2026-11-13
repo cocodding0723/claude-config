@@ -6,6 +6,7 @@ import {
   autoBanner,
   fmtAge,
   ageMin,
+  confirmApprovals,
   ghLine,
   headCounts,
   hubLine,
@@ -140,7 +141,7 @@ export const register: Register = on => {
     const counts = headCounts(board, auto)
     const src = auto?.sources
 
-    const approvals = byPriority(board?.approvals)
+    const approvals = byPriority(confirmApprovals(src?.confirm?.value) ?? board?.approvals)
     const todos = byPriority(board?.todos)
     const history: HistoryEntry[] = board?.history ?? []
     // 허브별 가지로 묶고, 허브 순서는 가장 최근 기록 순

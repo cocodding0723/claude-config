@@ -1,5 +1,5 @@
 // 패널의 순수 함수: 파일 해석·오래됨 판정·표시 문자열. 엔진($) 없이 node 로 시험함(tests/panel/board.test.mjs)
-import type { AutoBoard, AutoHub, AutoIdle, AutoProgress, AutoSource, Board } from '../types'
+import type { AutoBoard, AutoConfirm, AutoHub, AutoIdle, AutoProgress, AutoSource, Board, BoardItem } from '../types'
 
 /** 자동 칸이 이만큼 갱신되지 않으면 맨 위 경고. 수집 주기 90초의 6배 이상 */
 export const AUTO_STALE_MIN = 10
@@ -191,4 +191,18 @@ export const progressGroups = (v: AutoProgress | null | undefined): ProgressGrou
     }
   }
   return groups
+}
+
+/**
+ * '내가 승인할 것' 칸: 확인 목록(수집기의 confirm 원료) 안 함 항목. 급함 3 → p 1.
+ * 원료가 없으면 undefined → 호출한 쪽이 메인이 손으로 쓴 approvals 로 돌아감
+ */
+export const confirmApprovals = (v: AutoConfirm | null | undefined): BoardItem[] | undefined => {
+  if (v === null || v === undefined || !Array.isArray(v.items)) return undefined
+  return v.items.map(i => ({
+    p: Math.max(1, 4 - (Number.isFinite(i.urgency) ? i.urgency : 1)),
+    title: i.hub !== '' && i.hub !== '미상' ? `${i.title} (${i.hub})` : i.title,
+    why: i.kind_label,
+    how: i.how,
+  }))
 }

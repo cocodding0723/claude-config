@@ -34,6 +34,7 @@ import hub_report  # noqa: E402
 import progress_collect as pc  # noqa: E402
 import slack_list_create  # noqa: E402
 import tls_ctx  # noqa: E402
+import confirm_items  # noqa: E402
 import todo_facts  # noqa: E402
 import todo_items  # noqa: E402
 
@@ -548,13 +549,6 @@ def make_facts(items, state, now, use_pr):
     return todo_facts.make_facts([i.key for i in items], cache, now, use_pr)
 
 
-def settle_rows(rows, facts, state):
-    """행 정리(todo_facts.settle_rows). 반환: (남은 행, {버린 키: ('done'|'dup', 근거})"""
-    prefer = [k for k in state["items"] if not k.startswith(DONE_PREFIX)]
-    kept, dropped = todo_facts.settle_rows(rows, facts, prefer)
-    return kept, {r.key: (kind, why) for r, kind, why in dropped}
-
-
 ACTION_LABEL = {"create": "새 행", "update": "수정", "done": "완료 처리", "dedupe": "합침(완료·보관)", "archive": "보관"}
 
 
@@ -583,10 +577,12 @@ def run(conf, a):
     now = time.time()
     seen = state.setdefault("seen", {})  # 허브 항목의 대기 시간 기준(처음 본 시각)
     same_title = []
-    all_rows = todo_items.build_rows([(i.key, i.bucket, i.title, i.since) for i in items], now, seen, same_title)
     facts_before = json.dumps(state.get("facts"), sort_keys=True)
     facts = make_facts(items, state, now, not a.no_pr)
-    kept, dropped = settle_rows(all_rows, facts, state)
+    # 확인 목록과 같은 선별(confirm_items): 끝난 대상·확인 기록으로 끝난 행·중복을 뺌. 문서 사이트·옆 패널과 항목 집합이 같음
+    prefer = [k for k in state["items"] if not k.startswith(DONE_PREFIX)]
+    kept, gone_rows = confirm_items.open_rows([(i.key, i.bucket, i.title, i.since) for i in items], now, seen, facts, confirm_items.Store(pc.HUB_DIR), prefer, same_title)
+    dropped = {r.key: (kind, why) for r, kind, why in gone_rows}
     gone = set(dropped)  # 목록·DM 에서 뺄 항목: 끝난 대상과 합쳐진 중복(같은 제목 중복은 DM 에 그대로 셈)
     dropped.update({k: ("dup", "같은 제목의 행") for k in same_title})
     rows = {r.key: r for r in kept}

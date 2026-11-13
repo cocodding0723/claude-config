@@ -137,5 +137,49 @@ class VanishTest(Base):
         self.assertFalse(os.path.exists(self.store.seen_path))
 
 
+class ScreensTest(Base):
+    """문서 사이트·Slack 할 일 목록(digest)·옆 패널이 같은 입력에서 같은 항목 집합을 내는지"""
+
+    def screens(self, raw=RAW, **kw):
+        import panel_collect
+        facts = self.facts(**kw)
+        docsite = {i.key for i in ci.build(raw, NOW, facts, self.store, persist=False) if not i.done}
+        digest = {r.key for r in ci.open_rows(raw, NOW, {}, facts, self.store)[0]}
+        src = {"progress": {"value": {"items": [{"key": k, "bucket": b, "title": t, "since": s} for k, b, t, s in raw]}}}
+        panel = {i["key"] for i in panel_collect.collect_confirm(src, NOW, facts, self.store)["items"]}
+        return docsite, digest, panel
+
+    def test_same_input_gives_same_set_on_three_screens(self):
+        d, g, p = self.screens()
+        self.assertEqual(d, g)
+        self.assertEqual(g, p)
+        self.assertEqual(len(d), 6)
+
+    def test_closed_targets_leave_all_three(self):
+        d, g, p = self.screens(cards={"D-A": True}, prs={746: "MERGED"})
+        self.assertEqual(d, g)
+        self.assertEqual(g, p)
+        self.assertNotIn("decision:D-A", d)
+        self.assertNotIn(PR, d)
+
+    def test_confirm_log_leaves_all_three(self):
+        self.store.confirm("hub:alpha:2", answer_store.DOCSITE, NOW)
+        d, g, p = self.screens()
+        self.assertEqual(d, g)
+        self.assertEqual(g, p)
+        self.assertNotIn("hub:alpha:2", d)
+
+    def test_confirm_log_for_decision_does_not_remove_it_anywhere(self):
+        self.store.confirm("decision:D-A", answer_store.DOCSITE, NOW)
+        d, g, p = self.screens()
+        self.assertTrue("decision:D-A" in d and "decision:D-A" in g and "decision:D-A" in p)
+
+    def test_digest_and_panel_use_the_shared_selection(self):
+        here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "hubs", "scripts")
+        for name, needle in (("progress_digest.py", "confirm_items.open_rows("), ("panel_collect.py", "confirm_items.build(")):
+            with open(os.path.join(here, name), encoding="utf-8") as f:
+                self.assertEqual(f.read().count(needle), 1, name)
+
+
 if __name__ == "__main__":
     unittest.main()

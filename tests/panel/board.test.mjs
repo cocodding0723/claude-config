@@ -172,3 +172,17 @@ test('hubLine: 하위 작업 공간 수, 10개 넘으면 경고', () => {
   assert.equal(b.hubLine(h, { children: 0, active: 0, warn: false }), '작업 중')
   assert.equal(b.hubLine(h), '작업 중')
 })
+
+test('confirmApprovals: 확인 목록 항목을 승인 칸 모양으로, 원료가 없으면 undefined(손 칸으로 복귀)', () => {
+  assert.equal(b.confirmApprovals(undefined), undefined)
+  assert.equal(b.confirmApprovals(null), undefined)
+  const v = b.confirmApprovals({ todo: 2, done: 0, items: [
+    { key: 'a', kind: 'decision', kind_label: '🙋 결정 카드', title: 'D-1 결정', hub: 'alpha', urgency: 3, how: '카드에 답' },
+    { key: 'b', kind: 'merge', kind_label: '🔀 PR 병합', title: '#7 머지', hub: '미상', urgency: 1, how: '머지 버튼' },
+  ] })
+  assert.deepEqual(v, [
+    { p: 1, title: 'D-1 결정 (alpha)', why: '🙋 결정 카드', how: '카드에 답' },
+    { p: 3, title: '#7 머지', why: '🔀 PR 병합', how: '머지 버튼' },
+  ])
+  assert.deepEqual(b.confirmApprovals({ todo: 0, done: 0, items: [] }), [])
+})
