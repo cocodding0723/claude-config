@@ -105,20 +105,50 @@ class AnswerStore:
 
     def find_answer(self, did: str, ts: str) -> tuple:
         """(입구, 근거 inbox 줄). 판정은 그 카드(parent_ts == ts)로만 좁힘 — 같은 번호로 다시 올린 카드는 별개.
-        버튼 답은 그 자체로 확정(충돌 카드를 버튼으로 정리할 수 있음). 그다음 done 에 ts 가 있으면(사용자가 직접 닫음) 답한 것으로 봄.
+        규칙은 judge 참고. 결정 완료 판정은 이 한 곳(확인 목록·할 일 목록·옆 패널 포함)"""
+        return self.judge(self.read_inbox(), self.read_done(), did, ts)
+
+    @staticmethod
+    def judge(inbox: list, done: set, did: str, ts: str) -> tuple:
+        """카드 한 장의 답 판정. 버튼 답은 그 자체로 확정(충돌 카드를 버튼으로 정리할 수 있음). 그다음 done 에 ts 가 있으면(사용자가 직접 닫음) 답한 것으로 봄.
         그 밖에 반응·스레드의 pick/approve 가 한 가지면 답, 서로 다르거나 conflict 표시가 있으면 충돌이라 답 없음.
         source 가 없는 옛 기록은 Slack 에서 온 것"""
-        recs = [d for d in self.read_inbox() if d.get("decision_id") == did and d.get("kind") == "decide" and d.get("parent_ts") == ts]
+        recs = [d for d in inbox if d.get("decision_id") == did and d.get("kind") == "decide" and d.get("parent_ts") == ts]
         src = lambda d: d.get("source") if d.get("source") in SOURCE_NAME else SLACK  # noqa: E731
         for d in recs:
             if d.get("type") == "button":
                 return src(d), d
-        if ts and ts in self.read_done():
+        if ts and ts in done:
             return SLACK, {}
         votes = [d for d in recs if d.get("type") in ("reaction", "thread_reply") and d.get("action") in ANSWER_KINDS]
         if not votes or any(d.get("conflict") is True for d in votes) or len({str(d.get("pick")) for d in votes}) > 1:
             return "", {}
         return src(votes[0]), votes[0]
+
+    def cards(self, did: str = "") -> list:
+        """번호 카드 기록(slack-sent.jsonl) 전부, 오래된 순. did 를 주면 그 번호만. 같은 번호로 다시 올린 카드는 각각 한 건.
+        각 건은 sent 줄에 by(답한 입구, 없으면 '')를 더한 사본. 파일을 한 번씩만 읽음"""
+        inbox, done, out = self.read_inbox(), self.read_done(), []
+        try:
+            with open(self.sent, encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        s = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(s, dict) and s.get("form_kind") == "decide" and isinstance(s.get("ts"), str) and "options" in s \
+                            and re.fullmatch(r"D-[0-9A-Za-z]{1,16}", str(s.get("decision_id") or "")) and (not did or s["decision_id"] == did):
+                        out.append({**s, "by": self.judge(inbox, done, s["decision_id"], s["ts"])[0]})
+        except OSError:
+            return []
+        return out
+
+    def closed_by_did(self) -> dict:
+        """결정 번호 → 그 번호의 카드가 전부 답으로 닫혔는가. 카드가 하나라도 열려 있으면 False"""
+        out = {}
+        for c in self.cards():
+            out[c["decision_id"]] = out.get(c["decision_id"], True) and bool(c["by"])
+        return out
 
     # ---- PR 병합 승인 ----
     def approve(self, key: str, source: str, now: float | None = None, since: float = 0.0, head: str = "") -> bool:
@@ -219,8 +249,8 @@ class AnswerStore:
         finally:
             os.close(fd)
 
-    def find_card(self, did: str) -> dict | None:
-        """결정 번호의 가장 최근 번호 카드 기록(slack-sent.jsonl: ts·channel·title·options·tag). 없으면 None.
+    def find_card(self, did: str, ts: str = "") -> dict | None:
+        """결정 번호의 번호 카드 기록(slack-sent.jsonl: ts·channel·title·options·tag). ts 를 주면 그 카드, 없으면 가장 최근 카드. 없으면 None.
         선택지 문구는 여기서만 읽음 — 화면이 보낸 문구는 믿지 않음"""
         if not re.fullmatch(r"D-[0-9A-Za-z]{1,16}", did or ""):
             return None
@@ -233,7 +263,8 @@ class AnswerStore:
                     except ValueError:
                         continue
                     if isinstance(s, dict) and s.get("form_kind") == "decide" and s.get("decision_id") == did \
-                            and isinstance(s.get("ts"), str) and isinstance(s.get("options"), dict):
+                            and isinstance(s.get("ts"), str) and isinstance(s.get("options"), dict) \
+                            and (not ts or s["ts"] == ts):
                         found = s
         except OSError:
             return None

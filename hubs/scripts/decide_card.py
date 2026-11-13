@@ -5,6 +5,7 @@
 선택 항목: 본문 '이유:' 줄 = 추천 이유. 카드에서는 추천 줄 뒤에 붙음.
 카드 렌더 순서: 제목 → 배경 → 선택지(각 결과) → 추천(+이유) → 용어 → 답 줄.
 """
+import json
 import re
 import unicodedata
 
@@ -19,6 +20,46 @@ NO_TERMS = "없음"
 OPT_SPLIT = re.compile(r",[ \t]*(?=[0-9]+[ \t]*=)")  # 문구 안 쉼표는 뒤에 '숫자=' 가 올 때만 구분자. 두 자리 번호도 구분자로 봐 범위 오류로 거부
 OPT_ITEM = re.compile(r"[ \t]*([0-9]+)[ \t]*=(.*)", re.S)
 RESULT_SPLIT = re.compile(r"[ \t]*=>[ \t]*")
+
+TITLE_SHOW = 40  # 거부 안내에 보이는 옛 제목 길이
+_TITLE_HEAD = re.compile(r"^(?:\s*:[^\s:]+:)+\s*|^[^\s:]*선택해주세요\s*:\s*")  # 슬랙 이모지 코드(:비서-선택해주세요:)와 옛 머리말
+
+
+def title_key(title: str) -> str:
+    """제목 비교용 정규화: 이모지 코드·머리말·이모지·공백 차이를 지움. 같은 질문의 재전송·재질문은 같은 값"""
+    t = _TITLE_HEAD.sub("", unicodedata.normalize("NFC", str(title or "")).replace("*", ""), count=1)
+    t = "".join(c for c in t if unicodedata.category(c) not in ("So", "Sk", "Cf"))
+    return re.sub(r"\s+", "", t).casefold()
+
+
+def first_line(text: str) -> str:
+    return str(text or "").split("\n", 1)[0]
+
+
+def reuse_problem(did: str, title: str, sources: list) -> tuple:
+    """이미 다른 질문에 쓰인 결정 번호인가. 반환 (거부 사유, 경고) — 둘 다 빈 문자열이면 통과.
+    sources: [(경로, 제목 꺼내는 함수)] — 카드를 올린 기록(허브 보고 outbox·보낸 카드 기록) 전부. 번호가 같고 정규화한 제목이 하나도 같지 않으면 거부.
+    같은 질문 재전송·충돌 재질문(같은 번호·같은 질문)은 통과. 기록을 못 읽으면 경고만 하고 통과(차단으로 결정을 막지 않음)"""
+    seen, warn = [], ""
+    for path, get in sources:
+        try:
+            with open(path, encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        r = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(r, dict) and r.get("decision_id") == did and r.get("kind", "decide") == "decide":
+                        seen.append(str(get(r) or ""))
+        except FileNotFoundError:
+            continue
+        except (OSError, UnicodeDecodeError):
+            warn = f"경고: 결정 번호 {did} 재사용 검사 못 함(기록 읽기 실패) — 그대로 진행함"
+    seen = [t for t in seen if title_key(t)]
+    if not seen or title_key(title) in {title_key(t) for t in seen}:
+        return "", warn
+    return (f"이 결정 번호는 다른 질문에 이미 쓰임({seen[-1][:TITLE_SHOW]}) — 새 번호 쓰기(예: {did}2)", warn)
+
 
 EXAMPLE = ("본문 예: '알림 시각 정하기' 다음 줄에 '배경: 알림 개편 작업 중, 시각이 화면마다 달라 하나로 맞추려 함' · "
            "'용어: 푸시 — 앱 밖 알림' / --options 예: '1=오전 9시 => 출근 전에 도착,2=오전 10시 => 업무 시작 뒤에 도착'")

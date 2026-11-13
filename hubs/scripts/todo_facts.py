@@ -11,6 +11,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import answer_store  # noqa: E402
 import progress_collect as pc  # noqa: E402
 import todo_items  # noqa: E402
 import todo_sync  # noqa: E402
@@ -21,23 +22,6 @@ OPEN_TTL_S = 300  # 열린 PR 상태를 다시 묻는 간격
 HUB_TTL_S = 3600  # PR → 허브 판정 유효 시간(찾은 값)
 HUB_MISS_TTL_S = 600  # 못 찾은 값은 짧게(작업 공간이 곧 생길 수 있음)
 PR_PREFIX, DEC_PREFIX, LEDGER_PREFIX = "pr:", "decision:", "ledger:"
-
-
-def closed_cards(sent, inbox, done_ts, card_state):
-    """결정 번호 → 답이 끝난 카드인지(같은 번호의 카드가 여럿이면 전부 닫혀야 True). panel_collect.collect_pending 과 같은 닫힘 규칙:
-    번호 카드는 card_state 가 closed 이거나 slack-done 에 ts 가 있을 때만 닫힘. 보류·충돌은 대기"""
-    reactions = {}
-    for d in inbox:
-        if d.get("type") == "reaction" and isinstance(d.get("parent_ts"), str):
-            reactions.setdefault(d["parent_ts"], []).append(d)
-    state = {}
-    for s in sent:
-        did, ts = s.get("decision_id"), s.get("ts")
-        if s.get("form_kind") != "decide" or "options" not in s or not isinstance(did, str) or not isinstance(ts, str):
-            continue
-        shut = ts in done_ts or card_state(s, reactions.get(ts, [])) == "closed"
-        state[did] = state.get(did, True) and shut
-    return state
 
 
 def decision_hubs(reports, sent, known):
@@ -190,13 +174,8 @@ def load_local(facts, hub_dir, ledger_path):
     facts.hub_slugs = set(names)
     known = set(names) | {pc.status_key(s) for s in names} | {pc.legacy_slug(s) for s in names}  # 보고의 hub 값은 slug·상태 파일 이름·옛 별칭 모두 있음
     try:
-        sent, inbox = panel_collect.jsonl(p("slack-sent.jsonl")), panel_collect.jsonl(p("slack-inbox.jsonl"))
-        try:
-            with open(p("slack-done.txt"), encoding="utf-8") as f:
-                done = set(f.read().split())
-        except FileNotFoundError:
-            done = set()
-        facts.cards = closed_cards(sent, inbox, done, panel_collect.card_state)
+        sent = panel_collect.jsonl(p("slack-sent.jsonl"))
+        facts.cards = answer_store.AnswerStore(hub_dir).closed_by_did()  # 결정 완료 판정은 answer_store 카드 단위 한 곳
         try:
             reports = panel_collect.jsonl(p("hub-reports.jsonl"))
         except panel_collect.SourceError:

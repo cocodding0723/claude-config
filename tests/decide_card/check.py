@@ -1,4 +1,5 @@
 """decide_card 규칙 단위 시험 + 자동 결정 카드 통과 시험. 작업 폴더는 hubs/scripts."""
+import json
 import os
 import sys
 import tempfile
@@ -39,6 +40,69 @@ class RuleTest(unittest.TestCase):
         self.assertEqual((terms, why), (f"- {TERMS}", "열람률"))
         self.assertNotIn("용어", rest)
         self.assertIn("배경", rest)
+
+
+class ReuseTest(unittest.TestCase):
+    """결정 번호 재사용 차단: 접수(hub_report.make_report)와 직접 호출 검사(check-decide)가 같은 함수를 씀"""
+
+    def setUp(self):
+        import hub_report
+        self.hr = hub_report
+        self.dir = tempfile.mkdtemp(prefix="cc-reuse.")
+        self.old = (hub_report.HUB_DIR, os.environ.get("LRM_REPORT_OUTBOX"))
+        hub_report.HUB_DIR = self.dir
+        os.environ.pop("LRM_REPORT_OUTBOX", None)
+        self.addCleanup(self.restore)
+
+    def restore(self):
+        self.hr.HUB_DIR = self.old[0]
+        if self.old[1] is not None:
+            os.environ["LRM_REPORT_OUTBOX"] = self.old[1]
+
+    def put(self, name, rows):
+        with open(os.path.join(self.dir, name), "w", encoding="utf-8") as f:
+            for r in rows:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+    def add(self, title, did="D-SPINE"):
+        return self.hr.make_report("data-design", "없음", "decide", f"{title}\n{BG}\n{TERMS}", [], OPTS, "1", did, "보통", None, True)
+
+    def test_other_question_rejected_with_old_title_and_new_number_hint(self):
+        self.put("slack-sent.jsonl", [{"decision_id": "D-SPINE", "kind": "decide", "title": ":비서-선택해주세요: 공주영 스파인 앞머리 분절 방식"}])
+        with self.assertRaises(self.hr.ReportError) as cm:
+            self.add("스파인 설정 원본을 빌드 밖으로 옮길까?")
+        self.assertIn("공주영 스파인 앞머리 분절 방식", str(cm.exception))
+        self.assertIn("새 번호 쓰기(예: D-SPINE2)", str(cm.exception))
+
+    def test_same_question_passes_even_with_prefix_and_spacing(self):
+        self.put("slack-sent.jsonl", [{"decision_id": "D-SPINE", "kind": "decide", "title": ":비서-선택해주세요: 스파인 설정 원본을  빌드 밖으로 옮길까?"}])
+        self.assertEqual(self.add("스파인 설정 원본을 빌드 밖으로 옮길까?")["decision_id"], "D-SPINE")  # 재전송·충돌 재질문
+
+    def test_outbox_record_also_counts(self):
+        self.put("hub-reports.jsonl", [{"decision_id": "D-SPINE", "kind": "decide", "text": "첫 질문\n배경: x"}])
+        with self.assertRaises(self.hr.ReportError):
+            self.add("다른 질문")
+        self.assertEqual(self.add("첫 질문")["decision_id"], "D-SPINE")
+
+    def test_new_number_and_no_record_pass(self):
+        self.put("slack-sent.jsonl", [{"decision_id": "D-SPINE", "kind": "decide", "title": "옛 질문"}])
+        self.assertEqual(self.add("다른 질문", "D-SPINE2")["decision_id"], "D-SPINE2")
+
+    def test_unreadable_record_warns_and_passes(self):
+        os.makedirs(os.path.join(self.dir, "slack-sent.jsonl"))  # 파일 대신 폴더 → 읽기 실패
+        why, warn = dc.reuse_problem("D-SPINE", "질문", [(os.path.join(self.dir, "slack-sent.jsonl"), lambda r: r.get("title"))])
+        self.assertEqual(why, "")
+        self.assertIn("재사용 검사 못 함", warn)
+        self.assertEqual(self.add("질문")["decision_id"], "D-SPINE")
+
+    def test_check_decide_cli_uses_same_rule(self):
+        import subprocess
+        self.put("slack-sent.jsonl", [{"decision_id": "D-SPINE", "kind": "decide", "title": "옛 질문"}])
+        run = lambda title: subprocess.run([sys.executable, "-I", "hub_report.py", "check-decide", "--options", OPTS, "--decision-id", "D-SPINE"],  # noqa: E731
+                                           input=f"{title}\n{BG}\n{TERMS}", capture_output=True, text=True, env={**os.environ, "LRM_HUB_DIR": self.dir})
+        bad, ok = run("새 질문"), run("옛 질문")
+        self.assertEqual((bad.returncode, ok.returncode), (2, 0))
+        self.assertIn("이미 쓰임(옛 질문)", bad.stderr + bad.stdout)
 
 
 class AutoCardTest(unittest.TestCase):

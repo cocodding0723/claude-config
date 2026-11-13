@@ -223,7 +223,7 @@ class DecideTest(ServerBase):
     def test_expired_intent_rejected(self):
         intent = self.preview()[1]["intent"]
         for it in self.app.decider._intents.values():
-            self.app.decider._intents[intent] = it.__class__(it.did, it.pick, it.who, 0)
+            self.app.decider._intents[intent] = it.__class__(it.did, it.pick, it.ts, it.who, 0)
         self.assertEqual(self.decide({"id": DID, "pick": 2, "intent": intent})[0], 409)
         self.untouched()
 

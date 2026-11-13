@@ -55,6 +55,7 @@ class Item:
     command: str = ""  # 직접 실행 명령 본문(제목에서 백틱으로 감싼 부분)
     url: str = ""  # PR 주소
     did: str = ""  # 결정 번호
+    ts: str = ""  # 결정 카드(메시지) ts. 같은 번호로 다시 올린 카드는 ts 가 달라 별개 항목. 비면 연결된 카드 기록이 없음(화면은 '카드 없음')
     basis: str = ""  # done 일 때 근거 문장
     done_at: float = 0.0
     row: object = field(default=None, repr=False, compare=False)  # 원본 todo_items.Row. 목록 화면(digest)이 씀. 저장·응답에는 넣지 않음
@@ -194,6 +195,39 @@ def from_row(row, raw_title: str) -> Item:
                 did=m.group(1) if m else next((t[len("decision:"):] for t in row.targets if t.startswith("decision:")), ""))
 
 
+def link_cards(it: Item, raw_title: str, st: answer_store.AnswerStore) -> list:
+    """결정 항목의 카드 기록 목록. 번호는 항목이 가진 것, 없으면 원문에서 D-번호를 찾되 카드 기록이 있을 때만 연결함"""
+    for did in dict.fromkeys(([it.did] if it.did else []) + todo_items._CODE.findall(raw_title)):
+        cards = st.cards(did)
+        if cards:
+            return cards
+    return []
+
+
+def expand(items: list, titles: dict, store_dir: str) -> list:
+    """결정 항목을 카드 단위로 펼침. 판정은 answer_store(카드의 답 여부) 한 곳만 씀 — 이 모듈은 따로 판정하지 않음.
+    카드가 하나면 키·제목 그대로, 여럿(같은 번호로 다시 올림)이면 카드마다 별개 항목(키 '<키>@<ts>', 제목은 그 카드 제목).
+    카드 기록이 없으면 ts 가 빈 채로 둠"""
+    st, out = answer_store.AnswerStore(store_dir), []
+    for it in items:
+        cards = link_cards(it, titles.get(it.key, it.title), st) if it.kind == DECISION else []
+        for c in cards:
+            multi = len(cards) > 1
+            n = Item(**{f.name: getattr(it, f.name) for f in fields(Item)})
+            n.did, n.ts = c["decision_id"], c["ts"]
+            if multi:
+                n.key = f"{it.key}@{c['ts']}"
+                n.title = todo_items.cut(todo_items._CARD_HEAD.sub("", str(c.get("title") or n.did), count=1).strip() or n.did)
+            if c["by"]:
+                n.state, n.basis = DONE, answer_store.LATE_TEXT.get(c["by"], "이미 답함")
+            else:
+                n.state, n.basis, n.done_at = TODO, "", 0.0
+            out.append(n)
+        if not cards:
+            out.append(it)
+    return out
+
+
 def sort_key(it: Item) -> tuple:
     """안 함 먼저 → 종류 → 급함 높은 순 → 오래된 순. 함은 최근 완료 순"""
     if it.done:
@@ -244,7 +278,14 @@ def build(raw, now: float, facts, store: Store, persist: bool = True) -> list:
         items = [from_row(r, titles.get(r.key, r.title)) for r in todo] + done
         for it in done:
             it.done_at = it.done_at or now
-        live = {it.key for it in items} | {r.key for r, _k, _w in dropped}
+        base = {it.key for it in items}
+        items = expand(items, titles, store.dir)
+        for it in items:
+            if it.state == DONE:
+                it.done_at = it.done_at or now
+        live = {it.key for it in items} | {r.key for r, _k, _w in dropped} | base
+        for k in base - {it.key for it in items}:  # 카드별로 쪼개져 사라진 원래 키의 낡은 명부 항목
+            entries.pop(k, None)
         for it in items:
             first.setdefault(it.key, now)
             entries[it.key] = {**it.public(), "done_at": it.done_at or (entries.get(it.key) or {}).get("done_at", 0.0)}

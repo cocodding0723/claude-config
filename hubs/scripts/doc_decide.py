@@ -24,7 +24,7 @@ import card_actions as actions  # noqa: E402
 
 INTENT_TTL_S = 120  # 확인 단계가 유효한 시간
 INTENT_MAX = 200
-REQUEST_KEYS = {"id", "pick", "intent"}  # 요청이 가질 수 있는 키 전부
+REQUEST_KEYS = {"id", "ts", "pick", "intent"}  # ts: 같은 번호의 여러 카드 중 이 카드(없으면 최근 카드)  # 요청이 가질 수 있는 키 전부
 AUDIT_NAME = "docsite-audit.jsonl"
 DID_RE = re.compile(r"D-[0-9A-Za-z]{1,16}", re.ASCII)
 OPEN_ACTION = "감시기 카드는 Slack 에서 답하세요"
@@ -42,6 +42,7 @@ class DecideError(Exception):
 class Intent:
     did: str
     pick: int
+    ts: str
     who: str  # 확인 단계를 연 페이지의 CSRF 토큰. 다른 페이지가 가로채 쓰지 못하게 묶음
     exp: float
 
@@ -56,11 +57,11 @@ class Decider:
         self._lock = threading.Lock()
 
     # ---- 읽기 ----
-    def view(self, did: str) -> dict:
+    def view(self, did: str, ts: str = "") -> dict:
         """결정 카드 표시용: 제목·선택지·답 여부. 선택지 문구는 카드 기록에서만 읽음"""
-        card = self.card(did)
+        card = self.card(did, ts)
         by = self.store.first_answer(did, card["ts"])
-        return {"id": did, "title": str(card.get("title") or did), "options": self.options(card), "recommended": card.get("recommended"),
+        return {"id": did, "ts": card["ts"], "title": str(card.get("title") or did), "options": self.options(card), "recommended": card.get("recommended"),
                 "answered": answer_store.LATE_TEXT.get(by, "") if by else "", "actionable": not by and not self.has_action(did)}
 
     # ---- 확인(preview) → 전달(commit) ----
@@ -71,15 +72,17 @@ class Decider:
         pick = req.get("pick")
         if not isinstance(pick, int) or isinstance(pick, bool):
             raise DecideError(400, "요청 형식 오류 — pick 은 선택지 번호(정수)")
-        did = req["id"]
+        did, ts = req["id"], req.get("ts", "")
+        if not isinstance(ts, str):
+            raise DecideError(400, "요청 형식 오류 — ts 는 문자열")
         if "intent" not in req:
-            return self.preview(did, pick, who)
+            return self.preview(did, pick, who, ts)
         if not isinstance(req["intent"], str):
             raise DecideError(400, "요청 형식 오류 — intent 는 문자열")
-        return self.commit(did, pick, req["intent"], who)
+        return self.commit(did, pick, req["intent"], who, ts)
 
-    def preview(self, did: str, pick: int, who: str) -> dict:
-        card, label = self.pick_label(did, pick)
+    def preview(self, did: str, pick: int, who: str, ts: str = "") -> dict:
+        card, label = self.pick_label(did, pick, ts)
         self.ensure_open(did, card)
         body = answer_route.said_text(did, {"action": "pick", "pick": pick}, label)
         hub = self.router.hub_of(did)
@@ -90,19 +93,19 @@ class Decider:
                 del self._intents[k]
             if len(self._intents) >= INTENT_MAX:
                 del self._intents[min(self._intents, key=lambda k: self._intents[k].exp)]
-            self._intents[intent] = Intent(did, pick, who, now + INTENT_TTL_S)
+            self._intents[intent] = Intent(did, pick, card["ts"], who, now + INTENT_TTL_S)
         return {"ok": True, "phase": "preview", "intent": intent, "title": str(card.get("title") or did), "label": label,
                 "target": f"{hub} 허브" if hub else "메인 터미널",
                 "text": answer_route.HUB_LINE.format(body=body, source=answer_store.SOURCE_NAME[answer_store.DOCSITE]), "ttl": INTENT_TTL_S}
 
-    def commit(self, did: str, pick: int, intent: str, who: str) -> dict:
+    def commit(self, did: str, pick: int, intent: str, who: str, ts: str = "") -> dict:
         with self._lock:  # 한 번 쓰면 성공·실패와 무관하게 사라짐
             it = self._intents.pop(intent, None)
-        if it is None or it.exp < self.now() or (it.did, it.pick, it.who) != (did, pick, who):
+        if it is None or it.exp < self.now() or (it.did, it.pick, it.who) != (did, pick, who) or (ts and it.ts != ts):
             self.audit(did, pick, "rejected:no_confirm")
             raise DecideError(409, "확인 단계가 없거나 만료됨 — 선택부터 다시 하세요")
         try:
-            card, label = self.pick_label(did, pick)
+            card, label = self.pick_label(did, pick, it.ts)
             self.ensure_open(did, card)
         except DecideError as err:
             self.audit(did, pick, f"rejected:{err.status}")
@@ -134,8 +137,8 @@ class Decider:
         return {"ok": True, "phase": "commit", "via": out.via, "hub": out.hub, "note": out.note}
 
     # ---- 내부 ----
-    def card(self, did: str) -> dict:
-        card = self.store.find_card(did)
+    def card(self, did: str, ts: str = "") -> dict:
+        card = self.store.find_card(did, ts)
         if card is None:
             raise DecideError(404, "없는 결정 — 번호 카드 기록이 없음")
         return card
@@ -145,8 +148,8 @@ class Decider:
         opts = card.get("options") or {}
         return [{"n": int(k), "text": str(v)} for k, v in sorted(opts.items(), key=lambda kv: int(kv[0])) if str(k).isdigit()]
 
-    def pick_label(self, did: str, pick: int) -> tuple:
-        card = self.card(did)
+    def pick_label(self, did: str, pick: int, ts: str = "") -> tuple:
+        card = self.card(did, ts)
         text = (card.get("options") or {}).get(str(pick))
         if not isinstance(text, str) or not text:
             raise DecideError(400, f"없는 선택지 — {pick}번은 이 결정의 선택지가 아님")

@@ -215,7 +215,7 @@ class ConfirmTest(ServerBase):
     def test_ui_sends_only_item_key_and_has_per_kind_actions(self):
         ui = open(os.path.join(os.path.dirname(self.db.__file__), "doc_browser_ui.html"), encoding="utf-8").read()
         self.assertIn('JSON.stringify({id: it.key})', ui)
-        for needle in ('"/api/confirm"', 'openDecision(it.did)', "PR 열기", "복사", "했음", 'rel: "noopener noreferrer"'):
+        for needle in ('"/api/confirm"', 'openDecision(it.did, it.ts)', "PR 열기", "복사", "했음", 'rel: "noopener noreferrer"'):
             self.assertIn(needle, ui)
 
 
