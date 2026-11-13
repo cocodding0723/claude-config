@@ -163,3 +163,4 @@ hubs/scripts/doc_browser.py	.config/lrm-hubs/doc_browser.py	link
 hubs/scripts/doc_browser_ui.html	.config/lrm-hubs/doc_browser_ui.html	link
 hubs/doc-recipients.example.json	.config/lrm-hubs/doc-recipients.example.json	link
 hubs/launchd/ai.lrm.docbrowser.plist	Library/LaunchAgents/ai.lrm.docbrowser.plist	copy
+hubs/docs/doc-browser.md	.config/lrm-hubs/docs/doc-browser.md	link
