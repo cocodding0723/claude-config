@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """doc-kit 구조안·보고서 HTML 검사. 실패 항목이 있으면 종료 코드 1.
 
-사용: check.py [--report] [--strict] [--project 이름] [--audience 기획자|개발자] 문서.html
+사용: check.py [--json] [--report] [--strict] [--project 이름] [--audience 기획자|개발자] 문서.html
+--json: 검사 없이 도식 정보(종류·도식 수·예외 사유)만 JSON 한 줄로 출력.
 --strict: 결정 카드 길이 초과 경고도 실패로 처리.
 --project·설정 파일: doc_config.py 규칙. 설정의 ticket_pattern 이 있으면 본문 티켓 키를 검사하고
 audience 가 기획자일 때만 본문 고유명사를 검사한다.
@@ -175,6 +176,17 @@ def check_diagrams(d, report):
     return (fails, warns, None)
 
 
+def diagram_info(path):
+    """도식 정보만 반환(출력·검사 없음). 문서 목록 페이지가 같은 판정을 재사용함.
+    반환: {"kind": 종류, "diagrams": 도식 수, "no_diagram_reason": 예외 사유|None, "problem": 문제 위치 표시 유무}"""
+    d = Doc()
+    d.base = os.path.dirname(os.path.abspath(path))
+    with open(path, encoding="utf-8", errors="replace") as f:
+        d.feed(f.read())
+    return {"kind": d.meta.get(KIND_META) or KIND_DEFAULT, "diagrams": d.diagrams,
+            "no_diagram_reason": d.meta.get(NO_DIAGRAM_META) or None, "problem": bool(d.problem)}
+
+
 def main(path, report=False, strict=False, project=None, audience=None):
     html = open(path, encoding="utf-8").read()
     d = Doc()
@@ -282,8 +294,12 @@ if __name__ == "__main__":
     argv = sys.argv[1:]
     project, argv = _opt(argv, "--project")
     audience, argv = _opt(argv, "--audience")
-    args = [a for a in argv if a not in ("--report", "--strict")]
+    args = [a for a in argv if a not in ("--report", "--strict", "--json")]
     if not args:
         print(__doc__)
         sys.exit(2)
+    if "--json" in argv:
+        import json
+        print(json.dumps(diagram_info(args[0]), ensure_ascii=False))
+        sys.exit(0)
     sys.exit(main(args[0], report="--report" in argv, strict="--strict" in argv, project=project, audience=audience))
