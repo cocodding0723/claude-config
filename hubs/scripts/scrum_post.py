@@ -9,6 +9,7 @@ Confluence·Jira 는 읽기만(초안 작성 claude 에 읽기 도구만 허용)
   --date     초안 날짜(기본 오늘). 시험·재현용
   --force    평일·'오늘 이미 보냄' 검사를 건너뜀(수동 재실행)
   --out      초안 저장 경로 덮어쓰기
+  --reply-thread TS  요약 글을 새로 올리지 않고 그 ts 의 스레드에 '수정본' 답글로 초안 파일만 올림(--force 와 함께 재작성할 때)
   --preflight  발송·초안 작성 없이 gh 인증·claude 로그인·Atlassian MCP 연결·Slack 봇 스크립트 존재만 점검(토큰 값은 출력 안 함)
 종료 코드: 0 발송·건너뜀·dry-run·preflight 성공, 1 초안 작성 또는 발송 실패(warn·로컬 알림 시도함), 2 인자 오류
 """
@@ -37,22 +38,32 @@ LOG = Path(os.environ.get("LRM_SCRUM_LOG", Path.home() / "orca/archive/scrum_pos
 ENV_FILE = DIR / "scrum.env"  # SCRUM_NAME=<회의록 본인 칸 제목>. 예시는 hubs/scrum.env.example
 SHARE_FILE = Path(os.environ.get("LRM_SCRUM_SHARE_FILE", DIR / "scrum-share.md"))  # 팀 공유 사항 원본. 예시는 hubs/scrum-share.example.md
 SHARE_TITLE = "팀 공유 사항"
-SHARE_MAX_LINES = 12
+SHARE_MAX_LINES = 24  # App Distribution 설치 단계(플랫폼별 4~5줄)까지 담는 상한
 SHARE_LINE_MAX = 200
 SHARE_DATE_RE = re.compile(r"^날짜\s*:\s*(\d{4}-\d{2}-\d{2})\s*$")  # 선택 머리 줄. 있으면 초안 날짜와 같을 때만 씀(어제 공유 사항 재게시 방지)
 
 
-def load_name():
-    """본인 칸 제목. 환경 변수 LRM_SCRUM_NAME > scrum.env 의 SCRUM_NAME. 없으면 빈 문자열"""
-    if os.environ.get("LRM_SCRUM_NAME"):
-        return os.environ["LRM_SCRUM_NAME"]
+def load_setting(key, env):
+    """설정 값. 환경 변수 env > scrum.env 의 key. 없으면 빈 문자열"""
+    if os.environ.get(env):
+        return os.environ[env]
     try:
         for ln in ENV_FILE.read_text(encoding="utf-8").splitlines():
-            if ln.strip().startswith("SCRUM_NAME="):
+            if ln.strip().startswith(key + "="):
                 return ln.split("=", 1)[1].strip().strip("\"'")
     except OSError:
         pass
     return ""
+
+
+def load_name():
+    """본인 칸 제목(SCRUM_NAME / LRM_SCRUM_NAME). 없으면 빈 문자열"""
+    return load_setting("SCRUM_NAME", "LRM_SCRUM_NAME")
+
+
+def media_enabled():
+    """이미지·영상 첨부 사용 여부(SCRUM_MEDIA=on / LRM_SCRUM_MEDIA=on). 기본 끔: 11-13 사용자 요청(영상은 기본으로 안 붙임)"""
+    return load_setting("SCRUM_MEDIA", "LRM_SCRUM_MEDIA").lower() in ("on", "1", "true", "yes")
 
 
 NAME = load_name()
@@ -272,18 +283,30 @@ def load_share(date):
 
 
 def add_share(draft, lines):
-    """'팀 공유 사항' 최상위 불릿을 마지막 '막힌 것' 줄 앞(없으면 끝)에 끼움"""
+    """'팀 공유 사항' 최상위 불릿을 칸의 맨 앞(첫 불릿 앞, 없으면 끝)에 끼움: 팀이 먼저 봐야 하는 공유가 위"""
     if not lines:
         return draft
     block = ["- **%s**" % SHARE_TITLE] + ["    - %s" % t for t in lines]
     body = draft.splitlines()
-    at = next((i for i, ln in enumerate(body) if ln.startswith("- **막힌 것**")), len(body))
+    at = next((i for i, ln in enumerate(body) if ln.startswith("- ")), len(body))
     return "\n".join(body[:at] + block + body[at:]) + "\n"
 
 
 def write_draft(text, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def prompt_material(text):
+    """초안 작성 claude 에 줄 재료. 첨부를 안 올리는 설정이면 attachments 를 빼 본문이 영상·화면 첨부를 언급하지 않게 함"""
+    if media_enabled():
+        return text
+    try:
+        data = json.loads(text)
+        data.pop("attachments", None)
+        return json.dumps(data, ensure_ascii=False, indent=2)
+    except (ValueError, AttributeError):
+        return text
 
 
 def make_draft(date, since, material):
@@ -313,6 +336,8 @@ def topics(draft):
 
 def pick_media(text):
     """수집기 JSON 의 첨부 후보 중 지금도 올릴 수 있는 이미지·영상 경로(비밀 파일·크기 초과·없는 파일은 hub_report 규칙으로 다시 걸러냄)"""
+    if not media_enabled():
+        return []
     try:
         files = json.loads(text).get("attachments", {}).get("files", [])
     except (ValueError, AttributeError):
@@ -477,12 +502,16 @@ def main():
     ap.add_argument("--date", help="초안 날짜 YYYY-MM-DD(기본 오늘)")
     ap.add_argument("--force", action="store_true", help="평일·오늘 이미 보냄 검사 생략")
     ap.add_argument("--out", help="초안 저장 경로")
+    ap.add_argument("--reply-thread", metavar="TS", help="이 ts 스레드에 '수정본' 답글로 초안 파일만 올림(요약 글 없음)")
     ap.add_argument("--preflight", action="store_true", help="발송 없이 gh·claude·Atlassian MCP·Slack 봇 스크립트만 점검")
     a = ap.parse_args()
     if a.preflight:
         return preflight()
     if not NAME:
         print("본인 칸 제목 없음 — %s 에 SCRUM_NAME=<회의록 본인 칸 제목> 을 쓰거나 LRM_SCRUM_NAME 을 지정" % ENV_FILE, file=sys.stderr)
+        return 2
+    if a.reply_thread and (a.dry_run or not re.fullmatch(r"\d{1,12}\.\d{1,9}", a.reply_thread)):
+        print("--reply-thread 는 Slack 메시지 ts(숫자.숫자)만, --dry-run 과는 함께 못 씀 — 예: --reply-thread 1794533351.285799", file=sys.stderr)
         return 2
     try:
         date = dt.date.fromisoformat(a.date) if a.date else dt.date.today()
@@ -552,7 +581,7 @@ def run(a, date, state):
         if why:
             fails.append("%s(%s)" % (why, ", ".join(lost)))
         else:
-            draft, model, fails, no_atl = make_draft(date, since, mat.stdout)
+            draft, model, fails, no_atl = make_draft(date, since, prompt_material(mat.stdout))
     if draft is None:
         log("초안 실패 — %s" % "; ".join(fails))
         if a.dry_run:
@@ -570,7 +599,8 @@ def run(a, date, state):
 
     share, share_dropped = load_share(date)
     draft = add_share(draft, share)
-    path = Path(a.out) if a.out else DRAFT_DIR / ("%s.%smd" % (date, "dry." if a.dry_run else ""))
+    tail = "dry." if a.dry_run else "수정본." if a.reply_thread else ""  # 수정본은 먼저 올린 초안 파일과 이름이 겹치지 않게
+    path = Path(a.out) if a.out else DRAFT_DIR / ("%s.%smd" % (date, tail))
     write_draft(draft, path)
     if a.dry_run:
         print(draft, end="")
@@ -579,9 +609,12 @@ def run(a, date, state):
     intent = {"at": int(time.time()), "path": str(path), "model": model}
     state["pending"][date.isoformat()] = intent  # 전송 전에 의도를 남겨 중간에 죽어도 재실행이 중복 게시하지 않게 함
     save_state(state)
-    media = pick_media(mat.stdout)
+    media = [] if a.reply_thread else pick_media(mat.stdout)
     msg = summary_message(date, since, draft, model, missed, no_atl, lost, len(media), share_dropped)
-    if media:
+    if a.reply_thread:
+        body = "수정본 %s 초안" % date.strftime("%m-%d") + ("\n• 경고: 팀 공유 사항 %d줄을 뺌(공유 사항 파일 확인)" % share_dropped if share_dropped else "")
+        rc, text = notify(["--kind", "doc", "--tag", SLACK_TAG, "--thread", a.reply_thread, body, str(path)], confirm=lambda: delivered(intent))
+    elif media:
         rc, text = send_threaded(["--kind", "doc", "--tag", SLACK_TAG, msg], path, media, intent)
     else:
         rc, text = notify(["--kind", "doc", "--tag", SLACK_TAG, msg, str(path)], confirm=lambda: delivered(intent))

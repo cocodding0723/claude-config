@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 WITH_VALUE = {"--tag", "--title", "--thread", "--kind", "--choices", "--emoji-set", "--options", "--recommend", "--reversible",
-              "--decision-id", "--seq", "--todo-id", "--attached", "--link-to", "--quote"}
+              "--decision-id", "--seq", "--todo-id", "--attached", "--link-to", "--quote", "--to-user"}
 FILL = "\n배경: 시험용 배경 설명 문장입니다\n용어: 없음"
 
 

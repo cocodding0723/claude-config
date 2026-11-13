@@ -794,5 +794,31 @@ ord="$(printf '%s\n' "$t" | grep -n -e '^- 배경' -e '^:one:' -e '^:star:' -e '
 L=$(printf '가%.0s' $(seq 1 101))
 raw_n --kind decide --no-doc --options "1=가 => $L,2=나 => $L" --recommend 1 --decision-id D-0908 "$PB"
 [ "$RC" = 2 ] && nocall && grep -q '결과가 [0-9]*자' "$SB/err" && ok "P 결과 100자 초과 → 종료 코드 2" || ko "P 결과 길이" "rc=$RC $(cat "$SB/err")"
+
+
+# ---- O. --to-user(등록된 받는 사람 DM) ---------------------------------------------------------------------
+newhome touser
+printf '{"recipients":[{"name":"시험","slack_id":"UREC0001"}]}' > "$CFG/doc-recipients.json"
+printf 'doc body' > "$SB/to.html"
+run_n --to-user UREC0001 --tag doc-send "안내 메시지" "$SB/to.html"
+grep -q 'UREC0001' "$LOG/calls.log" && ! grep -q 'users=Uuser1' "$LOG/calls.log" && ok "O 등록된 받는 사람 → conversations.open 대상이 그 ID(사용자 본인 아님)" || ko "O 대상" "$(cat "$LOG/calls.log")"
+[ "$(lastrec | jq -r '.to_user')" = UREC0001 ] && [ "$(lastrec | jq -r '.kind')" = file ] && ok "O 보낸 기록에 to_user 와 파일 첨부가 남음" || ko "O 기록" "$(lastrec)"
+run_n --to-user UOTHER99 "안내"
+[ "$RC" = 2 ] && nocall && grep -q '미등록' "$SB/err" && ok "O 등록되지 않은 ID → 종료 코드 2, 호출 0건" || ko "O 미등록" "rc=$RC"
+run_n --to-user bad-id "안내"
+[ "$RC" = 2 ] && nocall && ok "O 형식 오류 ID → 종료 코드 2, 호출 0건" || ko "O 형식" "rc=$RC"
+rm -f "$CFG/doc-recipients.json"
+run_n --to-user UREC0001 "안내"
+[ "$RC" = 2 ] && nocall && ok "O 등록부 파일 없음 → 닫힌 쪽(미전송)" || ko "O 등록부 없음" "rc=$RC"
+printf '{"recipients":[{"name":"시험","slack_id":"UREC0001"}]}' > "$CFG/doc-recipients.json"
+run_n --to-user UREC0001 --thread 1700000000.000100 "안내"
+[ "$RC" = 2 ] && nocall && ok "O --thread 와 함께 → 거부" || ko "O thread" "rc=$RC"
+run_n --to-user UREC0001 --kind decide --no-doc --options '1=가,2=나' --recommend 1 --decision-id D-T1 "카드"
+[ "$RC" = 2 ] && nocall && ok "O 번호 카드와 함께 → 거부" || ko "O 카드" "rc=$RC"
+printf 'KEY=1' > "$SB/.env"
+run_n --to-user UREC0001 "안내" "$SB/.env"
+[ "$RC" = 2 ] && ! grep -q 'files.getUploadURLExternal' "$LOG/calls.log" && ok "O 비밀 파일(.env) 첨부는 받는 사람이 있어도 거부" || ko "O 비밀 첨부" "rc=$RC"
+run_n "받는 사람 없는 기존 호출"
+grep -q 'users=Uuser1' "$LOG/calls.log" && [ "$(lastrec | jq -r '.to_user // "none"')" = none ] && ok "O --to-user 없는 기존 호출은 사용자 본인 DM·기록 불변" || ko "O 기존 동작" "$(cat "$LOG/calls.log")"
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

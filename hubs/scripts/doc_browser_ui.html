@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="csrf" content="__CSRF_TOKEN__">
+<title>문서 모아보기</title>
+<style>
+/* 토큰: 색은 여기에만 둔다. 보내기만 강조색(--accent)을 쓴다 */
+:root{--bg:#fff;--surface:#f6f8fa;--text:#1f2328;--muted:#59636e;--border:#d0d7de;--accent:#0b57d0;--accent-text:#fff;
+--ok:#1a7f37;--warn:#9a6700;--error:#cf222e;--hold:#8250df;--row-hover:#eef3fb;--row-sel:#e2ecfb}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0d1117;--surface:#161b22;--text:#e6edf3;--muted:#9198a1;--border:#30363d;
+--accent:#4c8dff;--accent-text:#0d1117;--ok:#3fb950;--warn:#d29922;--error:#ff7b72;--hold:#bc8cff;--row-hover:#161f2e;--row-sel:#1b2a42}}
+:root[data-theme=dark]{--bg:#0d1117;--surface:#161b22;--text:#e6edf3;--muted:#9198a1;--border:#30363d;
+--accent:#4c8dff;--accent-text:#0d1117;--ok:#3fb950;--warn:#d29922;--error:#ff7b72;--hold:#bc8cff;--row-hover:#161f2e;--row-sel:#1b2a42}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;height:100vh;display:flex;flex-direction:column}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+header{display:flex;gap:12px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--border);background:var(--surface)}
+header h1{font-size:15px;margin:0;white-space:nowrap}
+header .sp{flex:1}
+#q{width:min(320px,40vw);padding:5px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)}
+.status{color:var(--muted);font-size:12px}
+button{font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer}
+button:hover{background:var(--row-hover)}
+button.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-text);font-weight:600}
+button.primary:hover{filter:brightness(1.08)}
+button{white-space:nowrap}
+button:disabled{opacity:.5;cursor:not-allowed}
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--border)}
+.chip{border-radius:999px;padding:2px 10px;font-size:13px}
+.chip[aria-pressed=true]{background:var(--text);color:var(--bg);border-color:var(--text)}
+.chip small{opacity:.7;margin-left:4px}
+select{font:inherit;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)}
+main{flex:1;display:flex;min-height:0}
+.list{flex:1;overflow:auto;min-width:0}
+table{border-collapse:collapse;width:100%}
+th{position:sticky;top:0;background:var(--surface);text-align:left;font-size:12px;color:var(--muted);padding:6px 10px;border-bottom:1px solid var(--border);z-index:1}
+td{padding:6px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:var(--row-hover)}
+tbody tr[aria-selected=true]{background:var(--row-sel)}
+.thumb{width:88px;height:56px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:4px;background:#fff;overflow:hidden}
+.thumb img{max-width:100%;max-height:100%}
+.nodia{font-size:11px;color:var(--error);border:1px dashed var(--error);border-radius:4px;padding:2px 4px;text-align:center;line-height:1.2}
+.unk{font-size:11px;color:var(--muted)}
+.title{font-weight:600;overflow-wrap:anywhere}
+.meta{font-size:12px;color:var(--muted)}
+.did{display:inline-block;font:12px ui-monospace,Menlo,monospace;border:1px solid var(--border);border-radius:4px;padding:0 5px;margin:1px 3px 1px 0}
+.st-대기{color:var(--warn)}.st-답함{color:var(--ok)}.st-보류{color:var(--hold)}.st-충돌{color:var(--error)}
+.sent{font-size:12px;color:var(--ok)}
+.viewer{width:55%;border-left:1px solid var(--border);display:none;flex-direction:column;min-width:0}
+.viewer.open{display:flex}
+.viewer .bar{display:flex;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--border);background:var(--surface)}
+.viewer .bar b{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.viewer iframe{flex:1;border:0;background:#fff}
+dialog{border:1px solid var(--border);border-radius:10px;background:var(--bg);color:var(--text);padding:16px;width:min(560px,92vw)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+dialog h2{margin:0 0 10px;font-size:16px}
+dialog label{display:block;margin:10px 0 3px;font-size:12px;color:var(--muted)}
+dialog select,dialog textarea{width:100%;font:inherit;padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text)}
+dialog textarea{min-height:170px;resize:vertical}
+.confirm{margin-top:10px;padding:8px 10px;background:var(--surface);border-radius:6px;font-size:13px}
+.err{margin-top:8px;color:var(--error);font-size:13px;min-height:1.2em}
+.actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
+.empty{padding:40px;text-align:center;color:var(--muted)}
+.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:8px 14px;border-radius:8px;display:none}
+.hint{font-size:11px;color:var(--muted)}
+@media (max-width:900px){.viewer.open{position:fixed;inset:0;width:100%;background:var(--bg);z-index:5}.col-meta,.col-sent{display:none}.thumb{width:64px;height:44px}}
+</style>
+<header>
+  <h1>문서 모아보기</h1>
+  <input id="q" type="search" placeholder="제목 검색  ( / )" aria-label="제목 검색" autocomplete="off">
+  <span class="sp"></span>
+  <span class="status" id="status" role="status"></span>
+  <button id="theme" type="button" aria-label="라이트·다크 전환">🌓</button>
+</header>
+<div class="filters">
+  <span id="hubs" role="group" aria-label="허브 필터"></span>
+  <label class="meta">도식 <select id="f-diagram"><option value="">전체</option><option value="has">있음</option><option value="none">없음</option><option value="unknown">판정 불가</option></select></label>
+  <label class="meta">답 상태 <select id="f-answer"><option value="">전체</option><option>대기</option><option>답함</option><option>보류</option><option>충돌</option><option value="없음">결정 없음</option></select></label>
+  <label class="meta">보냄 <select id="f-sent"><option value="">전체</option><option value="1">보냄</option><option value="0">안 보냄</option></select></label>
+  <span class="hint">↑↓ 이동 · Enter 열기 · S 보내기 · Esc 닫기</span>
+</div>
+<main>
+  <div class="list">
+    <table>
+      <thead><tr><th>도식</th><th>제목</th><th class="col-meta">결정 · 답 상태</th><th class="col-sent">보냄</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div id="empty" class="empty" hidden>조건에 맞는 문서가 없음</div>
+  </div>
+  <section class="viewer" id="viewer" aria-label="문서 열람">
+    <div class="bar"><b id="v-title"></b><button id="v-send" class="primary" type="button">보내기</button><button id="v-close" type="button">닫기 Esc</button></div>
+    <iframe id="v-frame" sandbox="" title="문서 열람"></iframe>
+  </section>
+</main>
+
+<dialog id="dlg" aria-labelledby="dlg-h">
+  <h2 id="dlg-h">문서 보내기</h2>
+  <div class="confirm" id="dlg-doc"></div>
+  <label for="dlg-to">받는 사람</label>
+  <select id="dlg-to"></select>
+  <label for="dlg-msg">메시지 (고쳐 쓸 수 있음)</label>
+  <textarea id="dlg-msg"></textarea>
+  <div class="err" id="dlg-err" role="alert"></div>
+  <div class="actions"><button id="dlg-cancel" type="button">취소 Esc</button><button id="dlg-ok" class="primary" type="button">확인 후 전송</button></div>
+  <div class="hint">누르면 선택한 사람의 Slack DM 으로 문서 파일과 위 메시지가 바로 전송됨</div>
+</dialog>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+"use strict";
+const TOKEN = document.querySelector('meta[name=csrf]').content;
+const $ = (id) => document.getElementById(id);
+const state = {hub: "", docs: [], sel: null, sending: null, recipients: []};
+
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "text") e.textContent = v; else if (k === "class") e.className = v; else e.setAttribute(k, v);
+  }
+  for (const k of kids) if (k) e.append(k);
+  return e;
+}
+const pad = (n) => String(n).padStart(2, "0");
+function fmt(sec) { const d = new Date(sec * 1000); return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+function toast(msg) { const t = $("toast"); t.textContent = msg; t.style.display = "block"; clearTimeout(toast.h); toast.h = setTimeout(() => t.style.display = "none", 3500); }
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({ok: false, error: "응답을 읽지 못함"}));
+  if (!r.ok) throw new Error(j.error || `요청 실패(${r.status})`);
+  return j;
+}
+
+function params() {
+  const p = new URLSearchParams();
+  if (state.hub) p.set("hub", state.hub);
+  for (const [k, id] of [["q", "q"], ["diagram", "f-diagram"], ["answer", "f-answer"], ["sent", "f-sent"]]) {
+    const v = $(id).value.trim(); if (v) p.set(k, v);
+  }
+  return p.toString();
+}
+
+async function load() {
+  try {
+    const j = await api("/api/docs?" + params());
+    const key = JSON.stringify([j.docs, j.hubs, state.sel]);
+    state.docs = j.docs;
+    if (key !== state.key) { state.key = key; renderHubs(j.hubs, j.total); renderRows(); }  // 바뀐 게 없으면 다시 그리지 않아 키보드 포커스 유지
+    $("status").textContent = (j.scanning ? "수집 중… " : "") + `${j.docs.length} / ${j.total}건`;
+  } catch (e) {
+    $("status").textContent = "목록 불러오기 실패: " + e.message;
+  }
+}
+
+function renderHubs(hubs, total) {
+  const box = $("hubs"); box.replaceChildren();
+  const mk = (name, label, n) => {
+    const b = el("button", {type: "button", class: "chip", "aria-pressed": String(state.hub === name)}, document.createTextNode(label), el("small", {text: n}));
+    b.onclick = () => { state.hub = name; load(); };
+    box.append(b, " ");
+  };
+  mk("", "전체", total);
+  Object.entries(hubs).sort((a, b) => b[1] - a[1]).forEach(([h, n]) => mk(h, h, n));
+}
+
+function renderRows() {
+  const tb = $("rows"); tb.replaceChildren();
+  $("empty").hidden = state.docs.length > 0;
+  for (const d of state.docs) {
+    const th = el("div", {class: "thumb"});
+    if (d.thumb) th.append(el("img", {src: `/thumb/${d.id}.svg`, alt: "도식 미리보기", loading: "lazy"}));
+    else if (d.no_diagram_reason) th.append(el("div", {class: "unk", text: "도식 예외"}));
+    else if (d.diagrams === null) th.append(el("div", {class: "unk", text: "판정 불가"}));
+    else if (d.diagrams === 0) th.append(el("div", {class: "nodia", text: "도식 없음"}));
+    else th.append(el("div", {class: "unk", text: `도식 ${d.diagrams}`}));
+    const dec = el("td", {class: "col-meta"});
+    if (!d.decisions.length) dec.append(el("span", {class: "meta", text: "결정 없음"}));
+    for (const x of d.decisions) dec.append(el("span", {class: "did"}, document.createTextNode(x.id + " "), el("b", {class: "st-" + x.state, text: x.state})));
+    const sent = el("td", {class: "col-sent"});
+    if (d.sent.length) { const s = d.sent[0]; sent.append(el("div", {class: "sent", text: `보냄 ${fmt(s.at)} → ${s.to}`})); if (d.sent.length > 1) sent.append(el("div", {class: "meta", text: `외 ${d.sent.length - 1}회`})); }
+    else sent.append(el("span", {class: "meta", text: "안 보냄"}));
+    const btn = el("button", {type: "button", class: "primary", text: "보내기"});
+    btn.onclick = (ev) => { ev.stopPropagation(); openSend(d); };
+    const tr = el("tr", {tabindex: "0", "aria-selected": String(state.sel === d.id), "data-id": d.id},
+      el("td", {}, th),
+      el("td", {}, el("div", {class: "title", text: d.title}), el("div", {class: "meta", text: `${fmt(d.mtime)} · ${d.hub}${d.kind ? " · " + d.kind : ""}`})),
+      dec, sent, el("td", {}, btn));
+    tr.onclick = () => openDoc(d);
+    tb.append(tr);
+  }
+}
+
+function openDoc(d) {
+  state.sel = d.id;
+  $("v-title").textContent = d.title;
+  $("v-frame").src = `/doc/${d.id}`;
+  $("viewer").classList.add("open");
+  $("v-send").onclick = () => openSend(d);
+  document.querySelectorAll("#rows tr").forEach((r) => r.setAttribute("aria-selected", String(r.dataset.id === d.id)));
+}
+function closeDoc() { state.sel = null; $("viewer").classList.remove("open"); $("v-frame").src = "about:blank"; renderRows(); }
+
+async function openSend(d) {
+  state.sending = d;
+  $("dlg-err").textContent = ""; $("dlg-msg").value = "초안 불러오는 중…"; $("dlg-ok").disabled = true;
+  $("dlg-doc").textContent = `문서: ${d.title}  (${d.hub}, ${fmt(d.mtime)})`;
+  const sel = $("dlg-to"); sel.replaceChildren();
+  try {
+    const [rec, dr] = await Promise.all([api("/api/recipients"), api("/api/draft?id=" + d.id)]);
+    state.recipients = rec.recipients;
+    if (!rec.recipients.length) $("dlg-err").textContent = "받는 사람 설정이 없음 — ~/.config/lrm-hubs/doc-recipients.json 에 이름과 Slack ID 를 추가";
+    rec.recipients.forEach((r) => sel.append(el("option", {value: r.name, text: r.ready ? r.name : `${r.name} (Slack ID 미설정)`, ...(r.ready ? {} : {disabled: ""})})));
+    $("dlg-msg").value = dr.message;
+    $("dlg-ok").disabled = !rec.recipients.some((r) => r.ready);
+    if (rec.recipients.length && !$("dlg-ok").disabled && !rec.recipients[0].ready) sel.value = rec.recipients.find((r) => r.ready).name;
+  } catch (e) { $("dlg-err").textContent = "불러오기 실패: " + e.message; $("dlg-msg").value = ""; }
+  if (!$("dlg").open) $("dlg").showModal();
+  $("dlg-msg").focus();
+}
+
+async function confirmSend() {
+  const d = state.sending; if (!d) return;
+  $("dlg-ok").disabled = true; $("dlg-err").textContent = "";
+  try {
+    const j = await api("/api/send", {method: "POST", headers: {"Content-Type": "application/json", "X-CSRF-Token": TOKEN},
+      body: JSON.stringify({id: d.id, recipient: $("dlg-to").value, message: $("dlg-msg").value})});
+    $("dlg").close(); toast(`${j.to}님께 보냄`); load();
+  } catch (e) { $("dlg-err").textContent = e.message; $("dlg-ok").disabled = false; }
+}
+
+$("dlg-ok").onclick = confirmSend;
+$("dlg-cancel").onclick = () => $("dlg").close();
+$("v-close").onclick = closeDoc;
+let timer; $("q").oninput = () => { clearTimeout(timer); timer = setTimeout(load, 200); };
+for (const id of ["f-diagram", "f-answer", "f-sent"]) $(id).onchange = load;
+$("theme").onclick = () => { const r = document.documentElement; const dark = r.dataset.theme ? r.dataset.theme === "dark" : matchMedia("(prefers-color-scheme:dark)").matches; r.dataset.theme = dark ? "light" : "dark"; try { localStorage.setItem("theme", r.dataset.theme); } catch (e) {} };
+try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+
+document.addEventListener("keydown", (ev) => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+  if (ev.key === "/" && !typing) { ev.preventDefault(); $("q").focus(); }
+  else if (ev.key === "Escape" && !$("dlg").open) { if (typing) document.activeElement.blur(); else closeDoc(); }
+  else if (!typing && !$("dlg").open && (ev.key === "ArrowDown" || ev.key === "ArrowUp")) {
+    const rows = [...document.querySelectorAll("#rows tr")]; const i = rows.indexOf(document.activeElement.closest("tr"));
+    const n = rows[Math.max(0, Math.min(rows.length - 1, i + (ev.key === "ArrowDown" ? 1 : -1)))]; if (n) { ev.preventDefault(); n.focus(); }
+  } else if (!typing && !$("dlg").open && ev.key === "Enter") { const tr = document.activeElement.closest && document.activeElement.closest("#rows tr"); if (tr && document.activeElement === tr) tr.click(); }
+  else if (!typing && !$("dlg").open && (ev.key === "s" || ev.key === "S")) { const tr = document.activeElement.closest && document.activeElement.closest("#rows tr"); if (tr) tr.querySelector("button").click(); }
+});
+
+// 주소 조각으로 바로 열기: #open=<id> 열람, #send=<id> 보내기 창(확인 전까지 전송 없음)
+load().then(() => {
+  const m = location.hash.match(/^#(open|send)=([0-9a-f]{12})$/);
+  const d = m && state.docs.find((x) => x.id === m[2]);
+  if (d) (m[1] === "open" ? openDoc : openSend)(d);
+});
+setInterval(() => { if (!$("dlg").open) load(); }, 30000);
+</script>
+</html>
