@@ -212,6 +212,16 @@ class ServerTest(unittest.TestCase):
         src = open(os.path.join(os.path.dirname(self.db.__file__), "doc_browser.py"), encoding="utf-8").read()
         self.assertEqual(src.count("doc_send.send("), 1)
 
+    def test_ui_file_static_rules(self):
+        ui = open(os.path.join(os.path.dirname(self.db.__file__), "doc_browser_ui.html"), encoding="utf-8").read()
+        self.assertIn(self.db.TOKEN_SLOT, ui)
+        for bad in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "http://", "https://"):
+            self.assertNotIn(bad, ui, bad)
+        self.assertIn("X-CSRF-Token", ui)
+        self.assertIn('sandbox=""', ui)  # 열람 iframe 은 모든 권한 제거
+        for term in ("localStorage",):
+            self.assertIn(term, ui)
+
 
 if __name__ == "__main__":
     unittest.main()
