@@ -220,7 +220,7 @@ class FakeOrcaRoute(Base):
 class SlugFolder(Base):
     """hubs.tsv slug(끝이 -hub 인 것·옛 coord-*-hub 형식 포함) → 전달 slug → 실제 폴더 in_hub 일치"""
     CASES = (("automa-hub", "automa-hub", "/w/coord-automa-hub-hub"), ("data-source-hub", "data-source-hub", "/w/coord-data-source-hub-hub"),
-             ("coord-server-hub", "server", "/w/coord-server-hub"), ("ui-layer", "ui-layer", "/w/coord-ui-layer-hub"))
+             ("coord-server-hub", "coord-server-hub", "/w/coord-coord-server-hub-hub"), ("ui-layer", "ui-layer", "/w/coord-ui-layer-hub"))
 
     def test_decision_to_delivery_slug_matches_hub_folder(self):
         import hub_dups
@@ -232,19 +232,43 @@ class SlugFolder(Base):
                 self.assertEqual(slug, want)
                 self.assertTrue(hub_dups.in_hub({"worktreePath": folder}, slug=slug))
 
-    def test_folder_names_and_slugs_normalize_once(self):
+    def test_server_hub_every_spelling_reaches_same_folder(self):
+        """hubs.tsv slug coord-server-hub: 상태 파일 이름(server)·slug·폴더 이름 모두 → 전달 대상 폴더 coord-coord-server-hub-hub"""
+        import hub_dups
+        import progress_collect as pc
+        slugs = {"coord-server-hub", "automa-hub", "data-source-hub", "ui-layer"}
+        for value in ("server", "coord-server-hub", "coord-coord-server-hub-hub"):
+            with self.subTest(value=value):
+                slug = pc.hub_slug(value, slugs)
+                self.assertEqual(slug, "coord-server-hub")
+                self.assertTrue(hub_dups.in_hub({"worktreePath": "/w/coord-coord-server-hub-hub"}, slug=slug))
+        for value in ("automa-hub", "data-source-hub", "ui-layer"):  # 회귀 없음
+            self.assertEqual(pc.hub_slug(value, slugs), value)
+        self.assertEqual(pc.hub_slug("coord-automa-hub-hub", slugs), "automa-hub")
+        self.assertEqual(pc.hub_slug("automa", slugs), "automa-hub")  # 옛 규칙 별칭
+
+    def test_without_hubs_table_folder_rule_only(self):
         import progress_collect as pc
         import panel_collect
-        for value, want in (("coord-automa-hub-hub", "automa-hub"), ("coord-server-hub", "server"), ("coord-ui-layer-hub", "ui-layer"),
-                            ("automa-hub", "automa-hub"), ("ui-layer", "ui-layer")):
+        for value, want in (("coord-automa-hub-hub", "automa-hub"), ("coord-ui-layer-hub", "ui-layer"), ("automa-hub", "automa-hub"), ("ui-layer", "ui-layer")):
             self.assertEqual(pc.hub_slug(value), want)
-        self.assertEqual(panel_collect.hub_name("coord-automa-hub-hub"), "automa-hub")  # 옆 패널 허브 칸 = 작업 공간 수 키
+            self.assertEqual(pc.hub_slug(value, set()), want)
+        self.assertEqual(panel_collect.hub_name("coord-automa-hub-hub"), "automa-hub")
+
+    def test_display_key_is_status_file_name(self):
+        """전달 slug 와 상태 파일 이름이 다른 허브: 표시용(status_key)은 server, 전달용은 coord-server-hub"""
+        import progress_collect as pc
+        import panel_collect
+        slugs = {"coord-server-hub", "automa-hub"}
+        self.assertEqual(panel_collect.hub_name("coord-coord-server-hub-hub", slugs), "server")
+        self.assertEqual(panel_collect.hub_name("coord-automa-hub-hub", slugs), "automa-hub")
+        self.assertEqual(pc.status_key("coord-server-hub"), "server")
 
     def test_workspace_counts_key_matches_status_file_slug(self):
         import progress_collect as pc
         wts = [{"id": "h", "path": "/w/coord-automa-hub-hub", "childWorktreeIds": ["c"]}, {"id": "c", "path": "/w/c"},
-               {"id": "s", "path": "/w/coord-server-hub"}, {"id": "u", "path": "/w/coord-ui-layer-hub", "childWorktreeIds": ["c"]}]
-        out = pc.workspace_counts(wts, [{"worktreeId": "c"}])
+               {"id": "s", "path": "/w/coord-coord-server-hub-hub"}, {"id": "u", "path": "/w/coord-ui-layer-hub", "childWorktreeIds": ["c"]}]
+        out = pc.workspace_counts(wts, [{"worktreeId": "c"}], {"coord-server-hub", "automa-hub", "ui-layer"})
         self.assertEqual(out["automa-hub"], {"children": 1, "active": 1})  # hub-status/automa-hub.json 과 같은 키
         self.assertEqual(set(out), {"automa-hub", "server", "ui-layer"})
 

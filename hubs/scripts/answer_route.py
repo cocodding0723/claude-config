@@ -57,7 +57,7 @@ class Router:
         import todo_facts
         p = lambda name: os.path.join(self.store.dir, name)  # noqa: E731
         names = ci_review.load_hub_names(p("hubs.tsv"))
-        known = set(names) | {pc.hub_slug(s) for s in names}
+        known = set(names) | {pc.status_key(s) for s in names} | {pc.legacy_slug(s) for s in names}  # 보고의 hub 값은 slug·상태 파일 이름·옛 별칭 모두 있음
         try:
             sent, reports = panel_collect.jsonl(p("slack-sent.jsonl")), panel_collect.jsonl(p("hub-reports.jsonl"))
         except (panel_collect.SourceError, UnicodeDecodeError):
@@ -67,7 +67,7 @@ class Router:
         if len(set(said)) > 1:  # 허브 둘 이상이 같은 번호를 보고함 — 모호
             return ""
         hub = todo_facts.decision_hubs(reports, sent, known).get(did, "")
-        return pc.hub_slug(hub) if hub else ""
+        return pc.hub_slug(hub, set(names)) if hub else ""
 
     def route(self, did: str, ts: str, source: str, body: str) -> Outcome:
         """답 한 건을 전달하고 결과를 전달 기록에 남김. body 는 said_text 결과. 줄바꿈이 있으면 터미널에서 여러 줄로 갈라지므로 한 줄로 정리"""
