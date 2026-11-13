@@ -21,6 +21,13 @@ chk "인자 없이 실행해도 대화형 대기 없음(오류 종료)" 'hs writ
 chk "비밀 값 거부 + 기존 파일 유지" 'before=$(cat "$SB/status/t1.json"); hs write --slug t1 --task "$FAKE_TOKEN" 2>"$SB/e"; [ $? = 2 ] && grep -q "비밀 값" "$SB/e" && [ "$before" = "$(cat "$SB/status/t1.json")" ]'
 chk "write --json 결과" 'hs write --slug t2 --json | python3 -c "import json,sys;d=json.load(sys.stdin);assert d[\"ok\"] and d[\"path\"].endswith(\"t2.json\")"'
 
+# ---- 막힘 근거 -----------------------------------------------------------------------------
+hs write --slug ev --blocker "병합 대기 [pr:Basakansoft/LoveRevolutionMaker#746]" --blocker "옛 형식 막힘" >/dev/null
+chk "근거 달린 막힘은 {text, refs}, 없는 막힘은 문자열" 'hs show --slug ev --json | python3 -c "import json,sys;d=json.load(sys.stdin)[\"blockers\"];assert d[0]=={\"text\":\"병합 대기\",\"refs\":[{\"kind\":\"pr\",\"id\":\"Basakansoft/LoveRevolutionMaker#746\"}]} and d[1]==\"옛 형식 막힘\", d"'
+chk "show·prompt 가 근거를 되살려 표시" 'hs show --slug ev | grep -q "차단: 병합 대기 \[pr:Basakansoft/LoveRevolutionMaker#746\]" && hs prompt --slug ev | grep -q "차단: 병합 대기 \[pr:"'
+chk "근거 형식 오류 거부: 종료 코드 2 + 기존 파일 유지" 'before=$(cat "$SB/status/ev.json"); hs write --slug ev --blocker "x [pr:746]" 2>"$SB/e"; [ $? = 2 ] && grep -q "형식 오류" "$SB/e" && [ "$before" = "$(cat "$SB/status/ev.json")" ]'
+chk "알 수 없는 근거 종류 거부" 'hs write --slug ev --blocker "x [foo:bar]" 2>"$SB/e"; [ $? = 2 ] && grep -q "미지원" "$SB/e"'
+
 # ---- 원자적 쓰기 ----------------------------------------------------------------------------
 chk "임시 파일 잔여 없음" '[ -z "$(ls -A "$SB/status" | grep "^\.tmp-")" ]'
 chk "replace 실패 시 원본 유지·임시 파일 정리" 'python3 - "$HS" "$SB/status" <<PY
