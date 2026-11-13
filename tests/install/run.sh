@@ -38,9 +38,10 @@ dups=$(echo "$entries" | cut -f2 | sort | uniq -d)
 # bash 5.2+ patsub_replacement 방어(이 맥은 3.2 라 동작 검증은 불가, 구문 존재만 확인)
 grep -q '^shopt -u patsub_replacement' "$REPO/install.sh" && ok "install.sh patsub_replacement 방어" || ko "patsub_replacement" "shopt 줄 없음"
 
+# git/repo-hooks/commit-msg 는 links.tsv 가 아니라 install.sh(install_repo_hook)가 설치하므로 제외
 # 역방향: 링크 대상 폴더의 모든 추적 파일이 links.tsv 에 직접 또는 상위 폴더로 있어야 함(파일 추가 시 누락 방지)
 srcs=$(echo "$entries" | cut -f1)
-uncovered=$(cd "$REPO" && git ls-files skills claude hubs git | grep -v -x -F 'hubs/slack-bot.env.example' | while read -r f; do
+uncovered=$(cd "$REPO" && git ls-files skills claude hubs git | grep -v -x -F 'hubs/slack-bot.env.example' | grep -v -x -F 'git/repo-hooks/commit-msg' | while read -r f; do
   d=$f; hit=0
   while [ "$d" != "." ] && [ "$d" != "/" ]; do if echo "$srcs" | grep -qx -F "$d"; then hit=1; break; fi; d=$(dirname "$d"); done
   [ "$hit" = 1 ] || echo "$f"

@@ -13,6 +13,7 @@ case "$*" in
   "terminal list --limit 1000 --json") cat "$D/terminals.json" ;;
   "orchestration worker-list --full --limit 100 --json") cat "$D/workers.json" ;;
   "orchestration worker-release --dispatch "*) echo '{"ok":true,"result":{}}' ;;
+  "worktree set --worktree path:"*) [ "${FAKE_SET_FAIL:-}" != 1 ] || { echo '{"ok":false}'; exit 1; }; echo '{"ok":true,"result":{}}' ;;
   "worktree rm --worktree path:"*)
     P="${4#path:}"; FORCE=0; case " $* " in *" --force "*) FORCE=1 ;; esac
     case "$P" in "${FAKE_ROOT:?}"/*) ;; *) echo "시험 폴더 밖 경로 거부: $P" >&2; exit 9 ;; esac
