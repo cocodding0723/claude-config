@@ -262,12 +262,39 @@ def collect_prs(gh, repos):
     return out
 
 
-def hub_slug(base):
-    """작업 폴더 이름 coord-<이름>-hub → 허브 상태 파일 slug(panel_collect.hub_name 과 같은 규칙)"""
-    return re.sub(r"(-hub)+$", "", re.sub(r"^(coord-)+", "", base)) or base
+def load_slugs(path=None):
+    """hubs.tsv 의 slug 목록. 못 읽으면 빈 집합(= 폴더 이름 규칙만 적용)"""
+    import ci_review  # 지연 가져오기: 순환 방지
+    return set(ci_review.load_hub_names(path or os.path.join(HUB_DIR, "hubs.tsv")))
 
 
-def workspace_counts(worktrees, terminals):
+def legacy_slug(slug):
+    """옛 규칙(앞 coord- 반복·끝 -hub 반복 제거). 상태 파일(hub-status/<이름>.json)·보고의 hub 값이 이 형태로 남아 있음"""
+    return re.sub(r"(-hub)+$", "", re.sub(r"^(coord-)+", "", slug)) or slug
+
+
+def status_key(slug):
+    """전달 slug → 상태 파일 이름·진행 목록 허브 칸·작업 공간 수 키(표시용). coord- 로 시작하는 slug 만 옛 규칙으로 줄임(coord-server-hub → server)"""
+    return legacy_slug(slug) if slug.startswith("coord-") else slug
+
+
+def hub_slug(value, slugs=None):
+    """허브 이름(폴더 이름·상태 파일 이름·hubs.tsv slug·옛 별칭) → 전달 slug(hub_dups.in_hub 가 찾는 /coord-<slug>-hub 의 <slug>).
+    slugs(hubs.tsv 의 slug 집합)가 있으면 기준: 정확히 같은 slug → 그대로, 옛 규칙 별칭이 하나로 정해지면 그 slug(server → coord-server-hub).
+    그 밖에 'coord-' 로 시작하면 폴더 이름으로 보고 앞 coord- 한 번·끝 -hub 한 번만 제거(coord-coord-server-hub-hub → coord-server-hub). 아니면 그대로.
+    hubs.tsv 를 못 읽었으면(빈 slugs) 폴더 이름 규칙만. 끝 -hub 를 반복 제거하면 automa-hub 가 automa 로 깨짐"""
+    slugs = slugs or ()
+    if value in slugs:
+        return value
+    hits = [s for s in slugs if legacy_slug(s) == value]
+    if len(hits) == 1:
+        return hits[0]
+    if not value.startswith("coord-"):
+        return value
+    return re.sub(r"-hub$", "", value[len("coord-"):]) or value
+
+
+def workspace_counts(worktrees, terminals, slugs=None):
     """허브(폴더 이름 coord-*)별 하위 작업 공간 수 → {slug: {children, active}}.
     하위 = 허브 워크스페이스의 childWorktreeIds(보관된 것 제외), 활동 = 그 하위에 열린 터미널이 있음"""
     if not isinstance(worktrees, list) or not isinstance(terminals, list):
@@ -282,7 +309,7 @@ def workspace_counts(worktrees, terminals):
         kids = {c for c in w.get("childWorktreeIds") or [] if isinstance(c, str)}
         kids |= {i for i, x in rows.items() if x.get("parentWorktreeId") == wid}
         kids = {k for k in kids if not (rows.get(k) or {}).get("isArchived")}
-        slot = out.setdefault(hub_slug(base), {"children": 0, "active": 0})
+        slot = out.setdefault(status_key(hub_slug(base, slugs)), {"children": 0, "active": 0})
         slot["children"] += len(kids)
         slot["active"] += sum(1 for k in kids if k in used)
     return out
@@ -310,7 +337,7 @@ def orca_bin():
 
 def query_workspaces():
     return workspace_counts(orca_json("worktree", "list", "--limit", LIST_LIMIT).get("worktrees"),
-                            orca_json("terminal", "list", "--limit", LIST_LIMIT).get("terminals"))
+                            orca_json("terminal", "list", "--limit", LIST_LIMIT).get("terminals"), load_slugs())
 
 
 def query_pending(now):

@@ -16,7 +16,7 @@ import progress_collect as pc  # noqa: E402
 import todo_items  # noqa: E402
 import todo_sync  # noqa: E402
 
-PR_STATE_FIELDS = "state,headRefName"
+PR_STATE_FIELDS = "state,headRefName,headRefOid"
 CLOSED_STATES = ("MERGED", "CLOSED")
 OPEN_TTL_S = 300  # 열린 PR 상태를 다시 묻는 간격
 HUB_TTL_S = 3600  # PR → 허브 판정 유효 시간(찾은 값)
@@ -84,7 +84,7 @@ class Facts:
             except (OSError, ValueError, subprocess.TimeoutExpired):
                 d = None
             if isinstance(d, dict) and isinstance(d.get("state"), str):
-                return {"state": d["state"], "branch": d.get("headRefName") or "", "repo": repo}
+                return {"state": d["state"], "branch": d.get("headRefName") or "", "head": d.get("headRefOid") or "", "repo": repo}
         return None
 
     def pr(self, num, repo=""):
@@ -123,7 +123,7 @@ class Facts:
             self.errors.append(f"작업 공간 목록 조회 불완전 — #{num} 허브 판정 보류")
             return info.get("hub", "")
         found = ci_review.parent_hub(info["branch"], wts, {s: s for s in self.hub_slugs}, repo)
-        info.update(hub=pc.hub_slug(found) if found else "", hub_at=self.now)
+        info.update(hub=pc.hub_slug(found, self.hub_slugs) if found else "", hub_at=self.now)
         return info["hub"]
 
     # ---------- 종합 ----------
@@ -172,7 +172,7 @@ def load_local(facts, hub_dir, ledger_path):
     p = lambda name: os.path.join(hub_dir, name)  # noqa: E731
     names = ci_review.load_hub_names(p("hubs.tsv"))
     facts.hub_slugs = set(names)
-    known = set(names) | {pc.hub_slug(s) for s in names}
+    known = set(names) | {pc.status_key(s) for s in names} | {pc.legacy_slug(s) for s in names}  # 보고의 hub 값은 slug·상태 파일 이름·옛 별칭 모두 있음
     try:
         sent = panel_collect.jsonl(p("slack-sent.jsonl"))
         facts.cards = answer_store.AnswerStore(hub_dir).closed_by_did()  # 결정 완료 판정은 answer_store 카드 단위 한 곳
