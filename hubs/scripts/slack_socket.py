@@ -33,6 +33,7 @@ from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # 링크·-I 실행에서도 같은 폴더의 공용 모듈(card_actions·main_terminal·ledger_sync)을 찾음
+import answer_route  # noqa: E402
 import answer_store  # noqa: E402
 import card_actions as actions  # noqa: E402
 import ledger  # noqa: E402
@@ -141,20 +142,12 @@ def warn_slack(thread: str, text: str) -> None:
     note_thread("warn", thread, text)
 
 
-def said_text(did: str, extra: dict, label: str) -> str:
-    """메인 전달 문장. slack_push.py 의 스레드 글·반응 해석과 같은 머리: '결정 D-0001 = 선택 2(문구) (버튼)', 직접 입력은 '결정 D-0001 답(자유 글): 원문'"""
-    if extra.get("action") == "custom":
-        return f"결정 {did} 답(자유 글): {extra.get('text', '')}"
-    pick = extra.get("pick")
-    name = re.sub(r"^\d+\.\s*", "", label)
-    return f"결정 {did} = " + (f"선택 {pick}({name})" if isinstance(pick, int) else name) + " (버튼)"
-
-
 class Decide:
     """결정 카드 버튼·직접 입력 처리. 수신 값은 데이터로만 씀(실행 안 함)"""
 
     def __init__(self, web, me: str) -> None:
         self.web, self.me = web, me
+        self.router = answer_route.Router(STORE, send_main)
 
     def handle(self, payload: dict) -> None:
         kind = payload.get("type")
@@ -220,14 +213,16 @@ class Decide:
         self.route(actions.take(did), did, ts, title, label, extra)
 
     def route(self, entry, did: str, ts: str, title: str, label: str, extra: dict) -> None:
-        """감시기가 건 카드(entry 있음)는 후속 동작만 실행하고 메인에는 전달하지 않음(메인이 같은 일을 또 하지 않게). 일반 카드는 메인 전달(결정 번호 머리줄)"""
+        """감시기가 건 카드(entry 있음)는 후속 동작만 실행하고 메인에는 전달하지 않음(메인이 같은 일을 또 하지 않게).
+        일반 카드는 결정을 올린 허브에 직접 전달하고 메인에는 참고 한 줄(허브 기록이 없으면 메인으로 — answer_route)"""
         if entry is not None:
             threading.Thread(target=self.run_action, args=(entry, did, ts, extra.get("pick")), daemon=True).start()
             return
-        ok = send_main(f"[Slack→메인] {said_text(did, extra, label)} ({ts})")
-        if not ok:
-            warn_slack(ts, f"메인 전달 실패: {title or did} = {label}\n\n• 무엇: 버튼 답은 기록했지만 메인 터미널로 못 보냄\n• 결과: 메인에 직접 알려 주세요")
-        log(f"결정 {did} 버튼 답 기록 · 메인 전달 {'성공' if ok else '실패'}")
+        out = self.router.route(did, ts, answer_store.SLACK, answer_route.said_text(did, extra, label))
+        if not out.ok:
+            where = "메인 터미널" if out.via == "main" else f"{out.hub} 허브·메인 터미널"
+            warn_slack(ts, f"{'메인' if out.via == 'main' else '허브'} 전달 실패: {title or did} = {label}\n\n• 무엇: 버튼 답은 기록했지만 {where}로 못 보냄 ({out.note})\n• 결과: 메인에 직접 알려 주세요")
+        log(f"결정 {did} 버튼 답 기록 · {'메인' if out.via == 'main' else f'허브 {out.hub} {out.via}'} 전달 {'성공' if out.ok else '실패'}")
 
     def run_action(self, entry: dict, did: str, ts: str, pick) -> None:
         """카드 후속 동작 실행(오래 걸릴 수 있어 별도 스레드). 실행했으면 결과를 스레드에 남김"""

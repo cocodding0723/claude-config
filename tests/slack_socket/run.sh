@@ -188,6 +188,9 @@ cat > "$SB/fake_orca.sh" <<'SH'
 printf '%s\n' "$*" >> "$FAKE_ORCA_LOG"
 case "$*" in  # 전송 전 메인 확인(terminal show)에는 정상 메인 터미널로 응답
   "terminal show"*) printf '{"ok":true,"result":{"terminal":{"handle":"term-main","connected":true,"writable":true,"worktreePath":"/fake/main","agentIdentity":"claude"}}}\n' ;;
+  "terminal list"*) printf '{"ok":true,"result":{"terminals":[{"handle":"term-hub1","title":"알파","worktreePath":"/x/coord-alpha-hub","agentIdentity":"claude","connected":true,"writable":true,"orphaned":false,"lastOutputAt":1}]}}\n' ;;
+  "orchestration worker-list"*) printf '{"ok":true,"result":{"workers":[]}}\n' ;;
+  "terminal send --terminal term-hub1"*) [ -z "${FAKE_HUB_FAIL:-}" ] || { printf '{"ok":false,"error":{"code":"terminal_handle_stale"}}\n'; exit 1; } ;;
 esac
 SH
 chmod +x "$SB/fake_orca.sh"
@@ -218,6 +221,21 @@ waitfor s22 out '결정 D-T3 버튼 답 무시' 4 && sleep 0.5
 grep -q '이미 Slack 에서 답함' "$SB/s22/calls" && grep -q '이미 문서 사이트에서 답함' "$SB/s22/calls" && ok "늦은 답은 카드에 '이미 Slack/문서 사이트에서 답함' 표시" || ko "늦은 답 표시" "$(grep 'chat_update' "$SB/s22/calls" | cut -c1-160)"
 ! grep -q 'D-T3' "$SB/s22/orca.calls" && [ "$(grep -c '"decision_id": "D-T3"' "$SB/s22/hub/slack-inbox.jsonl")" = 0 ] && ok "문서 사이트가 먼저 답한 결정은 기록·전달 추가 없음" || ko "문서 사이트 선답" ""
 stop s22
+
+# 결정을 올린 허브가 기록(hub-reports)에 있으면 허브 코디네이터에 직접 전달 + 메인엔 참고 한 줄. 허브 전송이 실패하면 메인에 대리 전달
+for n in s23 s24; do
+  mkdir -p "$SB/$n/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/$n/hub/main.env"
+  printf 'alpha\t알파\t-\t-\t-\n' > "$SB/$n/hub/hubs.tsv"
+  printf '{"decision_id":"D-T1","hub":"alpha"}\n' > "$SB/$n/hub/hub-reports.jsonl"
+done
+start s23 "{\"events\":[$(act 0.4 i1 $ME pick_2 'D-T1|2' '2. B 안')]}" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s23/orca.calls" HUB_PROC_TABLE="$SB/none"
+waitfor s23 out '결정 D-T1 버튼 답 기록 · 허브 alpha hub 전달 성공' 6
+grep -q -- '--terminal term-hub1 --text 사용자 원문: 결정 D-T1 = 선택 2(B 안) (버튼) (출처: Slack)' "$SB/s23/orca.calls" && grep -q -- '--terminal term-main --text \[Slack→메인 참고\] alpha 허브에 직접 전달함' "$SB/s23/orca.calls" && ! grep -q -- '--text \[Slack→메인\] 결정' "$SB/s23/orca.calls" && ok "허브 기록 있음 → 허브에 '사용자 원문: … (출처: Slack)' 직접 전달·메인엔 참고 한 줄만" || ko "허브 직접 전달" "$(cut -c1-140 "$SB/s23/orca.calls" 2>/dev/null)"
+stop s23
+start s24 "{\"events\":[$(act 0.4 i1 $ME pick_2 'D-T1|2' '2. B 안')]}" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s24/orca.calls" HUB_PROC_TABLE="$SB/none" FAKE_HUB_FAIL=1
+waitfor s24 out '결정 D-T1 버튼 답 기록 · 허브 alpha proxy 전달 성공' 6
+grep -q -- '--terminal term-main --text \[Slack→메인\] (alpha 허브에 전달하지 못해 대리 전달: terminal_handle_stale) 사용자 원문: 결정 D-T1 = 선택 2(B 안) (버튼) (출처: Slack)' "$SB/s24/orca.calls" && [ "$(grep -c -- '--terminal term-hub1 --text' "$SB/s24/orca.calls")" = 1 ] && ok "허브 전송 실패 → 메인에 원문 대리 전달(허브 재전송 없음)" || ko "대리 전달" "$(cut -c1-160 "$SB/s24/orca.calls" 2>/dev/null)"
+stop s24
 
 # 메인 전달 실패(orca 실패) → 카드 스레드에 warn 경고
 printf '#!/bin/sh\nexit 1\n' > "$SB/bad_orca.sh"; chmod +x "$SB/bad_orca.sh"
