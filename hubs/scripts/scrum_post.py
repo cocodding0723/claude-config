@@ -2,6 +2,7 @@
 """평일 스크럼 본인 칸 초안을 claude 로 쓰고 Slack 봇 DM 1건으로 보냄. launchd(ai.lrm.scrum)가 scrum_run.sh 로 호출.
 흐름: 평일·날짜 잠금 확인 → scrum_collect.py 재료 수집 → claude -p 를 모델 순서대로 시도(양식 검증 통과분 채택)
       → 초안 파일 저장 → slack_notify.sh --kind doc 1회(초안 파일 첨부). 모델이 전부 실패하면 --kind warn 1건.
+      오늘·어제 만든 이미지·영상이 있으면(최대 5개) 요약 글 1건을 먼저 올리고 초안 파일과 첨부를 그 스레드에 답글로 올림.
 Confluence·Jira 는 읽기만(초안 작성 claude 에 읽기 도구만 허용). 쓰기 없음.
 사용: scrum_post.py [--dry-run] [--date YYYY-MM-DD] [--force] [--out 파일]
   --dry-run  Slack·상태 파일 없이 초안을 파일(<draft-dir>/<날짜>.dry.md)과 표준 출력에 냄
@@ -267,6 +268,30 @@ def topics(draft):
     return out
 
 
+def pick_media(text):
+    """수집기 JSON 의 첨부 후보 중 지금도 올릴 수 있는 이미지·영상 경로(비밀 파일·크기 초과·없는 파일은 hub_report 규칙으로 다시 걸러냄)"""
+    try:
+        files = json.loads(text).get("attachments", {}).get("files", [])
+    except (ValueError, AttributeError):
+        return []
+    paths = [f.get("path") for f in files if isinstance(f, dict)] if isinstance(files, list) else []
+    return [p for p in paths if isinstance(p, str) and collect.media_kind(p) and not collect.hub_report.file_problem(p)][:collect.MEDIA_MAX_FILES]
+
+
+def posted_ts(text):
+    """slack_notify.sh 가 낸 'ok <ts>' 줄의 메시지 ts. 없으면 빈 문자열"""
+    m = re.search(r"^ok (\d{1,12}\.\d{1,9})\s*$", text or "", re.M)
+    return m.group(1) if m else ""
+
+
+def delivered_top(intent):
+    """전송 의도 이후 올라간 요약 글(스레드 첨부 방식)의 발송 기록. 없으면 None"""
+    for r in collect.jsonl(SENT_LOG):
+        if r.get("kind") == "text" and r.get("tag") == SLACK_TAG and r.get("form_kind") == "doc" and r.get("ts") and collect.num(r.get("at")) >= intent["at"]:
+            return r
+    return None
+
+
 def delivered(intent):
     """전송 의도 이후 같은 첨부 파일의 발송 기록(slack-sent.jsonl)이 있으면 그 기록, 없으면 None"""
     for r in collect.jsonl(SENT_LOG):
@@ -311,12 +336,14 @@ def local_alert(msg):
         pass
 
 
-def summary_message(date, since, draft, model, missed, no_atl, lost=()):
+def summary_message(date, since, draft, model, missed, no_atl, lost=(), media=0):
     ts = topics(draft)
     n = sum(1 for ln in draft.splitlines() if ln.startswith("    - "))
     lines = ["%s 스크럼 초안 도착" % date.strftime("%m-%d"),
              "• 주제 %d개 · 세부 %d줄. 전체는 첨부 파일" % (len(ts), n),
              "• 주제: %s" % " · ".join(ts)]
+    if media:
+        lines.append("• 첨부 %d개(오늘·어제 만든 화면·영상). 초안 파일과 함께 이 글의 스레드에 있음" % media)
     if missed:
         lines.append("• 경고: %s 초안이 안 나갔음(그날 Mac 이 자고 있었을 수 있음)" % missed)
     if no_atl:
@@ -326,6 +353,31 @@ def summary_message(date, since, draft, model, missed, no_atl, lost=()):
         lines.append("• 경고: 재료 수집 누락(%s) — 해당 출처 내용이 초안에 빠졌을 수 있음" % ", ".join(names))
     lines += ["", "참고: 모델 %s · 범위 %s 이후" % (model, since.strftime("%m-%d %H:%M"))]
     return "\n".join(lines)
+
+
+def send_threaded(args, path, media, intent):
+    """요약 글 → 스레드에 초안 파일 → 첨부 순서로 올림. (종료 코드, 출력). 초안 파일까지 올라가야 0.
+    첨부 개별 실패는 로그와 스레드 경고 1건으로 알리고 전체 성공으로 침(초안이 본체)"""
+    rc, text = notify(args, confirm=lambda: delivered_top(intent))
+    if rc != 0:
+        return rc, text
+    ts = posted_ts(text) or (delivered_top(intent) or {}).get("ts", "")
+    if not ts:
+        return NOTIFY_RC_UNKNOWN, "요약 글 ts 확인 불가"
+    thread = ["--kind", "doc", "--tag", SLACK_TAG, "--thread", ts]
+    rc, text = notify([*thread, "초안 전체", str(path)], confirm=lambda: delivered(intent))
+    if rc != 0:
+        return rc, text
+    failed = 0
+    for i, m in enumerate(media, 1):
+        r, t = notify([*thread, "첨부 %d/%d" % (i, len(media)), m], retry=False)
+        if r != 0:
+            failed += 1
+            log("첨부 %d/%d 실패 rc=%d %s" % (i, len(media), r, redact(t[:120])))
+    if failed:
+        notify(["--kind", "warn", "--tag", SLACK_TAG, "--thread", ts,
+                "첨부 일부 못 올림\n• 못 올린 첨부 %d개 (크기·권한·네트워크 중 하나)\n• 원본은 로컬에 있음. 로그 %s" % (failed, LOG)], retry=False)
+    return 0, text
 
 
 def failure_message(date, fails):
@@ -480,8 +532,12 @@ def run(a, date, state):
     intent = {"at": int(time.time()), "path": str(path), "model": model}
     state["pending"][date.isoformat()] = intent  # 전송 전에 의도를 남겨 중간에 죽어도 재실행이 중복 게시하지 않게 함
     save_state(state)
-    rc, text = notify(["--kind", "doc", "--tag", SLACK_TAG, summary_message(date, since, draft, model, missed, no_atl, lost), str(path)],
-                      confirm=lambda: delivered(intent))
+    media = pick_media(mat.stdout)
+    msg = summary_message(date, since, draft, model, missed, no_atl, lost, len(media))
+    if media:
+        rc, text = send_threaded(["--kind", "doc", "--tag", SLACK_TAG, msg], path, media, intent)
+    else:
+        rc, text = notify(["--kind", "doc", "--tag", SLACK_TAG, msg, str(path)], confirm=lambda: delivered(intent))
     if rc != 0:
         unknown = rc in (NOTIFY_RC_TIMEOUT, NOTIFY_RC_UNKNOWN)
         if not unknown:

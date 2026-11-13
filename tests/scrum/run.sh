@@ -167,6 +167,42 @@ printf '#!/bin/bash\necho boom >&2; exit 1\n' > "$D/gh_bad.sh"; chmod +x "$D/gh_
 LRM_HUB_DIR="$H" LRM_GH="$D/gh_bad.sh" LRM_GIT="$D/fake_git.sh" LRM_SCRUM_WS_ROOT="$HW" python3 "$S/scrum_collect.py" --date $WK > "$D/hp.json"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["hub_progress"]=={} or d["hub_progress"]==[]; assert any(e.startswith("hub_progress:") for e in d["errors"]), d["errors"]' "$D/hp.json" && ok "gh 실패 → hub_progress 오류 기록(다른 출처는 계속)" || ko "gh 실패" "$(head -c 400 "$D/hp.json")"
 
+# ---- 이미지·영상 첨부(수집기) ----
+M="$D/mediadir"; mkdir -p "$M/sub/deep/deeper/deepest" "$M/.ssh" "$H" "$M/old"
+for n in new1.png new2.jpg sub/new3.mp4 .ssh/shot.png secret.env.png sub/note.txt sub/deep/deeper/deepest/too-deep.png; do echo img > "$M/$n"; done
+echo img > "$M/old/old.png"; touch -t 202001010000 "$M/old/old.png"
+truncate -s 51m "$M/huge.mp4"
+echo img > "$M/dup-a.png"; mkdir -p "$M/copy"; echo img > "$M/copy/dup-a.png"   # 같은 이름·크기 복사본
+echo vid > "$D/rep-orig.mp4"; mkdir -p "$D/stg"; echo vid > "$D/stg/rep-staged.mp4"
+now=$(date +%s)
+printf '{"at":"%s","hub":"x","files":["%s","/없는/경로/gone.mp4","%s"],"staged":{"/없는/경로/gone.mp4":"%s"}}\n' "$now" "$D/rep-orig.mp4" "$D/ok.html" "$D/stg/rep-staged.mp4" > "$H/hub-reports.jsonl"
+printf '{"at":"1000","hub":"x","files":["%s"]}\n' "$D/rep-old.mp4" >> "$H/hub-reports.jsonl"; echo old > "$D/rep-old.mp4"
+mc() { LRM_HUB_DIR="$H" LRM_SCRUM_MEDIA_DIR="$M" LRM_GH="$D/fake_gh.sh" LRM_GIT="$D/fake_git.sh" LRM_SCRUM_WS_ROOT="$HW" python3 "$S/scrum_collect.py" --date "$(date +%F)" > "$D/mc.json"; }
+mc; python3 - "$D/mc.json" <<'PY' && ok "첨부 선택: 허브 보고(원본·복사본)+정리 기록, 최신 이틀·이미지 영상만, 비밀·초과·깊은 폴더·중복 제외, 상한 5" || ko "첨부 선택" "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["attachments"])' "$D/mc.json")"
+import json, sys
+a = json.load(open(sys.argv[1]))["attachments"]
+names = [f["name"] for f in a["files"]]
+assert sorted(names[:2]) == ["rep-orig.mp4", "rep-staged.mp4"], names   # 허브 보고가 먼저, 원본 없으면 복사본
+assert len(names) == 5, names                                   # 상한
+for bad in ("old.png", "shot.png", "secret.env.png", "huge.mp4", "note.txt", "too-deep.png", "rep-old.mp4"):
+    assert bad not in names, bad
+assert names.count("dup-a.png") <= 1
+why = {s["why"] for s in a["skipped"]}
+assert any("민감" in w for w in why) and any("크기 초과" in w for w in why), a["skipped"]
+assert all("/" not in s["name"] for s in a["skipped"]), "경로가 skipped 에 담김"
+PY
+rm -rf "$M" "$H/hub-reports.jsonl"; mc; python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["attachments"]=={"files":[],"skipped":[]} and not d["errors"], d' "$D/mc.json" && ok "첨부 폴더·보고 기록이 없으면 빈 목록(오류 아님)" || ko "첨부 없음" "$(cat "$D/mc.json" | head -c 300)"
+
+# ---- 이미지·영상 첨부(발송) ----
+reset; echo media > "$D/plan-collect"; post --date $WK; rc=$?
+[ $rc = 0 ] && [ "$(sent)" = 5 ] && [ "$(sed -n 1p "$D/sent.log")" != "" ] && ! sed -n 1p "$D/sent.log" | grep -q "2026-11-12.md" && grep -c -- "--thread 1700000000.000100" "$D/sent.log" | grep -qx 4 && grep -q "초안 전체" "$D/sent.log" && grep -q "첨부 2개" "$D/sent.log" && ok "요약 글(첨부 파일 없음) → 스레드 4건(초안·첨부 2·실패 경고 1)" || ko "스레드 순서" "rc=$rc $(sent)"
+grep -q "첨부 일부 못 올림" "$D/sent.log" && grep -q -- "--kind warn" "$D/sent.log" && grep -q "첨부 2/2 실패" "$D/scrum.log" && sent_has 2026-11-12 && ok "첨부 하나 실패 → 스레드 경고 1건·로그, 초안은 보냄으로 확정" || ko "첨부 실패 처리"
+reset; echo media-bad > "$D/plan-collect"; post --date $WK; rc=$?
+[ $rc = 0 ] && [ "$(sent)" = 3 ] && ! grep -q "\.env\.png\|big\.mp4" "$D/sent.log" && grep -q "a\.png" "$D/sent.log" && ok "발송 직전 재검사: 비밀 파일·50MB 초과는 후보에 있어도 올리지 않음" || ko "발송 직전 재검사" "rc=$rc $(sent)"
+reset; post --date $WK; [ "$(sent)" = 1 ] && grep -q -- "--kind doc" "$D/sent.log" && grep -q "2026-11-12.md" "$D/sent.log" && ! grep -q "첨부 .*개" "$D/sent.log" && ok "첨부가 없으면 기존처럼 초안 파일 1건 발송(스레드 없음)" || ko "첨부 없음 발송"
+reset; echo media > "$D/plan-collect"; echo 5 > "$D/send-fails"; post --date $WK; rc=$?
+[ $rc = 1 ] && ! sent_has 2026-11-12 && ok "요약 글이 끝내 거절되면 실패(보냄 기록 없음)" || ko "요약 거절" "rc=$rc"
+
 # ---- --preflight(첫 실행 전 점검) ----
 cat > "$D/pf_gh.sh" <<'G'
 #!/bin/bash

@@ -8,4 +8,6 @@ case "$mode" in record-*) printf '{"at":%s,"kind":"file","path":"%s","file_id":"
 case "$mode" in hang|record-hang) exec sleep 5 ;; silent1|record-silent1) exit 1 ;; esac
 # FAKE_SEND_FAILS 번까지는 Slack 이 거절한 것처럼 오류 코드를 내고 종료 코드 1
 [ "$n" -le "$(cat "$FAKE_DIR/send-fails" 2>/dev/null || echo 0)" ] && { echo ratelimited; exit 1; }
+# 마지막 인자(첨부 경로)에 fail-me 가 있으면 Slack 이 파일을 거절한 것처럼 오류 코드 + 종료 코드 1
+case "${!#}" in *fail-me*) echo file_upload_failed; exit 1 ;; esac
 echo "ok 1700000000.000100"
