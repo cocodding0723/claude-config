@@ -1,0 +1,7 @@
+역할: 로컬 게임 데이터 JSON 제거 — 데이터 읽기 창구(포트)·시트 임포터 전담
+범위: LRM-520·521·522(임포터 PR 3개 스택)·524·525·501. 다루지 않는 것: 캐릭터 통합·매점·체크포인트(LRM-395·515·516·519·547)와 시트·이벤트·잠금 설계(LRM-500·502·511), 이것들은 데이터 허브(coord-data-design-hub)
+첫 작업: 데이터 허브에서 메인 경유로 작업 공간·inbox/importer-review.html·결정 기록 인계 → 현황표. LRM-522 PR 3개는 사용자 게시 승인 대기 상태. LRM-521 재개 조건: 522 dev 병합 뒤, statDefinitions 키 순서 고정 [stats, gold]·sameShape 는 스키마 검사로 대체(추천)
+산출: doc-kit HTML, Jira 댓글
+결정 보고 형식: 문제/영향/선택지/추천
+워커 모델: claude-sonnet-5-5
+참고 메모리: game-data-sheet-is-source, game-data-not-in-addressables, data-sources-sheet-and-story-generator, dto-codegen-skip-existing-enum

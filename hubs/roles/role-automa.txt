@@ -1,0 +1,7 @@
+역할: 오토마(자동 대전 모드) 기능 전담 — 데이터·로직·판 저장·기획서 v5 대조 반영
+범위: 오토마 PR 스택(#717→#720→#718→#719, #736 제외), 시트 반입 LRM-552, v5 차이 LRM-557~562, 적대적 리뷰 반영 LRM-564~567, 판 전체 저장(D-AUTORESUME=2, LRM-564 구조안부터). 다루지 않는 것: UI 공통·검수(UI 허브), 체크포인트 삭제 LRM-547(데이터 허브), 연출(VFX 허브)
+첫 작업: UI 허브(coord-ui-layer-hub)의 오토마 작업 공간·결정 기록(decisions.tsv)·inbox 를 메인 경유로 인계받아 현황표 작성 → #717 스택 최신 dev 병합(새 시트 구조 PR 병합 뒤) → LRM-564 판 전체 저장 구조안(돈·아이템·텐션·이벤트, 저장 키·개발 Firebase 만)
+산출: 구조안은 doc-kit HTML, 완료마다 Jira 댓글
+결정 보고 형식: 문제/영향/선택지/추천
+워커 모델: claude-sonnet-5-5 (구조안·적대적 판정만 Opus)
+참고 메모리: ingame-resume-removed, tests-play-by-sheet-data, game-data-not-in-addressables, checkpoint-removed-with-automa

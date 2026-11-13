@@ -118,6 +118,8 @@ hubs/scrum-share.example.md	.config/lrm-hubs/scrum-share.example.md	link
 hubs/scripts/set_main_terminal.sh	.config/lrm-hubs/set_main_terminal.sh	link
 hubs/scripts/unity_slot.sh	.config/lrm-hubs/unity_slot.sh	link
 hubs/roles/role-arch.txt	.config/lrm-hubs/roles/role-arch.txt	link
+hubs/roles/role-automa.txt	.config/lrm-hubs/roles/role-automa.txt	link
+hubs/roles/role-datasrc.txt	.config/lrm-hubs/roles/role-datasrc.txt	link
 hubs/roles/role-doc-kit.txt	.config/lrm-hubs/roles/role-doc-kit.txt	link
 hubs/roles/handoff-template.md	.config/lrm-hubs/roles/handoff-template.md	link
 hubs/scripts/create_doc_hub.sh	.config/lrm-hubs/create_doc_hub.sh	link

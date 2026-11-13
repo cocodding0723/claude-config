@@ -13,4 +13,6 @@ docs	문서	~/.config/lrm-hubs/roles/role-docs.txt	-	-
 data-design	게임 데이터·시나리오 구조 설계	~/.config/lrm-hubs/roles/role-data.txt	-	-
 vfx	연출·VFX 폴리싱	~/.config/lrm-hubs/roles/role-vfx.txt	-	-
 coord-server-hub	서버·Firebase 환경 분리	~/.config/lrm-hubs/roles/role-server.txt	-	-
+automa-hub	오토마	~/.config/lrm-hubs/roles/role-automa.txt	-	-
+data-source-hub	데이터 읽기 창구	~/.config/lrm-hubs/roles/role-datasrc.txt	-	-
 config	개인 설정	~/.config/lrm-hubs/roles/role-config.txt	~/orca/workspaces/claude-config	~/orca/claude-config
