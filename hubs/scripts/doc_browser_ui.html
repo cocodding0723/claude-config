@@ -347,7 +347,7 @@ async function approvePr(it, btn) {
   toast("확인 창이 Mac 화면에 떴음 — 승인 또는 취소를 누르세요(60초)");
   try {
     const j = await api("/api/approve", {method: "POST", headers: {"Content-Type": "application/json", "X-CSRF-Token": TOKEN}, body: JSON.stringify({id: it.key})});
-    toast(j.already ? "이미 승인함·병합 대기" : (j.via === "hub" ? `${j.hub} 허브에 승인 전달함 — 병합은 충돌 검사 뒤` : "메인에 승인 전달함 — 병합은 충돌 검사 뒤"));
+    toast(j.already ? "이미 승인함·병합 대기" : (j.via === "hub" ? `${j.hub} 허브에 승인 전달함 — 병합 실행은 기존 규칙대로` : "메인에 승인 전달함 — 병합 실행은 기존 규칙대로"));
   } catch (e) { toast(e.message); }
   loadCheck();
 }
@@ -381,7 +381,7 @@ function checkRow(it) {
     else if (it.kind === "merge") {
       if (it.url) acts.append(el("a", {class: "btn primary", href: it.url, target: "_blank", rel: "noopener noreferrer", text: "PR 열기"}));
       if (it.approved) acts.append(el("span", {class: "basis", text: "✓ 승인함·병합 대기"}));
-      else { const b = el("button", {type: "button", text: "병합 승인", title: "Mac 확인 창에서 승인하면 담당 허브에 전달. 병합은 충돌 검사 뒤 코디네이터가 함"}); b.onclick = () => approvePr(it, b); acts.append(b); }
+      else { const b = el("button", {type: "button", text: "병합 승인", title: "Mac 확인 창에서 승인하면 담당 허브에 전달. 병합 실행은 기존 규칙대로(dev/main 병합은 사용자가 직접)"}); b.onclick = () => approvePr(it, b); acts.append(b); }
     }
     else {
       if (it.kind === "command" && it.command) { const c = el("button", {type: "button", text: "복사"}); c.onclick = () => copyText(it.command, c); acts.append(c); }

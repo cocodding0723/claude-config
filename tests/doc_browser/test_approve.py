@@ -95,7 +95,7 @@ class ApproveTest(ServerBase):
     def test_dialog_text_is_built_by_server_with_repo_number_title_hub(self):
         self.approve()
         self.assertEqual(len(self.asked), 1)
-        for needle in ("Org/Repo#12", "헤드 abc1234", self.item()["title"], "담당 허브", "승인", "충돌 검사 뒤"):
+        for needle in ("Org/Repo#12", "헤드 abc1234", self.item()["title"], "담당 허브", "승인", "병합 실행은 기존 규칙대로"):
             self.assertIn(needle, self.asked[0])
 
     def test_record_kind_and_delivery_rows(self):
