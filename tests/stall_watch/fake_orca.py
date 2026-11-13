@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """stall_watch 시험용 가짜 orca. 응답은 $FAKE_DIR 의 JSON 파일, 호출은 calls.log 에 한 줄씩, terminal send 는 sends.log 에 '핸들<TAB>문구'.
-FAKE_ORCA_FAIL=1 이면 모든 호출 실패. FAKE_SEND_FAIL="핸들:오류코드,..." 이면 그 핸들로의 terminal send 만 오류 JSON 과 함께 실패(rc 1)."""
+FAKE_ORCA_FAIL=1 이면 모든 호출 실패. FAKE_SEND_HANG="핸들,..." 이면 그 핸들 전송은 기록 뒤 5초 지연(시간 초과 재현). terminal list 는 호출 n번째에 terminals_n.json 이 있으면 그 응답.
+FAKE_SEND_FAIL="핸들:오류코드,..." 이면 그 핸들로의 terminal send 만 오류 JSON 과 함께 실패(rc 1)."""
 import json
 import os
 import sys
+import time
 
 d = os.environ["FAKE_DIR"]
 args = sys.argv[1:]
@@ -28,7 +30,8 @@ if args[:2] == ["orchestration", "worker-list"]:
 elif args[:2] == ["orchestration", "task-list"]:
     out = {"runId": opt("--run"), "tasks": load("tasks.json").get(opt("--run"), [])}
 elif args[:2] == ["terminal", "list"]:
-    out = {"terminals": load("terminals.json")}
+    n = sum(1 for ln in open(os.path.join(d, "calls.log"), encoding="utf-8") if ln.startswith("terminal list"))
+    out = {"terminals": load("terminals_%d.json" % n if os.path.exists(os.path.join(d, "terminals_%d.json" % n)) else "terminals.json")}
 elif args[:2] == ["orchestration", "worker-read"]:
     out = {"terminal": {"tail": load("read_%s.json" % opt("--dispatch"))}}
 elif args[:2] == ["terminal", "send"]:
@@ -40,6 +43,8 @@ elif args[:2] == ["terminal", "send"]:
         sys.exit(1)
     with open(os.path.join(d, "sends.log"), "a", encoding="utf-8") as f:
         f.write("%s\t%s\n" % (opt("--terminal"), opt("--text")))
+    if opt("--terminal") in os.environ.get("FAKE_SEND_HANG", "").split(","):
+        time.sleep(5)  # 전달은 됐지만 응답이 늦는 상황(호출 쪽 시간 초과)
     out = {"sent": True}
 else:
     sys.exit(2)

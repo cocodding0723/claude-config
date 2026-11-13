@@ -234,7 +234,7 @@ def detect(limits: Limits, now: float):
 
 def coordinators(slug: str):
     """허브 폴더의 살아 있는 claude 코디네이터 터미널 [(핸들, 제목)]. 알림 전송과 같은 판정(card_actions.hub_terminals). 조회 실패는 None"""
-    terms = card_actions.hub_terminals(slug)
+    terms = card_actions.hub_terminals(slug)  # writable 무관(쓰기 불가 코디네이터도 중복으로 셈)
     return None if terms is None else [(t.get("handle"), rw.clean(t.get("title") or "")) for t in terms]
 
 

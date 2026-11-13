@@ -276,6 +276,75 @@ chk "stall_watch.coordinators 도 같은 판정(프로세스 표 기준 2개)" '
 import sys; sys.path.insert(0, \"$SCRIPTS\")
 import stall_watch as s
 print(len(s.coordinators(\"delta\")))")" = 2 ]'
+# ---- 10c. 리뷰 반영: 재조회 새 핸들·시간 초과·마감·워커 제외·후속 동작 예외 ------------------------------------
+tj() { python3 - "$@" <<'PY'
+import json, os, sys
+d = os.environ["FAKE_DIR"]
+def t(h, out, **kw):
+    r = {"handle": h, "title": "c", "worktreePath": "/x/coord-delta-hub", "agentIdentity": "claude", "connected": True, "writable": True, "orphaned": False, "lastOutputAt": out}
+    r.update(kw); return r
+name, *specs = sys.argv[1:]
+json.dump([t(h, int(o), **({"writable": False} if w == "ro" else {})) for h, o, w in (x.split(":") for x in specs)], open(os.path.join(d, name), "w"))
+PY
+}
+rn() { python3 - "$@" <<PY
+import sys; sys.path.insert(0, "$SCRIPTS")
+import card_actions as c
+for k, v in (a.split("=") for a in sys.argv[1:]):
+    setattr(c, k, float(v))
+print(*c.run_notify({"hubs": [{"slug": "delta", "lines": ["x"]}]}))
+PY
+}
+printf '1 term_a\n2 term_b\n3 term_c\n' > "$SB/proc3"
+: > "$FAKE_DIR/sends.log"; : > "$FAKE_DIR/failed.log"; : > "$FAKE_DIR/calls.log"; rm -f "$FAKE_DIR"/terminals_*.json
+tj terminals.json term_a:900:rw; tj terminals_2.json term_a:900:rw term_c:100:rw
+FAKE_SEND_FAIL="term_a:terminal_handle_stale" HUB_PROC_TABLE="$SB/proc3" rn > "$SB/o"
+chk "2라운드 재조회에서 새 핸들(term_c) 등장 → 성공, 실패한 term_a 재전송 없음, rc 0" 'head -c1 "$SB/o" | grep -q 0 && grep -q "^term_c	" "$FAKE_DIR/sends.log" && [ "$(grep -c "^term_a$" "$FAKE_DIR/failed.log")" = 1 ] && ! grep -q "^$MAINH	" "$FAKE_DIR/sends.log"'
+rm -f "$FAKE_DIR"/terminals_*.json
+: > "$FAKE_DIR/sends.log"; : > "$FAKE_DIR/calls.log"
+tj terminals.json term_a:900:rw term_b:500:rw
+FAKE_SEND_HANG="term_a" HUB_PROC_TABLE="$SB/proc3" rn ORCA_TIMEOUT_S=1 > "$SB/o"
+chk "시간 초과 → 다른 후보·메인에 원문 재전송 없음, 메인엔 확인 필요 한 줄, rc 1" 'head -c1 "$SB/o" | grep -q 1 && grep -q "확인 필요" "$SB/o" && [ "$(grep -c "^term_a	" "$FAKE_DIR/sends.log")" = 1 ] && ! grep -q "^term_b	" "$FAKE_DIR/sends.log" && [ "$(grep -c "^$MAINH	" "$FAKE_DIR/sends.log")" = 1 ] && grep "^$MAINH	" "$FAKE_DIR/sends.log" | grep -q "확인 필요" && ! grep "^$MAINH	" "$FAKE_DIR/sends.log" | grep -q "응답 없는 워커"'
+: > "$FAKE_DIR/sends.log"; : > "$FAKE_DIR/calls.log"
+HUB_PROC_TABLE="$SB/proc3" rn DELIVER_DEADLINE_S=0.5 ORCA_TIMEOUT_S=1 > "$SB/o"
+chk "마감 초과(남은 시간 < 호출 상한) → 허브 호출·전송 없이 메인 대리, rc 0" 'head -c1 "$SB/o" | grep -q 0 && grep -q "deadline" "$SB/o" && grep -q "메인에 대리 전달" "$SB/o" && [ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 1 ] && grep -q "^$MAINH	" "$FAKE_DIR/sends.log" && ! grep -q "^terminal list" "$FAKE_DIR/calls.log"'
+: > "$FAKE_DIR/sends.log"
+python3 - <<'PY'
+import json, os
+p = os.path.join(os.environ["FAKE_DIR"], "workers_active.json")
+w = json.load(open(p)); w.append({"dispatchId": "ctx_wk", "taskId": "T99", "runId": "run_1", "workerState": "ready", "terminalState": "active", "agentTerminalHandle": "term_a", "projection": {"evidence": {"lastObservedAt": None}}})
+json.dump(w, open(p, "w"))
+PY
+HUB_PROC_TABLE="$SB/proc3" rn > "$SB/o"
+chk "워커 터미널(term_a, 최근 출력)은 후보에서 제외 → 코디네이터 term_b 에 전송" 'grep -q "^term_b	" "$FAKE_DIR/sends.log" && ! grep -q "^term_a	" "$FAKE_DIR/sends.log"'
+python3 - <<'PY'
+import json, os
+p = os.path.join(os.environ["FAKE_DIR"], "workers_active.json")
+json.dump([w for w in json.load(open(p)) if w.get("dispatchId") != "ctx_wk"], open(p, "w"))
+PY
+tj terminals.json term_a:900:ro term_b:500:ro
+: > "$FAKE_DIR/sends.log"
+chk "쓰기 불가 코디네이터는 중복 판정(coordinators)엔 포함, 전송 후보에선 제외" '[ "$(HUB_PROC_TABLE="$SB/proc3" python3 -I -c "
+import sys; sys.path.insert(0, \"$SCRIPTS\")
+import stall_watch as s, card_actions as c
+print(len(s.coordinators(\"delta\")), len(c.hub_terminals(\"delta\", writable_only=True)))")" = "2 0" ]'
+python3 - <<PY > "$SB/o"
+import sys; sys.path.insert(0, "$SCRIPTS")
+import card_actions as c
+print(*c.execute({"kind": "notify", "args": {"hubs": [{"slug": 5, "lines": "abc"}, "x", {"lines": [1, "y"]}], "dups": [{"titles": 3}, {"slug": "z", "titles": None}]}}, 1))
+c.run_notify = lambda a: 1 / 0
+c.KINDS["notify"] = c.run_notify
+print(*c.execute({"kind": "notify", "args": {}}, 1))
+PY
+chk "execute: 비문자열 slug·lines·handle 방어, 예외 → rc 1 '후속 동작 예외(ZeroDivisionError)'" 'grep -q "^[01] " "$SB/o" && tail -1 "$SB/o" | grep -qx "1 후속 동작 예외(ZeroDivisionError)"'
+: > "$FAKE_DIR/sends.log"
+FAKE_SEND_FAIL="$MAINH:terminal_not_found" python3 - <<PY > "$SB/o"
+import sys; sys.path.insert(0, "$SCRIPTS")
+import card_actions as c
+print(*c.run_notify({"hubs": [], "dups": [{"slug": "delta", "titles": ["a", "b"]}]}))
+PY
+chk "중복 코디네이터 메인 알림 실패 → rc 1" 'head -c1 "$SB/o" | grep -q 1 && grep -q "중복 코디네이터 메인 알림 실패" "$SB/o"'
+rm -f "$FAKE_DIR"/terminals_*.json
 # 다음 시험(10 의 후반)을 위해 원래 픽스처 상태로
 python3 -c 'import json,os;json.dump([],open(os.path.join(os.environ["FAKE_DIR"],"terminals.json"),"w"))'
 
