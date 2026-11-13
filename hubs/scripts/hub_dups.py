@@ -2,7 +2,8 @@
 """허브 코디네이터 터미널의 생존 판정·중복 목록·옛 세션 정리. restart_hub.sh·resume_all.sh 가 함께 씀.
 
 코디네이터 = 허브 폴더(coord-<slug>-hub)의 claude 터미널 중 orchestration 워커(active·retained Dispatch)가 아닌 것.
-살아 있음 = 연결됨·쓰기 가능·고아 아님·마지막 출력이 --max-idle-min 이내.
+살아 있음 = 그 터미널 핸들(환경 변수 ORCA_TERMINAL_HANDLE)을 가진 claude 프로세스가 실제로 있음. Orca 의 connected·orphaned 는
+Orca 재시작 뒤 낡을 수 있어 판정에 쓰지 않고 표시용 보조 정보로만 씀. 프로세스를 확인하지 못하면 판정 불가라 정리를 거부함.
 정리(clean)는 유지할 새 핸들이 같은 조건으로 살아 있을 때만 하고, 닫기 전에 각 터미널 마지막 화면을 보관함. 강제 종료는 쓰지 않음.
 
 CLI: hub_dups.py alive (--slug S|--path P) [--terms 파일]   '살아 있음 수 전체 수 유지후보' 출력. 종료 코드 0 살아 있음, 1 없음, 2 판정 실패
@@ -24,7 +25,10 @@ import main_terminal as mt  # noqa: E402
 
 HUB_RE = re.compile(r"/coord-([a-z0-9-]+)-hub$")
 HANDLE_RE = re.compile(r"term_[A-Za-z0-9_-]+")
-IDLE_MIN_DEFAULT = 240  # 사람 결정을 기다리며 조용한 허브가 죽은 것으로 오판되지 않게 넉넉히
+SOCK_DIR = "/tmp/cc-socks"  # claude 가 프로세스마다 <pid>.sock 을 열어 둠. 이 소켓을 연 프로세스 = 살아 있는 claude
+PROC_ENV = "ORCA_TERMINAL_HANDLE"
+PROC_TABLE_ENV = "HUB_PROC_TABLE"  # 시험용: "<pid> <핸들>" 줄 파일로 프로세스 조회를 대체. 파일이 없으면 조회 실패로 취급
+HANDLE_ENV_RE = re.compile(PROC_ENV + r"=(term_[A-Za-z0-9_-]+)")
 TAIL_LINES = 30
 INBOX_DEFAULT = "~/.config/lrm-hubs/hub-inbox"
 CALL_TIMEOUT = 30
@@ -89,10 +93,44 @@ def is_coord(t, workers):
     return t.get("agentIdentity") == "claude" and t.get("handle") not in workers
 
 
-def is_alive(t, now_ms, max_idle_min):
-    last = t.get("lastOutputAt")
-    return (t.get("connected") is True and t.get("writable") is True and t.get("orphaned") is False
-            and isinstance(last, (int, float)) and now_ms - last <= max_idle_min * 60000)
+def live_handles():
+    """실제로 떠 있는 claude 프로세스의 터미널 핸들 집합. 확인 실패는 Unavailable(빈 집합으로 오인하면 현역을 죽은 것으로 봄)"""
+    table = os.environ.get(PROC_TABLE_ENV)
+    if table:
+        try:
+            return {ln.split()[1] for ln in open(table) if len(ln.split()) >= 2}
+        except OSError:
+            raise Unavailable(f"프로세스 표 읽기 실패({table})")
+    if not os.path.isdir(SOCK_DIR):
+        raise Unavailable(f"{SOCK_DIR} 없음 — claude 프로세스를 확인할 수 없음")
+    socks = sorted(f for f in (os.path.join(SOCK_DIR, n) for n in os.listdir(SOCK_DIR)) if f.endswith(".sock"))
+    if not socks:
+        return set()
+    try:
+        p = subprocess.run(["lsof", "-F", "p", "--"] + socks, capture_output=True, text=True, timeout=CALL_TIMEOUT, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise Unavailable(f"lsof 실행 실패({type(e).__name__})")
+    if p.returncode not in (0, 1):  # 1 = 열린 소켓 없음 또는 일부만 열림
+        raise Unavailable(f"lsof 실패(rc={p.returncode})")
+    pids = sorted({ln[1:] for ln in p.stdout.splitlines() if re.fullmatch(r"p\d+", ln)})
+    if not pids:
+        return set()
+    try:
+        q = subprocess.run(["ps", "eww", "-o", "pid=,command=", "-p", ",".join(pids)], capture_output=True, text=True, timeout=CALL_TIMEOUT, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise Unavailable(f"ps 실행 실패({type(e).__name__})")
+    if q.returncode not in (0, 1) or not q.stdout.strip():  # 1 = 일부 pid 가 그새 종료
+        raise Unavailable(f"ps 실패(rc={q.returncode})")
+    return {m.group(1) for ln in q.stdout.splitlines() if (m := HANDLE_ENV_RE.search(ln))}
+
+
+def is_alive(t, live):
+    return t.get("handle") in live
+
+
+def orca_state(t):
+    """Orca 가 보는 상태(보조 정보)"""
+    return "orca:" + ("고아" if t.get("orphaned") else "연결" if t.get("connected") else "끊김")
 
 
 def coords(terms, workers, **where):
@@ -111,10 +149,6 @@ def one_line(s):
     return re.sub(r"\s+", " ", str(s or "")).strip()
 
 
-def idle_arg(a):
-    return float(a.max_idle_min if a.max_idle_min is not None else os.environ.get("HUB_ALIVE_MIN", IDLE_MIN_DEFAULT))
-
-
 def where_of(a):
     return {"path": a.path} if a.path else {"slug": a.slug}
 
@@ -131,9 +165,13 @@ def cmd_alive(a):
         workers = worker_handles()
     except Unavailable:
         workers = set()
-    now = time.time() * 1000
+    try:
+        procs = live_handles()
+    except Unavailable as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
     cs = coords(terms, workers, **where_of(a))
-    live = [t for t in cs if is_alive(t, now, idle_arg(a))]
+    live = [t for t in cs if is_alive(t, procs)]
     print(len(live), len(cs), (newest(live) or {}).get("handle", "-"))  # 살아 있음 수, 코디네이터 전체 수, 유지 후보 핸들
     return 0 if live else 1
 
@@ -155,24 +193,29 @@ def cmd_list(a):
     except Unavailable as e:
         print(f"ERROR: {e} — Orca 실행 상태 확인 후 재시도", file=sys.stderr)
         return 2
-    now = time.time() * 1000
+    try:
+        procs = live_handles()
+    except Unavailable as e:
+        print(f"경고: {e} — 프로세스 기준 상태·유지 후보를 표시하지 못함", file=sys.stderr)
+        procs = None
     rows = []
     for path, ts in sorted(hub_groups(terms, workers).items()):
         if len(ts) < 2 or (a.slug and not in_hub(ts[0], slug=a.slug)) or (a.path and path != a.path.rstrip("/")):
             continue
-        keep = newest([t for t in ts if is_alive(t, now, idle_arg(a))]) or newest(ts)
+        keep = newest([t for t in ts if procs is not None and is_alive(t, procs)])
         for t in sorted(ts, key=lambda x: x.get("lastOutputAt") or 0, reverse=True):
             rows.append({"hub": HUB_RE.search(path).group(1), "path": path, "handle": t["handle"], "title": one_line(t.get("title")),
-                         "lastOutputAt": t.get("lastOutputAt"), "alive": is_alive(t, now, idle_arg(a)), "keep": t is keep})
+                         "lastOutputAt": t.get("lastOutputAt"), "alive": None if procs is None else is_alive(t, procs), "orca": orca_state(t), "keep": t is keep})
     if a.json:
         print(json.dumps(rows, ensure_ascii=False, indent=1))
         return 0
     if not rows:
         print("중복 코디네이터 없음")
         return 0
-    print("허브\t핸들\t제목\t마지막 출력\t상태")
+    print("허브\t핸들\t제목\t마지막 출력\t프로세스\tOrca 표시")
     for r in rows:
-        print(f"{r['hub']}\t{r['handle']}\t{r['title']}\t{fmt_time(r['lastOutputAt'])}\t{'유지 후보' if r['keep'] else ('살아 있음' if r['alive'] else '죽음·고아')}")
+        state = "판정불가" if r["alive"] is None else ("있음(유지 후보)" if r["keep"] else "있음" if r["alive"] else "없음")
+        print(f"{r['hub']}\t{r['handle']}\t{r['title']}\t{fmt_time(r['lastOutputAt'])}\t{state}\t{r['orca']}")
     return 0
 
 
@@ -212,14 +255,14 @@ def cmd_clean(a):
     try:
         terms = load_terminals(None)
         workers = worker_handles()
+        procs = live_handles()
     except Unavailable as e:
         print(f"ERROR: {e} — 정리하지 않음(옛 세션 유지)", file=sys.stderr)
         return 2
-    now = time.time() * 1000
     by = {t["handle"]: t for t in terms}
     keep = by.get(a.keep)
-    if not (keep and keep.get("agentIdentity") == "claude" and is_alive(keep, now, idle_arg(a))):
-        print(f"ERROR: 유지할 세션 {a.keep} 이 살아 있지 않음 — 정리하지 않음(옛 세션 유지)", file=sys.stderr)
+    if not (keep and keep.get("agentIdentity") == "claude" and is_alive(keep, procs)):
+        print(f"ERROR: 유지할 세션 {a.keep} 의 claude 프로세스를 찾지 못함 — 정리하지 않음(옛 세션 유지). Orca 표시: {orca_state(keep) if keep else '목록에 없음'}", file=sys.stderr)
         return 2
     targets = coords(terms, workers, **where_of(a))
     for h in a.also:
@@ -261,7 +304,6 @@ def parser():
         g = s.add_mutually_exclusive_group(required=hub)
         g.add_argument("--slug", help="허브 slug(폴더 coord-<slug>-hub)")
         g.add_argument("--path", help="허브 폴더 절대 경로")
-        s.add_argument("--max-idle-min", type=float, help=f"살아 있음 기준 마지막 출력 경과 분(기본 {IDLE_MIN_DEFAULT}, 환경 HUB_ALIVE_MIN)")
 
     s = sub.add_parser("alive", help="허브에 살아 있는 코디네이터가 있는지")
     common(s, hub=True)

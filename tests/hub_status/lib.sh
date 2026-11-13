@@ -25,6 +25,8 @@ cat "${FAKE_TERMINALS:?}"
 FAKE
 chmod +x "$BIN/orca"
 echo '{"result":{"terminals":[]}}' > "$SB/terms-empty.json"
+# 생존 판정은 프로세스 표 기준(실제 lsof·ps 를 쓰지 않음). 기본은 빈 표 = 살아 있는 claude 없음
+: > "$SB/procs-empty.txt"; export HUB_PROC_TABLE="$SB/procs-empty.txt"
 export FAKE_LOG="$SB/orca.log" FAKE_TERMINALS="$SB/terms-empty.json" PATH="$BIN:$PATH"
 NOW_MS=$(python3 -c "import time;print(int(time.time()*1000))")
 # 터미널 JSON 한 개: tm <경로> <agent> <connected> <writable> <orphaned> <출력 경과 분> [handle]
