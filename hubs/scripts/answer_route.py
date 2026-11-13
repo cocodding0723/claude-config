@@ -5,6 +5,8 @@
 메인에는 참고 한 줄만 보냄. 허브 전송이 실패하면 메인에 원문을 대리 전달. 시간 초과는 도착 여부 불명이라 허브에 다시 보내지 않고
 메인에 '확인 필요' 한 줄만 보냄(두 곳 중복 전달 방지). 결정→허브 기록이 없으면 지금처럼 메인으로만 보냄.
 허브 전송은 card_actions.deliver 를 그대로 씀(후보 선택·재조회·마감 규칙을 여기서 다시 만들지 않음).
+같은 결정 번호를 두 허브 이상이 올렸다면 어느 허브인지 알 수 없어 메인으로 보냄(허브 추측 금지).
+전달이 끝나면 결과를 answer_store 의 전달 기록(answer-delivery.jsonl)에 남김.
 결정→허브: hub-reports.jsonl(허브 보고 outbox)의 decision_id·hub 가 우선, 없으면 보낸 카드 기록의 tag (todo_facts.decision_hubs 규칙).
 """
 import os
@@ -60,12 +62,20 @@ class Router:
             sent, reports = panel_collect.jsonl(p("slack-sent.jsonl")), panel_collect.jsonl(p("hub-reports.jsonl"))
         except (panel_collect.SourceError, UnicodeDecodeError):
             return ""
+        said = [r.get("hub") for r in reports if r.get("decision_id") == did and r.get("hub") in known]
+        said = said or [c.get("tag") for c in sent if c.get("decision_id") == did and c.get("form_kind") == "decide" and c.get("tag") in known]
+        if len(set(said)) > 1:  # 허브 둘 이상이 같은 번호를 보고함 — 모호
+            return ""
         hub = todo_facts.decision_hubs(reports, sent, known).get(did, "")
         return pc.hub_slug(hub) if hub else ""
 
     def route(self, did: str, ts: str, source: str, body: str) -> Outcome:
-        """답 한 건을 전달. body 는 said_text 결과. 줄바꿈이 있으면 터미널에서 여러 줄로 갈라지므로 한 줄로 정리"""
-        body = " ".join(body.split())
+        """답 한 건을 전달하고 결과를 전달 기록에 남김. body 는 said_text 결과. 줄바꿈이 있으면 터미널에서 여러 줄로 갈라지므로 한 줄로 정리"""
+        out = self.send(did, ts, source, " ".join(body.split()))
+        self.store.record_delivery(did, ts, out.via, out.ok)
+        return out
+
+    def send(self, did: str, ts: str, source: str, body: str) -> Outcome:
         src = answer_store.SOURCE_NAME.get(source, source)
         hub = self.hub_of(did)
         if not hub:

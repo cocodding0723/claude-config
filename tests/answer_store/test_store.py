@@ -116,6 +116,69 @@ class StoreTest(unittest.TestCase):
         self.assertIsNone(self.store.find_card("D-9999"))
         self.assertIsNone(self.store.find_card("../x"))
 
+    def seed_inbox(self, rows):
+        with open(os.path.join(self.hub, "slack-inbox.jsonl"), "w", encoding="utf-8") as f:
+            f.write("".join(json.dumps(r) + "\n" for r in rows))
+
+    def test_reasked_card_with_same_number_can_be_answered(self):
+        """같은 D-번호로 다시 올린 카드(새 ts)는 옛 카드의 답과 무관하게 답할 수 있음"""
+        self.assertEqual(self.store.claim(self.ans(ts="1.1")).status, "claimed")
+        self.assertTrue(self.store.claim(self.ans(ts="1.1")).late)
+        self.assertEqual(self.store.claim(self.ans(ts="2.2")).status, "claimed")
+        self.assertEqual(self.store.first_answer("D-0001", "3.3"), "")
+
+    def test_conflicting_reactions_on_card_are_not_an_answer_and_button_clears_it(self):
+        self.seed_inbox([{"type": "reaction", "parent_ts": "1.1", "decision_id": "D-0001", "kind": "decide", "action": "pick", "pick": 1},
+                         {"type": "reaction", "parent_ts": "1.1", "decision_id": "D-0001", "kind": "decide", "action": "pick", "pick": 2}])
+        self.assertEqual(self.store.first_answer("D-0001", "1.1"), "")
+        self.assertEqual(self.store.claim(self.ans(ts="1.1")).status, "claimed")
+        self.assertTrue(self.store.claim(self.ans(ts="1.1")).late)
+
+    def test_single_reaction_still_counts_but_only_on_its_card(self):
+        self.seed_inbox([{"type": "reaction", "parent_ts": "1.1", "decision_id": "D-0001", "kind": "decide", "action": "pick", "pick": 1}])
+        self.assertEqual(self.store.first_answer("D-0001", "1.1"), "slack")
+        self.assertEqual(self.store.first_answer("D-0001", "2.2"), "")
+
+    def test_docsite_answer_binds_to_latest_card(self):
+        import doc_decide
+        rows = [{"ts": "1.1", "form_kind": "decide", "decision_id": "D-0001", "options": {"1": "옛", "2": "옛2"}},
+                {"ts": "2.2", "form_kind": "decide", "decision_id": "D-0001", "options": {"1": "가", "2": "나"}}]
+        with open(os.path.join(self.hub, "slack-sent.jsonl"), "w", encoding="utf-8") as f:
+            f.write("".join(json.dumps(r) + "\n" for r in rows))
+        self.seed_inbox([{"type": "button", "parent_ts": "1.1", "decision_id": "D-0001", "kind": "decide", "action": "pick", "pick": 1, "source": "slack"}])
+        d = doc_decide.Decider(self.store)
+        self.assertEqual(d.view("D-0001")["answered"], "")
+        card = self.store.find_card("D-0001")
+        self.assertEqual(self.store.claim(self.ans(ts=card["ts"], source=self.st.DOCSITE)).status, "claimed")
+        self.assertEqual(json.loads(self.lines("slack-inbox.jsonl")[-1])["parent_ts"], "2.2")
+
+    def test_claim_writes_pending_and_result_closes_it(self):
+        self.store.claim(self.ans(), now=100)
+        self.assertEqual([r["state"] for r in self.store.deliveries("D-0001", "1.1")], ["pending"])
+        self.store.record_delivery("D-0001", "1.1", "hub", True)
+        self.assertEqual(self.store.deliveries("D-0001", "1.1")[-1]["state"], "hub")
+
+    def test_late_click_on_answer_without_delivery_redelivers_once(self):
+        self.store.claim(self.ans(label="2. B 안"), now=100)
+        c = self.store.claim(self.ans(ts="1.1"), now=100 + 10)  # 전달 중일 수 있음 → 재전달 안 함
+        self.assertEqual(c.status, "late")
+        c = self.store.claim(self.ans(ts="1.1"), now=100 + self.st.PENDING_TTL_S + 1)
+        self.assertTrue(c.redeliver)
+        self.assertEqual(c.replay(), ({"action": "pick", "pick": 2}, "2. B 안"))
+        self.assertTrue(self.store.claim(self.ans(ts="1.1"), now=100 + 2 * self.st.PENDING_TTL_S + 5).late)
+        self.assertEqual(len(self.lines("slack-inbox.jsonl")), 1)
+
+    def test_late_click_with_delivery_record_stays_late(self):
+        for state in ("hub", "proxy", "unknown", "lost"):
+            did = "D-" + state
+            self.store.claim(self.ans(did, "9.9"), now=100)
+            self.store.record_delivery(did, "9.9", state, state != "lost")
+            self.assertTrue(self.store.claim(self.ans(did, "9.9"), now=100 + 999).late, state)
+
+    def test_old_answer_without_delivery_lines_is_not_resent(self):
+        self.seed_inbox([{"type": "button", "parent_ts": "1.1", "decision_id": "D-0001", "kind": "decide", "action": "pick", "pick": 1, "source": "slack"}])
+        self.assertTrue(self.store.claim(self.ans(), now=10**9).late)
+
     def test_two_processes_only_one_wins_each_decision(self):
         """프로세스 2개(Slack·문서 사이트)가 같은 결정 40건에 동시에 claim → 결정마다 정확히 1번만 claimed"""
         go = os.path.join(self.hub, "go")

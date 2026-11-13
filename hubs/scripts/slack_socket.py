@@ -144,6 +144,7 @@ def warn_slack(thread: str, text: str) -> None:
 
 class Decide:
     """결정 카드 버튼·직접 입력 처리. 수신 값은 데이터로만 씀(실행 안 함)"""
+    workers: list = []  # 전달 작업 스레드(시험이 끝을 기다리는 용도)
 
     def __init__(self, web, me: str) -> None:
         self.web, self.me = web, me
@@ -193,11 +194,19 @@ class Decide:
         at = time.strftime("%m-%d %H:%M")
         title = card_title(msg)
         claim = STORE.claim(answer_store.Answer(did, ts, ch, title, label, answer_store.SLACK, extra))
-        line = f"ℹ️ {claim.late_text()} — 이번 선택은 반영하지 않음 ({at})" if claim.late else f"✅ {label} 선택됨 ({at})"
+        if claim.redeliver:  # 먼저 온 답이 전달 전에 끊긴 경우: 그 답 원문을 1회 다시 전달. 이번 클릭 자체는 반영하지 않음
+            line = f"ℹ️ 이전 답의 전달 기록이 없어 다시 전달함 — 이번 선택은 반영하지 않음 ({at})"
+        else:
+            line = f"ℹ️ {claim.late_text()} — 이번 선택은 반영하지 않음 ({at})" if claim.late else f"✅ {label} 선택됨 ({at})"
         try:
             self.web.chat_update(channel=ch, ts=ts, text=title or did, attachments=answered(msg, line))
         except Exception as err:
             log(f"카드 갱신 실패 {type(err).__name__} — 버튼은 남음")
+        if claim.redeliver:
+            extra0, label0 = claim.replay()
+            log(f"결정 {did} 전달 기록 없는 이전 답 — 원문 다시 전달")
+            self.start(self.send_out, did, ts, title, label0, extra0, claim.by)
+            return
         if claim.late:
             log(f"결정 {did} 버튼 답 무시 — {claim.late_text()}")
             return
@@ -216,9 +225,21 @@ class Decide:
         """감시기가 건 카드(entry 있음)는 후속 동작만 실행하고 메인에는 전달하지 않음(메인이 같은 일을 또 하지 않게).
         일반 카드는 결정을 올린 허브에 직접 전달하고 메인에는 참고 한 줄(허브 기록이 없으면 메인으로 — answer_route)"""
         if entry is not None:
+            STORE.record_delivery(did, ts, "action", True)
             threading.Thread(target=self.run_action, args=(entry, did, ts, extra.get("pick")), daemon=True).start()
             return
-        out = self.router.route(did, ts, answer_store.SLACK, answer_route.said_text(did, extra, label))
+        self.start(self.send_out, did, ts, title, label, extra)
+
+    @staticmethod
+    def start(fn, *args) -> None:
+        """허브 전송은 오래 걸릴 수 있어 버튼 처리 스레드 밖에서 실행(다른 버튼 처리를 막지 않음)"""
+        t = threading.Thread(target=fn, args=args, daemon=True)
+        t.start()
+        Decide.workers.append(t)
+        del Decide.workers[:-64]
+
+    def send_out(self, did: str, ts: str, title: str, label: str, extra: dict, source: str = answer_store.SLACK) -> None:
+        out = self.router.route(did, ts, source, answer_route.said_text(did, extra, label))
         if not out.ok:
             where = "메인 터미널" if out.via == "main" else f"{out.hub} 허브·메인 터미널"
             warn_slack(ts, f"{'메인' if out.via == 'main' else '허브'} 전달 실패: {title or did} = {label}\n\n• 무엇: 버튼 답은 기록했지만 {where}로 못 보냄 ({out.note})\n• 결과: 메인에 직접 알려 주세요")

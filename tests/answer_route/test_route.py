@@ -84,6 +84,23 @@ class UnitRoute(Base):
         self.assertEqual(len(self.main_calls), 1)
         self.assertTrue(self.main_calls[0].startswith("[문서 사이트→메인 참고] alpha 허브에 직접 전달함"))
 
+    def test_same_decision_reported_by_two_hubs_goes_to_main(self):
+        self.jsonl("hub-reports.jsonl", [{"decision_id": "D-0001", "hub": "alpha"}, {"decision_id": "D-0001", "hub": "beta"}])
+        out = self.router("sent").route("D-0001", "1.1", "slack", BODY)
+        self.assertEqual((out.via, self.hub_calls), ("main", []))
+
+    def test_same_hub_reporting_twice_is_not_ambiguous(self):
+        self.jsonl("hub-reports.jsonl", [{"decision_id": "D-0001", "hub": "alpha"}, {"decision_id": "D-0001", "hub": "alpha"}])
+        self.assertEqual(self.router("sent").route("D-0001", "1.1", "slack", BODY).via, "hub")
+
+    def test_outcome_is_recorded_for_late_click_judgement(self):
+        self.map_decision()
+        self.router("sent").route("D-0001", "1.1", "slack", BODY)
+        self.assertEqual(self.store.deliveries("D-0001", "1.1")[-1]["state"], "hub")
+        self.router("failed", ("no_terminal",), main_ok=False).route("D-0001", "2.2", "slack", BODY)
+        last = self.store.deliveries("D-0001", "2.2")[-1]
+        self.assertEqual((last["state"], last["ok"]), ("lost", False))
+
     def test_hub_from_sent_card_tag_when_no_report(self):
         self.jsonl("slack-sent.jsonl", [{"ts": "1.1", "form_kind": "decide", "decision_id": "D-0001", "tag": "beta", "options": {"1": "가"}},
                                         {"ts": "2.2", "form_kind": "decide", "decision_id": "D-0002", "tag": "ci-watch", "options": {"1": "가"}}])

@@ -245,6 +245,15 @@ start s21 "{\"events\":[$(act 0.4 i1 $ME pick_2 'D-T1|2' '2. B 안')]}" LRM_ORCA
 waitfor s21 out '메인 전달 실패' 4 && waitfor s21 notify.calls 'thread 1794383274.541929 메인 전달 실패' 4 && grep -q -- '--kind warn' "$SB/s21/notify.calls" && ok "메인 전달 실패 → 카드 스레드에 warn" || ko "전달 실패 경고" "$(cat "$SB/s21/notify.calls" 2>/dev/null)"
 stop s21
 
+# 먼저 온 답이 전달 전에 끊겼으면(전달 기록은 오래된 pending 뿐) 늦은 클릭이 그 답 원문을 1회 다시 전달함. 전달은 버튼 처리 스레드 밖
+mkdir -p "$SB/s26/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/s26/hub/main.env"
+printf '%s\n' '{"type":"button","parent_ts":"1794383274.541929","decision_id":"D-T1","kind":"decide","option_text":"2. B 안","action":"pick","pick":2,"source":"slack"}' > "$SB/s26/hub/slack-inbox.jsonl"
+printf '%s\n' '{"decision_id":"D-T1","parent_ts":"1794383274.541929","state":"pending","ok":null,"at":1}' > "$SB/s26/hub/answer-delivery.jsonl"
+start s26 "{\"events\":[$(act 0.4 i1 $ME pick_1 'D-T1|1' '1. A 안'),$(act 0.8 i2 $ME pick_1 'D-T1|1' '1. A 안')]}" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s26/orca.calls"
+waitfor s26 out '원문 다시 전달' 4 && waitfor s26 out '결정 D-T1 버튼 답 기록 · 메인 전달 성공' 4 && sleep 0.5
+[ "$(grep -c 'D-T1 = 선택 2(B 안)' "$SB/s26/orca.calls")" = 1 ] && ! grep -q 'D-T1 = 선택 1' "$SB/s26/orca.calls" && grep -q '이전 답의 전달 기록이 없어 다시 전달함' "$SB/s26/calls" && ok "전달 기록 없는 이전 답 → 늦은 클릭이 원문을 1회만 다시 전달·안내" || ko "재전달" "$(cut -c1-160 "$SB/s26/orca.calls" 2>/dev/null)"
+stop s26
+
 # ---- 9. 토큰·ID 는 어떤 출력에도 없음 ----------------------------------------------------------
 leaks=$(cat "$SB"/*/out | grep -Ec "$APPTOK|$BOTTOK|$ME|$LEAK|Uother9|Bbot1" || true)
 [ "$leaks" = 0 ] && ok "모든 시나리오 로그·표준출력에 토큰·사용자 ID·예외 본문 0건" || ko "유출" "${leaks}줄"

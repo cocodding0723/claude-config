@@ -110,10 +110,19 @@ class Decider:
         extra = {"action": "pick", "pick": pick}
         claim = self.store.claim(answer_store.Answer(did, card["ts"], str(card.get("channel") or ""), str(card.get("title") or ""), label,
                                                      answer_store.DOCSITE, extra))
+        if claim.redeliver:  # 먼저 온 답이 전달 전에 끊김: 그 답 원문을 1회 다시 전달
+            extra0, label0 = claim.replay()
+            out = self.router.route(did, card["ts"], claim.by, answer_route.said_text(did, extra0, label0))
+            self.audit(did, pick, f"redeliver:{out.via}:{'ok' if out.ok else 'fail'}")
+            if not out.ok:
+                raise DecideError(502, f"이전 답을 다시 전달하지 못함 — {out.note}. 허브·메인에 직접 알려 주세요")
+            return {"ok": True, "phase": "commit", "via": out.via, "hub": out.hub, "note": "이전 답의 전달 기록이 없어 다시 전달함(이번 선택은 반영하지 않음)"}
         if claim.late:
             self.audit(did, pick, f"late:{claim.by}")
             raise DecideError(409, claim.late_text())
         status, entry = claim.taken
+        if entry is not None:
+            self.store.record_delivery(did, card["ts"], "action", True)
         if status == "busy" or entry is not None:  # 등록이 생긴 경우(확인 뒤 등록): 후속 동작은 Slack 수신기와 같은 방식으로 실행
             threading.Thread(target=self.run_entry, args=(did, pick, entry, card["ts"], label), daemon=True).start()
             self.audit(did, pick, "claimed:card_action")
@@ -159,6 +168,7 @@ class Decider:
         try:
             entry = entry if entry is not None else actions.take(did)
             if entry is not None:
+                self.store.record_delivery(did, ts, "action", True)
                 actions.execute(entry, pick)
             else:
                 self.router.route(did, ts, answer_store.DOCSITE, answer_route.said_text(did, {"action": "pick", "pick": pick}, label))
