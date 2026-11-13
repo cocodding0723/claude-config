@@ -92,6 +92,7 @@ hubs/scripts/slack_list_create.py	.config/lrm-hubs/slack_list_create.py	link
 hubs/scripts/slack_poll.sh	.config/lrm-hubs/slack_poll.sh	link
 hubs/scripts/slack_push.sh	.config/lrm-hubs/slack_push.sh	link
 hubs/scripts/slack_push.py	.config/lrm-hubs/slack_push.py	link
+hubs/scripts/lib/py.sh	.config/lrm-hubs/lib/py.sh	link
 hubs/scripts/panel_collect.sh	.config/lrm-hubs/panel_collect.sh	link
 hubs/scripts/panel_collect.py	.config/lrm-hubs/panel_collect.py	link
 hubs/scripts/progress_collect.py	.config/lrm-hubs/progress_collect.py	link

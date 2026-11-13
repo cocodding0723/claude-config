@@ -2,7 +2,8 @@
 # 스크럼 초안 실행 래퍼. launchd(ai.lrm.scrum) 진입점. 잠자기 방지(caffeinate -i) 아래에서 scrum_post.py 실행.
 # 설명·등록·끄기는 ~/.config/lrm-hubs/docs/scrum-auto.md(원본 hubs/docs/scrum-auto.md).
 set -uo pipefail
-# launchd 의 짧은 PATH 에서도 claude·gh·python3 를 찾도록 뒤에 덧붙임(앞의 PATH 가 우선: 시험의 가짜 명령)
+. "$(dirname "$0")/lib/py.sh"  # PY = 3.10 이상 python3 (launchd 짧은 PATH 의 3.9 방지)
+# launchd 의 짧은 PATH 에서도 claude·gh 를 찾도록 뒤에 덧붙임(앞의 PATH 가 우선: 시험의 가짜 명령)
 export PATH="$PATH:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/Library/Frameworks/Python.framework/Versions/3.13/bin:/usr/bin:/bin"
 # claude 는 USER 로 키체인 로그인 항목을 찾음. env -i 나 짧은 환경에서 비면 인증이 풀려 '조직이 구독 접근을 막음' 오류가 나므로 채움
 export USER="${USER:-$(id -un)}" LOGNAME="${LOGNAME:-$(id -un)}"
@@ -19,15 +20,14 @@ case "${1:-}" in
 초안에는 허브별 진행 상세와 맨 앞 팀 공유 사항 칸이 들어감. 이미지·영상 첨부(스레드, 최대 5개)는 기본 끔: LRM_SCRUM_MEDIA=on 또는 scrum.env 의 SCRUM_MEDIA=on.
 환경: LRM_SCRUM_MODELS(쉼표, 기본 claude-fable-5-1,claude-fable-5-2,claude-opus-5-5) · LRM_SCRUM_DRAFT_DIR · LRM_SCRUM_LOG · LRM_HUB_DIR
       LRM_SCRUM_SHARE_FILE(팀 공유 사항, 기본 ~/.config/lrm-hubs/scrum-share.md. 예시 hubs/scrum-share.example.md) · LRM_SCRUM_MEDIA_DIR(첨부 후보 폴더, 기본 ~/Documents/90_정리기록)
-종료 코드: 0 발송·건너뜀·dry-run 성공, 1 초안 작성 또는 발송 실패, 2 인자 오류, 3 환경 오류(python3 없음)
+종료 코드: 0 발송·건너뜀·dry-run 성공, 1 초안 작성 또는 발송 실패, 2 인자 오류, 3 환경 오류(python 3.10 이상 없음)
 예:
   scrum_run.sh --dry-run --date 2026-11-12
 USAGE
     exit 0 ;;
 esac
-command -v python3 >/dev/null 2>&1 || { echo "python3 없음 — PATH($PATH) 에 python3 위치 추가" >&2; exit 3; }
 cd "$(dirname "$0")" || exit 3
 if command -v caffeinate >/dev/null 2>&1; then
-  exec caffeinate -i python3 "$(pwd -P)/scrum_post.py" "$@"
+  exec caffeinate -i "$PY" "$(pwd -P)/scrum_post.py" "$@"
 fi
-exec python3 "$(pwd -P)/scrum_post.py" "$@"
+exec "$PY" "$(pwd -P)/scrum_post.py" "$@"

@@ -1,6 +1,7 @@
 #!/bin/bash
 # Slack 사용자 메시지를 모아 메인 세션 터미널에 한 번에 전달(push). 본체는 같은 폴더의 slack_push.py.
 set -eu
+. "$(dirname "$0")/lib/py.sh"  # PY = 3.10 이상 python3 (launchd 짧은 PATH 의 3.9 방지)
 usage() {
   cat <<'EOF'
 사용: slack_push.sh --kick | --run
@@ -68,4 +69,4 @@ unset SLACK_BOT_TOKEN SLACK_APP_TOKEN SLACK_USER_ID
 export PATH="$PATH:/Applications/Orca.app/Contents/Resources/bin:/opt/homebrew/bin:/usr/local/bin"
 HERE=$(cd "$(dirname "$0")" && pwd)
 [ -f "$HERE/slack_push.py" ] || { echo "slack_push.py 없음 — 같은 폴더에 링크 필요(links.tsv)" >&2; exit 2; }
-exec python3 -I "$HERE/slack_push.py" "$1"
+exec "$PY" -I "$HERE/slack_push.py" "$1"

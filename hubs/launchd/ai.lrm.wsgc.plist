@@ -13,6 +13,9 @@
   </array>
   <!-- 30분마다. 잠자던 Mac 은 깨어난 뒤 한 번 실행됨 -->
   <key>StartInterval</key><integer>1800</integer>
+  <!-- 셸 진입점이 쓸 python3: install.sh 가 3.10 이상으로 검증한 경로(lib/py.sh 가 읽음) -->
+  <key>EnvironmentVariables</key>
+  <dict><key>LRM_PYTHON3</key><string>__PYTHON3__</string></dict>
   <key>ProcessType</key><string>Background</string>
   <key>LowPriorityIO</key><true/>
   <key>Nice</key><integer>10</integer>

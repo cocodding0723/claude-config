@@ -8,7 +8,7 @@
   <array>
     <string>/bin/sh</string>
     <string>-c</string>
-    <string>/usr/bin/python3 "$HOME/.config/lrm-hubs/ci_watch.py"; /usr/bin/python3 "$HOME/.config/lrm-hubs/bot_alive.py" --warn-once</string>
+    <string>__PYTHON3__ "$HOME/.config/lrm-hubs/ci_watch.py"; __PYTHON3__ "$HOME/.config/lrm-hubs/bot_alive.py" --warn-once</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>

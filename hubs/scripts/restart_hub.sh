@@ -3,6 +3,7 @@
 # 환경: HUB_ROOT(허브 상위 폴더), ROLE_FILE(역할 파일), COMMON_FILE(공통 규칙 파일, 빈 문자열이면 읽지 않음), READY_TIMEOUT(준비 대기 초, 기본 60)
 # 기본값은 기존 허브용. 새 문서 허브는 HUB_ROOT=claude-config 워크스페이스 폴더, ROLE_FILE=$HUB/hubs/roles/role-doc-kit.txt, COMMON_FILE= 로 호출
 set -eu
+. "$(dirname "$0")/lib/py.sh"  # PY = 3.10 이상 python3 (launchd 짧은 PATH 의 3.9 방지)
 
 SRC="${BASH_SOURCE[0]}"
 while [ -L "$SRC" ]; do T=$(readlink "$SRC"); case "$T" in /*) SRC="$T" ;; *) SRC="$(dirname "$SRC")/$T" ;; esac; done
@@ -40,13 +41,13 @@ P="너는 이 허브의 코디네이터다(재시작). 순서: $ORDER 를 읽고
 if [ "$DRY" = 1 ]; then
   echo "새 세션: orca agent launch --agent claude --worktree path:$HUB --model claude-sonnet-5-5 --effort medium --surface terminal"
   echo "준비 확인 뒤 정리 대상(옛 터미널 $OLD 포함, 워커 제외):"
-  python3 "$DUPS" list --path "$HUB" || true
+  "$PY" "$DUPS" list --path "$HUB" || true
   exit 0
 fi
 
 # 옛 세션은 새 세션이 준비된 뒤에 닫음. 기동·준비가 실패하면 그대로 남김
 NEW=$(orca agent launch --agent claude --worktree "path:$HUB" --model claude-sonnet-5-5 --effort medium --surface terminal --prompt "$P" --json | jq -r 'first(.. | objects | .handle? // empty | select(startswith("term_")))')
 [ -n "$NEW" ] || { echo "ERROR: 새 세션 핸들을 얻지 못함 — 옛 세션 유지. orca agent launch 출력 확인" >&2; exit 1; }
-python3 "$DUPS" ready --handle "$NEW" --timeout "${READY_TIMEOUT:-60}" || { echo "ERROR: 새 세션 $NEW 첫 출력 확인 실패 — 옛 세션 유지. 새 세션 상태를 확인하고 필요하면 직접 닫기" >&2; exit 1; }
-python3 "$DUPS" clean --path "$HUB" --keep "$NEW" --also "$OLD" >&2 || { echo "ERROR: 옛 세션 정리 일부 실패 — 위 출력 확인. 새 세션은 $NEW" >&2; echo "$NEW"; exit 1; }
+"$PY" "$DUPS" ready --handle "$NEW" --timeout "${READY_TIMEOUT:-60}" || { echo "ERROR: 새 세션 $NEW 첫 출력 확인 실패 — 옛 세션 유지. 새 세션 상태를 확인하고 필요하면 직접 닫기" >&2; exit 1; }
+"$PY" "$DUPS" clean --path "$HUB" --keep "$NEW" --also "$OLD" >&2 || { echo "ERROR: 옛 세션 정리 일부 실패 — 위 출력 확인. 새 세션은 $NEW" >&2; echo "$NEW"; exit 1; }
 echo "$NEW"

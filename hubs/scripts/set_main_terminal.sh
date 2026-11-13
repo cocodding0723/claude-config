@@ -1,6 +1,7 @@
 #!/bin/bash
 # 메인 세션 터미널 핸들을 main.env 의 MAIN_TERMINAL 줄에 기록(slack_push 전달 대상). 다른 줄은 그대로 두고 값은 출력하지 않음.
 set -eu
+. "$(dirname "$0")/lib/py.sh"  # PY = 3.10 이상 python3 (launchd 짧은 PATH 의 3.9 방지)
 usage() {
   cat <<'EOF'
 사용: set_main_terminal.sh <핸들>
@@ -25,13 +26,13 @@ case "${1:-}" in
   "") echo "핸들 필요 — 사용: set_main_terminal.sh <핸들> (--help 참고)" >&2; exit 2 ;;
 esac
 # 공용 모듈은 링크로 설치돼도 원본 폴더에서 찾음
-SELF=$(python3 -I -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$0")
+SELF=$("$PY" -I -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$0")
 if [ "$1" = "--auto" ]; then
   shift
   case "${1:-}" in "") ;; --dry-run) [ $# -eq 1 ] || { echo "--dry-run 뒤 인자 없음 — --help 참고" >&2; exit 2; } ;; *) echo "알 수 없는 옵션: $1 — --help 참고" >&2; exit 2 ;; esac
-  exec python3 -I "$(dirname "$SELF")/main_terminal.py" "$@"  # 재탐색은 공용 모듈이 맡음
+  exec "$PY" -I "$(dirname "$SELF")/main_terminal.py" "$@"  # 재탐색은 공용 모듈이 맡음
 fi
 [ $# -eq 1 ] || { echo "인자는 핸들 하나만 — --help 참고" >&2; exit 2; }
 [[ $1 =~ ^term_[0-9a-f-]+$ ]] || { echo "핸들 형식 오류: term_ 뒤에 16진·하이픈만 허용 — orca terminal list 의 handle 값을 그대로 넣음" >&2; exit 2; }
 # 기록은 공용 모듈이 맡음: 자동 재탐색과 같은 잠금 아래에서 교체하므로 오래된 탐색 결과가 이 값을 덮지 못함
-exec python3 -I "$(dirname "$SELF")/main_terminal.py" --set "$1"
+exec "$PY" -I "$(dirname "$SELF")/main_terminal.py" --set "$1"

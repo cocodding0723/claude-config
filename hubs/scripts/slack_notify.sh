@@ -4,6 +4,7 @@
 # --kind 를 주면 메시지 양식 A(hubs/docs/slack-format.md)를 검사하고, 종류별 색 띠(attachment)에 본문을 담아 보냄.
 # --kind 없는 기존 호출은 검사·출력·페이로드 모두 불변. 파일 첨부 호출은 Slack API 한계로 색 띠 없음.
 set -eu
+. "$(dirname "$0")/lib/py.sh"  # PY = 3.10 이상 python3 (launchd 짧은 PATH 의 3.9 방지)
 usage() {
   cat <<'EOF'
 사용: slack_notify.sh [--tag 허브] [--title 제목] [--thread TS] [--kind 종류 [--choices N] [--emoji-set 종류]] [--no-check] "메시지" [파일경로]
@@ -116,11 +117,11 @@ HR="${LRM_HUB_REPORT:-$(dirname "$(readlink "$0" || echo "$0")")/hub_report.py}"
 [ -f "$HR" ] || die "경로·첨부 검사 도구 없음: hub_report.py — 알림 스크립트와 같은 폴더에 설치 필요"
 ATT=(); [ $# -lt 2 ] || ATT=(--attached "$2")
 for a in ${ATTACHED[@]+"${ATTACHED[@]}"}; do ATT+=(--attached "$a"); done
-if ! CHK="$(printf '%s' "$1" | python3 -I "$HR" check-text ${ATT[@]+"${ATT[@]}"} 2>&1)"; then die "${CHK#오류: }"; fi
+if ! CHK="$(printf '%s' "$1" | "$PY" -I "$HR" check-text ${ATT[@]+"${ATT[@]}"} 2>&1)"; then die "${CHK#오류: }"; fi
 # 결정 카드 필수 항목(배경·용어·선택지 결과). 경로 검사처럼 우회 불가. 규칙은 decide_card.py 한 곳
 if [ "$KIND" = decide ]; then
   DC=(); [ "$OPT_SET" = 0 ] || DC=(--options "$OPTIONS"); [ "$DID_SET" = 0 ] || DC+=(--decision-id "$DECISION_ID")  # 번호 재사용(다른 질문)도 같은 검사에서 거부
-  if ! CHK="$(printf '%s' "$1" | python3 -I "$HR" check-decide ${DC[@]+"${DC[@]}"} 2>&1)"; then die "${CHK#오류: }"; fi
+  if ! CHK="$(printf '%s' "$1" | "$PY" -I "$HR" check-decide ${DC[@]+"${DC[@]}"} 2>&1)"; then die "${CHK#오류: }"; fi
   [ -z "$CHK" ] || echo "$CHK" >&2
 fi
 LRM_SCRIPT_DIR="$(dirname "$HR")"; export LRM_SCRIPT_DIR  # FORM_PY 가 decide_card 를 찾는 곳
@@ -138,7 +139,7 @@ FMTLOG="$DIR/slack-format.log"
 if [ -n "$TO_USER" ]; then
   printf '%s' "$TO_USER" | grep -Eq '^[UW][A-Z0-9]{6,20}$' || die "--to-user 형식 오류 — Slack ID(U·W 로 시작, 영문 대문자·숫자)"
   [ "$OPT_SET$TID_SET$CHOICES_SET" = 000 ] && [ -z "$THREAD$LINK_TO$QUOTE" ] && [ "$ALIVE" != 1 ] || die "--to-user 는 카드·스레드·링크·--alive 옵션과 함께 못 씀 — 일반 글·파일 전송에만 사용"
-  python3 -I -c 'import sys,json
+  "$PY" -I -c 'import sys,json
 try: ids={r.get("slack_id") for r in json.load(open(sys.argv[1],encoding="utf-8")).get("recipients",[])}
 except (OSError,ValueError,AttributeError): sys.exit(1)
 sys.exit(0 if sys.argv[2] in ids else 1)' "$RECIPIENTS" "$TO_USER" || die "--to-user 미등록 — $RECIPIENTS 의 recipients 에 있는 ID 만 허용(파일 없음 포함)"
@@ -147,10 +148,10 @@ export LRM_TO_USER="$TO_USER"
 API="${SLACK_API_BASE:-https://slack.com/api}"  # SLACK_API_BASE: 시험용 주소 재정의
 MSG="$1"
 # 결정 카드 본문은 전송기와 같은 줄 양식(제목 + '- ' 배경). 직접 호출도 같은 모양으로 나가게 함
-if [ "$OPT_SET" = 1 ]; then MSG="$(printf '%s' "$MSG" | python3 -I "$HR" bullet-body)" || die "카드 본문 정리 실패(전송 안 함) — hub_report.py 확인"; fi
+if [ "$OPT_SET" = 1 ]; then MSG="$(printf '%s' "$MSG" | "$PY" -I "$HR" bullet-body)" || die "카드 본문 정리 실패(전송 안 함) — hub_report.py 확인"; fi
 # 생존 줄은 주제 아래에 둠(첫 줄 40자 검사·알림 미리보기는 주제 그대로). 조회 실패는 전송에 영향 없음
 if [ "$ALIVE" = 1 ]; then
-  ALIVE_LINE="$(python3 "${LRM_BOT_ALIVE:-$(dirname "$(readlink "$0" || echo "$0")")/bot_alive.py}" 2>/dev/null || true)"
+  ALIVE_LINE="$("$PY" "${LRM_BOT_ALIVE:-$(dirname "$(readlink "$0" || echo "$0")")/bot_alive.py}" 2>/dev/null || true)"
   if [ -n "$ALIVE_LINE" ]; then
     case "$MSG" in
       *$'\n'*) MSG="${MSG%%$'\n'*}"$'\n'"$ALIVE_LINE"$'\n'"${MSG#*$'\n'}" ;;
@@ -492,14 +493,14 @@ elif sys.argv[1] in ("opts", "card"):
 else:
     sys.stdout.buffer.write(attach_guide(data, sys.argv[2]).encode("utf-8"))
 PYEOF
-check_form() { printf '%s' "$1" | python3 -c "$FORM_PY" check "$2" "$3"; }
-attach_guide() { printf '%s' "$1" | python3 -c "$FORM_PY" attach "$2"; }
+check_form() { printf '%s' "$1" | "$PY" -c "$FORM_PY" check "$2" "$3"; }
+attach_guide() { printf '%s' "$1" | "$PY" -c "$FORM_PY" attach "$2"; }
 setv() { if [ "$1" = 1 ]; then printf '=%s' "$2"; fi; }  # opts 인자: 준 값은 '=값', 안 준 값은 ''
 
 # 번호 카드·할 일 번호 검증. 틀리거나 검사가 실패하면 모드·우회와 무관하게 미전송(카드 줄 없이 보내면 답을 해석할 수 없음)
 CARD_JSON=""
 if [ "$OPT_SET" = 1 ] || [ "$TID_SET" = 1 ]; then
-  CARD_JSON="$(printf '%s' "$OPTIONS" | python3 -c "$FORM_PY" opts "$(setv "$REC_SET" "$RECOMMEND")" "$(setv "$REV_SET" "$REVERSIBLE")" \
+  CARD_JSON="$(printf '%s' "$OPTIONS" | "$PY" -c "$FORM_PY" opts "$(setv "$REC_SET" "$RECOMMEND")" "$(setv "$REV_SET" "$REVERSIBLE")" \
     "$(setv "$DID_SET" "$DECISION_ID")" "$(setv "$SEQ_SET" "$SEQ")" "$(setv "$TID_SET" "$TODO_ID")")" \
     || { rc=$?; [ "$rc" = 2 ] || echo "카드 인자 검사 실패(전송 안 함) — python3 동작 확인 뒤 다시 보내세요" >&2; exit 2; }
 fi
@@ -508,7 +509,7 @@ if [ "$KIND" = decide ] && [ "$OPT_SET" = 0 ] && [ "${LRM_BTN_WARN:-on}" != off 
   echo "경고: 선택지 버튼 없음(전송함) — --options '1=문구,2=문구' --recommend N --decision-id D-xxxx 로 보내야 버튼이 붙음(지금은 이모지 반응·스레드 글로만 답 가능)" >&2
 fi
 # 같은 결정 번호 재사용은 경고만(재전송일 수 있음). 검사 실패·기록 없음은 전송에 영향 없음
-if [ "$OPT_SET" = 1 ]; then python3 -c "$FORM_PY" dup "$SENT" "$DECISION_ID" < /dev/null || true; fi
+if [ "$OPT_SET" = 1 ]; then "$PY" -c "$FORM_PY" dup "$SENT" "$DECISION_ID" < /dev/null || true; fi
 GUIDED=0  # 답 줄을 도구가 붙이면 no-answer 검사 생략
 if [ "$CHOICES_SET" = 1 ] || [ -n "$CARD_JSON" ]; then GUIDED=1; fi
 
@@ -583,24 +584,24 @@ if [ "$CHOICES_SET" = 1 ]; then
 fi
 # 번호 카드·할 일 줄도 검사 뒤에 부착(선택지 문구의 '결정'을 결정 개수로 세지 않음). 실패하면 미전송
 if [ -n "$CARD_JSON" ]; then
-  CARDED="$(printf '%s' "$MSG" | python3 -c "$FORM_PY" card "$CARD_JSON")" \
+  CARDED="$(printf '%s' "$MSG" | "$PY" -c "$FORM_PY" card "$CARD_JSON")" \
     || { rc=$?; [ "$rc" = 2 ] || echo "카드 줄 부착 실패(전송 안 함) — python3 동작 확인 뒤 다시 보내세요" >&2; exit 2; }
   MSG="$CARDED"
 fi
 
 [ -n "$TITLE" ] || TITLE="${MSG%%$'\n'*}"
-CH=$(curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -d "users=${TO_USER:-$SLACK_USER_ID}" $API/conversations.open | python3 -c 'import sys,json;print(json.load(sys.stdin)["channel"]["id"])')
+CH=$(curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -d "users=${TO_USER:-$SLACK_USER_ID}" $API/conversations.open | "$PY" -c 'import sys,json;print(json.load(sys.stdin)["channel"]["id"])')
 # 다른 메시지로 가는 링크(--link-to)·원본 인용(--quote). 링크는 chat.getPermalink 정식 주소만 씀(손수 만든 주소 금지). 조회 실패는 링크만 생략(전송은 계속)
 UNFURL=""
 permalink_of() {
   curl -s -G -H "Authorization: Bearer $SLACK_BOT_TOKEN" --data-urlencode "channel=$CH" --data-urlencode "message_ts=$1" $API/chat.getPermalink \
-    | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d["permalink"] if d.get("ok") else "")' 2>/dev/null || true
+    | "$PY" -c 'import sys,json;d=json.load(sys.stdin);print(d["permalink"] if d.get("ok") else "")' 2>/dev/null || true
 }
 # 원본 첫 줄(최상위 메시지만 조회됨). 조회 실패·비밀·로컬 경로가 있으면 빈 값
 quote_of() {
   curl -s -G -H "Authorization: Bearer $SLACK_BOT_TOKEN" --data-urlencode "channel=$CH" --data-urlencode "latest=$1" --data-urlencode "oldest=$1" \
     --data-urlencode "inclusive=true" --data-urlencode "limit=1" $API/conversations.history \
-    | python3 -I -c '
+    | "$PY" -I -c '
 import sys, json
 sys.path.insert(0, sys.argv[1])
 import hub_report as h
@@ -616,7 +617,7 @@ print(t, end="")' "$(dirname "$HR")" 2>/dev/null || true
 }
 # 본문 끝(마지막 '참고:' 줄 앞, 없으면 끝)에 한 줄을 끼움
 add_ref_line() {
-  MSG="$(printf '%s' "$MSG" | python3 -c '
+  MSG="$(printf '%s' "$MSG" | "$PY" -c '
 import sys
 lines = sys.stdin.read().split("\n")
 idx = max((i for i, l in enumerate(lines) if l.lstrip().startswith("참고:")), default=len(lines))
@@ -647,7 +648,7 @@ case "$MSG" in *.slack.com/archives/*) UNFURL=1 ;; esac
 # form_kind(--kind 지정 시), unchecked(--no-check 시), 카드 필드(decision_id·options·recommended·reversible·seq 또는 todo_id)는
 # 해당할 때만 기록해 기존 레코드 모양을 유지함. 카드 필드가 없는 기록은 폴러가 옵션 없는 옛 카드로 읽음
 record() {
-  python3 -c '
+  "$PY" -c '
 import sys,json,time,os
 d=json.load(sys.stdin); sent,ch,title,tag,thread,kind,fkind,unchecked,card=sys.argv[1:10]
 if not d.get("ok"):
@@ -667,7 +668,7 @@ print("ok file_id=" + rec["file_id"] if kind=="file" else "ok " + rec["ts"])
 
 # 텍스트 게시. 번호 카드면 색 띠 안에 버튼 블록이 들어감
 post_text() {
-  PAYLOAD="$(printf '%s' "$MSG" | python3 -c "$FORM_PY" payload "$KIND" "$CH" "$THREAD" "$CARD_JSON" "$UNFURL")" \
+  PAYLOAD="$(printf '%s' "$MSG" | "$PY" -c "$FORM_PY" payload "$KIND" "$CH" "$THREAD" "$CARD_JSON" "$UNFURL")" \
     || die "페이로드 생성 실패(전송 안 함) — python3 동작 확인 뒤 다시 보내세요"
   curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H 'Content-Type: application/json' \
     -d "$PAYLOAD" $API/chat.postMessage | record text
@@ -677,10 +678,10 @@ upload_file() {
   local F="$1" BODY="$2" TH="$3" REC="$4" R U ID N L
   export LRM_FILE_PATH="$F"; N=$(basename "$F"); L=$(stat -f %z "$F")
   R=$(curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" --data-urlencode "filename=$N" -d "length=$L" $API/files.getUploadURLExternal)
-  U=$(echo "$R" | python3 -c 'import sys,json;print(json.load(sys.stdin)["upload_url"])'); ID=$(echo "$R" | python3 -c 'import sys,json;print(json.load(sys.stdin)["file_id"])')
+  U=$(echo "$R" | "$PY" -c 'import sys,json;print(json.load(sys.stdin)["upload_url"])'); ID=$(echo "$R" | "$PY" -c 'import sys,json;print(json.load(sys.stdin)["file_id"])')
   curl -s -o /dev/null -F "file=@$F" "$U"
   curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H 'Content-Type: application/json' \
-    -d "$(python3 -c '
+    -d "$("$PY" -c '
 import json,sys
 b={"files":[{"id":sys.argv[1],"title":sys.argv[2]}],"channel_id":sys.argv[3],"initial_comment":sys.argv[4]}
 if sys.argv[5]: b["thread_ts"]=sys.argv[5]

@@ -7,6 +7,7 @@
 #           LRM_PENDING_BUDGET 재시도 시간 예산 초(기본 120)
 # 한계: 수정 전 원문은 conversations.history 로 얻으며 text 가 없는 메시지(파일 첨부 등)는 null 로 기록
 set -eu
+. "$(dirname "$0")/lib/py.sh"  # PY = 3.10 이상 python3 (launchd 짧은 PATH 의 3.9 방지)
 export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/cert.pem}"
 DIR="${LRM_HUB_DIR:-$HOME/.config/lrm-hubs}"
 set -a; . "$DIR/slack-bot.env"; set +a
@@ -16,7 +17,7 @@ LOCK="$DIR/.slack-pending.lock"
 # 잠금으로 건너뛰면 exit 75. 호출한 쪽(slack_cmd.sh)이 "처리 중" 안내와 실패를 구분하게 함
 mkdir "$LOCK" 2>/dev/null || { echo "이미 실행 중 — 건너뜀"; exit 75; }
 trap 'rmdir "$LOCK"' EXIT
-LRM_PY_DIR="$(cd "$(dirname "$0")" && pwd)" python3 -I - "$DIR" "$@" <<'PY'
+LRM_PY_DIR="$(cd "$(dirname "$0")" && pwd)" "$PY" -I - "$DIR" "$@" <<'PY'
 import json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 sys.path.insert(0, os.environ["LRM_PY_DIR"])  # -I 는 같은 폴더를 import 경로에 넣지 않음
 import tls_ctx

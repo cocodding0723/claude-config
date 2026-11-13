@@ -14,6 +14,12 @@ PR 조회가 실패하면 'PR 조회 실패' 한 줄만 남기고 계속함. 수
       SLACK_API_BASE API 주소(기본 https://slack.com/api) · LRM_DIGEST_LOCAL_ONLY=1 이면 로컬 주소 외에는 요청 전에 실패(시험용)
 종료 코드: 0 성공(변화 없음·PR 조회 실패 포함), 1 목록 갱신 또는 DM 실패(재시도 대상), 2 설정·입력 오류
 """
+import sys
+
+if sys.version_info < (3, 10):  # 하위 모듈이 3.10 문법(X | None)을 씀. launchd 가 시스템 python(3.9)을 잡으면 TypeError 로 조용히 실패하므로 원인·조치를 냄
+    print(f"ERROR: Python 3.10 이상 필요(현재 {sys.version_info.major}.{sys.version_info.minor}). plist 의 LRM_PYTHON3·python 경로를 3.10 이상 절대 경로로 바꾸고 install.sh 를 다시 실행", file=sys.stderr)
+    sys.exit(2)
+
 import argparse
 import hashlib
 import ipaddress
@@ -21,7 +27,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import time
 import tempfile
 import urllib.error

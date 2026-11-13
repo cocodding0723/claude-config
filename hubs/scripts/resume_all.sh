@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Orca 재시작 뒤 허브 코디네이터 전체 재기동(--resume). 허브 목록은 hubs.tsv, 이어받기 문구는 hub_status.py prompt 가 만든다.
 set -uo pipefail
+. "$(dirname "$0")/lib/py.sh"  # PY = 3.10 이상 python3 (launchd 짧은 PATH 의 3.9 방지)
 
 # 링크로 설치돼도 실제 위치 기준으로 hubs.tsv·hub_status.py 를 찾음
 SRC="${BASH_SOURCE[0]}"
@@ -59,7 +60,7 @@ for t in ts:
     if not isinstance(t.get("agentIdentity"), (str, type(None))) or not isinstance(t.get("connected", False), bool):
         sys.exit(1)
 '
-if ! orca terminal list --json > "$TERMS" 2>"$TERMS.err" || ! python3 -c "$CHECK_PY" "$TERMS" 2>/dev/null; then
+if ! orca terminal list --json > "$TERMS" 2>"$TERMS.err" || ! "$PY" -c "$CHECK_PY" "$TERMS" 2>/dev/null; then
   printf 'ERROR: orca terminal list 조회 실패(%s) — Orca 실행 상태·응답 형식을 확인하고 재시도\n' "$(head -c 200 "$TERMS.err" 2>/dev/null | tr '\n' ' ')" >&2
   rm -f "$TERMS.err"; exit 1
 fi
@@ -67,11 +68,11 @@ rm -f "$TERMS.err"
 
 # 살아 있는 claude 코디네이터 여부(핸들별 claude 프로세스 존재, 워커 터미널 제외). 판정은 hub_dups.py alive
 # 종료 코드: 0 살아 있음, 1 없음, 2 예상 밖 실패(없음으로 해석하면 중복 기동 위험). 출력: "<살아 있음> <전체> <유지 후보 핸들>"
-alive() { python3 "$DUPS_PY" alive --slug "$1" --terms "$TERMS" 2>/dev/null; }
+alive() { "$PY" "$DUPS_PY" alive --slug "$1" --terms "$TERMS" 2>/dev/null; }
 
 # 명령 한 줄 출력용 셸 인용. printf %q 는 C 로케일에서 한글을 바이트로 깨뜨려 파이썬 사용. 줄바꿈·탭 값은 $'..' 로 한 줄 유지
 quote_cmd() {
-  python3 -c '
+  "$PY" -c '
 import re, shlex, sys
 def q(a):
     if re.fullmatch(r"[\w@%+=:,./-]+", a):
@@ -103,11 +104,11 @@ while IFS=$'\t' read -r SLUG NAME ROLE WSROOT REPO _PARENT; do
   [ "$A" -le 1 ] || { echo "ERROR: $NAME 생존 판정 실패 — orca terminal list 응답을 해석하지 못함. 중복 기동을 막으려 중단, Orca 상태 확인 후 재시도" >&2; exit 1; }
   read -r N_LIVE N_ALL KEEP <<< "$AOUT"
   if [ "${N_ALL:-0}" -gt 1 ]; then
-    echo "경고: $NAME 코디네이터 ${N_ALL}개(살아 있음 ${N_LIVE}) 중복 — 정리 제안: python3 $DUPS_PY clean --slug $SLUG --keep ${KEEP:--} --dry-run (확인 뒤 --dry-run 제거)"
+    echo "경고: $NAME 코디네이터 ${N_ALL}개(살아 있음 ${N_LIVE}) 중복 — 정리 제안: $PY $DUPS_PY clean --slug $SLUG --keep ${KEEP:--} --dry-run (확인 뒤 --dry-run 제거)"
   fi
   if [ "$A" = 0 ]; then echo "== $NAME: 살아 있음, 건너뜀"; continue; fi
   echo "== $NAME"
-  PROMPT=$(python3 "$STATUS_PY" prompt --slug "$SLUG") || PROMPT="상태 파일 확인 실패 — HANDOFF.md 와 run-list 로 이어받기"
+  PROMPT=$("$PY" "$STATUS_PY" prompt --slug "$SLUG") || PROMPT="상태 파일 확인 실패 — HANDOFF.md 와 run-list 로 이어받기"
   CMD=(env)
   W=$(expand "$WSROOT"); [ -n "$W" ] && CMD+=("WS_ROOT=$W")
   R=$(expand "$REPO"); [ -n "$R" ] && CMD+=("REPO=$R")

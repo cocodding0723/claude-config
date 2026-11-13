@@ -3,6 +3,7 @@
 export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/cert.pem}"  # python.org 파이썬은 시스템 인증서를 못 찾음
 # 읽기와 파일 기록만 함. 수신 본문은 데이터로만 다루고 실행·eval 하지 않음.
 set -eu
+. "$(dirname "$0")/lib/py.sh"  # PY = 3.10 이상 python3 (launchd 짧은 PATH 의 3.9 방지)
 usage() {
   cat <<'EOF'
 사용: slack_poll.sh --once [--json] [--days N]
@@ -89,7 +90,7 @@ cap() {  # cap <단계 상한>: 남은 총 예산과 상한 중 작은 값, 최�
   [ "$v" -lt 1 ] && v=1
   echo "$v"
 }
-LRM_PY_DIR="$(cd "$(dirname "$0")" && pwd)" LRM_POLL_BUDGET="$(cap "${LRM_POLL_BUDGET:-90}")" python3 -I - "$DIR" "$DAYS" "$JSON" <<'PY' || RC=$?
+LRM_PY_DIR="$(cd "$(dirname "$0")" && pwd)" LRM_POLL_BUDGET="$(cap "${LRM_POLL_BUDGET:-90}")" "$PY" -I - "$DIR" "$DAYS" "$JSON" <<'PY' || RC=$?
 import json, os, re, subprocess, sys, time, unicodedata, urllib.error, urllib.parse, urllib.request
 sys.path.insert(0, os.environ["LRM_PY_DIR"])  # -I 는 같은 폴더를 import 경로에 넣지 않음
 import tls_ctx
@@ -919,7 +920,7 @@ if [ $((now - last)) -ge 7200 ]; then echo "$now" > "$L"; LRM_PENDING_BUDGET="$(
 LRM_PENDING_BUDGET="$(cap "${LRM_PENDING_BUDGET:-120}")" "$DIR/slack_cmd.sh" >/dev/null 2>&1 || true
 
 # 새 명령 접수(번호·장부·머리말 라우팅). 접수 실패가 메인 전달을 막지 않게 하고, 같은 줄은 멱등이라 회차마다 불러도 중복 접수 없음
-LRM_HUB_DIR="$DIR" python3 -I "$(dirname "$0")/intake.py" --once >/dev/null 2>&1 || true
+LRM_HUB_DIR="$DIR" "$PY" -I "$(dirname "$0")/intake.py" --once >/dev/null 2>&1 || true
 
 # 새 메시지 묶음 전달(push). 수집이 실패한 회차에도 대기분을 전달하도록 RC 와 무관하게 호출.
 # 워커는 분리돼 바로 반환하므로 이 잠금(300초)을 쥐지 않고, 출력 파이프도 닫아 소켓 수신기의 capture_output 이 기다리지 않음
@@ -930,6 +931,6 @@ LRM_HUB_DIR="$DIR" /bin/bash "$(dirname "$0")/slack_push.sh" --kick >/dev/null 2
 left=$((TOTAL - ($(date +%s) - T0)))
 if [ "$left" -ge 1 ]; then
   [ "$left" -gt "${LRM_REPORT_BUDGET_S:-40}" ] && left="${LRM_REPORT_BUDGET_S:-40}"
-  LRM_REPORT_BUDGET_S="$left" LRM_HUB_DIR="$DIR" python3 -I "$(dirname "$0")/report_sender.py" --once >/dev/null 2>&1 || true
+  LRM_REPORT_BUDGET_S="$left" LRM_HUB_DIR="$DIR" "$PY" -I "$(dirname "$0")/report_sender.py" --once >/dev/null 2>&1 || true
 fi
 exit "$RC"
