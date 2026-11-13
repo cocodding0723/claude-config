@@ -4,8 +4,8 @@ set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 rc=0
 for t in "$HERE"/test_*.py; do
-  echo "== $(basename "$t")"
-  python3 "$t" -v 2>&1 | grep -E '^(test_|Ran |OK|FAILED|ERROR|FAIL)|Error|assert' | sed 's/ \.\.\. ok$/ ... PASS/' || true
-  python3 "$t" >/dev/null 2>&1 || rc=1
+  out=$(python3 "$t" 2>&1); r=$?
+  printf '%s: %s\n' "$(basename "$t")" "$(echo "$out" | grep -E '^(Ran |OK|FAILED)' | tr '\n' ' ')"
+  [ "$r" = 0 ] || { echo "$out" | grep -E '^(FAIL:|ERROR:)|Error' | head -20; rc=1; }
 done
 exit "$rc"
