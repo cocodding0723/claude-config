@@ -3,7 +3,9 @@ import json
 import os
 import sys
 import tempfile
+import warnings
 
+warnings.simplefilter("ignore", ResourceWarning)  # 시험 코드의 단순 open 경고 억제
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(ROOT, "hubs", "scripts"))
 CHECKER = os.path.join(ROOT, "skills", "doc-kit", "scripts", "check.py")
