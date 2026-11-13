@@ -60,6 +60,9 @@ SPIN_RE = re.compile(r"^[·✢✳✶✻✽] [A-Z][a-z]+(?: [a-z]+)?…")
 QUIET_IDLE_MIN = 2               # 작업 표식·입력 칸이 안 보여도 이만큼 출력이 없으면 입력 대기로 봄(preview 가 입력 칸을 자르는 경우가 많음)
 # patrol.sh 의 막힘 키워드. 'allow'·'승인' 은 평범한 출력에도 나와 오탐이 잦음 → 화면이 작업 중·입력 대기로 판별되지 않을 때만 씀
 PATROL_KEYS = ("do you want", "allow", "승인", "(y/n)", "❯ 1.")
+# 허브가 사용자 결정을 허브 창에 텍스트로 묻는 말버릇('이 창에서 확인/답'). 결정은 Slack 카드로 가야 사용자가 봄(11-13 D-CFGAPPLY).
+# 화면 끝(preview)만 보므로 놓칠 수 있음. 화면 내용은 저장하지 않고 허브별 참/거짓만 남김
+ASK_HERE_RE = re.compile(r"이 (?:창|터미널)(?:에서|에)\s*(?:확인|답|응답|승인)|(?:확인|답|응답)(?:해|을|를)?\s*이 (?:창|터미널)에")
 ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]")
 PUSH_RE = re.compile(r"^(\d{4}-\d\d-\d\d) (\d\d:\d\d):\d\d push ([a-z_]+)\b(.*)$")
 REASON_RE = re.compile(r"\breason=([a-z_]+)")
@@ -236,6 +239,11 @@ def classify(preview, quiet_min=None):
     return "unknown"
 
 
+def ask_here(preview):
+    """허브 출력이 '이 창에서 확인/답' 류로 사용자에게 창에서 답하라고 하는지"""
+    return bool(ASK_HERE_RE.search(ANSI_RE.sub("", str(preview or ""))))
+
+
 def hub_state(t, quiet, get):
     """목록 미리보기로 못 정하면(TUI 는 실행 명령만 남기도 함, 11-11 실측) 렌더된 화면을 한 번 더 읽어 판정"""
     state = classify(t.get("preview"), quiet)
@@ -295,6 +303,7 @@ def collect_hubs(conf, now, get):
             "state": hub_state(t, quiet, get) if connected else "unknown",
             "quietMin": max(quiet, 0) if quiet is not None else None,
             "connected": connected,
+            "askHere": ask_here(t.get("preview")),
         })
     # 같은 허브에 터미널이 여럿이면(재시작 뒤 옛 세션 남음) 연결된 것 → 최근 출력 순으로 하나만 남기고 dup 표시
     best = {}
@@ -780,6 +789,10 @@ def summary(data, gh, prev_state):
     ws = ((data["sources"].get("idle") or {}).get("value") or {}).get("wsSize")
     if isinstance(ws, dict) and ws.get("err") and ws.get("tried") == data["updatedAt"]:  # 이번 회차에 잰 것만
         parts.append(f"du={ws['err']}")
+    rows = ((data["sources"].get("hubs") or {}).get("value") or {}).get("rows")
+    names = [r.get("name") for r in rows if isinstance(r, dict) and r.get("askHere")] if isinstance(rows, list) else []
+    if names:
+        parts.append("WARN ask-here=" + ",".join(str(n) for n in names) + " (허브가 창에서 답하라고 함: hub_report.py decide 카드로 올릴 것)")
     if prev_state == "corrupt":
         parts.append("prev=corrupt")
     return " ".join(parts)
