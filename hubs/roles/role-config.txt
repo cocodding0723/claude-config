@@ -9,7 +9,7 @@ C. Slack 봇 최적화: 지금 구성 조사 — ~/.config/lrm-hubs/slack_notify
 진행 순서: A·B·C 리서치·조사는 병렬 워커 3개, 구조안 문서도 각각. 문서는 3단계 검수(독자 검수 → 다른 모델 교차 → 사용자). 문서가 나오면 "[개인설정→메인] [HTML] 경로" + 핵심 3줄로 메인에 보고(Slack 업로드는 메인).
 결정 보고 형식: 질문 한 문장·왜 지금·선택지(결과·비용·되돌리기)·추천+이유.
 워커 모델: 리서치·작성 claude-sonnet-5-5, 교차 검수 1회만 Fable 또는 Codex. 끝난 워커는 즉시 닫고 워크스페이스 자동 정리 규칙 적용.
-Git: 이 저장소 작업 브랜치(feat/…·chore/…) 커밋은 바로, main·dev 병합과 push 는 사용자 승인 뒤. 커밋 메시지 한국어 명사형, AI 흔적 금지.
+Git: 이 저장소 작업 브랜치(feat/…·chore/…) 커밋·push 는 바로, 새 PR 은 사용자 검수 뒤, main·dev 병합은 사용자 직접. 커밋 메시지 한국어 명사형, AI 흔적 금지.
 참고 메모리: structure-approval-first, slack-via-bot, docs-as-html, doc-three-stage-review, hub-auto-cleanup-single-session, token-saving-rules.
 
 워크스페이스 자동 정리(11-06 사용자 지시): 내 허브 하위 워크스페이스 중 안 쓰는 것은 사용자에게 묻지 않고 스스로 정리한다. 대상 = 도는 워커·터미널 없음 + 결과를 커밋했거나 보관함 + 다른 허브가 쓰지 않음. 순서: ① 보관 rsync(gitignore 결과물 포함) → ~/Documents/90_정리기록/workspace-archive/YYYYMMDD/<이름>/ ② 보관 폴더 파일 수 확인 ③ orca worktree rm (브랜치는 지우지 않음). 미커밋 변경이 남은 곳은 보관만.
@@ -26,10 +26,9 @@ Jira 기한(11-06 사용자): 티켓을 발급할 때 끝나는 날짜(기한)�
 - 배정된 티켓마다 실제 상태부터 확인(dev 에 이미 병합됐는지·PR·브랜치·커밋). 근거를 찾아 Jira 에 진행 댓글(쉬운 말: 한 일→왜→결과→남은 일, 해시·PR 은 맨 아래).
 - 이미 끝난 것: 근거 댓글 + 상태를 '확인 대기'로(완료는 사람 확인 뒤). 낡거나 중복·방향이 바뀐 것: 이유 댓글 + '보류'. 리팩토링류(이름 정리·공통화·주입 전환·구조 점검)는 사용자가 우선순위를 낮췄다 — 상태 확인·댓글만, 새 구현 금지.
 - 구현 가능한 것: 최신 dev 에서 브랜치(sprint-20261107/<타입>-LRM-<n>-…) → 로컬 커밋·Roslyn 컴파일까지. 서브모듈 수정 금지. 결정은 추천안으로 정하고 decisions.tsv 기록.
-- 권한(사용자 11-07 "권한은 월요일 새벽까지 다 승인"): 작업 브랜치 일반 push·초안 PR·PR 본문 수정·Jira 상태 변경·Firebase dev 프로젝트(loverevolutionmaker-dev) 쓰기(복사 포함)·승인된 계획의 시트 쓰기(행 전체 단위·백업 먼저)는 묻지 않고 진행, 할 때마다 decisions.tsv 기록.
-- 여전히 금지: 라이브 Firebase 접근(읽기 포함), 강제 push, dev·main 직접 커밋·PR 병합, 서브모듈 수정, 다른 사람 PR·브랜치 수정, 이 Mac Unity(QA 촬영은 화면 잠금 해제 때만). 이건 월요일 목록에.
+- 승인 경계(사용자 11-13 D-CFGAPPLY, 앞의 상충 문장보다 우선): 무승인 = 작업 브랜치 push(일반)·열린 PR 갱신(본문·커밋 추가)·추천안이 있는 결정·개발 Firebase(loverevolutionmaker-dev) 쓰기·Jira 상태 변경·승인된 계획의 시트 쓰기(행 전체 단위·백업 먼저)·push 전 작업 브랜치 리베이스. 사용자 검수 뒤 = 새 PR 생성(초안 포함). 사용자 직접 = dev/main 병합, 라이브 Firebase(읽기 포함), 강제 push(--force·--force-with-lease), CI 변수·시크릿 삭제. 그 밖 금지 유지: 서브모듈 수정, 다른 사람 PR·브랜치 수정, 이 Mac Unity(QA 촬영은 화면 잠금 해제 때만). 무승인 일은 할 때마다 decisions.tsv 기록.
+- 사용자 승인이 필요한 것은 허브 창에 텍스트로 묻지 말고 `hub_report.py decide` Slack 카드로 올린다(허브 창의 질문은 사용자가 보지 못한다).
 - 일요일 밤까지 끝낸 것·남은 것을 HANDOFF.md 에 정리, 월요일 07:00 까지 메인에 "티켓별 한 줄(키·결과·근거)" 보고.
-- 권한 확대(사용자 11-07 "하위 코디네이터 워커도 동일함. 강제푸시, 머지만 하지말고 PR 올리는것까지 승인한다 ... 리베이스 승인"): 허브와 하위 워커 모두 작업 브랜치 리베이스(--update-refs 스택 포함)·push·PR 생성(초안·정식)을 묻지 않고 진행. 금지 유지: 강제 push(--force·--force-with-lease 포함), PR 병합·dev/main 직접 커밋, 라이브 Firebase, 서브모듈 수정, 다른 사람 PR·브랜치, 이 Mac Unity. 이미 push한 브랜치를 리베이스하면 강제 push가 필요하므로 하지 말고 월요일 목록으로. 시트 반영은 PR CI 봇이 자동 처리하는지 먼저 확인하고, 안 되면 연결된 Google Drive/Sheets MCP로 쓴다(백업 먼저·행 전체 단위).
 - [skip test] 금지(사용자 11-07 "이제부터 skip test 붙여서 pr 올리지 마 + skip test 는 앞으로 내가 명시적으로 요청할께"): PR(초안 포함) 제목에 [skip test] 를 붙이지 않는다. 사용자가 그 PR 에 명시적으로 요청할 때만.
 - 워커 창의 확인 창(git merge 등 ask 규칙)은 사용자만 누른다. 코디네이터는 terminal send 등으로 대신 누르지 말고 목록만 메인에 보낸다.
 - 보호 훅이 막는 명령(reset --hard·stash drop·branch -D 등)은 update-ref 같은 다른 명령으로 우회하지 않는다. 사용자 실행용 명령을 메인에 보낸다.

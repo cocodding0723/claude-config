@@ -291,6 +291,22 @@ else
   printf 'SKIP  mod 순수 함수 시험 — node 23 이상(타입 제거 내장) 없음\n'
 fi
 
+# ---- 허브가 '이 창에서 확인/답' 이라고 쓰는 말버릇 경고 -----------------------------------------------
+askres=$(python3 -I - "$HERE/../../hubs/scripts" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import panel_collect as pc
+yes = ["결정이 필요합니다. 이 창에서 확인해 주세요", "승인은 이 창에서 답해 주세요", "이 창에 답해 주면 진행", "\x1b[1m이 창에서 승인\x1b[0m"]
+no = ["Slack 카드로 올렸다. hub_report.py decide", "창 닫기 전에 확인", "이 창을 닫아도 됨", "", None]
+bad = [t for t in yes if not pc.ask_here(t)] + [t for t in no if pc.ask_here(t)]
+data = {"updatedAt": "x", "sources": {"hubs": {"ok": True, "value": {"rows": [{"name": "alpha", "askHere": True}, {"name": "beta", "askHere": False}]}}}}
+s = pc.summary(data, "run", "ok")
+print("bad=%s warn=%s only_alpha=%s" % (bad, "WARN ask-here=alpha" in s, "beta" not in s))
+PY
+)
+[ "$askres" = "bad=[] warn=True only_alpha=True" ] && ok "허브 출력 '이 창에서 확인/답' 패턴 감지, 로그에 WARN ask-here=<허브> 한 줄" || ko "ask-here 경고" "$askres"
+[ "$(q '[.sources.hubs.value.rows[] | has("askHere")] | all')" = true ] && [ "$(q '[.sources.hubs.value.rows[] | select(.askHere)] | length')" = 0 ] && ok "행마다 askHere 불리언(화면 내용은 저장 안 함), 평범한 화면은 거짓" || ko "askHere 필드" ""
+
 echo
 echo "결과: 통과 $PASS, 실패 $FAIL"
 [ "$FAIL" = 0 ]

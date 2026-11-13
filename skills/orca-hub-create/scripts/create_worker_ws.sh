@@ -110,4 +110,14 @@ else
 fi
 
 # 허브·워커는 기억 플러그인 끔(메모리 절약, 11-05). 메인 체크아웃만 켬
-mkdir -p "$P/.claude" && python3 -c "import json,os,sys;f=sys.argv[1];d=json.load(open(f)) if os.path.exists(f) else {};d.setdefault(\"enabledPlugins\",{})[\"openviking-memory@openviking\"]=False;dn=d.setdefault(\"permissions\",{}).setdefault(\"deny\",[]);[dn.append(r) for r in [\"Read(/$HOME/.config/lrm-hubs/slack-bot.env)\",\"Bash(*slack-bot.env*)\",\"Bash(*slack_notify.sh*)\"] if r not in dn];json.dump(d,open(f,\"w\"),indent=2)" "$P/.claude/settings.local.json"
+# 워커 deny 규칙. 토큰 파일 Read 는 모든 저장소 공통. Slack 스크립트·토큰 파일 Bash 차단은 게임 저장소만(claude-config 워커는 slack_notify.sh 로 보고함, 11-13 D-CFGAPPLY)
+CFG_CONFIG_REPO="${LRM_CONFIG_REPO_NAME:-claude-config}"
+DENY_BASH=1; [ "$(basename "$REPO")" = "$CFG_CONFIG_REPO" ] && DENY_BASH=0
+mkdir -p "$P/.claude" && python3 -c 'import json,os,sys
+f, home, deny_bash = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+d = json.load(open(f)) if os.path.exists(f) else {}
+d.setdefault("enabledPlugins", {})["openviking-memory@openviking"] = False
+dn = d.setdefault("permissions", {}).setdefault("deny", [])
+rules = ["Read(/%s/.config/lrm-hubs/slack-bot.env)" % home] + (["Bash(*slack-bot.env*)", "Bash(*slack_notify.sh*)"] if deny_bash else [])
+dn.extend(r for r in rules if r not in dn)
+json.dump(d, open(f, "w"), indent=2)' "$P/.claude/settings.local.json" "$HOME" "$DENY_BASH"

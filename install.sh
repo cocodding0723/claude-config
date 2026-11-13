@@ -347,6 +347,24 @@ guard_live_diff() {
   }
 }
 
+# claude-config 저장소 전용 commit-msg 훅을 이 저장소의 공통 git 디렉터리에 링크함(워크트리 전부에 적용).
+# 실제 설치 위치($HOME 아래 저장소)일 때만. 시험용 임시 HOME 에서는 실제 저장소를 건드리지 않음
+install_repo_hook() {
+  local src="$REPO/git/repo-hooks/commit-msg" gd dst
+  case "$REPO" in "$(cd "$HOME" && pwd -P)"/*) ;; *) return 0 ;; esac   # /var → /private/var 같은 링크 차이를 흡수
+  [ -f "$src" ] || return 0
+  gd=$(git -C "$REPO" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0
+  # 보조 워크트리에서 실행하면 링크가 그 워크트리 삭제 뒤 끊어지므로 주 체크아웃에서만 설치
+  [ "$(git -C "$REPO" rev-parse --path-format=absolute --git-dir 2>/dev/null)" = "$gd" ] || return 0
+  dst="$gd/hooks/commit-msg"
+  if [ -L "$dst" ] && [ "$(readlink "$dst")" = "$src" ]; then N_SKIP=$((N_SKIP + 1)); say "SKIP   저장소 commit-msg 훅 (이미 링크됨)"; return; fi
+  if [ "$DRY" = 1 ]; then log "[dry-run] LINK   저장소 commit-msg 훅 -> $dst"; N_LINK=$((N_LINK + 1)); return; fi
+  mkdir -p "$gd/hooks"
+  if [ -e "$dst" ] || [ -L "$dst" ]; then mv "$dst" "$dst.pre-install"; fi
+  ln -s "$src" "$dst"
+  N_LINK=$((N_LINK + 1)); log "LINK   저장소 commit-msg 훅 -> $dst"
+}
+
 do_install() {
   validate
   guard_live_diff
@@ -360,6 +378,7 @@ do_install() {
     esac
   done < <(entries)
   apply_git_config
+  install_repo_hook
   log "---"
   log "요약: 링크 $N_LINK, 병합 $N_MERGE, 복사 $N_COPY, 건너뜀 $N_SKIP"
   if [ -n "$BACKUP" ]; then log "백업: $BACKUP (되돌리기: ./install.sh --restore $BACKUP)"; fi

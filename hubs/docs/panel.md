@@ -176,3 +176,7 @@
 - mod: `hubs/mods/lrm-board/hooks/register.tsx`(화면)·`board.ts`(판정 함수)·`types/index.d.ts`
 - 시험: `bash tests/panel/run.sh`, 변이 `bash tests/panel/mutate.sh`, node 시험 `node --test tests/panel/board.test.mjs`
 - 조사 사실표: `~/Documents/90_정리기록/2026-11-10-소통개선조사/facts-panel.md`
+
+## 허브 창 질문 경고 (2026-11-13)
+
+허브 화면 끝에 '이 창에서 확인·답·승인' 류 문구가 보이면 수집기가 허브 행에 `askHere: true` 를 남기고 로그(`panel-collect.log`)에 `WARN ask-here=<허브>` 한 줄을 쓴다. 결정은 허브 창이 아니라 `hub_report.py decide` Slack 카드로 가야 사용자가 본다. 화면 내용은 저장하지 않고 허브별 참·거짓만 남긴다. 화면 끝 300자 안팎만 보므로 놓칠 수 있다.

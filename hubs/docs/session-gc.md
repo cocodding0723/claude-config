@@ -1,5 +1,7 @@
 # 주기 세션 정리 (session_gc)
 
+> 실제 정리 모드는 2026-11-13 사용자 승인(Slack 결정 카드 D-CFGAPPLY '1. 전부 적용')으로 plist 에 `--apply` 가 들어갔다. 작업 공간 정리기(ws_gc)도 같은 승인으로 `--apply` 유지(`hubs/docs/ws-gc.md`).
+
 ## 쉬운 말 3줄 요약
 
 - 무엇이 생겼나: 30분마다 끝난 워커 창을 찾는다. 기본은 목록만 보여주고 아무것도 닫지 않는다. `--apply` 로 켜도 자동으로 하는 일은 `worker-release` 하나뿐이다.
@@ -31,8 +33,8 @@ tail -n 30 ~/.config/lrm-hubs/session-gc.log        # 실행마다 1줄 이상
 
 ```sh
 ./install.sh --allow-live-diff
-launchctl load ~/Library/LaunchAgents/ai.lrm.sessiongc.plist       # 시험 모드로 30분마다
-# 실제 정리: plist 의 ProgramArguments 마지막에 <string>--apply</string> 추가 → unload 후 다시 load
+launchctl load ~/Library/LaunchAgents/ai.lrm.sessiongc.plist       # 실제 정리 모드(--apply)로 30분마다
+# 시험 모드로 되돌리기: plist 의 <string>--apply</string> 줄 삭제 → unload 후 다시 load
 # python 은 설치 때 확인한 절대 경로(__PYTHON3__)이며 3.10 이상이어야 한다. 낮으면 실행 시 안내 문구와 종료 코드 2
 ```
 
