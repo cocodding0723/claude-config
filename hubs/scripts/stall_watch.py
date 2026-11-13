@@ -56,6 +56,7 @@ LOCK = os.path.join(DIR, ".stall-watch.lock")
 ORCA, NOTIFY = rw.ORCA, rw.NOTIFY
 ORCA_TIMEOUT_S = 30
 DID_PREFIX = "D-ST"
+STALL_OPTIONS = "1=담당 허브에 알리기 => 담당 허브 코디네이터에 한 줄만 전달. 워커는 건드리지 않음,2=무시 => 아무것도 안 하고 카드를 닫음"
 CLOSED_TASK = frozenset({"completed", "failed", "cancelled", "canceled", "done"})  # 이미 끝난 작업의 멈춘 워커는 대상 아님
 RUNNING_TASK = frozenset({"dispatched", "running", "in_progress"})
 HUB_RE = re.compile(r"/coord-([a-z0-9-]+)-hub(?:@@|$)")  # 작업 생성 기록(@@ 뒤 붙음)·터미널 폴더(끝) 둘 다
@@ -260,8 +261,9 @@ def build(items: list, names: dict, dups: dict) -> tuple:
     for it in items:
         by_hub.setdefault(it["slug"], []).append(it)
     lines = [f"멈춘 워커 감시 — 응답 없음 {len(items)}건", "",
-             f"• 무엇: 종료 보고 없이 멈췄거나 응답이 없는 워커 {len(items)}건(허브 {len(by_hub)}곳)",
-             "• 결과: 알리기를 누르면 담당 허브 코디네이터에 한 줄만 보냄. 워커는 건드리지 않음"]
+             "• 배경: 허브가 맡긴 워커 중 일부가 끝났다는 보고 없이 한동안 출력이 없음. 허브가 알아야 할지 묻는 중",
+             "• 용어: 워커 — 허브가 일을 맡긴 작업 세션 · 허브 — 작업 묶음을 맡는 코디네이터 세션",
+             f"• 무엇: 종료 보고 없이 멈췄거나 응답이 없는 워커 {len(items)}건(허브 {len(by_hub)}곳)"]
     for slug, ts in sorted(dups.items()):
         lines.append(f"• 중복 코디네이터: {names.get(slug, slug)} · {' / '.join(t or '제목 없음' for _h, t in ts)} ({len(ts)}개)")
     lines += ["", "참고:"]
@@ -316,7 +318,7 @@ def _check(limits: Limits, dry: bool, report_existing: bool, now: float | None =
         return 0, {"status": "would_card", **summary}
     card_actions.register(did, "notify", {"hubs": [{"slug": s, "lines": ls} for s, ls in notify.items()],
                                           "dups": [{"slug": s, "titles": [t for _h, t in c]} for s, c in dups.items()]})
-    if not rw.send_card(did, text, "1=담당 허브에 알리기,2=무시"):
+    if not rw.send_card(did, text, STALL_OPTIONS):
         card_actions.take(did)
         return 1, {"status": "send_failed", **summary}
     for i in fresh:

@@ -69,7 +69,7 @@ sw --json > "$SB/o"; chk "이어서 변화 없음: 감지 없음" '[ "$(cards)" 
 mkfix 45 1
 sw --json > "$SB/o"
 chk "묶음 카드 1장(w3 45분 무응답 + w6 새로 멈춤)" '[ "$(cards)" = 1 ] && grep -q "\"count\": *2\|\"count\":2" "$SB/o"'
-chk "결정 카드·선택지 담당 허브에 알리기/무시" 'grep -qx decide "$FAKE_NOTIFY_LOG" && grep -qx "1=담당 허브에 알리기,2=무시" "$FAKE_NOTIFY_LOG" && grep -Eqx "D-ST[0-9a-f]{10}" "$FAKE_NOTIFY_LOG"'
+chk "결정 카드·선택지 담당 허브에 알리기/무시" 'grep -qx decide "$FAKE_NOTIFY_LOG" && grep -qx "1=담당 허브에 알리기 => 담당 허브 코디네이터에 한 줄만 전달. 워커는 건드리지 않음,2=무시 => 아무것도 안 하고 카드를 닫음" "$FAKE_NOTIFY_LOG" && grep -q "^• 배경:" "$FAKE_NOTIFY_LOG" && grep -q "^• 용어:" "$FAKE_NOTIFY_LOG" && grep -Eqx "D-ST[0-9a-f]{10}" "$FAKE_NOTIFY_LOG"'
 chk "허브별 한 줄: 허브·작업 제목·상태(분)" 'grep -q "• 베타 허브 (beta) · 워커 ws-ctx_3 · 베타 구현 LRM-3 — 4[0-9]분째 응답 없음 · 마지막 출력 [0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]" "$FAKE_NOTIFY_LOG" && grep -q "• 알파 허브 (alpha) · 워커 ws-ctx_6 · 알파 새 작업 @U1 — 종료 보고 없이 멈춤 · 마지막 출력 미확인" "$FAKE_NOTIFY_LOG"'
 chk "기준선 워커(ctx_1)·끝난 작업(ctx_2)·최근 관찰(ctx_4)·관찰 없음(ctx_5)은 제외" '! grep -q "알파 옛 작업\|끝난 작업\|최근 관찰\|관찰 없음" "$FAKE_NOTIFY_LOG"'
 chk "문구는 '응답 없음', '죽음' 표현 없음·Slack 멘션 문자 제거" 'grep -q "응답 없음" "$FAKE_NOTIFY_LOG" && ! grep -q "죽" "$FAKE_NOTIFY_LOG" && ! grep -q "<@U1>" "$FAKE_NOTIFY_LOG"'
