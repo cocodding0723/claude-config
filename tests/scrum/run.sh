@@ -129,6 +129,44 @@ rm -rf "$W/ok1" "$W/ok2"; mkdir -p "$W/bad2/.git"
 reset; LRM_SCRUM_COLLECT="$S/scrum_collect.py" LRM_GIT="$D/fake_git.sh" LRM_GH="$D/fake_gh.sh" LRM_SCRUM_WS_ROOT="$W" post --date $WK; rc=$?
 [ $rc = 1 ] && grep -q -- "--kind warn" "$D/sent.log" && grep -q "collect_all_empty(commits)" "$D/sent.log" && ok "전부 실패(빈 날과 구분) → 초안 없이 warn" || ko "전체 실패 warn" "rc=$rc"
 
+# ---- 허브별 진행 상세(가짜 gh·상태 파일) ----
+H="$D/hubdir"; HW="$D/hubws"; mkdir -p "$H/hub-status" "$HW/coord-ui-hub" "$HW/coord-qa-hub"
+cat > "$H/hub-status/ui.json" <<'J'
+{"slug":"ui","updatedAt":"2026-11-13T10:00:00+09:00","tasks":["오토마 4개 push, CI 대기"],"branches":["feat/a"],"next":"CI 확인","blockers":["#731 병합 대기"]}
+J
+echo '{"slug":' > "$H/hub-status/broken.json"
+cat > "$H/progress.json" <<'J'
+{"items":[{"bucket":"wait","group":"ui","title":"ui: 서버 답 대기"},{"bucket":"wait","group":"장부","title":"F1 내부"},{"bucket":"doing","group":"ui","title":"ui: 진행"}]}
+J
+printf '시각\t무엇\t왜\t근거\t결과\t되돌리기\n2026-11-01 10:00:00\t옛 결정\t왜\t-\t결과\t-\n2026-11-13 09:00:00\t새 결정\t이유\t-\t적용\t-\n' > "$HW/coord-ui-hub/decisions.tsv"
+cat > "$D/gh_prs.sh" <<'G'
+#!/bin/bash
+cat <<'J'
+[{"number":7,"title":"A 기능","isDraft":false,"headRefName":"feat/a","baseRefName":"dev","url":"https://x/pull/7","reviewDecision":"",
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"unity","status":"COMPLETED","conclusion":"FAILURE"},{"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
+  {"__typename":"CheckRun","name":"wake","status":"COMPLETED","conclusion":"SKIPPED"},{"__typename":"CheckRun","name":"slow","status":"IN_PROGRESS","conclusion":""}]},
+ {"number":9,"title":"주인 없는 PR","isDraft":true,"headRefName":"feat/zzz","baseRefName":"dev","url":"https://x/pull/9","statusCheckRollup":[]}]
+J
+G
+chmod +x "$D/gh_prs.sh"
+hp() { LRM_HUB_DIR="$H" LRM_GH="$D/gh_prs.sh" LRM_GIT="$D/fake_git.sh" LRM_SCRUM_WS_ROOT="$HW" python3 "$S/scrum_collect.py" --date $WK --since '2026-11-12 10:00' > "$D/hp.json"; }
+hp; python3 - "$D/hp.json" <<'PY' && ok "허브별 진행: 상태 파일·대기·브랜치가 맞는 PR 검사 요약·최근 결정만(깨진 파일·내부 묶음 제외)" || ko "허브 진행" "$(head -c 600 "$D/hp.json")"
+import json, sys
+d = json.load(open(sys.argv[1])); hp = d["hub_progress"]
+assert not [e for e in d["errors"] if e.startswith("hub_progress")], d["errors"]
+assert [h["hub"] for h in hp["hubs"]] == ["ui"], hp
+h = hp["hubs"][0]
+assert h["next"] == "CI 확인" and h["blockers"] == ["#731 병합 대기"] and h["waiting"] == ["서버 답 대기"], h
+pr = h["prs"][0]; c = pr["checks"]
+assert pr["number"] == 7 and c["fail"] == 1 and c["pass"] == 2 and c["pending"] == 1 and c["failed"] == ["unity"], pr
+assert [p["number"] for p in hp["other_prs"]] == [9] and hp["other_prs"][0]["draft"] is True
+assert [x["what"] for x in h["decisions"]] == ["새 결정"], h["decisions"]
+PY
+rm -rf "$H/hub-status" "$H/progress.json"; hp; python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["hub_progress"]["hubs"]==[] and len(d["hub_progress"]["other_prs"])==2' "$D/hp.json" && ok "상태 파일·progress.json 이 없어도 열린 PR 만으로 수집(실패 아님)" || ko "상태 파일 없음"
+printf '#!/bin/bash\necho boom >&2; exit 1\n' > "$D/gh_bad.sh"; chmod +x "$D/gh_bad.sh"
+LRM_HUB_DIR="$H" LRM_GH="$D/gh_bad.sh" LRM_GIT="$D/fake_git.sh" LRM_SCRUM_WS_ROOT="$HW" python3 "$S/scrum_collect.py" --date $WK > "$D/hp.json"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["hub_progress"]=={} or d["hub_progress"]==[]; assert any(e.startswith("hub_progress:") for e in d["errors"]), d["errors"]' "$D/hp.json" && ok "gh 실패 → hub_progress 오류 기록(다른 출처는 계속)" || ko "gh 실패" "$(head -c 400 "$D/hp.json")"
+
 # ---- --preflight(첫 실행 전 점검) ----
 cat > "$D/pf_gh.sh" <<'G'
 #!/bin/bash

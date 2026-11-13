@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""스크럼 초안 재료 수집. gh PR·워크스페이스 커밋·허브 보고·HANDOFF·Slack 지시를 JSON 한 덩이로 출력함(읽기 전용).
+"""스크럼 초안 재료 수집. gh PR·워크스페이스 커밋·허브 보고·HANDOFF·Slack 지시·허브별 진행 상세(상태 파일·열린 PR 검사·결정 기록)를 JSON 한 덩이로 출력함(읽기 전용).
 Jira·Confluence 는 여기서 안 읽음: 초안을 쓰는 claude 가 Atlassian MCP 로 직접 읽음(인증이 MCP 쪽에 있음).
 사용: scrum_collect.py --date YYYY-MM-DD [--since 'YYYY-MM-DD HH:MM'] [--out 파일]
   --date   초안 날짜(오늘). --since 를 안 주면 직전 평일 10:00 부터 모음(월요일은 금요일부터)
@@ -25,6 +25,14 @@ HANDOFF_MAX_FILES = 3
 INBOX_HOURS = 24
 CMD_TIMEOUT = 60
 COMMIT_MAX = 150  # 프롬프트 크기 상한. 최신순으로 자름
+HUB_STATUS_DIR = DIR / "hub-status"  # <허브>.json: tasks·branches·next·blockers
+PROGRESS = DIR / "progress.json"  # items[]: bucket(doing|wait|block)·title·group
+HUB_ITEM_GROUPS_SKIP = ("PR", "장부", "결정")  # progress.json 에서 허브별 진행이 아닌 묶음
+DECISION_MAX = 5  # 허브당 최근 결정 기록 상한
+FIELD_MAX = 160  # 상태 파일·결정 기록 한 칸 길이 상한(프롬프트 크기)
+FAIL_NAMES_MAX = 3
+CHECK_FAIL = ("FAILURE", "TIMED_OUT", "ERROR", "ACTION_REQUIRED", "STARTUP_FAILURE")
+CHECK_OK = ("SUCCESS", "NEUTRAL", "SKIPPED")
 
 
 def holidays():
@@ -113,6 +121,91 @@ def collect_hub_reports(since):
             for r in jsonl(DIR / "slack-sent.jsonl") if num(r.get("at")) >= ts and r.get("tag") != "scrum"]
 
 
+def clip(v, n=FIELD_MAX):
+    t = " ".join(str(v or "").split())
+    return t if len(t) <= n else t[:n - 1] + "…"
+
+
+def read_json(path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def summarize_checks(rollup):
+    """statusCheckRollup → {pass, fail, pending, failed[이름]}. 건너뜀·중립은 통과로 셈"""
+    out = {"pass": 0, "fail": 0, "pending": 0, "failed": []}
+    for c in rollup or []:
+        verdict = (c.get("conclusion") or c.get("state") or "").upper()
+        name = c.get("name") or c.get("context") or ""
+        if verdict in CHECK_FAIL:
+            out["fail"] += 1
+            if len(out["failed"]) < FAIL_NAMES_MAX:
+                out["failed"].append(clip(name, 60))
+        elif verdict in CHECK_OK and (c.get("status") in (None, "COMPLETED")):
+            out["pass"] += 1
+        else:
+            out["pending"] += 1
+    return out
+
+
+def collect_open_prs():
+    """내 열린 PR 번호·상태·검사 요약. 허브 매칭용 branch 포함"""
+    out = run([GH, "pr", "list", "-R", REPO, "--author", "@me", "--state", "open", "--limit", "50",
+               "--json", "number,title,isDraft,headRefName,baseRefName,url,reviewDecision,statusCheckRollup"])
+    rows = []
+    for p in json.loads(out or "[]"):
+        rows.append({"number": p["number"], "title": clip(p.get("title"), 90), "url": p.get("url", ""),
+                     "draft": bool(p.get("isDraft")), "branch": p.get("headRefName", ""), "base": p.get("baseRefName", ""),
+                     "review": p.get("reviewDecision") or "", "checks": summarize_checks(p.get("statusCheckRollup"))})
+    return rows
+
+
+def collect_decisions(since):
+    """허브별 decisions.tsv 의 since 이후 기록(최근 DECISION_MAX 개). 열 순서: 시각·무엇·왜·근거·결과·되돌리기"""
+    found = {}
+    for p in sorted(WS_ROOT.glob("coord-*-hub/decisions.tsv")) if WS_ROOT.is_dir() else []:
+        hub = p.parent.name[len("coord-"):-len("-hub")]
+        try:
+            lines = p.read_text(encoding="utf-8").splitlines()[1:]
+        except OSError:
+            continue
+        rows = []
+        for ln in lines:
+            c = (ln.split("\t") + [""] * 6)[:6]
+            if c[0] >= since.strftime("%Y-%m-%d %H:%M:%S"):
+                rows.append({"at": c[0], "what": clip(c[1]), "why": clip(c[2]), "result": clip(c[4])})
+        if rows:
+            found[hub] = rows[-DECISION_MAX:]
+    return found
+
+
+def collect_hub_progress(since):
+    """허브별 진행 상세: 상태 파일(작업·다음·막힘) + 대기·막힘 항목 + 브랜치가 맞는 열린 PR + 최근 결정.
+    출처 일부가 없어도 나머지로 만들고, 전부 없으면 빈 목록. PR 조회 실패는 예외로 올려 errors 에 기록됨"""
+    prs = collect_open_prs()
+    items = (read_json(PROGRESS) or {}).get("items") or []
+    decisions = collect_decisions(since)
+    hubs = {}
+    for p in sorted(HUB_STATUS_DIR.glob("*.json")) if HUB_STATUS_DIR.is_dir() else []:
+        d = read_json(p)
+        if not isinstance(d, dict) or not d.get("slug"):
+            continue
+        hubs[d["slug"]] = {"hub": d["slug"], "updated": d.get("updatedAt", ""),
+                           "tasks": [clip(t) for t in d.get("tasks") or []][:6], "next": clip(d.get("next")),
+                           "blockers": [clip(b) for b in d.get("blockers") or []][:6],
+                           "waiting": [], "prs": [], "decisions": decisions.get(d["slug"], [])}
+        branches = set(d.get("branches") or [])
+        hubs[d["slug"]]["prs"] = [p for p in prs if p["branch"] in branches]
+    for it in items:
+        g = it.get("group")
+        if g in hubs and it.get("bucket") == "wait":
+            hubs[g]["waiting"].append(clip(it.get("title", "").split(": ", 1)[-1]))
+    matched = {p["number"] for h in hubs.values() for p in h["prs"]}
+    return {"hubs": list(hubs.values()), "other_prs": [p for p in prs if p["number"] not in matched]}
+
+
 def collect_handoffs(since):
     ts = since.timestamp()
     found = []
@@ -144,6 +237,7 @@ def collect(date, since):
         data["errors"].append("commits: %s" % e)
     for key, fn, arg in (("prs", collect_prs, since),
                          ("hub_reports", collect_hub_reports, since), ("handoffs", collect_handoffs, since),
+                         ("hub_progress", collect_hub_progress, since),
                          ("instructions", collect_instructions, now)):
         try:
             data[key] = fn(arg)

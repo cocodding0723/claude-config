@@ -70,11 +70,11 @@ DENY_TOOLS = ("Bash", "Read", "Write", "Edit", "WebFetch", "WebSearch", "Task",
 ATLASSIAN_MCP = {"mcpServers": {"atlassian": {"type": "http", "url": "https://mcp.atlassian.com/v2/mcp"}}}
 MCP_CONFIG = os.environ.get("LRM_SCRUM_MCP_CONFIG") or json.dumps(ATLASSIAN_MCP)  # JSON 문자열 또는 파일 경로(시험에서 가짜 MCP 로 교체)
 CLAUDE_TIMEOUT = int(os.environ.get("LRM_SCRUM_CLAUDE_TIMEOUT", "900"))
-MAX_LINES = 30  # 칸 길이 상한(11-12 실측 25줄 안팎에 여유)
+MAX_LINES = 45  # 칸 길이 상한(11-12 실측 25줄 + 진행 상세·PR·막힘 줄)
 RETRY_WAITS = [int(x) for x in os.environ.get("LRM_SCRUM_RETRY_WAITS", "30,90").split(",") if x]  # Slack 이 거절한 발송만 재시도
 NET_HOST = os.environ.get("LRM_SCRUM_NET_HOST", "api.anthropic.com")
 NET_WAIT_SEC = int(os.environ.get("LRM_SCRUM_NET_WAIT", "120"))  # 깨어난 직후 네트워크가 붙기를 기다리는 최대 시간
-SOURCES = ("prs", "commits", "hub_reports", "handoffs", "instructions")  # scrum_collect.collect 의 출처 키
+SOURCES = ("prs", "commits", "hub_reports", "handoffs", "instructions")  # scrum_collect.collect 의 출처 키. hub_progress 는 보강 출처라 '전 출처 빔' 판정에서 뺌
 LOST_LABEL = {"commits_partial": "commits 일부 워크트리"}  # 경고 줄에 쓸 이름
 REQUIRED_SOURCES = ("prs", "commits")  # 둘 다 못 모이면 초안이 근거 없음
 # Slack 본문·경고·로그에 나가면 안 되는 문자열. 첨부 초안은 비밀만, 본문 주제는 내부 번호도 거름
