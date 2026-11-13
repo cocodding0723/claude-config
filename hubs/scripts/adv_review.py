@@ -20,13 +20,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ci_review as review  # noqa: E402
+import main_terminal as mt  # noqa: E402
 
 DIR = Path(os.environ.get("LRM_HUB_DIR", Path.home() / ".config/lrm-hubs"))
 REPO = os.environ.get("LRM_CI_REPO", "Basakansoft/LoveRevolutionMaker")
 GH = os.environ.get("LRM_GH", "gh")
 CLAUDE = os.environ.get("LRM_CLAUDE", "claude")
 NOTIFY = os.environ.get("LRM_NOTIFY", str(DIR / "slack_notify.sh"))
-ORCA = os.environ.get("LRM_ORCA", "orca")
+ORCA = mt.find_orca()  # launchd 짧은 PATH 대응
 MAIN_ENV = os.environ.get("LRM_MAIN_ENV", str(DIR / "main.env"))
 STATE = DIR / "adv-review.state.json"
 LOCK = DIR / "adv-review.lock"

@@ -10,6 +10,7 @@ usage() {
   줄 끝: 교체하는 MAIN_TERMINAL 줄만 LF 로 쓰고 다른 줄은 원형(CRLF 포함)대로 보존한다. CRLF 파일이면 줄 끝이 섞일 수 있으며 slack_push 는 값을 strip 해 읽으므로 동작에는 영향 없다.
 --auto  핸들을 직접 찾아 기록함(slack_push 의 자동 재탐색과 같은 기준). orca terminal list 에서 제목이 MAIN-HANDOFF 로 시작하고(제목 중간에 낀 터미널은 제외. 운영 규약: 이 접두부는 메인 전용이며 워커 제목은 이 접두부로 시작하지 않는다), 메인 체크아웃(LRM_PUSH_MAIN,
         기본 ~/orca/LoveRevolutionMaker) 소속이며, agentIdentity=claude 이고, 연결됨·쓰기 가능한 터미널이 정확히 1개일 때만 기록한다.
+        접두 후보가 0개면 제목과 무관하게 메인 체크아웃의 같은 조건 터미널 중 마지막 출력이 가장 최근인 1개를 후보로 삼는다(팀 모드 리더 pane 제목 대응).
         0개·2개 이상이면 아무것도 쓰지 않고 후보 수와 조치를 안내한 뒤 종료 코드 3. --dry-run 은 찾기만 하고 main.env 를 쓰지 않는다(핸들은 앞 8자만 출력).
 핸들: orca terminal 핸들(term_ 뒤 16진·하이픈). 메인 세션에서 orca terminal list --json 으로 찾는다.
 언제: 메인 코디네이터를 (재)시작한 직후 새 터미널 핸들로 한 번. 안 하면 slack_push 가 전달을 보류하고 '메인 연결 끊김'을 알린다.

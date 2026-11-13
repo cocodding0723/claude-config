@@ -21,7 +21,7 @@ DIR = os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
 STORE = os.path.join(DIR, "card-actions.json")
 TTL_S = 7 * 24 * 3600  # 답 없는 카드의 등록 보존 기간
 RUN_PICK = 1  # 실행을 뜻하는 선택지 번호
-ORCA = os.environ.get("LRM_ORCA") or "orca"
+ORCA = mt.find_orca()  # 수신기(launchd)의 짧은 PATH 에서도 찾음
 ORCA_TIMEOUT_S = 30
 EXEC_TIMEOUT_S = 600  # 허브 여러 개를 순서대로 띄우는 시간까지 감안한 상한
 
@@ -148,27 +148,35 @@ def send_line(handle: str, text: str) -> bool:
 
 
 def hub_terminals(slug: str) -> list:
-    """허브 폴더(coord-<slug>-hub)에 연결된 claude 터미널 핸들. 조회 실패는 None"""
+    """허브 폴더(coord-<slug>-hub)의 claude 터미널 정보 목록(연결됨·고아 아님·쓰기 가능만). 조회 실패는 None"""
     res = orca_json(["terminal", "list", "--json", "--limit", "1000"])
     if res is None or not isinstance(res.get("terminals"), list):
         return None
-    return [t.get("handle") for t in res["terminals"] if isinstance(t, dict) and str(t.get("worktreePath", "")).endswith(f"/coord-{slug}-hub")
-            and t.get("agentIdentity") == "claude" and t.get("connected") is True and t.get("handle")]
+    return [t for t in res["terminals"] if isinstance(t, dict) and str(t.get("worktreePath", "")).endswith(f"/coord-{slug}-hub")
+            and t.get("agentIdentity") == "claude" and t.get("connected") is True and not t.get("orphaned")
+            and t.get("writable") is True and t.get("handle")]
+
+
+def pick_latest(terms: list) -> dict:
+    """마지막 출력(lastOutputAt)이 가장 최근인 터미널. 값이 없으면 가장 오래된 것으로 봄, 같으면 목록 앞쪽"""
+    return max(terms, key=lambda t: t.get("lastOutputAt") if isinstance(t.get("lastOutputAt"), (int, float)) else 0)
 
 
 def run_notify(args: dict) -> tuple[int, str]:
-    """멈춘 워커 알림: 허브 코디네이터 터미널에 한 줄만 전송. 워커·창은 건드리지 않음.
-    코디네이터가 2개 이상이면 어느 쪽인지 알 수 없어 허브에는 보내지 않고 메인에 중복 사실만 알림"""
+    """멈춘 워커 알림: 허브 코디네이터 터미널 한 곳에 한 줄만 전송. 워커·창은 건드리지 않음.
+    코디네이터가 여럿이면(재시작으로 남은 옛 세션) 마지막 출력이 가장 최근인 1개를 고르고 근거를 결과에 남김. 조회 실패·후보 0개만 '없음'"""
     sent, notes = 0, []
     for hub in args.get("hubs", []):
         slug, lines = hub.get("slug", ""), hub.get("lines", [])
-        handles = hub_terminals(slug) if slug else []
-        if not handles:
+        terms = hub_terminals(slug) if slug else []
+        if not terms:
             notes.append(f"{slug or '허브 미확인'}: 코디네이터 터미널 없음")
-        elif len(handles) > 1:
-            notes.append(f"{slug}: 코디네이터 {len(handles)}개라 보내지 않음")
-        elif send_line(handles[0], "[멈춘 워커 감시] 응답 없는 워커: " + " / ".join(lines)[:600] + " — 상태 확인 후 조치 판단(확인 창은 사용자만 누름)"):
+            continue
+        pick = pick_latest(terms)
+        if send_line(pick["handle"], "[멈춘 워커 감시] 응답 없는 워커: " + " / ".join(lines)[:600] + " — 상태 확인 후 조치 판단(확인 창은 사용자만 누름)"):
             sent += 1
+            if len(terms) > 1:
+                notes.append(f"{slug}: 코디네이터 {len(terms)}개 중 마지막 출력이 가장 최근인 1개에 전송")
         else:
             notes.append(f"{slug}: 전송 실패")
     dups = args.get("dups", [])
@@ -179,7 +187,7 @@ def run_notify(args: dict) -> tuple[int, str]:
             notes.append("중복 코디네이터를 메인에 알림")
         else:
             notes.append("중복 코디네이터 메인 알림 실패")
-    bad = [n for n in notes if "없음" in n or "실패" in n or "않음" in n]
+    bad = [n for n in notes if "없음" in n or "실패" in n]
     return (1 if bad and not sent else 0), f"허브 {sent}곳 알림" + (f" · {'; '.join(notes)}" if notes else "")
 
 

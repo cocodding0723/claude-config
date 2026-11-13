@@ -40,7 +40,7 @@ setlist() { jq -sc '.' > "$FO/list.json"; }  # 행 JSON 을 stdin 으로
 nsend() { [ -f "$FO/sends.log" ] && wc -l < "$FO/sends.log" | tr -d ' ' || echo 0; }
 nlist() { local n; n=$(grep -c '^list' "$FO/calls.log" 2>/dev/null); echo "${n:-0}"; }
 envval() { grep '^MAIN_TERMINAL=' "$H/main.env" | cut -d= -f2; }
-noise() { row term_0000aaaa-0000-4000-8000-00000000000a "다른 작업" "$MAIN"; row term_0000aaaa-0000-4000-8000-00000000000b "MAIN-HANDOFF 다른 체크아웃" "$SB/elsewhere"; row term_0000aaaa-0000-4000-8000-00000000000c "MAIN-HANDOFF codex" "$MAIN" codex; }
+noise() { row term_0000aaaa-0000-4000-8000-00000000000a "다른 작업" "$MAIN" codex; row term_0000aaaa-0000-4000-8000-00000000000b "MAIN-HANDOFF 다른 체크아웃" "$SB/elsewhere"; row term_0000aaaa-0000-4000-8000-00000000000c "MAIN-HANDOFF codex" "$MAIN" codex; }
 W() { bash "$PUSH" --run; }
 
 # ---- 후보 1개: main.env 갱신·로그·전달 계속 ---------------------------------------------------------
@@ -149,6 +149,16 @@ r=$(S)
 newhub T1; { row "$NEW" "MAIN-HANDOFF.md 메인 코디네이터" "$MAIN"; row "$NEW2" "워커: MAIN-HANDOFF 재탐색 구현" "$MAIN"; } | setlist
 out=$(bash "$SETMAIN" --auto 2>&1); rc=$?
 [ "$rc" = 0 ] && [ "$(envval)" = "$NEW" ] && ok "제목 앞부분 일치: 'MAIN-HANDOFF…' 만 후보, 제목 중간에 표식이 낀 워커는 제외 → 후보 1개" || ko "제목 규약" "rc=$rc $out"
+# ---- 제목 접두 후보 0개: 메인 체크아웃 경로 기준 후보 허용(팀 모드 리더 pane 제목이 달라진 사고) -----------------------------------
+newhub T3; { noise; row "$NEW" "팀 리더 pane" "$MAIN"; } | setlist
+out=$(bash "$SETMAIN" --auto 2>&1); rc=$?
+[ "$rc" = 0 ] && [ "$(envval)" = "$NEW" ] && ok "접두 후보 0개 + 메인 체크아웃 claude 1개 → 경로 기준 후보로 갱신(codex·다른 체크아웃은 제외)" || ko "경로 기준 후보" "rc=$rc $out"
+newhub T4; { row "$NEW" "팀 리더 A" "$MAIN" | jq -c '.lastOutputAt=1000'; row "$NEW2" "팀 리더 B" "$MAIN" | jq -c '.lastOutputAt=9000'; } | setlist
+out=$(bash "$SETMAIN" --auto 2>&1); rc=$?
+[ "$rc" = 0 ] && [ "$(envval)" = "$NEW2" ] && ok "경로 기준 후보가 여럿이면 lastOutputAt 가장 최근 1개" || ko "최근 선택" "rc=$rc $out"
+newhub T5; { row "$NEW" "팀 리더 A" "$MAIN" | jq -c '.lastOutputAt=1000'; row "$NEW2" "MAIN-HANDOFF 메인" "$MAIN" | jq -c '.lastOutputAt=1'; } | setlist
+out=$(bash "$SETMAIN" --auto 2>&1); rc=$?
+[ "$rc" = 0 ] && [ "$(envval)" = "$NEW2" ] && ok "접두 후보가 있으면 그쪽 우선(경로 기준 후보는 쓰지 않음)" || ko "접두 우선" "rc=$rc $out"
 bash "$SETMAIN" --help | grep -q '로 시작' && ok "--help 에 제목 규약(MAIN-HANDOFF 로 시작) 명시" || ko "--help 제목 규약" ""
 
 # ---- list 행 스키마: 핸들 없는 행이 있으면 목록을 믿지 않음 ------------------------------------------------------------

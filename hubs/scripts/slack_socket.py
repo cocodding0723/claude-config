@@ -19,7 +19,6 @@ REFRESH 주기마다 계획 재연결(반쯤 죽은 연결 방지). ALIVE 주기
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import threading
@@ -46,8 +45,7 @@ EXIT_RESTART = 3
 INBOX, DONE = os.path.join(DIR, "slack-inbox.jsonl"), os.path.join(DIR, "slack-done.txt")
 MAIN_ENV = os.environ.get("LRM_MAIN_ENV", os.path.join(DIR, "main.env"))
 # launchd 기본 PATH(/usr/bin:/bin)에는 orca 가 없어 전달이 실패했음 → PATH 밖 설치 위치도 찾음
-ORCA = os.environ.get("LRM_ORCA") or shutil.which("orca") or next(
-    (p for p in ("/usr/local/bin/orca", "/Applications/Orca.app/Contents/Resources/bin/orca") if os.path.exists(p)), "orca")
+ORCA = mt.find_orca()
 NOTIFY = os.environ.get("LRM_NOTIFY", os.path.join(DIR, "slack_notify.sh"))
 BLOCK_RE = re.compile(r"^lrm_decide:([A-Za-z0-9-]{1,32})$")
 MODAL_ID = "lrm_custom"
