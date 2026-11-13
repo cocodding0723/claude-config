@@ -28,6 +28,8 @@ LATE_TEXT = {SLACK: "이미 Slack 에서 답함", DOCSITE: "이미 문서 사이
 ANSWER_KINDS = ("pick", "approve")  # 이 동작의 반응·글은 답. 보류(hold)는 카드가 열려 있어 답이 아님
 DELIVERY_NAME = "answer-delivery.jsonl"
 PENDING = "pending"
+APPROVE_NAME = "pr-approve.jsonl"  # PR 병합 승인 기록(종류 pr-approve)
+APPROVE_KIND = "pr-approve"
 PENDING_TTL_S = 300  # 이 시간이 지나도 전달 결과가 없으면 전달 전에 종료된 것으로 봄
 LABEL_MAX = 80  # inbox option_text 길이 상한(Slack 버튼 때와 같음)
 
@@ -77,6 +79,7 @@ class AnswerStore:
         self.sent = os.path.join(self.dir, "slack-sent.jsonl")
         self.lock = os.path.join(self.dir, "answer-store.lock")
         self.delivery = os.path.join(self.dir, DELIVERY_NAME)
+        self.approvals_path = os.path.join(self.dir, APPROVE_NAME)
 
     def claim(self, ans: Answer, now: float | None = None) -> Claim:
         """첫 답이면 inbox·done 에 기록하고 감시기 카드 등록을 꺼냄(card-actions). 늦은 답은 기록 없이 Late.
@@ -116,6 +119,35 @@ class AnswerStore:
         if not votes or any(d.get("conflict") is True for d in votes) or len({str(d.get("pick")) for d in votes}) > 1:
             return "", {}
         return src(votes[0]), votes[0]
+
+    # ---- PR 병합 승인 ----
+    def approve(self, key: str, source: str, now: float | None = None, since: float = 0.0, head: str = "") -> bool:
+        """PR 키의 승인 한 줄. head 는 승인 시점 PR 헤드 커밋(승인은 이 헤드에만 유효).
+        since(이번 출현의 처음 본 시각) 이후 같은 헤드의 승인이 이미 있으면 False(먼저 온 것만 인정). 헤드가 다른 옛 승인은 낡은 것으로 보고 새로 기록.
+        병합은 하지 않음 — 기록만. 판정·기록은 flock 아래 한 번에"""
+        with actions.flock(self.lock):
+            rec = self.approvals().get(key)
+            if rec and rec.get("at", 0) >= int(since) and rec.get("head", "") == head:
+                return False
+            line = {"kind": APPROVE_KIND, "key": key, "source": source, "head": head, "at": int(time.time() if now is None else now)}
+            self.append(self.approvals_path, json.dumps(line, ensure_ascii=False) + "\n")
+        return True
+
+    def approvals(self) -> dict:
+        """키 → 가장 최근 승인 기록. 깨진 줄은 건너뜀"""
+        out = {}
+        try:
+            with open(self.approvals_path, encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        d = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(d, dict) and d.get("kind") == APPROVE_KIND and isinstance(d.get("key"), str):
+                        out[d["key"]] = d
+        except OSError:
+            pass
+        return out
 
     # ---- 전달 기록 ----
     def mark(self, did: str, ts: str, state: str, ok, now: float | None = None, retry: bool = False) -> None:

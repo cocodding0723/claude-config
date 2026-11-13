@@ -29,6 +29,9 @@ REQUEST_KEYS = {"id"}
 RELATED_MAX = 2
 SNAP_MAX_AGE_S = 600  # 수집기가 이만큼 멈췄으면 목록이 낡았다고 알림
 KIND_TEXT = {ci.REVIEW: "검수 자료", ci.COMMAND: "직접 실행 명령", ci.SHEET: "시트·콘솔 작업", ci.WINDOW: "창 승인"}
+APPROVED_BASIS = "승인함·병합 대기"
+VOID_BASIS = "승인 무효(미병합 닫힘)"
+STALE_BASIS = "승인 낡음 — 새 커밋"
 SAY = "확인 완료: {title} ({kind})"
 
 
@@ -84,8 +87,31 @@ class Checklist:
         with self._lock:
             items, notes, at = list(self._items), list(self._notes), self._at
         counts = {k: sum(1 for i in items if i.kind == k and not i.done) for k in ci.KIND_ORDER}
-        return {"items": [i.public() for i in items], "todo": sum(counts.values()), "done": sum(1 for i in items if i.done),
+        return {"items": [self.public(i) for i in items], "todo": sum(counts.values()), "done": sum(1 for i in items if i.done),
                 "counts": counts, "kinds": [{"kind": k, "label": label} for k, label in ci.KINDS], "notes": notes, "at": at, "scanning": not at}
+
+    def public(self, item) -> dict:
+        """항목 응답. 승인했지만 아직 병합 안 된 PR 은 todo 로 두고 approved(승인 시각)·basis 만 붙임(병합되면 done 으로 넘어감)"""
+        d = item.public()
+        if item.kind != ci.MERGE:
+            return d
+        rec = self.router.store.approvals().get(item.key)
+        if not rec or rec.get("at", 0) < int(self.store.load_seen()["first"].get(item.key, 0)):
+            return d
+        info = self._facts_cache.get(item.key) or {}
+        if item.done:
+            if info.get("state") in todo_facts.CLOSED_STATES and info["state"] != "MERGED":
+                d["basis"] = VOID_BASIS  # 병합 없이 닫힘: 승인은 쓰이지 않음(다시 열려도 옛 승인은 되살리지 않음)
+        elif info.get("head") and rec.get("head", "") != info["head"]:
+            d["basis"] = STALE_BASIS  # 승인 뒤 새 커밋: 안 함으로 두고 다시 승인받음
+        else:
+            d["approved"], d["basis"] = rec["at"], APPROVED_BASIS
+        return d
+
+    def fresh_pr(self, key: str):
+        """캐시를 거치지 않는 PR 재조회 → {state, head, ...} 또는 None(조회 실패). 승인 직전 확인용"""
+        repo, num = key[len(pc.PR_PREFIX):].rsplit("#", 1)
+        return todo_facts.make_facts([key], {}, self.now(), True)._view(num, [repo])
 
     # ---- 쓰기: 했음 ----
     def handle(self, req: dict) -> dict:
@@ -155,9 +181,9 @@ class Checklist:
         with self._lock:
             return next((i for i in self._items if i.key == key), None)
 
-    def audit(self, key: str, result: str) -> None:
+    def audit(self, key: str, result: str, kind: str = "confirm") -> None:
         key = key if ci.KEY_RE.fullmatch(key) else "invalid"  # 형식이 틀린 값은 그대로 남기지 않음(로그 오염 방지)
-        rec = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(self.now())), "source": answer_store.DOCSITE, "kind": "confirm", "key": key, "result": result}
+        rec = {"at": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(self.now())), "source": answer_store.DOCSITE, "kind": kind, "key": key, "result": result}
         try:
             answer_store.AnswerStore.append(self.audit_path, json.dumps(rec, ensure_ascii=False) + "\n")
         except OSError as err:

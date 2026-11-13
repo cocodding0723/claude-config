@@ -15,7 +15,7 @@ import progress_collect as pc  # noqa: E402
 import todo_items  # noqa: E402
 import todo_sync  # noqa: E402
 
-PR_STATE_FIELDS = "state,headRefName"
+PR_STATE_FIELDS = "state,headRefName,headRefOid"
 CLOSED_STATES = ("MERGED", "CLOSED")
 OPEN_TTL_S = 300  # 열린 PR 상태를 다시 묻는 간격
 HUB_TTL_S = 3600  # PR → 허브 판정 유효 시간(찾은 값)
@@ -100,7 +100,7 @@ class Facts:
             except (OSError, ValueError, subprocess.TimeoutExpired):
                 d = None
             if isinstance(d, dict) and isinstance(d.get("state"), str):
-                return {"state": d["state"], "branch": d.get("headRefName") or "", "repo": repo}
+                return {"state": d["state"], "branch": d.get("headRefName") or "", "head": d.get("headRefOid") or "", "repo": repo}
         return None
 
     def pr(self, num, repo=""):
