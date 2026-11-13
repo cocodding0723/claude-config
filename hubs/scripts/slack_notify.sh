@@ -7,7 +7,7 @@ set -eu
 usage() {
   cat <<'EOF'
 사용: slack_notify.sh [--tag 허브] [--title 제목] [--thread TS] [--kind 종류 [--choices N] [--emoji-set 종류]] [--no-check] "메시지" [파일경로]
-      slack_notify.sh --kind decide --options '1=문구,2=문구' --recommend N --decision-id D-xxxx [--reversible 쉬움|보통|어려움] [--seq 3/9] "제목·배경"
+      slack_notify.sh --kind decide --options '1=문구 => 고르면 달라지는 점,2=문구 => …' --recommend N --decision-id D-xxxx [--reversible 쉬움|보통|어려움] [--seq 3/9] $'제목\n배경: …\n용어: …'
       slack_notify.sh --kind todo --todo-id T-xxxx "할 일"
   --tag        관련 허브 태그(기록용)
   --title      기록용 제목(기본: 메시지 첫 줄)
@@ -16,9 +16,10 @@ usage() {
                종류별 색 띠(decide·todo 주황, warn 빨강, progress 파랑, done·doc 초록)에 본문을 담고 첫 줄을 굵게 함(이미 굵으면 그대로)
   --choices    2~4(--kind decide 전용). 메시지 끝에 '👉 답:' 이모지 안내 줄을 붙임(본문에 👉 줄이 있으면 생략)
   --emoji-set  custom(기본, :비서-a: 등)|std(표준 :a: :regional_indicator_c: 등). 안내 줄 이모지 종류
-  --options    (--kind decide 전용) 버튼·번호 이모지로 고르는 카드(파일 첨부 시 카드를 먼저 올리고 파일은 그 스레드에 붙임). '번호=문구' 를 쉼표로 이음. 번호는 1부터 연속 2~4개, 문구 1~80자.
+  --options    (--kind decide 전용) 버튼·번호 이모지로 고르는 카드(파일 첨부 시 카드를 먼저 올리고 파일은 그 스레드에 붙임). '번호=문구 => 고르면 달라지는 점' 을 쉼표로 이음(결과 칸 필수). 번호는 1부터 연속 2~4개, 문구 1~80자, 결과 1~100자.
                문구에 :이름:·👉·✅·❌·키캡은 못 씀(답 이모지로 오인). --thread 와 함께 못 씀(스레드 답글의 반응은 수집 안 됨).
-               선택지 줄(:one: 등)·추천 줄·'👉 답:' 줄·결정 번호 줄을 도구가 붙임. 본문에는 제목과 배경만 씀(본문 '👉 답:' 줄은 거부)
+               선택지 줄(:one: 등, 결과 포함)·추천 줄·'👉 답:' 줄·결정 번호 줄을 도구가 붙임. 본문에는 제목·'배경:'·'용어:' 줄만 씀(본문 '👉 답:' 줄은 거부).
+               카드 순서: 제목 → 배경 → 선택지(각 결과) → 추천(+본문 '이유:' 줄) → 용어 → 답 줄
   --recommend  (--options 필수) 추천 선택지 번호
   --decision-id (--options 필수) 결정 번호 D-영문·숫자 1~16자. 태그에서 만들지 않음(결정끼리 겹치면 답이 다른 결정에 붙음).
                최근 7일 안에 같은 번호로 보낸 카드가 있으면 stderr 경고(전송은 함)
@@ -35,14 +36,15 @@ usage() {
                카드·스레드·링크 옵션과 함께 못 씀. 보낸 기록에 to_user 로 남김. 문서 페이지(doc_browser.py)의 보내기가 씀
   --no-check   양식 검사 생략(slack-sent.jsonl 에 unchecked:true 기록)
 환경 변수: LRM_BTN_WARN=off 는 '버튼 없음' 경고를 끔(시험용). LRM_FORMAT=warn|strict|off (기본 warn). warn 은 위반해도 전송하고 stderr 경고, strict 는 위반 시 미전송·종료 코드 2
+  --kind decide 는 본문 '배경:'·'용어:' 줄(낯선 말이 없으면 '용어: 없음')이 없거나 --options 에 선택지 결과가 없으면 --no-check·LRM_FORMAT 과 무관하게 미전송·종료 코드 2.
   --kind decide 는 결정이 2개 이상이거나 python3 검사가 실패하면 모드와 무관하게 미전송·종료 코드 2(결정 1건 = 메시지 1개). --no-check·off 로 우회하면 로그에 한 줄 남음
 예:
   slack_notify.sh "빌드 완료"
   slack_notify.sh --tag ui-hub "결정1 A/B?" report.html
   slack_notify.sh --thread 1730790000.123456 "반영함"
   slack_notify.sh --kind done "알림 시각 통일"
-  slack_notify.sh --kind decide --choices 3 "알림 시각 정하기"
-  slack_notify.sh --kind decide --options '1=오전 9시,2=오전 10시' --recommend 1 --decision-id D-0001 --seq 1/3 "알림 시각"
+  slack_notify.sh --kind decide --no-doc --choices 3 $'알림 시각 정하기\n배경: 알림 개편 중, 시각이 화면마다 달라 하나로 맞추려 함\n용어: 푸시 — 앱 밖 알림'
+  slack_notify.sh --kind decide --no-doc --options '1=오전 9시 => 출근 전에 도착,2=오전 10시 => 업무 시작 뒤에 도착' --recommend 1 --decision-id D-0001 --seq 1/3 $'알림 시각\n배경: 알림 개편 중, 시각이 화면마다 달라 하나로 맞추려 함\n용어: 푸시 — 앱 밖 알림\n이유: 출근 시간대 열람률이 높음'
 종료 코드: 0 성공, 1 API 실패, 2 설정·인자·양식 오류
 본문·참고에 로컬 문서·이미지 경로(.html .png .jpg .gif .mp4 .pdf, 폴더 포함)가 있는데 같은 파일이 첨부로 오지 않거나 첨부가 비밀 파일(.env·키·인증서·~/.ssh 등)이면 미전송·종료 코드 2(--no-check 로도 못 풀림).
 판정은 hub_report.py check-text 가 함(환경 변수 LRM_HUB_REPORT 로 경로 재정의). decide 카드(--options) 본문은 전송기와 같은 '- ' 줄 양식으로 정리함(hub_report.bullet_body).
@@ -115,6 +117,12 @@ HR="${LRM_HUB_REPORT:-$(dirname "$(readlink "$0" || echo "$0")")/hub_report.py}"
 ATT=(); [ $# -lt 2 ] || ATT=(--attached "$2")
 for a in ${ATTACHED[@]+"${ATTACHED[@]}"}; do ATT+=(--attached "$a"); done
 if ! CHK="$(printf '%s' "$1" | python3 -I "$HR" check-text ${ATT[@]+"${ATT[@]}"} 2>&1)"; then die "${CHK#오류: }"; fi
+# 결정 카드 필수 항목(배경·용어·선택지 결과). 경로 검사처럼 우회 불가. 규칙은 decide_card.py 한 곳
+if [ "$KIND" = decide ]; then
+  DC=(); [ "$OPT_SET" = 0 ] || DC=(--options "$OPTIONS")
+  if ! CHK="$(printf '%s' "$1" | python3 -I "$HR" check-decide ${DC[@]+"${DC[@]}"} 2>&1)"; then die "${CHK#오류: }"; fi
+fi
+LRM_SCRIPT_DIR="$(dirname "$HR")"; export LRM_SCRIPT_DIR  # FORM_PY 가 decide_card 를 찾는 곳
 if [ -n "$LINK_TO" ]; then printf '%s' "$LINK_TO" | grep -Eq '^[0-9]{1,12}\.[0-9]{1,9}$' || die "--link-to 형식 오류 — Slack 메시지 ts(숫자.숫자)"; fi
 if [ -n "$QUOTE" ]; then printf '%s' "$QUOTE" | grep -Eq '^[0-9]{1,12}\.[0-9]{1,9}$' || die "--quote 형식 오류 — Slack 메시지 ts(숫자.숫자)"; fi
 DIR="$HOME/.config/lrm-hubs"
@@ -189,7 +197,9 @@ fi
 #   dup <sent 파일> <결정번호>: 최근 7일 안에 같은 결정 번호로 보낸 기록이 있으면 stderr 경고(종료 코드 항상 0)
 # 검사 제외 구간: 코드 블록·인라인 코드·URL, 마지막 '참고:' 줄 이후(티켓·커밋 번호 허용, 첫 줄 제외). 결정 개수는 예외로 '참고:' 줄 자체만 빼고 그 뒤도 셈
 read -r -d '' FORM_PY <<'PYEOF' || true
-import json, re, sys, time, unicodedata
+import json, os, re, sys, time, unicodedata
+sys.path.insert(0, os.environ.get("LRM_SCRIPT_DIR", ""))
+import decide_card
 
 RX = {
     "fence": re.compile(r"```.*?```", re.S),
@@ -209,9 +219,6 @@ RX = {
     "head_a": re.compile(r"^[ \t]*(?:(?:>|[•\-*·#\[])[ \t]*)*결정[ \t]*[-#]?[ \t]*(?P<n>[①-⑳]|\d{1,2}(?![0-9]))(?:번)?(?=[).:*\]\s]|$)", re.M),
     "head_b": re.compile(r"^[ \t]*(?:(?:>|[•\-*·])[ \t]*)*(?P<n>[①-⑳]|\d{1,2}(?:[.)]|번)|\(\d{1,2}\)|\d{1,2}\uFE0F?\u20E3)[ \t]*\**[ \t]*결정", re.M),
     "mid_a": re.compile(r"(?<![0-9A-Za-z_가-힣])결정[ \t]*[-#]?[ \t]*(?P<n>[①-⑳]|\d{1,2}(?![0-9])(?=[).:*]))"),
-    # 번호 카드 인자. 문구 안 쉼표는 뒤에 '숫자=' 가 올 때만 구분자로 봄. 두 자리 번호도 구분자로 봐 범위 오류로 거부(문구에 조용히 합쳐지지 않게)
-    "opt_split": re.compile(r",[ \t]*(?=[0-9]+[ \t]*=)"),
-    "opt_item": re.compile(r"[ \t]*([0-9]+)[ \t]*=(.*)", re.S),
     # 선택지 문구에 있으면 답 이모지·답 줄로 오인되는 것: :이름:·👉·✅·❌·키캡 숫자
     "opt_fake": re.compile(r"(?<!\w):[\w+\-]{1,40}:(?!\w)|👉|✅|❌|[0-9#*]️?⃣"),
     "decision_id": re.compile(r"D-[0-9A-Za-z]{1,16}", re.A),
@@ -369,12 +376,8 @@ def parse_card(raw, rec, rev, did, seq, tid):
         if not RX["todo_id"].fullmatch(tid):
             raise ValueError("--todo-id 형식 오류: T-영문·숫자 1~16자 — 예 T-0001")
         return {"todo_id": tid}
-    opts = {}
-    for part in RX["opt_split"].split(unicodedata.normalize("NFC", raw)):
-        m = RX["opt_item"].fullmatch(part)
-        if not m:
-            raise ValueError("--options 형식 오류 — '1=문구,2=문구' 처럼 번호=문구 를 쉼표로 이어 쓰세요")
-        n, text = m.group(1), m.group(2).strip(" \t")
+    opts, outcomes = {}, {}
+    for n, text, result in decide_card.options(raw):  # 분리 규칙은 decide_card 한 곳
         if n in opts:
             raise ValueError("--options 번호 중복: %s — 번호마다 한 번씩만 쓰세요" % n)
         if any(unicodedata.category(c) in BAD_CATS or c in BAD_CHARS for c in text):
@@ -386,6 +389,8 @@ def parse_card(raw, rec, rev, did, seq, tid):
         if len(text) > OPT_TEXT_MAX:
             raise ValueError("--options 문구가 %d자(%s번, 최대 %d) — 줄이세요" % (len(text), n, OPT_TEXT_MAX))
         opts[n] = text
+        if result:
+            outcomes[n] = result
     if not 2 <= len(opts) <= 4 or set(opts) != {str(i) for i in range(1, len(opts) + 1)}:
         raise ValueError("--options 범위 오류: 번호는 1부터 빠짐없이 2~4개 — 예 '1=가,2=나,3=다'")
     if rec not in opts:
@@ -393,6 +398,8 @@ def parse_card(raw, rec, rev, did, seq, tid):
     if not RX["decision_id"].fullmatch(did or ""):
         raise ValueError("--decision-id 형식 오류: D-영문·숫자 1~16자 — 예 D-0001")
     out = {"decision_id": did, "options": opts, "recommended": int(rec)}
+    if outcomes:
+        out["outcomes"] = outcomes
     if rev is not None:
         if rev not in REVERSIBLE:
             raise ValueError("--reversible 값 오류: %s — 쉬움|보통|어려움 중 하나" % rev)
@@ -407,6 +414,9 @@ def parse_card(raw, rec, rev, did, seq, tid):
 def build_card(msg, spec):
     """검사를 마친 본문에 카드 줄을 붙여 (본문, 경고 목록) 반환. 카드의 답 줄은 1개여야 해서 본문 답 줄은 ValueError.
     선택지·추천·답 줄은 마지막 '참고:' 줄 앞(없으면 끝). 번호 줄은 메시지 맨 끝 = 참고 블록 끝('참고:' 줄 뒤에 다른 줄이 더 있어도 그 뒤. 없으면 '참고:' 줄을 새로 만듦)"""
+    terms, why = "", ""
+    if "options" in spec:  # 용어·이유 줄은 추천 줄 뒤로 옮김(배경 → 선택지 → 추천 → 용어 순)
+        msg, terms, why = decide_card.take_lines(msg)
     scan = scrub(msg)
     pos = ref_start(scan)
     has_answer = RX["answer"].search(scan)
@@ -417,9 +427,15 @@ def build_card(msg, spec):
         if RX["opt_line"].search(scan if pos is None else scan[:pos]):
             warns.append("경고: 본문 줄 머리에 선택지 이모지(:one: 등)가 있음 — --options 가 선택지 줄을 만들므로 본문에는 배경만 쓰세요")
         nums = sorted(int(k) for k in spec["options"])
-        block = ["%s %s" % (OPT_EMOJI[n], spec["options"][str(n)]) for n in nums]
+        outcomes = spec.get("outcomes", {})
+        for n in nums:
+            block.append("%s %s" % (OPT_EMOJI[n], spec["options"][str(n)]))
+            if str(n) in outcomes:
+                block.append("    ↳ 고르면: %s" % outcomes[str(n)])
         rec = ":star: 추천: %s" % OPT_EMOJI[spec["recommended"]]
-        block.append(rec + (" · 되돌리기: %s" % spec["reversible"] if "reversible" in spec else ""))
+        block.append(rec + (" · 이유: %s" % why if why else "") + (" · 되돌리기: %s" % spec["reversible"] if "reversible" in spec else ""))
+        if terms:
+            block.append(terms)
         block.append("👉 답: %s 중 하나 · :white_check_mark: 추천대로 · :x: 보류" % " ".join(OPT_EMOJI[n] for n in nums))
         ref = "결정 %s" % spec["decision_id"] + (" · %s" % spec["seq"] if "seq" in spec else "")
     else:
@@ -430,7 +446,10 @@ def build_card(msg, spec):
     if block:
         guide = "\n".join(block)
         out = msg.rstrip("\n") + "\n\n" + guide if pos is None else msg[:pos].rstrip("\n") + "\n\n" + guide + "\n\n" + msg[pos:].lstrip("\n")
-    return out.rstrip("\n") + ("\n\n참고: " + ref if pos is None else "\n" + ref), warns
+    out = out.rstrip("\n") + ("\n\n참고: " + ref if pos is None else "\n" + ref)
+    if "options" in spec and len(out) + 2 > SECTION_MAX:  # 넘으면 블록이 잘려 답 줄·참고가 사라지므로 미전송(+2 = 제목 굵게 표식)
+        raise ValueError("카드 본문이 %d자(최대 %d, 전송 안 함) — 배경·용어·선택지 결과를 줄이세요" % (len(out), SECTION_MAX))
+    return out, warns
 
 def recent_dup(path, did):
     """최근 DUP_DAYS 일 안에 같은 결정 번호로 보낸 기록 수. 파일이 없거나 깨진 줄은 무시"""

@@ -386,14 +386,21 @@ def check_plan(pl: Plan, hubs: list) -> None:
         pl.parent = h.parent
 
 
+APPROVE_OPTIONS = "1=승인 => 안대로 실행 대상이 됨. 실행은 별도 명령,2=보류 => 아무것도 바뀌지 않음"
+
+
 def card_text(pl: Plan, reasons: list) -> str:
     if pl.kind == "split":
         title = f"허브 분할 승인: {pl.parent} → {pl.child}"
         what = f"새 하위 허브 '{pl.child_name}', 머리말 '{pl.prefix}' 추가. 미착수 작업만 이관, 진행 작업은 끝까지 부모"
+        background = f"허브 {pl.parent} 에 작업이 몰려 일부를 하위 허브로 나누는 안을 승인받는 중"
     else:
         title = f"허브 병합 승인: {pl.child} → {pl.parent}"
         what = "하위 허브를 부모로 합침: 장부 담당·접수 경로·작업 공간 부모를 되돌리고 하위 허브 종료"
-    return "\n".join([title[:40], what, ("근거: " + "; ".join(reasons))[:200] if reasons else "근거: hub_split.py measure 결과"])
+        background = f"하위 허브 {pl.child} 를 부모 {pl.parent} 로 되돌려 합치는 안을 승인받는 중"
+    terms = "허브 — 작업 묶음을 맡는 코디네이터 세션 · 머리말 — 작업 이름 앞 글자로 담당 허브를 정하는 표시"
+    return "\n".join([title[:40], f"배경: {background}", f"용어: {terms}", what,
+                      ("근거: " + "; ".join(reasons))[:200] if reasons else "근거: hub_split.py measure 결과"])
 
 
 def cmd_propose(a, run) -> int:
@@ -401,7 +408,7 @@ def cmd_propose(a, run) -> int:
     check_plan(pl, read_hubs())
     if not a.file and not a.no_doc:
         raise SplitError("결정 카드는 근거 문서 --file 필요(없으면 --no-doc 명시)")
-    args = ["--kind", "decide", "--text", card_text(pl, a.reason), "--options", "1=승인,2=보류", "--recommend", "1",
+    args = ["--kind", "decide", "--text", card_text(pl, a.reason), "--options", APPROVE_OPTIONS, "--recommend", "1",
             "--decision-id", a.decision_id, "--reversible", "보통"]
     args += [x for f in a.file for x in ("--file", f)] + (["--no-doc"] if a.no_doc else [])
     res = hub_report(args, dry=not a.record)

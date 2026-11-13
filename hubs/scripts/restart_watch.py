@@ -151,15 +151,19 @@ def targets() -> list[dict]:
 def card_text(ident: dict, hubs: list[dict]) -> str:
     started = ident["startedAt"] or "시각 불명"
     lines = [CARD_TITLE, "",
-             f"• 무엇: Orca 가 다시 시작됨(시작 {started}), 진행 작업이 있던 허브 {len(hubs)}개",
-             "• 결과: 이어받기를 누르면 아래 허브만 코디네이터를 다시 띄움. 보류는 아무것도 안 함", "", "참고:"]
+             "• 배경: Orca 앱이 다시 시작돼 진행 중이던 허브 코디네이터 세션이 끊겼을 수 있음. 어느 허브를 다시 띄울지 묻는 중",
+             "• 용어: 허브 — 작업 묶음 하나를 맡는 코디네이터 세션 · 이어받기 — 끊긴 허브 세션을 다시 띄움",
+             f"• 무엇: Orca 가 다시 시작됨(시작 {started}), 진행 작업이 있던 허브 {len(hubs)}개", "", "참고:"]
     for h in hubs:
         more = f" 외 {len(h['tasks']) - 1}건" if len(h["tasks"]) > 1 else ""
         lines.append(f"• {h['slug']} · {h['name']} — {h['tasks'][0][:LINE_MAX]}{more}")
     return "\n".join(lines)
 
 
-def send_card(did: str, text: str, options: str = "1=이어받기,2=보류") -> bool:
+RESUME_OPTIONS = "1=이어받기 => 아래 허브만 코디네이터를 다시 띄움,2=보류 => 아무것도 안 하고 카드를 닫음"
+
+
+def send_card(did: str, text: str, options: str = RESUME_OPTIONS) -> bool:
     cmd = [NOTIFY, "--kind", "decide", "--no-doc", "--options", options, "--recommend", "1", "--decision-id", did, "--reversible", "쉬움", text]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=NOTIFY_TIMEOUT_S, stdin=subprocess.DEVNULL)

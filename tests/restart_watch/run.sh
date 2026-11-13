@@ -82,7 +82,7 @@ chk "dry-run: 카드 문구 출력, 전송·저장 없음" 'grep -q "Orca 재시
 # ---- 4. 재시작 1회: 카드 1개 -----------------------------------------------------------------
 rw --json > "$SB/o"
 chk "재시작: 카드 1개" '[ "$(cards)" = 1 ] && grep -q "\"carded\"" "$SB/o"'
-chk "카드: 결정 카드·선택지 이어받기/보류·D-RS 번호" 'grep -qx -- "--kind" "$FAKE_NOTIFY_LOG" && grep -qx "decide" "$FAKE_NOTIFY_LOG" && grep -qx "1=이어받기,2=보류" "$FAKE_NOTIFY_LOG" && grep -Eqx "D-RS[0-9a-f]{10}" "$FAKE_NOTIFY_LOG"'
+chk "카드: 결정 카드·선택지 이어받기/보류·D-RS 번호" 'grep -qx -- "--kind" "$FAKE_NOTIFY_LOG" && grep -qx "decide" "$FAKE_NOTIFY_LOG" && grep -qx "1=이어받기 => 아래 허브만 코디네이터를 다시 띄움,2=보류 => 아무것도 안 하고 카드를 닫음" "$FAKE_NOTIFY_LOG" && grep -q "^• 배경:" "$FAKE_NOTIFY_LOG" && grep -q "^• 용어:" "$FAKE_NOTIFY_LOG" && grep -Eqx "D-RS[0-9a-f]{10}" "$FAKE_NOTIFY_LOG"'
 chk "카드: 제목 첫 줄 'Orca 재시작 감지'" 'grep -qx "Orca 재시작 감지" <(sed -n "1,/^---\$/p" "$FAKE_NOTIFY_LOG" | tr "\n" "\n" | awk "BEGIN{RS=\"\"} {print}" ) || grep -q "^Orca 재시작 감지" "$FAKE_NOTIFY_LOG"'
 chk "카드: 진행 작업 있는 허브(alpha·beta)만, 작업 없음(gamma)·낡음(delta) 제외" 'grep -q "alpha · 알파 허브 — 기능 A 구현 LRM-266 외 1건" "$FAKE_NOTIFY_LOG" && grep -q "beta · 베타 허브" "$FAKE_NOTIFY_LOG" && ! grep -q "gamma" "$FAKE_NOTIFY_LOG" && ! grep -q "delta" "$FAKE_NOTIFY_LOG"'
 chk "카드: Slack 멘션·링크 문자 제거" '! grep -q "<!channel>" "$FAKE_NOTIFY_LOG" && grep -q "!channel 베타 작업" "$FAKE_NOTIFY_LOG"'

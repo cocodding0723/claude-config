@@ -23,6 +23,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # -I 실행·복사 설치에서도 같은 폴더의 hub_status 를 찾음
+import decide_card  # noqa: E402
 import hub_status  # noqa: E402
 
 HUB_DIR = os.environ.get("LRM_HUB_DIR", os.path.expanduser("~/.config/lrm-hubs"))
@@ -37,7 +38,7 @@ KINDS = {
     "info": ("🔄", "정보", "progress"),
     "warn": ("⚠️", "경고", "warn"),
 }
-THREAD_KINDS = ("warn", "done")  # 기존 스레드에 답글로 올릴 수 있는 종류. decide 버튼 카드는 스레드 답글이 안 됨
+THREAD_KINDS = ("info", "done", "warn")  # 기존 스레드에 답글로 올릴 수 있는 종류. Slack 에서 온 질문의 답(info·done·warn)이 그 스레드로 감. decide 버튼 카드는 스레드 답글이 안 됨
 DECISION_ID_RE = re.compile(r"D-[0-9A-Za-z]{1,16}", re.A)  # slack_notify.sh 의 decision_id 규칙과 같은 정의. 접수·전송 양쪽이 이걸 씀
 DECISION_ID_ERR = "--decision-id 형식 오류: D-영문·숫자 1~16자 — 예 D-0001"
 TS_RE = re.compile(r"^\d{1,12}\.\d{1,9}$")
@@ -217,8 +218,9 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
     lines = [ln.strip() for ln in (text or "").strip().splitlines() if ln.strip()]
     if not lines:
         raise ReportError("--text 비어 있음 — 보고 내용을 3줄 이내로 지정")
-    if len(lines) > MAX_LINES or len("\n".join(lines)) > MAX_CHARS:
-        raise ReportError(f"--text 가 {len(lines)}줄·{len(' '.join(lines))}자 — {MAX_LINES}줄·{MAX_CHARS}자 이내로 줄이고 상세는 --file 증거로")
+    max_lines, max_chars = (decide_card.MAX_LINES, decide_card.MAX_CHARS) if kind == "decide" else (MAX_LINES, MAX_CHARS)
+    if len(lines) > max_lines or len("\n".join(lines)) > max_chars:
+        raise ReportError(f"--text 가 {len(lines)}줄·{len(' '.join(lines))}자 — {max_lines}줄·{max_chars}자 이내로 줄이고 상세는 --file 증거로")
     files = [f.strip() for f in files or []]
     if any(not f or "\n" in f for f in files) or len(files) > MAX_FILES:
         raise ReportError(f"--file 오류 — 한 줄 경로 {MAX_FILES}개 이하")
@@ -235,6 +237,8 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
         if len(lines[0]) > MAX_TITLE:
             raise ReportError(f"decide 첫 줄(결정 제목)이 {len(lines[0])}자 — {MAX_TITLE}자 이내로, 배경은 둘째 줄부터")
         check_decision_id(decision_id)
+        if why := decide_card.problem("\n".join(lines), options):
+            raise ReportError(why)
         if not files and not no_doc:
             raise ReportError(NO_DOC_ERR)
         rep.update({"options": options, "recommend": recommend, "decision_id": decision_id})
@@ -412,8 +416,9 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="예:\n"
                "  hub_report.py add --hub ui-layer --task C0012 --kind done --text '버튼 정렬 수정 완료' --file docs/ui.html\n"
                "  hub_report.py add --hub ui-layer --task 없음 --kind info --text '리뷰 대기 중'\n"
-               "  hub_report.py add --hub ui-layer --task C0012 --kind decide --text $'알림 시각 정하기\\n지금은 시각이 제각각' \\\n"
-               "      --options '1=오전 9시,2=오전 10시' --recommend 1 --decision-id D-0101\n"
+               "  hub_report.py add --hub ui-layer --task C0012 --kind decide --no-doc --text $'알림 시각 정하기\\n배경: 알림 개편 중, 시각이 화면마다 달라 하나로 맞추려 함\\n용어: 푸시 — 앱 밖 알림' \\\n"
+               "      --options '1=오전 9시 => 출근 전에 도착,2=오전 10시 => 업무 시작 뒤에 도착' --recommend 1 --decision-id D-0101\n"
+               "  hub_report.py add --hub ui-layer --task 없음 --kind info --reply-to 1730790000.123456 --text 'Slack 질문 답: 원인은 캐시'\n"
                "  hub_report.py add --hub ci-hub --task 없음 --kind warn --thread 1730790000.123456 --text 'CI 실패 원인: 시험 X' --now\n"
                "환경: LRM_HUB_DIR, LRM_REPORT_OUTBOX\n"
                "종료 코드: 0 기록(중복 무시 포함), 1 파일 읽기·쓰기 실패, 2 인자·입력 오류(비밀 값 포함)")
@@ -422,19 +427,21 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--hub", required=True, help="허브 slug(예 ui-layer)")
     a.add_argument("--task", required=True, help=f"작업 번호(예 C0012). 없으면 '{NO_TASK}'")
     a.add_argument("--kind", required=True, metavar="|".join(KINDS), help="보고 종류")  # 값 검사는 make_report 가 함(비밀 검사 뒤)
-    a.add_argument("--text", required=True, help=f"본문 {MAX_LINES}줄·{MAX_CHARS}자 이내. decide 는 첫 줄이 결정 제목")
+    a.add_argument("--text", required=True, help=f"본문 {MAX_LINES}줄·{MAX_CHARS}자 이내. decide 는 첫 줄이 결정 제목이고 '배경:'·'용어:' 줄 필수({decide_card.MAX_LINES}줄·{decide_card.MAX_CHARS}자 이내)")
     a.add_argument("--file", action="append", default=[], dest="files", help="Slack 에 첨부할 문서·이미지·영상 경로(반복 가능, 최대 5개). 본문에 경로만 쓰지 않음")
-    a.add_argument("--options", help="(decide) '1=문구,2=문구'")
+    a.add_argument("--options", help="(decide) '1=문구 => 고르면 달라지는 점,2=문구 => …' — 결과 칸 필수")
     a.add_argument("--recommend", help="(decide) 추천 번호")
     a.add_argument("--decision-id", help="(decide) 결정 번호 D-영문·숫자")
     a.add_argument("--reversible", help="(decide) 쉬움|보통|어려움")
-    a.add_argument("--thread", help="봇 DM 안의 기존 Slack 스레드 ts(숫자.숫자)에 답글로 올림(채널 지정 불가). warn·done 만. 진행 스레드 한 줄은 생략")
+    a.add_argument("--thread", "--reply-to", dest="thread", help="봇 DM 안의 기존 Slack 스레드 ts(숫자.숫자)에 답글로 올림(채널 지정 불가). info·done·warn 만. 하달문 '답할 곳: thread <ts>' 의 ts 를 씀. 진행 스레드 한 줄은 생략")
     a.add_argument("--no-doc", action="store_true", help="(decide) 근거 문서 없는 결정임을 명시. decide 는 --file 없이는 이게 있어야 기록됨")
     a.add_argument("--now", action="store_true", help="기록 직후 전송기를 1회 실행. 다른 전송기가 돌고 있으면 다음 폴러 회차가 올림")
     a.add_argument("--dry-run", action="store_true", help="쓰지 않고 기록될 보고만 출력")
     a.add_argument("--json", action="store_true", help="결과를 JSON 한 줄로 출력")
     ck = sub.add_parser("check-text", help="본문(표준 입력)의 로컬 경로·첨부 파일 검사", description="알림 스크립트가 부르는 검사. 본문에 로컬 문서·이미지·영상 경로가 있는데 같은 파일이 첨부로 오지 않거나 첨부가 민감 파일이면 종료 코드 2.")
     ck.add_argument("--attached", action="append", default=[], help="이 메시지가 첨부하거나 같은 보고에서 따로 첨부하는 파일(반복 가능)")
+    dc = sub.add_parser("check-decide", help="결정 카드 필수 항목 검사(본문은 표준 입력)", description="알림 스크립트가 부르는 검사. 본문에 '배경:'·'용어:' 줄이 없거나 --options 에 선택지 결과가 없으면 종료 코드 2.")
+    dc.add_argument("--options", help="있으면 선택지마다 결과 칸도 검사. 없으면 본문만(--choices 카드)")
     sub.add_parser("bullet-body", help="결정 카드 본문 양식(표준 입력 → 표준 출력)", description="알림 스크립트가 직접 호출 카드 본문에 쓰는 줄 양식.")
     ls = sub.add_parser("list", help="outbox 목록", description="outbox 의 보고를 기록 순서로 출력.")
     ls.add_argument("--json", action="store_true", help="JSON 배열로 출력")
@@ -465,6 +472,9 @@ def main(argv=None) -> int:
                 send_now()
         elif args.cmd == "bullet-body":
             sys.stdout.write(bullet_body(sys.stdin.read()))
+        elif args.cmd == "check-decide":
+            if why := decide_card.problem(sys.stdin.read(), args.options):
+                raise ReportError(why)
         elif args.cmd == "check-text":
             for f in args.attached:
                 if why := secret_file_problem(f):

@@ -50,11 +50,11 @@ class ReportTest(unittest.TestCase):
 
     def test_malformed_decision_id_rejected_at_intake(self):
         for did in ("D-bad id", "x-1", "D-", "D-" + "a" * 17, "D-한글"):
-            r = self.add(text="제목\n배경", kind="decide", extra=["--options", "1=a,2=b", "--recommend", "1", "--decision-id", did, "--no-doc"])
+            r = self.add(text="제목\n배경: 시험용 배경 설명 문장입니다\n용어: 없음", kind="decide", extra=["--options", "1=a => 결과 가,2=b => 결과 나", "--recommend", "1", "--decision-id", did, "--no-doc"])
             self.assertEqual(r.returncode, 2, did)
             self.assertIn("형식 오류: D-영문·숫자 1~16자", r.stderr)
         self.assertEqual(self.rows(), [])
-        r = self.add(text="제목\n배경", kind="decide", extra=["--options", "1=a,2=b", "--recommend", "1", "--decision-id", "D-" + "a" * 16, "--no-doc"])
+        r = self.add(text="제목\n배경: 시험용 배경 설명 문장입니다\n용어: 없음", kind="decide", extra=["--options", "1=a => 결과 가,2=b => 결과 나", "--recommend", "1", "--decision-id", "D-" + "a" * 16, "--no-doc"])
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_secret_values_rejected_with_exit_2(self):
@@ -78,14 +78,40 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(self.add(task="없음").returncode, 0)
 
     def test_decide_requires_card_fields(self):
-        r = self.add(text="시각 정하기\n배경", kind="decide")
+        r = self.add(text="시각 정하기\n배경: 시험용 배경 설명 문장입니다\n용어: 없음", kind="decide")
         self.assertEqual(r.returncode, 2)
         self.assertIn("--options", r.stderr)
-        ok = self.add(text="시각 정하기\n배경", kind="decide",
-                      extra=["--options", "1=9시,2=10시", "--recommend", "1", "--decision-id", "D-0101", "--no-doc"])
+        ok = self.add(text="시각 정하기\n배경: 시험용 배경 설명 문장입니다\n용어: 없음", kind="decide",
+                      extra=["--options", "1=9시 => 일찍 도착,2=10시 => 늦게 도착", "--recommend", "1", "--decision-id", "D-0101", "--no-doc"])
         self.assertEqual(ok.returncode, 0, ok.stderr)
         self.assertEqual(self.rows()[0]["decision_id"], "D-0101")
         self.assertEqual(self.add(extra=["--recommend", "1"]).returncode, 2)  # decide 가 아닌데 카드 필드
+
+    def test_decide_requires_background_terms_and_results(self):
+        opts = ["--options", "1=9시 => 일찍 도착,2=10시 => 늦게 도착", "--recommend", "1", "--decision-id", "D-0201", "--no-doc"]
+        bg, terms = "배경: 알림 개편 중이라 시각을 하나로 맞추려 함", "용어: 푸시 — 앱 밖 알림"
+        for text, want in ((f"시각\n{terms}", "배경"), (f"시각\n{bg}", "용어"), ("시각\n배경: 없음\n" + terms, "배경이 2자")):
+            r = self.add(text=text, kind="decide", extra=opts)
+            self.assertEqual(r.returncode, 2, text)
+            self.assertIn(want, r.stderr)
+            self.assertIn("예:", r.stderr)  # 원인·조치·예시 한 줄
+        r = self.add(text=f"시각\n{bg}\n{terms}", kind="decide", extra=["--options", "1=9시,2=10시 => 늦게 도착", *opts[2:]])
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("선택지 결과(1번)", r.stderr)
+        self.assertEqual(self.rows(), [])
+        ok = self.add(text=f"시각\n{bg}\n{terms}\n이유: 출근 전 열람률이 높음", kind="decide", extra=opts)
+        self.assertEqual(ok.returncode, 0, ok.stderr)  # 줄 상한은 decide 만 8줄
+
+    def test_reply_to_alias_accepts_info_done_warn_and_rejects_block(self):
+        ts = "1730790000.123456"
+        for kind in ("info", "done", "warn"):
+            r = self.add(text=f"답 {kind}", kind=kind, extra=["--reply-to", ts])
+            self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual({row["thread"] for row in self.rows()}, {ts})
+        r = self.add(text="차단", kind="block", extra=["--reply-to", ts])
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("info|done|warn", r.stderr)
+        self.assertEqual(self.add(text="형식", kind="info", extra=["--reply-to", "abc"]).returncode, 2)
 
     def test_dry_run_writes_nothing(self):
         r = self.cli("add", "--hub", "ui", "--task", "C1", "--kind", "info", "--text", "x", "--dry-run")
@@ -149,7 +175,7 @@ class ReportTest(unittest.TestCase):
 
     def test_secret_in_decide_fields_rejected(self):
         bad = "xox" + "b-review-sentinel"
-        r = self.add(text="제목\n배경", kind="decide", extra=["--options", f"1={bad},2=b", "--recommend", "1", "--decision-id", "D-1"])
+        r = self.add(text="제목\n배경: 시험용 배경 설명 문장입니다\n용어: 없음", kind="decide", extra=["--options", f"1={bad},2=b", "--recommend", "1", "--decision-id", "D-1"])
         self.assertEqual(r.returncode, 2)
 
     def test_invalid_records_are_isolated_not_fatal(self):
