@@ -233,13 +233,9 @@ def detect(limits: Limits, now: float):
 
 
 def coordinators(slug: str):
-    """허브 폴더에 연결된 claude 코디네이터 터미널 [(핸들, 제목)]. 조회 실패는 None"""
-    res = orca_json(["terminal", "list", "--json", "--limit", "1000"])
-    if res is None or not isinstance(res.get("terminals"), list):
-        return None
-    return [(t.get("handle"), rw.clean(t.get("title") or "")) for t in res["terminals"]
-            if isinstance(t, dict) and str(t.get("worktreePath", "")).endswith(f"/coord-{slug}-hub")
-            and t.get("agentIdentity") == "claude" and t.get("connected") is True]
+    """허브 폴더의 살아 있는 claude 코디네이터 터미널 [(핸들, 제목)]. 알림 전송과 같은 판정(card_actions.hub_terminals). 조회 실패는 None"""
+    terms = card_actions.hub_terminals(slug)  # writable 무관(쓰기 불가 코디네이터도 중복으로 셈)
+    return None if terms is None else [(t.get("handle"), rw.clean(t.get("title") or "")) for t in terms]
 
 
 def load_state() -> dict:
