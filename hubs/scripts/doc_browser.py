@@ -7,10 +7,11 @@
 보안(검사는 이 파일 한 곳):
   - 바인드 주소는 상수 HOST(127.0.0.1) 고정. 환경 변수·인자로 바꿀 수 없음.
   - 모든 요청의 Host 헤더가 127.0.0.1·localhost(+포트)가 아니면 403(DNS 리바인딩 차단).
-  - 보내기는 POST /api/send 한 곳. Origin 이 이 서버 주소가 아니거나 없으면 403, Sec-Fetch-Site 가 same-origin 이 아니면 403,
+  - 쓰기는 POST /api/send(문서 보내기)와 POST /api/decide(결정 답) 두 곳. Origin 이 이 서버 주소가 아니거나 없으면 403, Sec-Fetch-Site 가 same-origin 이 아니면 403,
     X-CSRF-Token 이 페이지 열 때 발급한 토큰과 다르면 403. JSON 본문만 받고 크기 상한(BODY_MAX).
   - 문서는 수집된 id 로만 엶. 경로를 받지 않음. 문서 본문은 CSP sandbox(스크립트·외부 요청 없음)로 내려줌.
-  - 전송 함수(doc_send.send)를 부르는 곳은 이 파일의 POST 처리기뿐.
+  - 결정 답은 선택 번호만 받음. 문구는 서버가 카드 기록에서 조립하고, 확인(preview) 단계의 1회용 intent 가 있어야 전달함(doc_decide.py).
+  - 전송 함수(doc_send.send)·결정 처리(doc_decide.Decider.handle)를 부르는 곳은 이 파일의 POST 처리기뿐.
 수집은 시작 직후 백그라운드에서 돌고 REFRESH_S 마다 갱신함. 첫 수집이 끝나기 전 목록은 scanning=true 로 알림.
 """
 import argparse
@@ -25,6 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import doc_decide  # noqa: E402
 import doc_index  # noqa: E402
 import doc_send  # noqa: E402
 
@@ -48,6 +50,7 @@ class App:
     def __init__(self, port: int):
         self.port = port
         self.index = doc_index.Index()
+        self.decider = doc_decide.Decider()
         self.first_scan_done = False
         self._tokens: dict[str, float] = {}
         self._lock = threading.Lock()
@@ -176,6 +179,8 @@ def make_handler(app: App):
                 return self._json(200, {"recipients": doc_send.public_recipients()})
             if p == "/api/draft":
                 return self._draft((q.get("id") or [""])[0])
+            if p == "/api/decision":
+                return self._decision((q.get("id") or [""])[0])
             if p.startswith("/doc/"):
                 return self._doc(p[len("/doc/"):])
             if p.startswith("/thumb/") and p.endswith(".svg"):
@@ -198,6 +203,12 @@ def make_handler(app: App):
             title = next((r.title for r in app.index.snapshot() if r.id == did), os.path.basename(path))
             self._json(200, doc_send.draft(path, title))
 
+        def _decision(self, did):
+            try:
+                self._json(200, app.decider.view(did))
+            except doc_decide.DecideError as e:
+                self._deny(e.why, e.status)
+
         def _doc(self, did):
             path = app.index.path_of(did)
             if not path:
@@ -215,18 +226,20 @@ def make_handler(app: App):
                 return self._deny("도식 없음", 404)
             self._send(200, svg.encode("utf-8"), "image/svg+xml", THUMB_CSP)
 
-        # ---- POST: 보내기 한 곳뿐 ----
+        # ---- POST: 쓰기는 보내기·결정 답 두 곳뿐. 공통 검사 뒤 경로별 처리 ----
         def do_POST(self):
             if not self._host_ok():
                 return
-            if urlparse(self.path).path != "/api/send":
+            route = {"/api/send": self._post_send, "/api/decide": self._post_decide}.get(urlparse(self.path).path)
+            if route is None:
                 return self._deny("없는 주소", 404)
             origin = self.headers.get("Origin")
             if origin not in app.origins:
                 return self._deny("요청 출처 불일치 — 문서 페이지 안에서 누른 요청만 받음")
             if self.headers.get("Sec-Fetch-Site") not in (None, "same-origin"):
                 return self._deny("다른 사이트에서 온 요청 — 문서 페이지 안에서 누른 요청만 받음")
-            if not app.token_ok(self.headers.get("X-CSRF-Token") or ""):
+            token = self.headers.get("X-CSRF-Token") or ""
+            if not app.token_ok(token):
                 return self._deny("보안 토큰 없음·만료 — 페이지를 새로 고친 뒤 다시 누르세요")
             if not (self.headers.get("Content-Type") or "").startswith("application/json"):
                 return self._deny("JSON 요청만 받음", 415)
@@ -236,8 +249,11 @@ def make_handler(app: App):
                 n = -1
             if n < 0 or n > BODY_MAX:
                 return self._deny("요청 크기 초과·누락", 413)
+            route(self.rfile.read(n), token)
+
+        def _post_send(self, raw, _token):
             try:
-                req = json.loads(self.rfile.read(n))
+                req = json.loads(raw)
                 did, who, msg = req["id"], req["recipient"], req["message"]
                 if not all(isinstance(x, str) for x in (did, who, msg)):
                     raise TypeError
@@ -255,6 +271,20 @@ def make_handler(app: App):
                 print(f"보내기 예외: {type(e).__name__}", file=sys.stderr, flush=True)
                 return self._deny("보내기 중 알 수 없는 오류 — 로그를 확인하세요", 500)
             self._json(200, {"ok": True, **res})
+
+        def _post_decide(self, raw, token):
+            try:
+                req = json.loads(raw)
+            except ValueError:
+                return self._deny("요청 형식 오류 — JSON 객체 필요", 400)
+            try:
+                res = app.decider.handle(req, token)
+            except doc_decide.DecideError as e:
+                return self._deny(e.why, e.status)
+            except Exception as e:
+                print(f"결정 처리 예외: {type(e).__name__}", file=sys.stderr, flush=True)
+                return self._deny("결정 처리 중 알 수 없는 오류 — 로그를 확인하세요", 500)
+            self._json(200, res)
 
         def do_PUT(self):
             self._deny("허용되지 않은 방식", 405)
