@@ -19,7 +19,7 @@ SNAP_ITEMS = tc.SNAP_ITEMS + [
 ]
 GH_FAKE = """#!/bin/bash
 echo "$@" >> "$FAKE_GH_LOG"
-echo "{\\"state\\":\\"${FAKE_PR_STATE:-OPEN}\\",\\"headRefName\\":\\"feat/x\\"}"
+echo "{\\"state\\":\\"${FAKE_PR_STATE:-OPEN}\\",\\"headRefName\\":\\"feat/x\\",\\"headRefOid\\":\\"${FAKE_PR_HEAD-abc1234def5678}\\"}"
 """
 
 
@@ -80,7 +80,7 @@ class ApproveTest(ServerBase):
         self.assertEqual(len(self.hub_sends()), 0)
         main = self.main_sends()
         self.assertEqual(len(main), 1)
-        self.assertIn("PR Org/Repo#12 병합 승인 — 충돌 검사 뒤 병합", main[0])
+        self.assertIn("PR Org/Repo#12 병합 승인(헤드 abc1234) — 헤드가 같을 때만 병합, 다르면 다시 승인 요청", main[0])
         self.assertIn("문서 사이트", main[0])
 
     def test_known_hub_gets_user_original_line(self):
@@ -89,13 +89,13 @@ class ApproveTest(ServerBase):
                 i.hub = "alpha"
         st, j = self.approve()
         self.assertEqual((st, j["via"], j["hub"]), (200, "hub", "alpha"))
-        self.assertEqual(self.hub_sends(), ["사용자 원문: PR Org/Repo#12 병합 승인 — 충돌 검사 뒤 병합 (출처: 문서 사이트)"])
+        self.assertEqual(self.hub_sends(), ["사용자 원문: PR Org/Repo#12 병합 승인(헤드 abc1234) — 헤드가 같을 때만 병합, 다르면 다시 승인 요청 (출처: 문서 사이트)"])
         self.assertEqual(len(self.main_sends()), 1)  # 메인에는 참고 한 줄
 
     def test_dialog_text_is_built_by_server_with_repo_number_title_hub(self):
         self.approve()
         self.assertEqual(len(self.asked), 1)
-        for needle in ("Org/Repo#12", self.item()["title"], "담당 허브", "승인", "충돌 검사 뒤"):
+        for needle in ("Org/Repo#12", "헤드 abc1234", self.item()["title"], "담당 허브", "승인", "충돌 검사 뒤"):
             self.assertIn(needle, self.asked[0])
 
     def test_record_kind_and_delivery_rows(self):
@@ -138,6 +138,66 @@ class ApproveTest(ServerBase):
         self.assertEqual(self.audit()[-1]["result"], "redeliver:main:ok")
         self.assertEqual(len(self.asked), 1)  # 재전달은 확인 창 없이
         self.assertTrue(self.approve()[1]["already"])
+
+    # ---- 헤드 묶음·닫힘 무효 ----
+    def refresh(self, **env):
+        os.environ.update(env)
+        self.app.checklist._facts_cache.clear()
+        self.app.checklist.refresh(use_pr=True)
+
+    def test_record_has_head_and_new_commit_marks_stale_then_reapprove(self):
+        self.approve()
+        self.assertEqual(self.approvals()[0]["head"], "abc1234def5678")
+        self.refresh(FAKE_PR_HEAD="fff9999aaa")
+        it = self.item()
+        self.assertEqual((it["state"], it["basis"]), ("todo", "승인 낡음 — 새 커밋"))
+        self.assertNotIn("approved", it)
+        st, j = self.approve()  # 헤드가 다르면 확인 창을 다시 띄워 새로 승인
+        self.assertEqual((st, j["ok"], len(self.asked)), (200, True, 2))
+        self.assertIn("헤드 fff9999", self.asked[1])
+        self.assertEqual([r["head"] for r in self.approvals()], ["abc1234def5678", "fff9999aaa"])
+        self.assertTrue(self.item()["approved"])
+        self.assertIn("(헤드 fff9999)", self.main_sends()[-1])
+
+    def test_closed_unmerged_with_approval_is_void_and_reopen_is_todo(self):
+        self.approve()
+        self.refresh(FAKE_PR_STATE="CLOSED")
+        it = self.item()
+        self.assertEqual((it["state"], it["basis"]), ("done", "승인 무효(미병합 닫힘)"))
+        self.refresh(FAKE_PR_STATE="MERGED")
+        self.assertIn("병합됨", self.item()["basis"])  # 병합됐으면 무효 표시 없음
+        os.environ.pop("FAKE_PR_STATE")
+
+    def test_reopened_pr_with_new_head_is_not_approved(self):
+        self.approve()
+        self.refresh(FAKE_PR_STATE="CLOSED")
+        self.refresh(FAKE_PR_STATE="OPEN", FAKE_PR_HEAD="eee0000bbb")
+        it = self.item()
+        self.assertEqual(it["state"], "todo")
+        self.assertNotIn("approved", it)
+
+    def test_pr_closed_or_head_changed_while_dialog_open_is_rejected(self):
+        for env in ({"FAKE_PR_STATE": "CLOSED"}, {"FAKE_PR_HEAD": "ddd1111ccc"}):
+            def ask_then_change(text, env=env):
+                self.asked.append(text)
+                os.environ.update(env)
+                return "approved"
+            self.app.approver.ask = ask_then_change
+            st, j = self.approve()
+            self.assertEqual(st, 409, env)
+            self.assertIn("기록·전달 없음", j["error"])
+            self.assertEqual(self.audit()[-1]["result"], "rejected:changed")
+            self.nothing_happened()
+            for k in env:
+                os.environ.pop(k)
+
+    def test_unknown_head_rejected_without_dialog(self):
+        os.environ["FAKE_PR_HEAD"] = ""
+        st, j = self.approve()
+        os.environ.pop("FAKE_PR_HEAD")
+        self.assertEqual(st, 502)
+        self.assertEqual(self.asked, [])
+        self.nothing_happened()
 
     # ---- 취소·시간 초과·창 없음 ----
     def test_cancel_timeout_unavailable_leave_no_record_or_send(self):

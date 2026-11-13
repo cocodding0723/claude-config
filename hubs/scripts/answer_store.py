@@ -121,14 +121,15 @@ class AnswerStore:
         return src(votes[0]), votes[0]
 
     # ---- PR 병합 승인 ----
-    def approve(self, key: str, source: str, now: float | None = None, since: float = 0.0) -> bool:
-        """PR 키의 승인 한 줄. since(이번 출현의 처음 본 시각) 이후 승인이 이미 있으면 False(먼저 온 것만 인정).
+    def approve(self, key: str, source: str, now: float | None = None, since: float = 0.0, head: str = "") -> bool:
+        """PR 키의 승인 한 줄. head 는 승인 시점 PR 헤드 커밋(승인은 이 헤드에만 유효).
+        since(이번 출현의 처음 본 시각) 이후 같은 헤드의 승인이 이미 있으면 False(먼저 온 것만 인정). 헤드가 다른 옛 승인은 낡은 것으로 보고 새로 기록.
         병합은 하지 않음 — 기록만. 판정·기록은 flock 아래 한 번에"""
         with actions.flock(self.lock):
             rec = self.approvals().get(key)
-            if rec and rec.get("at", 0) >= int(since):
+            if rec and rec.get("at", 0) >= int(since) and rec.get("head", "") == head:
                 return False
-            line = {"kind": APPROVE_KIND, "key": key, "source": source, "at": int(time.time() if now is None else now)}
+            line = {"kind": APPROVE_KIND, "key": key, "source": source, "head": head, "at": int(time.time() if now is None else now)}
             self.append(self.approvals_path, json.dumps(line, ensure_ascii=False) + "\n")
         return True
 
