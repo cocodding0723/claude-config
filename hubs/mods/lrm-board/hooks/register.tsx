@@ -6,12 +6,12 @@ import {
   autoBanner,
   fmtAge,
   ageMin,
-  confirmApprovals,
   ghLine,
   headCounts,
   hubLine,
   idleLines,
   mainAge,
+  mergeApprovals,
   parseAuto,
   parseMain,
   pendingLine,
@@ -141,7 +141,8 @@ export const register: Register = on => {
     const counts = headCounts(board, auto)
     const src = auto?.sources
 
-    const approvals = byPriority(confirmApprovals(src?.confirm?.value) ?? board?.approvals)
+    const approvalMerge = mergeApprovals(src?.confirm, board?.approvals, nowMs)
+    const approvals = byPriority(approvalMerge.items)
     const todos = byPriority(board?.todos)
     const history: HistoryEntry[] = board?.history ?? []
     // 허브별 가지로 묶고, 허브 순서는 가장 최근 기록 순
@@ -229,7 +230,7 @@ export const register: Register = on => {
           )
         })}
 
-        {section(`🙋 내가 승인할 것 (${approvals.length})`, C.approve)}
+        {section(`🙋 내가 승인할 것 (${approvals.length})`, C.approve, approvalMerge.stale ? '⚠ 확인 목록이 낡음 — 손 칸 우선' : undefined)}
         {approvals.length === 0 && <Text dimColor>없음</Text>}
         {itemRows(approvals, C.approve)}
 

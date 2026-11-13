@@ -3,6 +3,8 @@ import type { AutoBoard, AutoConfirm, AutoHub, AutoIdle, AutoProgress, AutoSourc
 
 /** 자동 칸이 이만큼 갱신되지 않으면 맨 위 경고. 수집 주기 90초의 6배 이상 */
 export const AUTO_STALE_MIN = 10
+/** 확인 목록 원료가 이만큼 갱신되지 않으면 낡은 것으로 보고 손 칸을 앞세움 */
+export const CONFIRM_STALE_MIN = 10
 /** 메인 칸(panel.json)이 이만큼 지나면 연한 경고. 메인은 순찰·결정 때만 고침 */
 export const MAIN_STALE_MIN = 30
 /** 파일 안 시각이 지금보다 이만큼 앞서면 시계가 틀린 것으로 보고 수정 시각을 씀 */
@@ -195,14 +197,53 @@ export const progressGroups = (v: AutoProgress | null | undefined): ProgressGrou
 
 /**
  * '내가 승인할 것' 칸: 확인 목록(수집기의 confirm 원료) 안 함 항목. 급함 3 → p 1.
- * 원료가 없으면 undefined → 호출한 쪽이 메인이 손으로 쓴 approvals 로 돌아감
+ * 원료가 없으면 undefined. 손 칸과의 합치기는 mergeApprovals
  */
 export const confirmApprovals = (v: AutoConfirm | null | undefined): BoardItem[] | undefined => {
   if (v === null || v === undefined || !Array.isArray(v.items)) return undefined
   return v.items.map(i => ({
+    key: i.key,
     p: Math.max(1, 4 - (Number.isFinite(i.urgency) ? i.urgency : 1)),
     title: i.hub !== '' && i.hub !== '미상' ? `${i.title} (${i.hub})` : i.title,
     why: i.kind_label,
     how: i.how,
   }))
+}
+
+/** 제목 비교용: 공백 정리, 끝의 ' (허브)' 꼬리표 제거 */
+const titleKey = (t: string) => t.replace(/\s+/g, ' ').trim().replace(/ \([^()]*\)$/, '')
+
+export type ApprovalMerge = { items: BoardItem[]; /** 확인 목록 원료가 낡음 → 손 칸을 앞세웠음 */ stale: boolean }
+
+/**
+ * '내가 승인할 것' 칸 합치기: 확인 목록 원료 항목 + 제목·키가 겹치지 않는 손 칸 항목.
+ * 겹치면 원료 항목에 손 칸의 why·detail 을 붙임. 원료가 없거나 빈 배열이면 손 칸만.
+ * 원료가 낡았으면(CONFIRM_STALE_MIN 초과·시각 없음) 손 칸을 앞세우고 겹치는 건 손 칸 것을 씀. 낡은 원료 항목에는 ⚠ 표시
+ */
+export const mergeApprovals = (
+  src: AutoSource<AutoConfirm> | undefined,
+  hand: BoardItem[] | undefined,
+  nowMs: number,
+): ApprovalMerge => {
+  const handItems = hand ?? []
+  const auto = confirmApprovals(src?.value)
+  if (auto === undefined || auto.length === 0) return { items: handItems, stale: false }
+  const min = src?.at !== null && src?.at !== undefined ? ageMin(src.at * 1000, nowMs) : undefined
+  const stale = min === undefined || min > CONFIRM_STALE_MIN
+  const same = (a: BoardItem, h: BoardItem) =>
+    (a.key !== undefined && a.key === h.key) || titleKey(a.title) === titleKey(h.title)
+  if (stale) {
+    const rest = auto.filter(a => !handItems.some(h => same(a, h))).map(a => ({ ...a, why: `${a.why ?? ''} · ⚠ 낡음` }))
+    return { items: [...handItems, ...rest], stale }
+  }
+  const merged = auto.map(a => {
+    const h = handItems.find(x => same(a, x))
+    if (h === undefined) return a
+    return {
+      ...a,
+      why: h.why === undefined ? a.why : a.why === undefined ? h.why : `${a.why} · ${h.why}`,
+      detail: h.detail ?? a.detail,
+    }
+  })
+  return { items: [...merged, ...handItems.filter(h => !auto.some(a => same(a, h)))], stale }
 }

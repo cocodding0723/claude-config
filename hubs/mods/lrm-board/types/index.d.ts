@@ -1,6 +1,8 @@
 export type BoardLink = { label: string; href: string }
 
 export type BoardItem = {
+  /** 확인 목록 원료 항목의 키. 손 칸과 겹침 판정에 씀 */
+  key?: string
   /** 1 이 가장 급함 */
   p: number
   title: string

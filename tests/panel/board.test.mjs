@@ -181,8 +181,47 @@ test('confirmApprovals: 확인 목록 항목을 승인 칸 모양으로, 원료�
     { key: 'b', kind: 'merge', kind_label: '🔀 PR 병합', title: '#7 머지', hub: '미상', urgency: 1, how: '머지 버튼' },
   ] })
   assert.deepEqual(v, [
-    { p: 1, title: 'D-1 결정 (alpha)', why: '🙋 결정 카드', how: '카드에 답' },
-    { p: 3, title: '#7 머지', why: '🔀 PR 병합', how: '머지 버튼' },
+    { key: 'a', p: 1, title: 'D-1 결정 (alpha)', why: '🙋 결정 카드', how: '카드에 답' },
+    { key: 'b', p: 3, title: '#7 머지', why: '🔀 PR 병합', how: '머지 버튼' },
   ])
   assert.deepEqual(b.confirmApprovals({ todo: 0, done: 0, items: [] }), [])
+})
+
+const conf = (items, at = NOW / 1000 - 60) => ({ ok: true, err: null, at, stale: false, value: { todo: items.length, done: 0, items } })
+const ci = (key, title, hub = '미상') => ({ key, kind: 'window', kind_label: '🪟 창 승인', title, hub, urgency: 2, how: '창에서 승인' })
+
+test('mergeApprovals: 원료가 없거나 빈 배열이면 손 칸만', () => {
+  const hand = [{ p: 2, title: '손 항목' }]
+  assert.deepEqual(b.mergeApprovals(undefined, hand, NOW), { items: hand, stale: false })
+  assert.deepEqual(b.mergeApprovals(conf([]), hand, NOW), { items: hand, stale: false })
+  assert.deepEqual(b.mergeApprovals(undefined, undefined, NOW), { items: [], stale: false })
+})
+
+test('mergeApprovals: 원료 항목 + 겹치지 않는 손 칸 항목', () => {
+  const hand = [{ p: 1, title: '손으로 적은 승인', why: '메인 메모' }]
+  const r = b.mergeApprovals(conf([ci('k1', '창 승인 대기', 'alpha')]), hand, NOW)
+  assert.equal(r.stale, false)
+  assert.deepEqual(r.items.map(i => i.title), ['창 승인 대기 (alpha)', '손으로 적은 승인'])
+})
+
+test('mergeApprovals: 제목이 겹치면 원료 항목에 손 칸 why·detail 을 붙이고 중복은 하나', () => {
+  const hand = [{ p: 1, title: '창 승인 대기', why: '배포 막힘', detail: ['3번째 요청'] }]
+  const r = b.mergeApprovals(conf([ci('k1', '창 승인 대기', 'alpha')]), hand, NOW)
+  assert.equal(r.items.length, 1)
+  assert.deepEqual(r.items[0], { key: 'k1', p: 2, title: '창 승인 대기 (alpha)', why: '🪟 창 승인 · 배포 막힘', how: '창에서 승인', detail: ['3번째 요청'] })
+})
+
+test('mergeApprovals: 키가 같으면 제목이 달라도 겹침', () => {
+  const hand = [{ key: 'k1', p: 1, title: '다른 표현', why: '메모' }]
+  assert.equal(b.mergeApprovals(conf([ci('k1', '창 승인 대기')]), hand, NOW).items.length, 1)
+})
+
+test('mergeApprovals: 원료가 낡으면 손 칸 우선·낡음 표시, 겹치는 건 손 칸 것', () => {
+  const hand = [{ p: 1, title: '창 승인 대기', why: '손 메모' }, { p: 3, title: '손 전용' }]
+  const old = conf([ci('k1', '창 승인 대기'), ci('k2', '원료 전용')], NOW / 1000 - (b.CONFIRM_STALE_MIN + 5) * 60)
+  const r = b.mergeApprovals(old, hand, NOW)
+  assert.equal(r.stale, true)
+  assert.deepEqual(r.items.map(i => i.title), ['창 승인 대기', '손 전용', '원료 전용'])
+  assert.match(r.items[2].why, /⚠ 낡음/)
+  assert.equal(b.mergeApprovals(conf([ci('k2', 'x')], null), hand, NOW).stale, true)  // 시각 모르면 낡음
 })
