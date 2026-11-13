@@ -2,6 +2,7 @@
 # 쓰임이 끝난 Orca 워크스페이스 자동 정리기. 기본은 --dry-run(후보·건너뜀 이유만 기록), 실삭제는 --apply 로만.
 # 판정·절차·되돌리기는 ~/.config/lrm-hubs/docs/ws-gc.md(원본 hubs/docs/ws-gc.md).
 set -uo pipefail
+. "$(dirname "$0")/lib/py.sh"  # PY = 3.10 이상 python3 (launchd 짧은 PATH 의 3.9 방지)
 # launchd 의 짧은 PATH 에서도 orca·gh·jq 를 찾도록 뒤에 덧붙임(앞의 PATH 가 우선: 시험의 가짜 명령)
 export PATH="$PATH:/Applications/Orca.app/Contents/Resources/bin:/opt/homebrew/bin:/usr/local/bin"
 
@@ -120,9 +121,8 @@ mkdir -p "$(dirname "$CFG_LOG")" || die "로그 폴더 생성 실패: $CFG_LOG" 
 # 동시 실행 방지(launchd 회차·release_ws 가 겹칠 때). 파일 잠금(flock)을 쥔 채 자기 자신을 다시 실행함.
 # 잠금은 프로세스가 죽으면 커널이 풀어 stale 판정·잠금 탈취가 없고, 잠금 파일은 지우지 않음(지우면 두 실행이 서로 다른 파일을 잠금)
 if [ -z "${WS_GC_LOCKED:-}" ]; then
-  command -v python3 >/dev/null 2>&1 || die "python3 없음 — 잠금에 필요. 아무것도 지우지 않음" 3
   export WS_GC_LOCKED=1
-  exec python3 -c 'import fcntl, os, sys
+  exec "$PY" -c 'import fcntl, os, sys
 fd = os.open(sys.argv[1], os.O_CREAT | os.O_RDWR, 0o644)
 try:
     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

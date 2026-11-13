@@ -10,6 +10,9 @@
     <string>--once</string>
   </array>
   <key>StartInterval</key><integer>120</integer>
+  <!-- 셸 진입점이 쓸 python3: install.sh 가 3.10 이상으로 검증한 경로(lib/py.sh 가 읽음) -->
+  <key>EnvironmentVariables</key>
+  <dict><key>LRM_PYTHON3</key><string>__PYTHON3__</string></dict>
   <key>AbandonProcessGroup</key><true/>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>__HOME__/.config/lrm-hubs/slack-poll.log</string>
