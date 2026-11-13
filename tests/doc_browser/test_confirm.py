@@ -125,6 +125,12 @@ class ConfirmTest(ServerBase):
         src = open(os.path.join(os.path.dirname(self.db.__file__), "doc_browser.py"), encoding="utf-8").read()
         self.assertEqual(src.count("checklist.handle("), 1)
 
+    def test_ui_sends_only_item_key_and_has_per_kind_actions(self):
+        ui = open(os.path.join(os.path.dirname(self.db.__file__), "doc_browser_ui.html"), encoding="utf-8").read()
+        self.assertIn('JSON.stringify({id: it.key})', ui)
+        for needle in ('"/api/confirm"', 'openDecision(it.did)', "PR 열기", "복사", "했음", 'rel: "noopener noreferrer"'):
+            self.assertIn(needle, ui)
+
 
 if __name__ == "__main__":
     unittest.main()

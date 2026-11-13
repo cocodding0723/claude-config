@@ -38,7 +38,7 @@ def related_docs(item: dict, recs: list, limit: int = RELATED_MAX) -> list:
     else:
         hit = []
     hit = hit or [r for r in recs if item["hub"] and r.hub == item["hub"]]
-    return [{"id": r.id, "title": r.title} for r in sorted(hit, key=lambda r: -r.mtime)[:limit]]
+    return [{"id": r.id, "title": r.title, "hub": r.hub, "mtime": r.mtime} for r in sorted(hit, key=lambda r: -r.mtime)[:limit]]
 
 
 class Checklist:
