@@ -45,7 +45,12 @@ tbody tr[aria-selected=true]{background:var(--row-sel)}
 .unk{font-size:11px;color:var(--muted)}
 .title{font-weight:600;overflow-wrap:anywhere}
 .meta{font-size:12px;color:var(--muted)}
-.did{display:inline-block;font:12px ui-monospace,Menlo,monospace;border:1px solid var(--border);border-radius:4px;padding:0 5px;margin:1px 3px 1px 0}
+.did{display:inline-block;font:12px ui-monospace,Menlo,monospace;border:1px solid var(--border);border-radius:4px;padding:0 5px;margin:1px 3px 1px 0;background:var(--bg)}
+button.did{cursor:pointer}
+.opts{display:flex;flex-direction:column;gap:6px;margin:10px 0}
+.opts button{text-align:left;white-space:normal;padding:6px 10px}
+.opts button[aria-pressed=true]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.say{margin:8px 0 0;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font:12px ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
 .st-대기{color:var(--warn)}.st-답함{color:var(--ok)}.st-보류{color:var(--hold)}.st-충돌{color:var(--error)}
 .sent{font-size:12px;color:var(--ok)}
 .viewer{width:55%;border-left:1px solid var(--border);display:none;flex-direction:column;min-width:0}
@@ -105,6 +110,18 @@ dialog textarea{min-height:170px;resize:vertical}
   <div class="err" id="dlg-err" role="alert"></div>
   <div class="actions"><button id="dlg-cancel" type="button">취소 Esc</button><button id="dlg-ok" class="primary" type="button">확인 후 전송</button></div>
   <div class="hint">누르면 선택한 사람의 Slack DM 으로 문서 파일과 위 메시지가 바로 전송됨</div>
+</dialog>
+<dialog id="dec" aria-labelledby="dec-h">
+  <h2 id="dec-h">결정</h2>
+  <div class="confirm" id="dec-title"></div>
+  <div class="opts" id="dec-opts" role="group" aria-label="선택지"></div>
+  <div id="dec-confirm" hidden>
+    <div class="meta" id="dec-target"></div>
+    <pre class="say" id="dec-say"></pre>
+  </div>
+  <div class="err" id="dec-err" role="alert"></div>
+  <div class="actions"><button id="dec-cancel" type="button">닫기 Esc</button><button id="dec-ok" class="primary" type="button" disabled>이 답으로 전달</button></div>
+  <div class="hint">선택만으로는 전달되지 않음. 위 문구를 확인하고 '이 답으로 전달'을 눌러야 결정을 올린 허브에 전달됨</div>
 </dialog>
 <div class="toast" id="toast" role="status"></div>
 
@@ -177,7 +194,11 @@ function renderRows() {
     else th.append(el("div", {class: "unk", text: `도식 ${d.diagrams}`}));
     const dec = el("td", {class: "col-meta"});
     if (!d.decisions.length) dec.append(el("span", {class: "meta", text: "결정 없음"}));
-    for (const x of d.decisions) dec.append(el("span", {class: "did"}, document.createTextNode(x.id + " "), el("b", {class: "st-" + x.state, text: x.state})));
+    for (const x of d.decisions) {
+      const chip = el(x.state === "답함" ? "span" : "button", {class: "did", ...(x.state === "답함" ? {} : {type: "button", title: "선택지 보기·답하기"})}, document.createTextNode(x.id + " "), el("b", {class: "st-" + x.state, text: x.state}));
+      if (x.state !== "답함") chip.onclick = (ev) => { ev.stopPropagation(); openDecision(x.id); };
+      dec.append(chip);
+    }
     const sent = el("td", {class: "col-sent"});
     if (d.sent.length) { const s = d.sent[0]; sent.append(el("div", {class: "sent", text: `보냄 ${fmt(s.at)} → ${s.to}`})); if (d.sent.length > 1) sent.append(el("div", {class: "meta", text: `외 ${d.sent.length - 1}회`})); }
     else sent.append(el("span", {class: "meta", text: "안 보냄"}));
@@ -230,6 +251,50 @@ async function confirmSend() {
   } catch (e) { $("dlg-err").textContent = e.message; $("dlg-ok").disabled = false; }
 }
 
+// 결정 답: 선택(preview) → '이 답으로 전달'(commit). 보내는 값은 결정 번호·선택 번호·intent 뿐이고 문구는 서버가 만듦
+const decide = {did: "", pick: null, intent: ""};
+function decPost(body) {
+  return api("/api/decide", {method: "POST", headers: {"Content-Type": "application/json", "X-CSRF-Token": TOKEN}, body: JSON.stringify(body)});
+}
+function decReset() { decide.pick = null; decide.intent = ""; $("dec-confirm").hidden = true; $("dec-ok").disabled = true; $("dec-err").textContent = ""; }
+async function openDecision(did) {
+  decide.did = did; decReset();
+  $("dec-h").textContent = "결정 " + did; $("dec-title").textContent = "불러오는 중…"; $("dec-opts").replaceChildren();
+  if (!$("dec").open) $("dec").showModal();
+  try {
+    const v = await api("/api/decision?id=" + encodeURIComponent(did));
+    $("dec-title").textContent = v.title;
+    if (v.answered) { $("dec-err").textContent = v.answered + " — 더 답할 수 없음"; return; }
+    if (!v.actionable) { $("dec-err").textContent = "감시기 카드는 Slack 에서 답하세요"; return; }
+    for (const o of v.options) {
+      const b = el("button", {type: "button", "aria-pressed": "false", text: `${o.n}. ${o.text}${v.recommended === o.n ? "  (추천)" : ""}`});
+      b.onclick = () => previewPick(o.n, b);
+      $("dec-opts").append(b);
+    }
+  } catch (e) { $("dec-title").textContent = ""; $("dec-err").textContent = "불러오기 실패: " + e.message; }
+}
+async function previewPick(n, btn) {
+  decReset();
+  document.querySelectorAll("#dec-opts button").forEach((b) => b.setAttribute("aria-pressed", String(b === btn)));
+  try {
+    const j = await decPost({id: decide.did, pick: n});
+    decide.pick = n; decide.intent = j.intent;
+    $("dec-target").textContent = `전달 대상: ${j.target} · ${j.ttl}초 안에 확인`;
+    $("dec-say").textContent = j.text;
+    $("dec-confirm").hidden = false; $("dec-ok").disabled = false;
+  } catch (e) { $("dec-err").textContent = e.message; }
+}
+async function commitPick() {
+  if (!decide.intent) return;
+  $("dec-ok").disabled = true; $("dec-err").textContent = "";
+  try {
+    const j = await decPost({id: decide.did, pick: decide.pick, intent: decide.intent});
+    $("dec").close(); toast(j.via === "hub" ? `${j.hub} 허브에 전달함` : "전달함"); load();
+  } catch (e) { $("dec-err").textContent = e.message; decReset(); }
+}
+$("dec-ok").onclick = commitPick;
+$("dec-cancel").onclick = () => $("dec").close();
+
 $("dlg-ok").onclick = confirmSend;
 $("dlg-cancel").onclick = () => $("dlg").close();
 $("v-close").onclick = closeDoc;
@@ -240,13 +305,14 @@ try { const t = localStorage.getItem("theme"); if (t) document.documentElement.d
 
 document.addEventListener("keydown", (ev) => {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+  const modal = $("dlg").open || $("dec").open;
   if (ev.key === "/" && !typing) { ev.preventDefault(); $("q").focus(); }
-  else if (ev.key === "Escape" && !$("dlg").open) { if (typing) document.activeElement.blur(); else closeDoc(); }
-  else if (!typing && !$("dlg").open && (ev.key === "ArrowDown" || ev.key === "ArrowUp")) {
+  else if (ev.key === "Escape" && !modal) { if (typing) document.activeElement.blur(); else closeDoc(); }
+  else if (!typing && !modal && (ev.key === "ArrowDown" || ev.key === "ArrowUp")) {
     const rows = [...document.querySelectorAll("#rows tr")]; const i = rows.indexOf(document.activeElement.closest("tr"));
     const n = rows[Math.max(0, Math.min(rows.length - 1, i + (ev.key === "ArrowDown" ? 1 : -1)))]; if (n) { ev.preventDefault(); n.focus(); }
-  } else if (!typing && !$("dlg").open && ev.key === "Enter") { const tr = document.activeElement.closest && document.activeElement.closest("#rows tr"); if (tr && document.activeElement === tr) tr.click(); }
-  else if (!typing && !$("dlg").open && (ev.key === "s" || ev.key === "S")) { const tr = document.activeElement.closest && document.activeElement.closest("#rows tr"); if (tr) tr.querySelector("button").click(); }
+  } else if (!typing && !modal && ev.key === "Enter") { const tr = document.activeElement.closest && document.activeElement.closest("#rows tr"); if (tr && document.activeElement === tr) tr.click(); }
+  else if (!typing && !modal && (ev.key === "s" || ev.key === "S")) { const tr = document.activeElement.closest && document.activeElement.closest("#rows tr"); if (tr) tr.querySelector("button.primary").click(); }
 });
 
 // 주소 조각으로 바로 열기: #open=<id> 열람, #send=<id> 보내기 창(확인 전까지 전송 없음)
@@ -255,6 +321,6 @@ load().then(() => {
   const d = m && state.docs.find((x) => x.id === m[2]);
   if (d) (m[1] === "open" ? openDoc : openSend)(d);
 });
-setInterval(() => { if (!$("dlg").open) load(); }, 30000);
+setInterval(() => { if (!$("dlg").open && !$("dec").open) load(); }, 30000);
 </script>
 </html>

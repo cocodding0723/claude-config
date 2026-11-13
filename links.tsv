@@ -76,6 +76,8 @@ hubs/scripts/hub_status.py	.config/lrm-hubs/hub_status.py	link
 hubs/scripts/hub_dups.py	.config/lrm-hubs/hub_dups.py	link
 hubs/scripts/hub_split.py	.config/lrm-hubs/hub_split.py	link
 hubs/scripts/card_actions.py	.config/lrm-hubs/card_actions.py	link
+hubs/scripts/answer_store.py	.config/lrm-hubs/answer_store.py	link
+hubs/scripts/answer_route.py	.config/lrm-hubs/answer_route.py	link
 hubs/scripts/restart_watch.py	.config/lrm-hubs/restart_watch.py	link
 hubs/docs/restart-watch.md	.config/lrm-hubs/docs/restart-watch.md	link
 hubs/scripts/stall_watch.py	.config/lrm-hubs/stall_watch.py	link
@@ -165,6 +167,7 @@ hubs/docs/session-gc.md	.config/lrm-hubs/docs/session-gc.md	link
 hubs/launchd/ai.lrm.sessiongc.plist	Library/LaunchAgents/ai.lrm.sessiongc.plist	copy
 hubs/scripts/doc_index.py	.config/lrm-hubs/doc_index.py	link
 hubs/scripts/doc_send.py	.config/lrm-hubs/doc_send.py	link
+hubs/scripts/doc_decide.py	.config/lrm-hubs/doc_decide.py	link
 hubs/scripts/doc_browser.py	.config/lrm-hubs/doc_browser.py	link
 hubs/scripts/doc_browser_ui.html	.config/lrm-hubs/doc_browser_ui.html	link
 hubs/doc-recipients.example.json	.config/lrm-hubs/doc-recipients.example.json	link

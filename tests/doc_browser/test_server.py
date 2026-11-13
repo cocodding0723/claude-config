@@ -19,7 +19,9 @@ def free_port():
     return p
 
 
-class ServerTest(unittest.TestCase):
+class ServerBase(unittest.TestCase):
+    """서버 띄우기·요청 도구. 시험 메서드 없음(ServerTest·DecideTest 가 상속)"""
+
     def setUp(self):
         self.env = Env()
         self.ui = os.path.join(self.env.hub, "ui.html")
@@ -30,6 +32,7 @@ class ServerTest(unittest.TestCase):
         with open(notify, "w") as f:
             f.write('#!/bin/bash\nprintf "%s\\n" "$@" > "$LRM_HUB_DIR/notify-args"\n[ "${FAKE_RC:-0}" = 0 ] || { echo "Slack 오류" >&2; exit 1; }\n')
         os.environ["LRM_DOC_NOTIFY"] = notify
+        self.prepare()
         with open(os.path.join(self.env.hub, "doc-recipients.json"), "w", encoding="utf-8") as f:
             json.dump({"recipients": [{"name": "시험", "slack_id": "UREC0001"}]}, f)
         self.d1 = os.path.realpath(self.env.write(self.env.docs, "a.html", page("가 문서", SUMMARY + SVG3)))
@@ -42,6 +45,9 @@ class ServerTest(unittest.TestCase):
         self.app.index.refresh()
         self.app.first_scan_done = True
         threading.Thread(target=lambda: self.srv.serve_forever(poll_interval=0.01), daemon=True).start()
+
+    def prepare(self):
+        """서버 모듈을 불러오기 전에 환경을 더 맞출 자리(하위 시험이 채움)"""
 
     def tearDown(self):
         self.srv.shutdown()
@@ -68,7 +74,7 @@ class ServerTest(unittest.TestCase):
     def doc_id(self, title):
         return next(d["id"] for d in self.docs()["docs"] if d["title"] == title)
 
-    def post(self, payload, origin="auto", token="auto", ctype="application/json", extra=None):
+    def post(self, payload, origin="auto", token="auto", ctype="application/json", extra=None, path="/api/send"):
         h = {"Content-Type": ctype}
         if origin == "auto":
             origin = f"http://127.0.0.1:{self.port}"
@@ -79,10 +85,13 @@ class ServerTest(unittest.TestCase):
         if token:
             h["X-CSRF-Token"] = token
         h.update(extra or {})
-        return self.req("POST", "/api/send", json.dumps(payload, ensure_ascii=False).encode(), h)
+        return self.req("POST", path, json.dumps(payload, ensure_ascii=False).encode(), h)
 
     def sent_called(self):
         return os.path.exists(os.path.join(self.env.hub, "notify-args"))
+
+
+class ServerTest(ServerBase):
 
     # ---- 바인드·Host ----
     def test_binds_loopback_only(self):

@@ -1,0 +1,19 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontSize 13
+skinparam RectangleRoundCorner 10
+title 바뀜: Slack 과 페이지가 같은 기록 지점을 쓰고, 허브가 직접 받음
+rectangle "사용자\nSlack 버튼" as U1
+rectangle "사용자\n문서 페이지 버튼" as U2 #DAFBE1
+rectangle "answer_store.claim\n먼저 온 답만 기록" as A #FFF8C5
+rectangle "기록 3곳\ninbox · done · card-actions" as R
+rectangle "허브 코디네이터\n'사용자 원문: … (문서 사이트)'" as H #FFF8C5
+rectangle "메인 터미널\n참고 한 줄만" as M
+rectangle "Slack 카드 닫기\n소켓 수신기가 chat_update" as C #DAFBE1
+U1 --> A
+U2 --> A : POST /api/decide
+A --> R
+A --> H : card_actions.deliver
+A ..> M : 실패 때 대리 전달
+R ..> C
+@enduml

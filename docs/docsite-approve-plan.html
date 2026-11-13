@@ -1,0 +1,226 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- 종류: 구조안·설명·결정·보고서·비주얼. 도식 필수는 check.py 가 막음(사용량 절약 모드여도 생략 불가). 예외는 <meta name="doc-kit-no-diagram" content="사유"> -->
+<meta name="doc-kit-kind" content="구조안">
+<title>문서 사이트 결정·승인 구조안</title>
+<style>
+:root{--bg:#fff;--fg:#1f2328;--muted:#59636e;--card:#f6f8fa;--line:#d0d7de;--warn:#fff8c5;--ok:#dafbe1;--bad:#ffebe9}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0d1117;--fg:#e6edf3;--muted:#9198a1;--card:#161b22;--line:#30363d;--warn:#3a2f00;--ok:#0f2e1a;--bad:#3d1214}}
+body{background:var(--bg);color:var(--fg);font:16px/1.7 -apple-system,"Apple SD Gothic Neo",sans-serif;margin:0 auto;max-width:1040px;padding:16px;word-break:keep-all}
+h1{font-size:25px;margin:8px 0}h2{font-size:20px;margin-top:34px;border-bottom:2px solid var(--line);padding-bottom:4px}h3{font-size:17px;margin:18px 0 6px}
+.summary{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 18px;font-size:16.5px}
+.decision-card{border:2px solid #d4a72c;border-radius:12px;padding:12px 16px;margin:12px 0}.opts tr.rec td{background:var(--ok)}.answer code{font-size:15px}
+.ask{background:var(--warn);border-radius:12px;padding:12px 16px;border:1px solid var(--line)}
+table{border-collapse:collapse;width:100%;font-size:14.5px}td,th{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}th{background:var(--card)}
+.diagrams{display:grid;grid-template-columns:1fr 1fr;gap:12px}.diagram{background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px;overflow-x:auto}.diagram svg{max-width:100%;height:auto}
+.ba{border:1px solid var(--line);border-radius:12px;padding:12px;margin:14px 0}.ba-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.ba pre{margin:0;padding:10px;border-radius:8px;overflow-x:auto;font:13px/1.5 ui-monospace,Menlo,monospace}.before pre{background:var(--bad)}.after pre{background:var(--ok)}
+.why{margin-top:8px}.label{font-size:13px;color:var(--muted);margin-bottom:4px}
+details.ref{margin-top:30px;color:var(--muted);font-size:14px}
+@media (max-width:760px){.diagrams,.ba-grid{grid-template-columns:1fr}}
+.cap{font-size:14px;color:var(--muted)}.prob{background:var(--bad);border:2px solid #cf222e;border-radius:8px;padding:6px 10px;margin-bottom:6px;font-size:14px}ul.facts{margin:6px 0;padding-left:20px}.terms{font-size:14px;color:var(--muted)}.diagrams{grid-template-columns:1fr}.diagram svg{min-width:520px}</style>
+<h1>문서 사이트에서 바로 결정·승인 + 사용자 확인 목록 — 구조안</h1>
+<div class="summary" data-check="summary"><b>쉬운 말 3줄 요약</b><br>① <b>지금 문제</b> — 결정 답은 Slack 에서만 받고 허브 전달은 메인이 손으로 한다.<br>② <b>그래서</b> — 문서 페이지 버튼도 같은 기록에 쓰고 허브가 직접 받게 한다.<br>③ <b>그러면</b> — 확인할 일이 한 목록에 모이고, 결정 4개에 답하면 구현에 들어간다.</div>
+<p class="cap">기준: main <code>e57eda6</code>, 2026-11-13. 코드 읽기 기준이며 웹 조사는 하지 않았다(미확인). 구현 전 구조안이고 코드는 바꾸지 않았다.</p>
+
+<h2 data-check="decision">🙋 결정 필요 — 4개</h2>
+<div class="ask"><b>한 번에 답하기:</b> 전부 추천대로면 <code>전부 추천</code> · 골라서면 <code>결정1 A, 결정2 B</code></div>
+<table><tr><th>#</th><th>정할 것</th><th>추천</th></tr>
+<tr><td>결정1</td><td>페이지에서 누른 답을 허브에 직접 전달할까?</td><td>A</td></tr>
+<tr><td>결정2</td><td>PR 승인 버튼은 승인 기록만 남길까?</td><td>A</td></tr>
+<tr><td>결정3</td><td>페이지 쓰기에 확인 단계를 더할까?</td><td>B</td></tr>
+<tr><td>결정4</td><td>자동 판정이 안 되는 항목에 "했음" 버튼을 둘까?</td><td>A</td></tr></table>
+
+<section class="decision-card" data-check="dcard">
+<h3>결정1. 페이지에서 누른 답을 허브 코디네이터에 직접 전달할까?</h3>
+<p><b>배경:</b> 문서 페이지 버튼으로 결정에 답하게 하는 작업 중이다. Slack 버튼 답은 메인 터미널까지만 자동이고 허브로는 메인 세션이 옮긴다.</p>
+<p><b>지금 문제:</b> 메인이 바쁘거나 멈추면 답이 허브에 가지 않는다. 그래서 "누르면 코디네이터가 이어서 작업" 이 메인 상태에 달려 있다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 페이지 버튼의 전달 지점을 정하지 못해 3번째 커밋부터 시작하지 못한다.</p>
+<table class="opts"><tr><th>선택지</th><th>고르면</th><th>되돌리기</th></tr>
+<tr class="rec" data-check="opt"><td><b>A. 허브 직접 전달 + 메인에 참고 한 줄 ✅ 추천</b></td><td>허브가 바로 받으므로 메인이 멈춰도 이어진다. 실패하면 메인에 대리 전달한다.</td><td>쉬움</td></tr>
+<tr data-check="opt"><td><b>B. 메인 경유 유지</b></td><td>Slack 과 같은 길이라 코드가 적다. 메인이 멈추면 답이 허브에 못 간다.</td><td>쉬움</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> 메인이 중계 고리라서 멈추면 답이 묻힌다. A 는 기존 허브 전송 함수를 재사용하므로 새 전송 코드가 없다. <b>감수하는 단점:</b> 메인이 허브 답을 직접 못 보므로 참고 한 줄을 받는다.</p>
+<p class="answer">답: <code>결정1 A</code></p>
+<p class="terms"><b>용어:</b> 허브 — 작업 묶음별 상주 코디네이터 세션. 메인 — 허브를 총괄하는 세션. 사용자 원문 — 사용자가 한 말을 고치지 않고 허브에 붙이는 전달 형식.</p>
+</section>
+
+<section class="decision-card" data-check="dcard">
+<h3>결정2. PR 승인 버튼은 승인 기록만 남기고 병합은 하지 않을까?</h3>
+<p><b>배경:</b> PR 승인 버튼을 넣는 중이다. 병합은 사용자 승인이 필요하고, 코디네이터가 충돌 검사 뒤에 직접 한다.</p>
+<p><b>지금 문제:</b> 버튼이 병합까지 하면 충돌 검사를 건너뛴다. 그래서 클릭 하나로 라이브가 깨질 수 있다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 7번째 커밋의 버튼 동작을 정하지 못한다.</p>
+<table class="opts"><tr><th>선택지</th><th>고르면</th><th>되돌리기</th></tr>
+<tr class="rec" data-check="opt"><td><b>A. 승인 기록만 ✅ 추천</b></td><td>기록과 허브 전달만 하므로 병합은 코디네이터가 충돌 검사 뒤에 한다. 병합은 한 박자 늦다.</td><td>쉬움</td></tr>
+<tr data-check="opt"><td><b>B. 기록 + 병합 실행</b></td><td>클릭 하나로 끝나므로 빠르다. 충돌 검사를 건너뛰고 병합이 되돌리기 어렵다.</td><td>어려움</td></tr>
+<tr data-check="opt"><td><b>C. 버튼 없이 PR 링크만</b></td><td>위험이 늘지 않는다. 승인은 계속 터미널이나 Slack 에서 말해야 한다.</td><td>쉬움</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> 클릭이 실행까지 가면 충돌 검사가 없어진다. A 는 승인과 병합을 나눠 검사를 지킨다. <b>감수하는 단점:</b> 병합이 코디네이터 차례를 기다린다.</p>
+<p class="answer">답: <code>결정2 A</code></p>
+<p class="terms"><b>용어:</b> 충돌 검사 — main 에 합칠 때 겹치는 변경이 있는지 먼저 보는 확인. 주 체크아웃 — 라이브가 링크로 읽는 main 작업 폴더.</p>
+</section>
+
+<section class="decision-card" data-check="dcard">
+<h3>결정3. 페이지 쓰기 버튼에 확인 단계를 더할까?</h3>
+<p><b>배경:</b> 페이지가 읽기 전용에서 허브 터미널로 글을 넣는 도구가 되는 중이다.</p>
+<p><b>지금 문제:</b> 기존 검사는 다른 웹사이트의 요청만 막는다. 같은 권한의 로컬 프로세스는 토큰을 받아 헤더를 직접 만들 수 있다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 3번째 커밋의 요청 흐름을 확정하지 못한다.</p>
+<table class="opts"><tr><th>선택지</th><th>고르면</th><th>되돌리기</th></tr>
+<tr data-check="opt"><td><b>A. 선택 뒤 "이 답으로 전달" 확인 + 출처 표기·감사 로그</b></td><td>오클릭이 줄고 허브 글에 출처가 남는다. 클릭이 한 번 늘어난다.</td><td>쉬움</td></tr>
+<tr class="rec" data-check="opt"><td><b>B. A + PR 승인만 macOS 확인 창 추가 ✅ 추천</b></td><td>병합 승인은 되돌리기 어려우므로 화면 밖 확인을 한 번 더 받는다.</td><td>쉬움</td></tr>
+<tr data-check="opt"><td><b>C. 기존 검사만</b></td><td>구현이 가장 작다. 위조 요청이 허브 입력까지 간다.</td><td>쉬움</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> 가짜 병합 승인이 가면 되돌릴 수 없는 병합이 시작된다. B 는 그 한 곳만 화면 밖 확인을 둔다. <b>감수하는 단점:</b> 일반 결정은 A 수준까지만 막는다.</p>
+<p class="answer">답: <code>결정3 B</code></p>
+<p class="terms"><b>용어:</b> Origin·Sec-Fetch-Site — 브라우저가 요청 출처를 알리는 헤더. CSRF 토큰 — 페이지를 연 사람만 아는 일회성 값. 감사 로그 — 누가 언제 눌렀는지 남기는 기록.</p>
+</section>
+
+<section class="decision-card" data-check="dcard">
+<h3>결정4. 자동 판정이 안 되는 항목에 "했음" 버튼을 둘까?</h3>
+<p><b>배경:</b> 첫 화면에 사용자 확인 목록을 만드는 중이다. 결정과 PR 은 기록으로 함·안 함을 알지만, 직접 실행 명령·시트 작업·검수는 기록이 없다.</p>
+<p><b>지금 문제:</b> 근거가 없으면 해도 계속 "안 함" 으로 남는다. 그래서 목록이 커지고 진짜 남은 일이 묻힌다.</p>
+<p data-check="blocks"><b>안 정하면 멈추는 것:</b> 4번째 커밋의 상태 판정 규칙을 정하지 못한다.</p>
+<table class="opts"><tr><th>선택지</th><th>고르면</th><th>되돌리기</th></tr>
+<tr class="rec" data-check="opt"><td><b>A. 했음 버튼 + 허브에 한 줄 전달 ✅ 추천</b></td><td>누르면 확인 기록이 남아 "함" 이 되고 허브도 안다. 거짓으로 눌러도 막지 못한다.</td><td>쉬움</td></tr>
+<tr data-check="opt"><td><b>B. 허브가 완료를 보고해야 "함"</b></td><td>근거가 허브 보고라 정확하다. 허브가 보고하기 전까지 목록에 남는다.</td><td>쉬움</td></tr></table>
+<p data-check="why-rec"><b>추천 이유:</b> 사용자가 직접 한 일은 사용자만 알아서 허브 보고를 기다리면 목록이 안 줄어든다. A 는 그 사실을 한 번 눌러 기록한다. <b>감수하는 단점:</b> 안 하고 누른 경우를 시스템이 가려내지 못한다.</p>
+<p class="answer">답: <code>결정4 A</code></p>
+<p class="terms"><b>용어:</b> 확인 기록 — 사용자가 "했음" 을 누른 일을 적는 새 파일. 허브 보고 — 허브가 작업 결과를 올리는 기존 기록.</p>
+</section>
+
+<h2>📄 지금 구조 / 바뀌는 구조</h2>
+<p>① 지금: 답이 Slack 에서만 들어오고, 허브까지는 메인 세션이 옮긴다.</p>
+<div class="diagrams"><div class="diagram" data-check="diagram"><div data-check="problem" class="prob">⚠️ 문제 위치: 메인 → 허브 구간. 코드에 자동 경로가 없다</div><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" data-diagram-type="DESCRIPTION" style="width:591px;height:507px;background:#FFFFFF;" width="591px" height="507px" viewBox="0 0 591 507" zoomAndPan="magnify" preserveAspectRatio="none" contentStyleType="text/css"><?plantuml 1.2026.8?><defs/><g font-family="sans-serif" lengthAdjust="spacing"><g class="title" data-source-line="4"><text x="104.134" y="23.535" fill="#000" font-size="14" textLength="376.178" font-weight="700">지금: 결정 답은 Slack 에서만 받고, 허브까지는 메인이 손으로 전달</text></g><!--entity U--><g class="entity" data-qualified-name="U" id="ent0001" data-source-line="5"><rect x="204.91" y="44.488" width="105.402" height="50.621" fill="#F1F1F1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="214.91" y="67.057" fill="#000" font-size="13" textLength="33.735">사용자</text><text x="214.91" y="82.367" fill="#000" font-size="13" textLength="85.402">Slack 카드 버튼</text></g><!--entity S--><g class="entity" data-qualified-name="S" id="ent0002" data-source-line="6"><rect x="198.42" y="172.108" width="118.382" height="50.621" fill="#F1F1F1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="208.42" y="194.677" fill="#000" font-size="13" textLength="98.382">slack_socket.py</text><text x="208.42" y="209.987" fill="#000" font-size="13" textLength="81.993">Decide.finish</text></g><!--entity R--><g class="entity" data-qualified-name="R" id="ent0003" data-source-line="7"><rect x="7" y="299.728" width="161.217" height="65.932" fill="#F1F1F1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="17" y="322.297" fill="#000" font-size="13" textLength="46.068">기록 3곳</text><text x="17" y="337.607" fill="#000" font-size="13" textLength="141.217">inbox 한 줄 · done 한 줄</text><text x="17" y="352.918" fill="#000" font-size="13" textLength="80">card-actions</text></g><!--entity M--><g class="entity" data-qualified-name="M" id="ent0004" data-source-line="8"><rect x="202.95" y="307.378" width="197.316" height="50.621" fill="#FFEBE9" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="212.95" y="329.947" fill="#000" font-size="13" textLength="60.338">메인 터미널</text><text x="212.95" y="345.257" fill="#000" font-size="13" textLength="177.316">'[Slack→메인] 결정 D = 선택 N'</text></g><!--entity H--><g class="entity" data-qualified-name="H" id="ent0005" data-source-line="9"><rect x="247.85" y="442.658" width="107.519" height="50.621" fill="#F1F1F1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="257.85" y="465.227" fill="#000" font-size="13" textLength="82.828">허브 코디네이터</text><text x="257.85" y="480.537" fill="#000" font-size="13" textLength="87.519">'사용자 원문: …'</text></g><!--entity P--><g class="entity" data-qualified-name="P" id="ent0006" data-source-line="10"><rect x="22.89" y="172.108" width="129.432" height="50.621" fill="#F1F1F1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="32.89" y="194.677" fill="#000" font-size="13" textLength="109.432">문서 모아보기 페이지</text><text x="32.89" y="209.987" fill="#000" font-size="13" textLength="98.187">읽기·문서 보내기만</text></g><g class="entity" data-qualified-name="GMN12" id="ent0013" data-source-line="16"><path d="M434.77,312.378 L434.77,328.688 L400.42,332.688 L434.77,336.688 L434.77,352.999 A0,0 0 0 0 434.77,352.999 L576.447,352.999 A0,0 0 0 0 576.447,352.999 L576.447,322.378 L566.447,312.378 L434.77,312.378 A0,0 0 0 0 434.77,312.378" style="stroke:#181818;stroke-width:0.5;" fill="#FEFFDD"/><path d="M566.447,312.378 L566.447,322.378 L576.447,322.378 L566.447,312.378" style="stroke:#181818;stroke-width:0.5;" fill="#FEFFDD"/><text x="440.77" y="329.947" fill="#000" font-size="13" textLength="120.677">메인이 멈추거나 바쁘면</text><text x="440.77" y="345.257" fill="#000" font-size="13" textLength="102.3">허브가 답을 못 받음</text></g><!--link U to S--><g class="link" data-entity-1="ent0001" data-entity-2="ent0002" id="lnk7" data-source-line="11" data-link-type="dependency"><path d="M257.61,95.308 C257.61,117.448 257.61,144.838 257.61,166.958" style="stroke:#181818;stroke-width:1;" fill="none" id="U-to-S"/><polygon points="257.61,171.958,261.61,162.958,257.61,166.958,253.61,162.958,257.61,171.958" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="258.61" y="138.677" fill="#000" font-size="13" textLength="49.093">버튼 클릭</text></g><!--link S to R--><g class="link" data-entity-1="ent0002" data-entity-2="ent0003" id="lnk8" data-source-line="12" data-link-type="dependency"><path d="M229.29,223.008 C212.94,236.978 191.87,254.648 172.61,269.728 C159.95,279.628 149.992,287.105 137.072,296.515" style="stroke:#181818;stroke-width:1;" fill="none" id="S-to-R"/><polygon points="133.03,299.458,142.66,297.393,137.072,296.515,137.95,290.926,133.03,299.458" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="192.59" y="266.297" fill="#000" font-size="13" textLength="22.49">기록</text></g><!--link S to M--><g class="link" data-entity-1="ent0002" data-entity-2="ent0004" id="lnk9" data-source-line="13" data-link-type="dependency"><path d="M265.78,223.168 C273.68,247.108 284.022,278.431 291.912,302.321" style="stroke:#181818;stroke-width:1;" fill="none" id="S-to-M"/><polygon points="293.48,307.068,294.456,297.268,291.912,302.321,286.859,299.777,293.48,307.068" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="281.93" y="266.297" fill="#000" font-size="13" textLength="67.761">send_main</text></g><!--link M to H--><g class="link" data-entity-1="ent0004" data-entity-2="ent0005" id="lnk10" data-source-line="14" data-link-type="dependency"><path d="M301.61,358.448 C301.61,382.388 301.61,413.448 301.61,437.348" style="stroke:#181818;stroke-width:1;" fill="none" id="M-to-H"/><polygon points="301.61,442.348,305.61,433.348,301.61,437.348,297.61,433.348,301.61,442.348" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="302.61" y="409.227" fill="#000" font-size="13" textLength="140.148">메인 세션이 사람 대신 전달</text></g><!--link P to R--><g class="link" data-entity-1="ent0006" data-entity-2="ent0003" id="lnk11" data-source-line="15" data-link-type="dependency"><path d="M87.61,223.168 C87.61,244.698 87.61,271.038 87.61,294.508" style="stroke:#181818;stroke-width:1;stroke-dasharray:7,7;" fill="none" id="P-to-R"/><polygon points="87.61,299.508,91.61,290.508,87.61,294.508,83.61,290.508,87.61,299.508" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="88.61" y="266.297" fill="#000" font-size="13" textLength="75.697">답 상태만 읽음</text></g><?plantuml-src LP9DJzj048Rl_XKZUk3IH4MS6gazj11nIOKISMegvDgRn4fO8zke7wTyk2WYKHMrZeXAZ8A4eAbIrILfCIfS-2aSFUF_q8sTqFIuxym-E_lEQvOrlYiRyWwO9LdLtsYy20MvOZB9lA-eh23lLQoqpgsSzfx1okf2CSiKI-R52ilgUrnzhXkS6R3oIB8qgyA0pgk1tqn1SE7He0lO-aLk5N8LMIa37NR8xkDv6z0x2iQ3Xn0UDj5l1rTjSGqF7C2XGwvFxWHelqFzQppf0mriR8qaO_uiB55zH5-6TDp9ynduQeAV-u0NTdXmlGIo2LkB_UQqQTlKbJApahllydoDAPhAaWMDQsOfwiyjzWU-XoSkh0RZSPvh_BN-5iAk6EJKXjjBK7NEvkSyLsH3JSYAfUdSZ4ZPHLBy7mXj3t_uQ8k1brz68z_jVufhh-PEhS4J87iGDbnuiHoHCl0WdLv_jlvuaHWx1dJZeEEWVIgy4dJ1lJS5wAY38py5TzMp6BJntqWZNom1yDjNwjeudeZFGlYn9pXY1tbExerGRY_dRUC9rgSzOciHQrFQWaJYAUGWDVCRmje4pxvBkKZF2ZtsRoPaX60ohcxlo1gNCf6sCRqSMqEsJnzwqSRh8pmMqMXNgJMORtqJaiaOAf84rAY5ZIX0OanosnBNBGQ6LYnPe1UYf_ub28TD-kq4FpsizqJW7AhrS3Z9yrdcl6eSJbjOyMSQIC7x2m00?></g></svg></div></div>
+<p>② 바뀜: 두 입구가 같은 기록 지점을 지나고, 허브가 직접 받는다. 바뀐 곳은 노랑·초록이다.</p>
+<div class="diagrams"><div class="diagram" data-check="diagram"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" data-diagram-type="DESCRIPTION" style="width:574px;height:475px;background:#FFFFFF;" width="574px" height="475px" viewBox="0 0 574 475" zoomAndPan="magnify" preserveAspectRatio="none" contentStyleType="text/css"><?plantuml 1.2026.8?><defs/><g font-family="sans-serif" lengthAdjust="spacing"><g class="title" data-source-line="4"><text x="99.386" y="23.535" fill="#000" font-size="14" textLength="368.682" font-weight="700">바뀜: Slack 과 페이지가 같은 기록 지점을 쓰고, 허브가 직접 받음</text></g><!--entity U1--><g class="entity" data-qualified-name="U1" id="ent0001" data-source-line="5"><rect x="220.66" y="44.488" width="78.799" height="50.621" fill="#F1F1F1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="230.66" y="67.057" fill="#000" font-size="13" textLength="33.735">사용자</text><text x="230.66" y="82.367" fill="#000" font-size="13" textLength="58.799">Slack 버튼</text></g><!--entity U2--><g class="entity" data-qualified-name="U2" id="ent0002" data-source-line="6"><rect x="334.59" y="44.488" width="106.942" height="50.621" fill="#DAFBE1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="344.59" y="67.057" fill="#000" font-size="13" textLength="33.735">사용자</text><text x="344.59" y="82.367" fill="#000" font-size="13" textLength="86.942">문서 페이지 버튼</text></g><!--entity A--><g class="entity" data-qualified-name="A" id="ent0003" data-source-line="7"><rect x="253.77" y="172.108" width="140.593" height="50.621" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="263.77" y="194.677" fill="#000" font-size="13" textLength="120.593">answer_store.claim</text><text x="263.77" y="209.987" fill="#000" font-size="13" textLength="91.055">먼저 온 답만 기록</text></g><!--entity R--><g class="entity" data-qualified-name="R" id="ent0004" data-source-line="8"><rect x="7" y="299.728" width="192.123" height="50.621" fill="#F1F1F1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="17" y="322.297" fill="#000" font-size="13" textLength="46.068">기록 3곳</text><text x="17" y="337.607" fill="#000" font-size="13" textLength="172.123">inbox · done · card-actions</text></g><!--entity H--><g class="entity" data-qualified-name="H" id="ent0005" data-source-line="9"><rect x="233.85" y="299.728" width="180.426" height="50.621" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="243.85" y="322.297" fill="#000" font-size="13" textLength="82.828">허브 코디네이터</text><text x="243.85" y="337.607" fill="#000" font-size="13" textLength="160.426">'사용자 원문: … (문서 사이트)'</text></g><!--entity M--><g class="entity" data-qualified-name="M" id="ent0006" data-source-line="10"><rect x="448.84" y="299.728" width="84.452" height="50.621" fill="#F1F1F1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="458.84" y="322.297" fill="#000" font-size="13" textLength="60.338">메인 터미널</text><text x="458.84" y="337.607" fill="#000" font-size="13" textLength="64.452">참고 한 줄만</text></g><!--entity C--><g class="entity" data-qualified-name="C" id="ent0007" data-source-line="11"><rect x="16.72" y="411.348" width="172.681" height="50.621" fill="#DAFBE1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="26.72" y="433.917" fill="#000" font-size="13" textLength="85.402">Slack 카드 닫기</text><text x="26.72" y="449.227" fill="#000" font-size="13" textLength="152.681">소켓 수신기가 chat_update</text></g><!--link U1 to A--><g class="link" data-entity-1="ent0001" data-entity-2="ent0003" id="lnk8" data-source-line="12" data-link-type="dependency"><path d="M272.55,95.318 C283.83,117.448 298.06,145.383 309.33,167.503" style="stroke:#181818;stroke-width:1;" fill="none" id="U1-to-A"/><polygon points="311.6,171.958,311.078,162.123,309.33,167.503,303.95,165.755,311.6,171.958" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link U2 to A--><g class="link" data-entity-1="ent0002" data-entity-2="ent0003" id="lnk9" data-source-line="13" data-link-type="dependency"><path d="M375.57,95.318 C364.29,117.448 350.06,145.383 338.79,167.503" style="stroke:#181818;stroke-width:1;" fill="none" id="U2-to-A"/><polygon points="336.52,171.958,344.17,165.755,338.79,167.503,337.042,162.123,336.52,171.958" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="360.89" y="138.677" fill="#000" font-size="13" textLength="110.64">POST /api/decide</text></g><!--link A to R--><g class="link" data-entity-1="ent0003" data-entity-2="ent0004" id="lnk10" data-source-line="14" data-link-type="dependency"><path d="M280.66,223.088 C241.82,245.168 189.516,274.887 150.706,296.957" style="stroke:#181818;stroke-width:1;" fill="none" id="A-to-R"/><polygon points="146.36,299.428,156.161,298.456,150.706,296.957,152.206,291.502,146.36,299.428" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link A to H--><g class="link" data-entity-1="ent0003" data-entity-2="ent0005" id="lnk11" data-source-line="15" data-link-type="dependency"><path d="M322.17,223.158 C321.34,236.878 320.63,254.238 321.06,269.728 C321.33,279.448 321.575,285.147 322.125,294.457" style="stroke:#181818;stroke-width:1;" fill="none" id="A-to-H"/><polygon points="322.42,299.448,325.882,290.228,322.125,294.457,317.896,290.7,322.42,299.448" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="322.06" y="266.297" fill="#000" font-size="13" textLength="125.322">card_actions.deliver</text></g><!--link A to M--><g class="link" data-entity-1="ent0003" data-entity-2="ent0006" id="lnk12" data-source-line="16" data-link-type="dependency"><path d="M394.74,218.638 C414.9,226.858 435.78,237.978 452.06,252.728 C466.08,265.418 474.175,279.748 480.545,294.928" style="stroke:#181818;stroke-width:1;stroke-dasharray:7,7;" fill="none" id="A-to-M"/><polygon points="482.48,299.538,482.686,289.692,480.545,294.928,475.309,292.787,482.48,299.538" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="467.4" y="266.297" fill="#000" font-size="13" textLength="91.055">실패 때 대리 전달</text></g><!--link R to C--><g class="link" data-entity-1="ent0004" data-entity-2="ent0007" id="lnk13" data-source-line="17" data-link-type="dependency"><path d="M103.06,350.638 C103.06,368.688 103.06,388.108 103.06,406.138" style="stroke:#181818;stroke-width:1;stroke-dasharray:7,7;" fill="none" id="R-to-C"/><polygon points="103.06,411.138,107.06,402.138,103.06,406.138,99.06,402.138,103.06,411.138" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><?plantuml-src TL71QXDH5DtFLrpQHHLCQYn2oQ8Gew6ReYJjBX2UCw_jqEcRC3EnuYhA8AKP92KfHfkH4KBJOi31L1mXRlmKbtbt_i6RIOmfwEe-thddt7lEjGzqKMKMEmHxdsdcaIxsO9SPDbViEQBnNLOpd88fd9B-WaDcRG4iSjLXOi_WHRCcjBnf2Mv1vgxYw8x1GOPjMUzceMGmzG36mn74RpheNsE_FWxhC0xVeKyb2kL77-WJWoRwBc0h70-3En2_FPQHD-d4_aiCJadl77rFiVuCXILyDS3tL_YXMHRJ8VAB6v-Cbe3Pi9FvJwSSHEXs_-voWtGFbX_c2WyUtI0pOHzngs8xfiNJgi7qGrAv7650gtKkGJQ-ohutCvB8v62vK2Yiv-ylgioChes7mxBGnLFpEVpy1fef-AIgpD9IJ7LqKzY9Hd6HEyq2y4TRjjlIxT7ciHkMnShS5-1vavnbuLVz0cxDF4vGwZo9Rgyacfl_sajUjT6FWFJavqYwb1264Lq0uZDIwBdaBI5lBPAcSUFtQzdgKW2Vo1pnNdiuQW4UTx0HqC_aTke-SogrgiOSdgZavm7lP22Lse2SGg4d3yZ2ayUbRLXbLNrLuwgkSIMNGCLPtQIMIL2LML1fZHlwCsuHd4vlm1R1sEZ57jtap0FfrUN5031mPMEW59EM_6y0?></g></svg></div></div>
+<p>③ 세 화면의 공통 원천: 문서 사이트·Slack 할 일 목록·옆 패널이 한 모듈에서 항목을 받는다.</p>
+<div class="diagrams"><div class="diagram" data-check="diagram"><svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" data-diagram-type="DESCRIPTION" style="width:446px;height:363px;background:#FFFFFF;" width="446px" height="363px" viewBox="0 0 446 363" zoomAndPan="magnify" preserveAspectRatio="none" contentStyleType="text/css"><?plantuml 1.2026.8?><defs/><g font-family="sans-serif" lengthAdjust="spacing"><g class="title" data-source-line="4"><text x="69.892" y="23.535" fill="#000" font-size="14" textLength="299.297" font-weight="700">공통 원천: 사용자 확인 항목 한 곳에서 세 화면을 만듦</text></g><!--entity SRC--><g class="entity" data-qualified-name="SRC" id="ent0001" data-source-line="5"><rect x="124.63" y="44.488" width="177.798" height="50.621" fill="#F1F1F1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="134.63" y="67.057" fill="#000" font-size="13" textLength="124.005">progress.json 스냅샷</text><text x="134.63" y="82.367" fill="#000" font-size="13" textLength="157.798">+ 결정 카드 기록 + 확인 기록</text></g><!--entity CI--><g class="entity" data-qualified-name="CI" id="ent0002" data-source-line="6"><rect x="112.72" y="187.108" width="201.611" height="50.621" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="122.72" y="209.677" fill="#000" font-size="13" textLength="108.919">confirm_items.py</text><text x="122.72" y="224.987" fill="#000" font-size="13" textLength="181.611">항목 + 종류 + 상태(함·안 함·근거)</text></g><!--entity W--><g class="entity" data-qualified-name="W" id="ent0003" data-source-line="7"><rect x="7" y="298.728" width="111.055" height="50.621" fill="#DAFBE1" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="17" y="321.297" fill="#000" font-size="13" textLength="60.338">문서 사이트</text><text x="17" y="336.607" fill="#000" font-size="13" textLength="91.055">첫 화면 확인 목록</text></g><!--entity T--><g class="entity" data-qualified-name="T" id="ent0004" data-source-line="8"><rect x="153.18" y="298.728" width="120.687" height="50.621" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="163.18" y="321.297" fill="#000" font-size="13" textLength="89.515">Slack 할 일 목록</text><text x="163.18" y="336.607" fill="#000" font-size="13" textLength="100.687">progress_digest</text></g><!--entity B--><g class="entity" data-qualified-name="B" id="ent0005" data-source-line="9"><rect x="308.98" y="298.728" width="123.102" height="50.621" fill="#FFF8C5" style="stroke:#181818;stroke-width:0.5;" rx="5" ry="5"/><text x="318.98" y="321.297" fill="#000" font-size="13" textLength="103.102">옆 패널 approvals</text><text x="318.98" y="336.607" fill="#000" font-size="13" textLength="81.853">panel_collect</text></g><!--link SRC to CI--><g class="link" data-entity-1="ent0001" data-entity-2="ent0002" id="lnk6" data-source-line="10" data-link-type="dependency"><path d="M213.53,95.288 C213.53,120.938 213.53,156.008 213.53,181.728" style="stroke:#181818;stroke-width:1;" fill="none" id="SRC-to-CI"/><polygon points="213.53,186.728,217.53,177.728,213.53,181.728,209.53,177.728,213.53,186.728" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/><text x="214.53" y="138.677" fill="#000" font-size="13" textLength="142.651">todo_items.build_rows</text><text x="215.915" y="153.987" fill="#000" font-size="13" textLength="139.881">todo_facts.Facts 재사용</text></g><!--link CI to W--><g class="link" data-entity-1="ent0002" data-entity-2="ent0003" id="lnk7" data-source-line="11" data-link-type="dependency"><path d="M179.64,238.018 C154.86,256.008 125.427,277.382 100.607,295.392" style="stroke:#181818;stroke-width:1;" fill="none" id="CI-to-W"/><polygon points="96.56,298.328,106.194,296.28,100.607,295.392,101.495,289.805,96.56,298.328" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link CI to T--><g class="link" data-entity-1="ent0002" data-entity-2="ent0004" id="lnk8" data-source-line="12" data-link-type="dependency"><path d="M213.53,238.018 C213.53,256.068 213.53,275.488 213.53,293.518" style="stroke:#181818;stroke-width:1;" fill="none" id="CI-to-T"/><polygon points="213.53,298.518,217.53,289.518,213.53,293.518,209.53,289.518,213.53,298.518" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><!--link CI to B--><g class="link" data-entity-1="ent0002" data-entity-2="ent0005" id="lnk9" data-source-line="13" data-link-type="dependency"><path d="M248.76,238.018 C274.53,256.008 305.24,277.456 331.04,295.466" style="stroke:#181818;stroke-width:1;" fill="none" id="CI-to-B"/><polygon points="335.14,298.328,330.05,289.897,331.04,295.466,325.471,296.457,335.14,298.328" fill="#181818" style="stroke:#181818;stroke-width:1;stroke-linejoin:miter;stroke-miterlimit:10;"/></g><?plantuml-src RL5DQnf16BxxArwIIuj4AgLGSWX4suLULSX5aEdkQ3QECx8pLjfRgmabv22aI_FXXgGqhROMh35emLD_ZlFkV-Yuki53BpFFpFi-p_D-oAhBwyGZDP3xn15DbrUWJ9Ya2VaGSMYPD9Yo15Tvzns5zDErO8xQYl0AepdHu4vMU9nwa7wIKAvY5EPtz-7HFU1b1qVTRS0F0xpeurK7mdCVWoc4_Y_zes-khaczmyyTR7S1soPm_adtnnYqGNy_qQVV4bxi0njrJrGyAcNgG0eEUFnLjmwnDIdo9Cn7Gxps0V-CzQcHd0xrJG39s6tvtW0Y8P_BhalQWfTThrPo5Qt9LFrjaQygIm9-ETItPmlGUX-skez2l_TtWlv7YC1yCfl_7ZwEDBElODEohEVPP-lIUZ2DcZAj1-FmU5haEFgvwYykp3Z5XUt1vejTA_ColQwHPyIk6iDhm62soYxoU0ubnwrGgI9wuNybuDaHX2SztUu0gHlM6xDWGoUSif8j63EP4JdpG3RZWQsjdKLBsw248rQJUTrmcLFoHDFme-yoiPLCMOiJy6gmN732q1RilHWKOf3v1m00?></g></svg></div></div>
+<p class="cap">원본 PUML: <code>docs/puml/docsite-approve-*.puml</code></p>
+
+<h2>🔍 조사 결과</h2>
+<h3>1. 답이 허브까지 가는 지금 경로</h3>
+<table><tr><th>단계</th><th>위치</th><th>메인을 거치나</th></tr>
+<tr><td>버튼 클릭 수신</td><td><code>slack_socket.py</code> <code>Decide.on_click</code></td><td>아니오</td></tr>
+<tr><td>기록: inbox 한 줄 · done 한 줄</td><td><code>Decide.finish</code></td><td>아니오</td></tr>
+<tr><td>감시기가 건 카드의 후속 동작</td><td><code>card_actions.take</code> → <code>execute</code></td><td>아니오, 메인에도 안 보냄</td></tr>
+<tr><td>일반 카드의 메인 전달</td><td><code>Decide.route</code> → <code>send_main</code></td><td>예, 자동 구간은 여기서 끝</td></tr>
+<tr><td>메인 → 허브 "사용자 원문"</td><td>메인 세션 운영 규칙(orca-main 스킬 문서)</td><td>예, 코드가 아닌 세션이 수행</td></tr></table>
+<p><b>넣을 지점:</b> 기록은 <code>finish</code> 안의 inbox·done 기록 단계다. 페이지와 Slack 이 이 단계를 공유하면 같은 기록이 남고, 패널·할 일 목록이 읽는 닫힘 판정(<code>closed_cards</code>, <code>collect_pending</code>)도 그대로 맞는다. 허브 직접 전송 함수는 이미 <code>card_actions.deliver(slug, text)</code> 로 있고, 결정을 올린 허브는 <code>todo_facts.decision_hubs</code> 가 안다.</p>
+
+<h3>2. 공통 원천 후보</h3>
+<table><tr><th>후보</th><th>재사용</th><th>한계</th></tr>
+<tr><td><code>todo_items.build_rows</code>·<code>Row</code></td><td>종류 분류·제목·급함·허브·대상 키</td><td>종류가 결정·머지·직접 입력·검수 4개뿐이고 상태가 없다</td></tr>
+<tr><td><code>todo_facts.Facts</code></td><td>PR 병합 여부(gh)·결정 닫힘·결정 허브</td><td>끝난 행은 <code>settle</code> 에서 버려 "함" 목록을 못 만든다</td></tr>
+<tr><td><code>panel_collect.collect_pending</code></td><td>결정 카드 대기·카드 상태</td><td>패널 approvals 는 <code>panel.json</code> 손 칸이라 자동 원천이 아니다</td></tr></table>
+<p><b>채택:</b> <code>todo_items</code>·<code>todo_facts</code> 를 그대로 쓰는 새 모듈 <code>confirm_items.py</code>. 직접 입력을 명령·시트·창 승인으로 쪼개고, <code>settle</code> 이 버리는 완료 행을 상태 "함" 으로 보존한다. <b>기각:</b> 문서 사이트 전용 집계는 세 곳이 어긋난다. 패널 손 칸 유지는 자동 갱신이 안 된다.</p>
+
+<h3>3. 첫 화면 목록의 종류와 상태 근거</h3>
+<table><tr><th>종류</th><th>"함" 근거</th><th>줄의 처리 버튼</th></tr>
+<tr><td>결정 카드</td><td>done 기록·카드 상태 닫힘</td><td>선택지 버튼</td></tr>
+<tr><td>PR 병합</td><td>gh 로 병합 확인</td><td>승인 버튼·PR 링크</td></tr>
+<tr><td>검수 자료</td><td>확인 기록</td><td>문서 열기·했음</td></tr>
+<tr><td>직접 실행 명령</td><td>확인 기록 또는 허브 보고</td><td>명령 복사·했음</td></tr>
+<tr><td>시트·콘솔 작업</td><td>확인 기록 또는 허브 보고</td><td>링크·했음</td></tr>
+<tr><td>창 승인</td><td>허브 화면에서 승인창이 사라짐</td><td>허브 이름 표시만, 버튼 없음</td></tr></table>
+<p>창 승인은 사용자가 허브 창에서 직접 눌러야 하는 규칙이라 페이지가 대신 누르지 않는다.</p>
+
+<h3>4. 보안 검토</h3>
+<table><tr><th>위협</th><th>지금 방어</th><th>충분한가</th></tr>
+<tr><td>다른 사이트의 브라우저 요청</td><td>Origin·Sec-Fetch-Site·CSRF 토큰</td><td>충분</td></tr>
+<tr><td>DNS 리바인딩</td><td>Host 검사, 127.0.0.1 고정</td><td>충분</td></tr>
+<tr><td>같은 권한의 로컬 프로세스가 위조</td><td>없음, 헤더를 직접 만들 수 있다</td><td>부족. 다만 같은 권한이면 설정 폴더에 직접 쓸 수도 있어 새로 늘어나는 것은 허브 입력 위조 한 가지</td></tr>
+<tr><td>같은 결정에 두 번 답</td><td>없음</td><td>부족. 파일 잠금 아래 첫 답만 인정하도록 추가</td></tr>
+<tr><td>화면이 보낸 문구를 허브에 주입</td><td>없음</td><td>부족. 서버가 선택 번호만 받고 문구는 카드 기록에서 조립. 자유 글은 첫 버전에서 제외</td></tr></table>
+
+<h2>🔄 주제별 before / after</h2>
+<section class="ba" data-check="ba"><h3>답 기록 지점</h3>
+<div class="ba-grid"><div class="before"><div class="label">before (지금, slack_socket.py)</div><pre><code>rec = {"type": "button", "parent_ts": ts, "decision_id": did, ...}
+with open(INBOX, "a", encoding="utf-8") as f:
+    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+with open(DONE, "a", encoding="utf-8") as f:
+    f.write(ts + "\n")
+status, entry = actions.try_take(did)
+...
+self.route(entry, did, ts, title, label, extra)
+# route: 일반 카드는 send_main 으로 메인에만 전달</code></pre></div>
+<div class="after"><div class="label">after (제안)</div><pre><code># answer_store.py: Slack·페이지 공용
+def claim(did, pick, source):
+    with flock(LOCK):
+        if answered(did):          # inbox·done·반응 모두 확인
+            return Taken(by=first_source(did))
+        append_inbox(did, pick, source)   # source: slack|docsite
+        append_done(ts_of(did))
+        return Claimed(entry=take(did))
+# 호출 쪽
+res = answer_store.claim(did, pick, "docsite")
+route.deliver(res)   # 허브 직접, 실패 시 메인 대리</code></pre></div></div>
+<p class="why" data-check="why"><b>왜:</b> 기록과 "먼저 온 답만" 판정이 한 함수에 모이므로 Slack 과 페이지가 겹쳐도 한 번만 실행된다.</p></section>
+
+<section class="ba" data-check="ba"><h3>세 화면의 항목 원천</h3>
+<div class="ba-grid"><div class="before"><div class="label">before (지금)</div><pre><code># progress_digest.run
+all_rows = todo_items.build_rows(
+    [(i.key, i.bucket, i.title, i.since) for i in items],
+    now, seen, same_title)
+kept, dropped = settle_rows(all_rows, facts, state)
+# 끝난 행(dropped)은 목록에서 사라짐
+# 패널 approvals 는 panel.json 손 칸
+# 문서 사이트는 답 상태만 따로 계산</code></pre></div>
+<div class="after"><div class="label">after (제안)</div><pre><code># confirm_items.py
+def collect(snapshot, facts, confirms):
+    rows = todo_items.build_rows(...)
+    kept, dropped = settle(rows, facts)
+    return ([Item(r, status="안 함") for r in kept]
+          + [Item(r, status="함", why=why)
+             for r, why in dropped]
+          + from_confirm_log(confirms))
+# 세 화면이 같은 collect 결과를 필터만 달리해 씀</code></pre></div></div>
+<p class="why" data-check="why"><b>왜:</b> 항목과 상태 판정이 한 곳이므로 Slack 목록·패널·문서 사이트가 같은 근거로 같은 결과를 낸다.</p></section>
+
+<section class="ba" data-check="ba"><h3>쓰기 요청 경로</h3>
+<div class="ba-grid"><div class="before"><div class="label">before (지금, doc_browser.py)</div><pre><code>def do_POST(self):
+    if not self._host_ok(): return
+    if urlparse(self.path).path != "/api/send":
+        return self._deny("없는 주소", 404)
+    origin = self.headers.get("Origin")
+    if origin not in app.origins: ...403
+    if Sec-Fetch-Site not same-origin: ...403
+    if not app.token_ok(X-CSRF-Token): ...403
+    ...
+    res = doc_send.send(path, title, who, msg)</code></pre></div>
+<div class="after"><div class="label">after (제안)</div><pre><code>WRITES = {"/api/send": send, "/api/decide": decide,
+          "/api/confirm": confirm, "/api/pr-approve": pr}
+def do_POST(self):
+    handler = WRITES.get(urlparse(self.path).path)
+    ...  # Host·Origin·Sec-Fetch-Site·토큰 검사는 그대로
+    if handler is decide:
+        # 1단계 preview: 서버가 문구 조립, 1회용 intent 발급
+        # 2단계 commit: intent 일치할 때만 claim
+    audit.write(source="docsite", route=path, did=did)</code></pre></div></div>
+<p class="why" data-check="why"><b>왜:</b> 검사 한 곳을 유지한 채 쓰기 경로만 늘리고, 확인 단계와 감사 로그를 공통으로 붙인다.</p></section>
+
+<h2>✅ 그대로인 것 / 없어지는 것</h2>
+<table><tr><th>그대로</th><th>없어짐</th></tr>
+<tr><td>127.0.0.1 고정 바인드와 Host·Origin·CSRF 검사</td><td>메인 터미널에만 닿는 일반 카드 전달(결정1 A 일 때)</td></tr>
+<tr><td>Slack 버튼·반응 답, 감시기 카드의 후속 동작</td><td>패널 approvals 손 칸 갱신 작업</td></tr>
+<tr><td>문서 보내기(<code>/api/send</code>)와 받는 사람 설정</td><td>Slack 목록 전용 항목 집계</td></tr>
+<tr><td>창 승인은 사용자가 허브 창에서 누름</td><td></td></tr></table>
+
+<h2>🔄 진행 순서 — 구현 묶음</h2>
+<table><tr><th>#</th><th>커밋 단위</th><th>예상 시간</th><th>검증</th></tr>
+<tr><td>1</td><td>공용 기록 모듈 <code>answer_store</code> 와 Slack 연결, 첫 답만 인정</td><td>1.5시간</td><td>기록·중복·동시 호출 시험</td></tr>
+<tr><td>2</td><td>허브 직접 전달과 메인 대리 전달, 출처 표기</td><td>1.5시간</td><td>전송 실패·시간 초과 시험</td></tr>
+<tr><td>3</td><td>페이지 <code>POST /api/decide</code>, 서버 조립 문구, 확인 단계, 감사 로그</td><td>2시간</td><td>기존 doc_browser 보안 시험 + 새 위조 시험</td></tr>
+<tr><td>4</td><td>원천 <code>confirm_items</code> 와 상태 판정, 확인 기록</td><td>3시간</td><td>종류·상태별 시험</td></tr>
+<tr><td>5</td><td>첫 화면 확인 목록 UI, 결정 버튼·명령 복사·링크</td><td>3시간</td><td>화면 녹화 스모크</td></tr>
+<tr><td>6</td><td>Slack 할 일 목록·패널이 원천 사용, Slack 카드 닫기</td><td>3시간</td><td>세 화면 일치 시험</td></tr>
+<tr><td>7</td><td>PR 승인 버튼과 운영 문서 갱신</td><td>1.5시간</td><td>결정2·3 결과대로 시험</td></tr></table>
+<p>합계 약 15.5시간, 작업일로 2일 안팎. 추정이며 실측이 아니다. 1~3 을 먼저 병합하면 결정 버튼만 먼저 쓸 수 있고, 4~6 은 그 뒤에 이어진다. 커밋마다 파일 3~10개·400줄 이하를 목표로 한다.</p>
+<p><b>페이지 클릭이 Slack 과 겹치면:</b> 먼저 기록된 답만 유효하다. 늦은 쪽은 "이미 Slack 에서 답함" 또는 "이미 문서 사이트에서 답함" 을 보고 아무것도 실행하지 않는다.</p>
+
+<details class="ref" data-check="ref"><summary>참고 (파일·근거)</summary>
+<ul class="facts">
+<li>조사 파일: <code>hubs/scripts/doc_browser.py</code>·<code>doc_send.py</code>·<code>doc_index.py</code>·<code>slack_socket.py</code>·<code>card_actions.py</code>·<code>todo_items.py</code>·<code>todo_facts.py</code>·<code>progress_digest.py</code>·<code>panel_collect.py</code></li>
+<li>기준 커밋: main <code>e57eda6</code></li>
+<li>메인 → 허브 전달이 사람 손인지: 코드에는 자동 경로가 없고 메인 운영 규칙 문서에만 있다. 라이브 메인 동작은 확인하지 않았다(미확인).</li>
+<li>웹 조사·타 저장소 유사 코드 조사: 하지 않았다(미확인). 설계 패턴은 코드 안 기존 구조(공용 잠금 기록 모듈, 포트·어댑터)에서 가져왔다.</li>
+<li>구현 시 설계 제약: <code>doc_send.py</code> 는 서버 POST 처리기만 부르는 시험이 있어, 새 쓰기 모듈도 같은 시험을 따른다.</li></ul></details>
+<details class="ref" data-check="review"><summary>검수 기록</summary>
+<ul class="facts"><li>1차 독자 검수: 아직 안 함. 메인이 다른 워커에 의뢰한다.</li><li>2차 교차 검수: 아직 안 함.</li><li>작성자 자체 점검 2026-11-13, check.py 통과 여부는 커밋 보고에 적는다.</li></ul></details>
+
+</html>
