@@ -4,7 +4,10 @@
 사용: check.py [--report] [--strict] [--project 이름] [--audience 기획자|개발자] 문서.html
 --strict: 결정 카드 길이 초과 경고도 실패로 처리.
 --project·설정 파일: doc_config.py 규칙. 설정의 ticket_pattern 이 있으면 본문 티켓 키를 검사하고
-audience 가 기획자일 때만 본문 고유명사를 검사한다."""
+audience 가 기획자일 때만 본문 고유명사를 검사한다.
+도식: 렌더된 도식(도형 3개 이상 인라인 SVG, data URI·옆 파일 이미지)이 종류별 최소 개수 미만이면 실패.
+종류는 <meta name="doc-kit-kind" content="구조안|설명|결정|보고서|비주얼">, 없으면 설명(2개, --report 는 보고서 1개).
+예외는 <meta name="doc-kit-no-diagram" content="사유"> 이며 사유가 없으면 실패."""
 import os
 import re
 import sys
@@ -18,6 +21,17 @@ CAUSAL_RE = re.compile(r"(때문|그래서|그러면|하면|면 |므로|탓에|�
 REVIEW_RE = re.compile(r"(검수.{0,6}(기록|결과|반영|내역|지적)|[12]차.{0,3}검수)")
 SUMMARY_MAX = 180
 DCARD_MAX = 450
+# 도식으로 인정하는 인라인 SVG 최소 도형 수. 아이콘(도형 1~2개)은 도식이 아님
+SVG_MIN_SHAPES = 3
+SVG_SHAPES = {"rect", "path", "line", "circle", "ellipse", "polygon", "polyline", "text"}
+IMG_EXT = (".svg", ".png", ".jpg", ".jpeg", ".webp", ".gif")
+DATA_IMG_MIN = 300      # data URI 최소 길이. 1픽셀 자리표시 이미지 배제
+# 문서 종류(<meta name="doc-kit-kind">)별 도식 최소 개수. 표식이 없으면 설명 문서로 본다
+KIND_MIN = {"구조안": 2, "설명": 2, "해설": 2, "결정": 1, "보고서": 1, "비주얼": 2}
+KIND_DEFAULT = "설명"
+NO_DIAGRAM_META = "doc-kit-no-diagram"
+KIND_META = "doc-kit-kind"
+REASON_MIN = 5
 
 
 class Doc(HTMLParser):
@@ -25,6 +39,12 @@ class Doc(HTMLParser):
         super().__init__()
         self.checks = {}
         self.svg = 0
+        self.diagrams = 0     # 도식으로 센 인라인 SVG·이미지
+        self.shots = {"shot-before": 0, "shot-after": 0}
+        self.problem = 0      # 문제 위치 표시(data-check=problem)
+        self.meta = {}
+        self._svg_shapes = []  # 열린 svg 별 도형 수
+        self.base = ""
         self.external = []
         self.ba = []          # (before 코드 있음, after 코드 있음, why 있음)
         self._stack = []
@@ -46,6 +66,18 @@ class Doc(HTMLParser):
             self.checks[chk] = self.checks.get(chk, 0) + 1
         if tag == "svg":
             self.svg += 1
+            self._svg_shapes.append(0)
+        elif self._svg_shapes and tag in SVG_SHAPES:
+            self._svg_shapes[-1] += 1
+        if tag == "meta" and a.get("name"):
+            self.meta[a["name"]] = (a.get("content") or "").strip()
+        if chk == "problem":
+            self.problem += 1
+        if tag == "img":
+            if chk in self.shots:
+                self.shots[chk] += 1
+            if self._is_rendered_img(a.get("src") or ""):
+                self.diagrams += 1
         if tag == "script" and a.get("src"):
             self.external.append(a["src"])
         if tag == "link" and a.get("rel") == "stylesheet":
@@ -76,7 +108,17 @@ class Doc(HTMLParser):
             if "after" in self._in:
                 self._cur_ba[1] = True
 
+    def _is_rendered_img(self, src):
+        """data URI 또는 문서 옆에 실제로 있는 이미지 파일만 도식으로 인정. 외부 URL 은 제외."""
+        if src.startswith("data:image/"):
+            return len(src) >= DATA_IMG_MIN
+        if re.match(r"^[a-z][a-z0-9+.-]*:", src, re.I) or not src.lower().split("?")[0].endswith(IMG_EXT):
+            return False
+        return os.path.isfile(os.path.join(self.base, src.split("?")[0].split("#")[0]))
+
     def handle_endtag(self, tag):
+        if tag == "svg" and self._svg_shapes and self._svg_shapes.pop() >= SVG_MIN_SHAPES:
+            self.diagrams += 1
         while self._stack:
             t, skip = self._stack.pop()
             if skip:
@@ -109,9 +151,34 @@ class Doc(HTMLParser):
                 c[2].append(data)
 
 
+def check_diagrams(d, report):
+    """도식 검사. (실패 목록, 경고 목록, 예외 사유) 반환. 예외는 meta 표식 + 사유가 있을 때만."""
+    if NO_DIAGRAM_META in d.meta:
+        reason = d.meta[NO_DIAGRAM_META]
+        if len(re.sub(r"\s", "", reason)) < REASON_MIN:
+            return ([f"도식 예외 표식에 사유 없음 — <meta name=\"{NO_DIAGRAM_META}\" content=\"사유\"> 에 {REASON_MIN}자 이상 사유를 적거나 도식을 넣을 것"], [], None)
+        return ([], [], reason)
+    kind = d.meta.get(KIND_META) or ("보고서" if report else KIND_DEFAULT)
+    if kind not in KIND_MIN:
+        return ([f"문서 종류 표식 '{kind}' 모름 — {'·'.join(KIND_MIN)} 중 하나로 적을 것"], [], None)
+    need = KIND_MIN[kind]
+    fails, warns = [], []
+    if d.diagrams < need:
+        fails.append(
+            f"도식 {d.diagrams}개 — {kind} 문서는 {need}개 이상 필요. "
+            f"PUML 을 SVG 로 렌더해 내장하거나(구조·설명은 이전/현재), 불가하면 <meta name=\"{NO_DIAGRAM_META}\" content=\"사유\"> 로 사유 명시")
+    if kind == "비주얼":
+        if not (d.shots["shot-before"] and d.shots["shot-after"]):
+            fails.append('UI 변경 문서는 전/후 이미지 쌍(data-check="shot-before"·"shot-after") 필요 — 샷이 없으면 도식 예외 표식으로 사유 명시')
+    elif kind in ("구조안", "설명", "해설") and d.diagrams >= need and not d.problem:
+        warns.append('문제 위치 표시(data-check="problem") 없음 — 이전 도식에 ⚠️ 빨강 표시 권장')
+    return (fails, warns, None)
+
+
 def main(path, report=False, strict=False, project=None, audience=None):
     html = open(path, encoding="utf-8").read()
     d = Doc()
+    d.base = os.path.dirname(os.path.abspath(path))
     d.feed(html)
     body = " ".join(d.body_text)
     fails = []
@@ -119,8 +186,8 @@ def main(path, report=False, strict=False, project=None, audience=None):
         fails.append("3줄 요약 박스(data-check=summary) 없음")
     if not d.checks.get("decision"):
         fails.append("🙋 결정 섹션(data-check=decision) 없음")
-    if not report and d.svg < 2:
-        fails.append(f"내장 SVG {d.svg}개 — 지금/바뀌면 그림 2개 이상 필요")
+    dfails, dwarns, dreason = check_diagrams(d, report)
+    fails += dfails
     dc = d.checks.get("dcard", 0)
     if dc == 0 and "결정 없음" not in body:
         fails.append("결정 카드(data-check=dcard) 없음 — 결정할 게 없으면 '결정 없음'이라고 적을 것")
@@ -172,7 +239,9 @@ def main(path, report=False, strict=False, project=None, audience=None):
     jargon = sorted(set(re.findall(r"\b(?:P[123]|fixup|autosquash|ctx_\w+|Dispatch)\b", body)))
     if jargon:
         fails.append("내부 기호: " + ", ".join(jargon))
-    warns = []
+    warns = list(dwarns)
+    if dreason:
+        warns.append(f"도식 예외 적용: {dreason}")
     for name, text in d.regions:
         if name == "summary":
             n = len(re.sub(r"\s", "", text.replace("3줄 요약", "", 1)))
@@ -194,7 +263,7 @@ def main(path, report=False, strict=False, project=None, audience=None):
         for f in fails:
             print(" -", f)
         return 1
-    print(f"✅ 통과 — SVG {d.svg}, before/after {len(d.ba)}")
+    print(f"✅ 통과 — 도식 {d.diagrams}, before/after {len(d.ba)}")
     return 0
 
 

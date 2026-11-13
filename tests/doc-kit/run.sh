@@ -78,6 +78,46 @@ chk --audience 기획자 "$W/digits.html" >/dev/null 2>&1 && ok "check.py: 기�
 sed 's#규칙이 여러 곳에 있다\. 그래서#규칙이 8763a17 에 있다. 그래서#' "$FIX/sample-ok.html" > "$W/hash.html"
 out=$(chk --audience 기획자 "$W/hash.html" 2>&1); echo "$out" | grep -q '8763a17' && ok "check.py: 기획자 독자면 커밋 해시(8763a17)는 계속 검출" || ko "해시 검출" ""
 
+# ---- check.py 도식 필수 ---------------------------------------------------------
+SVG3='<svg width="40" height="20"><rect width="9" height="9"/><rect x="12" width="9" height="9"/><path d="M0 0L9 9"/></svg>'
+SVG1='<svg width="9" height="9"><path d="M0 0L9 9"/></svg>'
+IMG='<img alt="샷" src="data:image/png;base64,'$(printf 'A%.0s' $(seq 1 400))'">'
+mk() { # mk 출력파일 종류 도식조각 [추가 meta]  — sample-ok 의 도식 2개를 바꿔 끼움
+  python3 - "$FIX/sample-ok.html" "$1" "$2" "$3" "${4:-}" <<'PY'
+import re, sys
+src, out, kind, frag, extra = sys.argv[1:6]
+s = open(src, encoding="utf-8").read()
+s = re.sub(r"<svg.*?</svg>", "@@", s, flags=re.S)
+parts = s.split("@@")
+body = parts[0] + frag + "".join(p + (frag if i < 1 else "") for i, p in enumerate(parts[1:]))
+meta = (f'<meta name="doc-kit-kind" content="{kind}">' if kind else "") + extra
+open(out, "w", encoding="utf-8").write(body.replace("<title>", meta + "<title>", 1))
+PY
+}
+mk "$W/d-ok.html" 구조안 "$SVG3" && chk "$W/d-ok.html" >/dev/null 2>&1 && ok "check.py 도식: 구조안 도식 2개 통과" || ko "구조안 도식 통과" ""
+mk "$W/d-none.html" 구조안 ""; out=$(chk "$W/d-none.html" 2>&1); rc=$?
+[ "$rc" = 1 ] && echo "$out" | grep -q '도식 0개' && echo "$out" | grep -q 'doc-kit-no-diagram' && ok "check.py 도식: 도식 0개는 종료 코드 1·원인과 조치 안내" || ko "도식 0개 실패" "rc=$rc"
+mk "$W/d-icon.html" 구조안 "$SVG1"; chk "$W/d-icon.html" >/dev/null 2>&1; [ "$?" = 1 ] && ok "check.py 도식: 도형 1개짜리 아이콘 SVG 는 도식으로 안 셈" || ko "아이콘 SVG" ""
+mk "$W/d-nokind.html" "" ""; chk "$W/d-nokind.html" >/dev/null 2>&1; [ "$?" = 1 ] && ok "check.py 도식: 종류 표식 없으면 설명 문서로 보아 도식 필요" || ko "표식 없음 보수 판정" ""
+mk "$W/d-one.html" 구조안 "$SVG3"; python3 - "$W/d-one.html" <<'PY'
+import re, sys
+p = sys.argv[1]; s = open(p, encoding="utf-8").read(); s = re.sub(r"<svg.*?</svg>", "", s, count=1, flags=re.S); open(p, "w", encoding="utf-8").write(s)
+PY
+chk "$W/d-one.html" >/dev/null 2>&1; [ "$?" = 1 ] && ok "check.py 도식: 구조안에 도식 1개면 실패(2개 필요)" || ko "구조안 1개" ""
+sed 's#content="구조안"#content="결정"#' "$W/d-one.html" > "$W/d-dec.html"
+chk "$W/d-dec.html" >/dev/null 2>&1 && ok "check.py 도식: 결정 문서는 도식 1개로 통과" || ko "결정 1개" ""
+mk "$W/d-img.html" 구조안 "$IMG"; chk "$W/d-img.html" >/dev/null 2>&1 && ok "check.py 도식: data URI 이미지도 도식으로 셈" || ko "data 이미지" ""
+mk "$W/d-ext.html" 구조안 '<img src="https://example.com/a.png">'; chk "$W/d-ext.html" >/dev/null 2>&1; [ "$?" = 1 ] && ok "check.py 도식: 외부 URL 이미지는 도식 아님" || ko "외부 이미지" ""
+mk "$W/d-ui.html" 비주얼 "$IMG"; out=$(chk "$W/d-ui.html" 2>&1); [ "$?" = 1 ] && echo "$out" | grep -q '전/후 이미지 쌍' && ok "check.py 도식: UI 문서는 전/후 쌍 없으면 실패" || ko "UI 쌍 없음" ""
+mk "$W/d-ui2.html" 비주얼 '<img data-check="shot-before" alt="전" src="data:image/png;base64,'$(printf 'A%.0s' $(seq 1 400))'"><img data-check="shot-after" alt="후" src="data:image/png;base64,'$(printf 'A%.0s' $(seq 1 400))'">'
+chk "$W/d-ui2.html" >/dev/null 2>&1 && ok "check.py 도식: UI 문서 전/후 쌍 통과" || ko "UI 쌍" ""
+mk "$W/d-ex.html" 구조안 "" '<meta name="doc-kit-no-diagram" content="코드 없는 순수 합의 기록">'; out=$(chk "$W/d-ex.html" 2>&1)
+[ $? = 0 ] && echo "$out" | grep -q '도식 예외 적용' && ok "check.py 도식: 예외 표식+사유는 통과하되 경고에 사유 출력" || ko "예외 표식" "$out"
+mk "$W/d-ex0.html" 구조안 "" '<meta name="doc-kit-no-diagram" content="">'; out=$(chk "$W/d-ex0.html" 2>&1)
+[ $? = 1 ] && echo "$out" | grep -q '사유 없음' && ok "check.py 도식: 사유 없는 예외 표식은 실패" || ko "사유 없음" "$out"
+mk "$W/d-rep.html" "" ""; chk --report "$W/d-rep.html" >/dev/null 2>&1; [ "$?" = 1 ] && ok "check.py 도식: --report 도 도식 0개면 실패(예전엔 통과)" || ko "report 도식" ""
+mk "$W/d-badkind.html" 모름 "$SVG3"; chk "$W/d-badkind.html" >/dev/null 2>&1; [ "$?" = 1 ] && ok "check.py 도식: 모르는 종류 표식은 실패" || ko "모르는 종류" ""
+
 # ---- 고유값 0건 ---------------------------------------------------------------
 out=$("$REPO/tests/doc-kit/check_unique.sh" 2>&1); rc=$?
 [ "$rc" = 0 ] && ok "doc-kit 본문 고유값 0건" || ko "고유값" "$(echo "$out" | head -4 | tr '\n' ' ')"
