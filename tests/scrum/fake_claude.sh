@@ -3,7 +3,7 @@
 # 호출 인자는 FAKE_DIR/claude.args 에 인자당 한 줄로 기록(빈 인자는 '<빈값>')
 for a in "$@"; do printf '%s\n' "${a:-<빈값>}" >> "${FAKE_DIR:?}/claude.args"; done; echo "---" >> "$FAKE_DIR/claude.args"
 m=""; while [ $# -gt 0 ]; do [ "$1" = --model ] && m="$2"; shift; done
-cat > /dev/null
+cat > "${FAKE_DIR:?}/claude.stdin"  # 받은 프롬프트(재료 포함)를 시험이 검사
 echo "$m" >> "${FAKE_DIR:?}/claude.log"
 N="${FAKE_NAME:?}"
 case "$(cat "$FAKE_DIR/plan-$m" 2>/dev/null || echo ok)" in
