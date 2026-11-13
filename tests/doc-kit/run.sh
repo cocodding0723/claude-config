@@ -106,6 +106,8 @@ PY
 chk "$W/d-one.html" >/dev/null 2>&1; [ "$?" = 1 ] && ok "check.py 도식: 구조안에 도식 1개면 실패(2개 필요)" || ko "구조안 1개" ""
 sed 's#content="구조안"#content="결정"#' "$W/d-one.html" > "$W/d-dec.html"
 chk "$W/d-dec.html" >/dev/null 2>&1 && ok "check.py 도식: 결정 문서는 도식 1개로 통과" || ko "결정 1개" ""
+js=$(chk --json "$W/d-ok.html" 2>&1); echo "$js" | grep -q '"diagrams": 2' && echo "$js" | grep -q '"kind": "구조안"' && ok "check.py --json: 종류·도식 수만 한 줄 출력(검사 문구 없음)" || ko "check.py --json" "$js"
+js=$(chk --json "$W/d-icon.html" 2>&1); rc=$?; [ "$rc" = 0 ] && echo "$js" | grep -q '"diagrams": 0' && ok "check.py --json: 검사에 실패하는 문서도 종료 코드 0·도식 0 보고" || ko "check.py --json 도식 0" "rc=$rc $js"
 mk "$W/d-img.html" 구조안 "$IMG"; chk "$W/d-img.html" >/dev/null 2>&1 && ok "check.py 도식: data URI 이미지도 도식으로 셈" || ko "data 이미지" ""
 mk "$W/d-ext.html" 구조안 '<img src="https://example.com/a.png">'; chk "$W/d-ext.html" >/dev/null 2>&1; [ "$?" = 1 ] && ok "check.py 도식: 외부 URL 이미지는 도식 아님" || ko "외부 이미지" ""
 mk "$W/d-ui.html" 비주얼 "$IMG"; out=$(chk "$W/d-ui.html" 2>&1); [ "$?" = 1 ] && echo "$out" | grep -q '전/후 이미지 쌍' && ok "check.py 도식: UI 문서는 전/후 쌍 없으면 실패" || ko "UI 쌍 없음" ""
