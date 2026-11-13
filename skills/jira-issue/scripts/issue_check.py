@@ -17,13 +17,15 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 SUMMARY_RE = re.compile(r"^\[[^\]]+\] .+")
 SUMMARY_MAX = 40
 EPIC = "에픽"
-# 근거 단계별 허용 상태. 사이트 워크플로 이름과 다르면 getTransitionsForJiraIssue 로 확인해 고칠 것
+# 근거 단계별 허용 상태(LRM 실제 이름, 11-13 조회). 완료는 병합 뒤 사람 확인 후 전환이라 병합 직후엔 확인 대기도 허용
 STAGE_STATUS = {
     "todo": {"해야 할 일"},
     "doing": {"진행 중"},
-    "review": {"리뷰 중", "검토 중", "진행 중"},
-    "done": {"완료"},
+    "review": {"확인 대기"},
+    "done": {"완료", "확인 대기"},
 }
+# 사람이 정하는 상태. 어느 단계에서도 불일치로 보지 않음
+HOLD_STATUS = "보류"
 FIELDS = ("key", "parent", "status", "due", "assignee", "evidence")
 LABELS = {"key": "키", "parent": "상위", "status": "상태", "due": "기한", "assignee": "담당", "evidence": "근거"}
 
@@ -69,7 +71,7 @@ def check_pre(d):
         errs.append("상태 없음")
     else:
         stage = stage_of(d.get("evidence"))
-        if status not in STAGE_STATUS[stage]:
+        if status != HOLD_STATUS and status not in STAGE_STATUS[stage]:
             warns.append(f"상태 불일치: 근거는 '{stage}' 단계, 입력 상태 '{status}' → 발급 직후 {sorted(STAGE_STATUS[stage])[0]} 로 전환")
     return errs, warns
 
@@ -85,7 +87,7 @@ def check_post(items):
                     miss.append(label)
         if it.get("status") and it.get("evidence") is not None:
             stage = stage_of(it["evidence"])
-            if it["status"] not in STAGE_STATUS[stage]:
+            if it["status"] != HOLD_STATUS and it["status"] not in STAGE_STATUS[stage]:
                 miss.append(f"상태({stage} 단계와 불일치)")
         rows.append((it, miss))
     return rows

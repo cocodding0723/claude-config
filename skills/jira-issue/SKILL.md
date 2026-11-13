@@ -51,12 +51,13 @@ description: "버그·작업을 다른 사람이 티켓만 보고 재현·착수
 |---|---|---|
 | 브랜치·커밋 없음 | 착수 전 | 해야 할 일 |
 | 작업 브랜치 또는 커밋 있음 | 진행 | 진행 중 |
-| PR 게시됨 | 리뷰 | 리뷰 중 |
-| PR 병합됨 | 완료 | 완료 |
+| PR 게시됨(검수 대기) | 확인 | 확인 대기 |
+| PR 병합됨 | 완료 | 확인 대기 → 사람 확인 뒤 완료 |
 
 - 확인: `git branch --list '*티켓키*'`, `git log --oneline 기준브랜치..HEAD`, `gh pr list --head 브랜치 --state all`.
 - 입력 JSON `evidence` 에 `branch`·`commits`·`pr`·`merged` 를 넣는다. 근거와 상태가 다르면 검사기가 경고한다.
-- 상태 이름은 사이트 워크플로 값이다. 이름이 다르면 `getTransitionsForJiraIssue` 로 실제 이름을 확인하고 `issue_check.py` 의 `STAGE_STATUS` 를 고친다.
+- LRM 상태 이름(11-13 조회): `해야 할 일`·`진행 중`·`확인 대기`·`보류`(분류는 완료)·`완료`. `리뷰 중` 은 없다. `보류` 는 사람이 정하며 단계 검사에서 제외한다.
+- **`완료` 전환은 병합 뒤 사람 확인 후에만.** 에이전트가 임의로 완료 처리하지 않는다. 이름이 바뀌면 `getTransitionsForJiraIssue` 로 확인하고 `issue_check.py` 의 `STAGE_STATUS` 를 고친다.
 
 ## 제목
 
