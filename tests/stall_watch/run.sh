@@ -37,7 +37,7 @@ d = os.environ["FAKE_DIR"]; mins = float(sys.argv[1]); with_w6 = sys.argv[2] == 
 now_ms = int(time.time() * 1000)
 def w(disp, task, state, term, seen_min, run="run_1"):
     ev = {"lastObservedAt": None if seen_min is None else now_ms - int(seen_min * 60000)}
-    return {"dispatchId": disp, "taskId": task, "runId": run, "workerState": state, "terminalState": term, "projection": {"evidence": ev}}
+    return {"dispatchId": disp, "taskId": task, "runId": run, "workerState": state, "terminalState": term, "projection": {"evidence": ev, "workspace": {"id": "wid::/x/ws/ws-" + disp}}}
 retained = [w("ctx_1", "T1", "stopped", "retained", None), w("ctx_2", "T2", "stopped", "retained", None)]
 if with_w6:
     retained.append(w("ctx_6", "T6", "stopped", "retained", None))
@@ -70,7 +70,7 @@ mkfix 45 1
 sw --json > "$SB/o"
 chk "묶음 카드 1장(w3 45분 무응답 + w6 새로 멈춤)" '[ "$(cards)" = 1 ] && grep -q "\"count\": *2\|\"count\":2" "$SB/o"'
 chk "결정 카드·선택지 담당 허브에 알리기/무시" 'grep -qx decide "$FAKE_NOTIFY_LOG" && grep -qx "1=담당 허브에 알리기,2=무시" "$FAKE_NOTIFY_LOG" && grep -Eqx "D-ST[0-9a-f]{10}" "$FAKE_NOTIFY_LOG"'
-chk "허브별 한 줄: 허브·작업 제목·상태(분)" 'grep -q "• 베타 허브 · 베타 구현 LRM-3 — 4[0-9]분째 응답 없음" "$FAKE_NOTIFY_LOG" && grep -q "• 알파 허브 · 알파 새 작업 @U1 — 종료 보고 없이 멈춤" "$FAKE_NOTIFY_LOG"'
+chk "허브별 한 줄: 허브·작업 제목·상태(분)" 'grep -q "• 베타 허브 (beta) · 워커 ws-ctx_3 · 베타 구현 LRM-3 — 4[0-9]분째 응답 없음 · 마지막 출력 [0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]" "$FAKE_NOTIFY_LOG" && grep -q "• 알파 허브 (alpha) · 워커 ws-ctx_6 · 알파 새 작업 @U1 — 종료 보고 없이 멈춤 · 마지막 출력 미확인" "$FAKE_NOTIFY_LOG"'
 chk "기준선 워커(ctx_1)·끝난 작업(ctx_2)·최근 관찰(ctx_4)·관찰 없음(ctx_5)은 제외" '! grep -q "알파 옛 작업\|끝난 작업\|최근 관찰\|관찰 없음" "$FAKE_NOTIFY_LOG"'
 chk "문구는 '응답 없음', '죽음' 표현 없음·Slack 멘션 문자 제거" 'grep -q "응답 없음" "$FAKE_NOTIFY_LOG" && ! grep -q "죽" "$FAKE_NOTIFY_LOG" && ! grep -q "<@U1>" "$FAKE_NOTIFY_LOG"'
 chk "중복 코디네이터 줄: 베타 허브 · 제목 2개(연결 끊긴 창은 세지 않음)" 'grep -q "• 중복 코디네이터: 베타 허브 · 서버 허브 이어받기 / 서버 허브 복원 (2개)" "$FAKE_NOTIFY_LOG" && ! grep -q "베타 죽은 창" "$FAKE_NOTIFY_LOG"'
@@ -136,7 +136,7 @@ def wr(n, v): json.dump(v, open(os.path.join(d, n + ".json"), "w"), ensure_ascii
 now_ms = int(time.time() * 1000)
 a = rd("workers_active")
 a.append({"dispatchId": disp, "taskId": task, "runId": "run_1", "workerState": "ready", "terminalState": "active", "agentTerminalHandle": "term_" + disp,
-          "projection": {"evidence": {"lastObservedAt": now_ms - 60000}}})
+          "projection": {"evidence": {"lastObservedAt": now_ms - 60000}, "workspace": {"id": "wid::/x/ws/ws-" + disp}}})
 wr("workers_active", a)
 t = rd("tasks"); t["run_1"].append({"id": task, "status": "dispatched", "title": "승인 질문 작업 " + task, "created_by_process_incarnation": "wt::/x/coord-%s-hub@@a:b" % hub}); wr("tasks", t)
 ts = rd("terminals"); ts.append({"handle": "term_" + disp, "title": "worker", "worktreePath": "/x/ws", "agentIdentity": "claude", "connected": True,
@@ -153,7 +153,7 @@ addappr 6 ctx_w7 T7 alpha
 sw --json > "$SB/o"
 chk "승인 대기 6분: 새 카드 1장" '[ "$(cards)" = "$((BEFORE + 1))" ] && grep -q "\"count\": *1\|\"count\":1" "$SB/o"'
 LAST=$(python3 -c "import sys;print([c for c in open(sys.argv[1],encoding='utf-8').read().split('---\n') if c.strip()][-1])" "$FAKE_NOTIFY_LOG")
-chk "카드 줄: 허브·작업·'승인 대기 6분째(확인 창은 사용자만 누름)'" 'printf "%s" "$LAST" | grep -q "• 알파 허브 · 승인 질문 작업 T7 — 승인 대기 6분째(확인 창은 사용자만 누름)"'
+chk "카드 줄: 허브·작업·'승인 대기 6분째(확인 창은 사용자만 누름)'" 'printf "%s" "$LAST" | grep -q "• 알파 허브 (alpha) · 워커 ws-ctx_w7 · 승인 질문 작업 T7 — 승인 대기 6분째(확인 창은 사용자만 누름) · 마지막 출력 [0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]"'
 chk "카드: 화면 요약에 질문·명령 포함, 구분선 제외" 'printf "%s" "$LAST" | grep -q "화면: .*Bash command.*rm -rf ./build.*Do you want to proceed?" && ! printf "%s" "$LAST" | grep -q "────"'
 chk "카드: 비밀 값 가림(토큰 원문 없음)" 'printf "%s" "$LAST" | grep -q "\[가림\]" && ! printf "%s" "$LAST" | grep -q "123456789012-abcdef"'
 chk "카드: 4분짜리(T8)는 포함되지 않음" '! printf "%s" "$LAST" | grep -q "T8"'
@@ -251,5 +251,20 @@ import main_terminal as mt
 print(mt.find_orca(env={}, path=\"/usr/bin:/bin\", candidates=(\"$BIN/orca\",)))")" = "$BIN/orca" ]'
 chk "bare orca 하드코딩 없음(hubs/scripts 의 orca 실행 경로는 find_orca 경유)" '! grep -nE "(environ\.get\(\"[A-Z_]*ORCA\"(, \"orca\"\)|\) or \"orca\"))" "$SCRIPTS"/*.py | grep -v panel_collect'
 
+# ---- 11. 허브 slug 보강: 작업 생성 기록에 허브 폴더가 없으면 생성 터미널 폴더로 ---------------------------------------
+python3 - <<'PY'
+import json, os
+d = os.environ["FAKE_DIR"]
+def rd(n): return json.load(open(os.path.join(d, n + ".json")))
+def wr(n, v): json.dump(v, open(os.path.join(d, n + ".json"), "w"), ensure_ascii=False)
+r = rd("workers_retained"); r.append({"dispatchId": "ctx_s1", "taskId": "T20", "runId": "run_1", "workerState": "stopped", "terminalState": "retained", "agentTerminalHandle": "term_w20",
+    "projection": {"evidence": {"lastObservedAt": None}, "workspace": {"id": "wid::/x/ws/vfx-쉐이더"}}}); wr("workers_retained", r)
+t = rd("tasks"); t["run_1"].append({"id": "T20", "status": "blocked", "title": "생성 기록 없는 작업", "created_by_process_incarnation": "unknown", "created_by_terminal_handle": "term_a1"}); wr("tasks", t)
+wr("terminals", [{"handle": "term_a1", "title": "알파 코디", "worktreePath": "/x/coord-alpha-hub", "agentIdentity": "claude", "connected": True, "writable": True, "orphaned": False, "lastOutputAt": 1}])
+PY
+sw --json > "$SB/o"
+CARD=$(python3 -c "import sys;print([c for c in open(sys.argv[1],encoding='utf-8').read().split('---\n') if c.strip()][-1])" "$FAKE_NOTIFY_LOG")
+chk "생성 기록에 허브가 없어도 생성 터미널 폴더로 slug 보강('허브 미확인' 아님)" 'printf "%s" "$CARD" | grep -q "• 알파 허브 (alpha) · 워커 vfx-쉐이더 · 생성 기록 없는 작업" && ! printf "%s" "$CARD" | grep -q "허브 미확인"'
+chk "카드 데이터(JSON 요약)에 허브 slug 포함" 'grep -q "\"hubs\": *\[\"alpha\"\]" "$SB/o"'
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

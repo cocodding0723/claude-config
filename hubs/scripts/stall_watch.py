@@ -58,7 +58,7 @@ ORCA_TIMEOUT_S = 30
 DID_PREFIX = "D-ST"
 CLOSED_TASK = frozenset({"completed", "failed", "cancelled", "canceled", "done"})  # 이미 끝난 작업의 멈춘 워커는 대상 아님
 RUNNING_TASK = frozenset({"dispatched", "running", "in_progress"})
-HUB_RE = re.compile(r"/coord-([a-z0-9-]+)-hub(?:@@|$)")
+HUB_RE = re.compile(r"/coord-([a-z0-9-]+)-hub(?:@@|$)")  # 작업 생성 기록(@@ 뒤 붙음)·터미널 폴더(끝) 둘 다
 LINE_MAX = 60
 SUMMARY_LINES = 6  # 카드에 싣는 화면 마지막 줄 수
 SUMMARY_MAX = 240  # 화면 요약 글자 상한
@@ -116,8 +116,28 @@ def run_tasks(run_id: str):
     for t in res["tasks"]:
         if isinstance(t, dict) and t.get("id"):
             m = HUB_RE.search(str(t.get("created_by_process_incarnation") or ""))
-            out[t["id"]] = {"status": t.get("status"), "title": t.get("title") or t.get("task_title") or "", "slug": m.group(1) if m else ""}
+            out[t["id"]] = {"status": t.get("status"), "title": t.get("title") or t.get("task_title") or "", "slug": m.group(1) if m else "",
+                            "creator": t.get("created_by_terminal_handle") or ""}
     return out
+
+
+def ws_name(w: dict) -> str:
+    """워커 작업 공간 표시 이름(경로 마지막 폴더). 못 찾으면 빈 문자열"""
+    for ref in ((w.get("projection") or {}).get("workspace") or {}).get("id"), (w.get("resource") or {}).get("worktreeId"):
+        if isinstance(ref, str) and ref:
+            return os.path.basename(ref.split("::", 1)[-1].rstrip("/"))
+    return ""
+
+
+def terminal_map() -> dict:
+    """{핸들: 터미널 정보}. 조회 실패는 빈 dict(마지막 출력 시각·허브 보강만 건너뜀)"""
+    res = orca_json(["terminal", "list", "--json", "--limit", "1000"])
+    return {t.get("handle"): t for t in (res or {}).get("terminals", []) if isinstance(t, dict)}
+
+
+def clock(ms) -> str:
+    """에포크 밀리초 → 'MM-DD HH:MM'(로컬). 값이 없으면 '미확인'"""
+    return time.strftime("%m-%d %H:%M", time.localtime(ms / 1000)) if isinstance(ms, (int, float)) and ms > 0 else "미확인"
 
 
 def approval_waiting(active: list, limits: Limits, now: float) -> list:
@@ -193,6 +213,7 @@ def detect(limits: Limits, now: float):
             return [], "task-list 조회 실패"
         tasks.update(t)
     out = []
+    terms = terminal_map() if cands else {}
     for w, kind in cands:
         t = tasks.get(w.get("taskId"))
         if t is None or t["status"] in CLOSED_TASK or (kind == "silent" and t["status"] not in RUNNING_TASK):
@@ -200,7 +221,13 @@ def detect(limits: Limits, now: float):
         if kind == "approval" and t["status"] not in RUNNING_TASK:
             continue
         mins = int((now - w["projection"]["evidence"]["lastObservedAt"] / 1000) // 60) if kind == "silent" else w.get("_quiet_min")
-        out.append({"dispatch": w.get("dispatchId"), "kind": kind, "mins": mins, "title": rw.clean(t["title"]), "slug": t["slug"]})
+        slug = t["slug"]
+        if not slug:  # 작업 생성 기록에 허브 폴더가 없으면 생성 터미널의 폴더로 보강(대상 허브를 못 찾던 원인)
+            m = HUB_RE.search(str((terms.get(t["creator"]) or {}).get("worktreePath") or ""))
+            slug = m.group(1) if m else ""
+        last = (terms.get(w.get("agentTerminalHandle")) or {}).get("lastOutputAt") or ((w.get("projection") or {}).get("evidence") or {}).get("lastObservedAt")
+        out.append({"dispatch": w.get("dispatchId"), "kind": kind, "mins": mins, "title": rw.clean(t["title"]), "slug": slug,
+                    "ws": rw.clean(ws_name(w)), "last": last})
     return out, None
 
 
@@ -242,8 +269,9 @@ def build(items: list, names: dict, dups: dict) -> tuple:
     for slug, its in sorted(by_hub.items(), key=lambda kv: kv[0] or "~"):
         label = names.get(slug, slug) if slug else "허브 미확인"
         for it in its:
-            text = f"{it['title'][:LINE_MAX]} — {describe(it)}"
-            lines.append(f"• {label} · {text}")
+            who = f"워커 {it['ws']} · " if it.get("ws") else ""
+            text = f"{who}{it['title'][:LINE_MAX]} — {describe(it)} · 마지막 출력 {clock(it.get('last'))}"
+            lines.append(f"• {label}{f' ({slug})' if slug else ''} · {text}")
             if it.get("screen"):
                 lines.append(f"    화면: {it['screen']}")
             notify.setdefault(slug, []).append(text)
