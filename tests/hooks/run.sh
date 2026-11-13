@@ -108,5 +108,43 @@ exp "ai-trace: --body-file 내용 검사" $AT "gh pr edit 3 --body-file $SB/body
 exp "ai-trace: git push 아닌 명령은 통과" $AT 'echo Co-Authored-By: Claude' "$SB/g"
 exp "ai-trace: 사람 공저자는 통과" $AT 'gh pr create --body "Co-Authored-By: Kim <kim@x.com>"' "$SB/g"
 
+# ---- 저장소 commit-msg 훅(claude-config) ----
+CM="$HERE/../../git/repo-hooks/commit-msg"
+cm() { printf '%b' "$1" > "$SB/msg"; bash "$CM" "$SB/msg"; cat "$SB/msg"; }
+out=$(cm '기능 추가\n\n본문 한 줄\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>\n')
+[ "$out" = $'기능 추가\n\n본문 한 줄' ] && ok "commit-msg: Co-Authored-By Claude 줄 제거, 끝 빈 줄 정리" || ko "commit-msg 제거" "$out"
+out=$(cm '제목\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Anthropic <noreply@anthropic.com>\n')
+[ "$out" = "제목" ] && ok "commit-msg: 생성 표시·Anthropic 공저자 줄 모두 제거" || ko "commit-msg 생성 표시" "$out"
+out=$(cm '제목\n\nCo-Authored-By: Kim <kim@x.com>\n')
+[ "$out" = $'제목\n\nCo-Authored-By: Kim <kim@x.com>' ] && ok "commit-msg: 사람 공저자는 유지" || ko "commit-msg 사람" "$out"
+out=$(cm '제목만\n')
+[ "$out" = "제목만" ] && ok "commit-msg: 흔적 없으면 불변" || ko "commit-msg 불변" "$out"
+# 전역 훅 체인 경유: 실제 git commit 으로 확인
+CR="$SB/cmrepo"; mk "$CR" main; mkdir -p "$CR/.git/hooks"; ln -s "$CM" "$CR/.git/hooks/commit-msg"
+git -C "$CR" -c core.hooksPath="$HERE/../../git/hooks" commit -q --allow-empty -m "$(printf '작업\n\nCo-Authored-By: Claude <noreply@anthropic.com>')"
+[ "$(git -C "$CR" log -1 --format=%B | sed '/^$/d')" = "작업" ] && ok "commit-msg: 전역 체인 경유 커밋에서 흔적 제거" || ko "체인 경유" "$(git -C "$CR" log -1 --format=%B)"
+# install.sh: 임시 HOME 의 주 체크아웃에서만 링크, 시험 HOME 밖 저장소는 불변
+IH="$(cd "$SB" && pwd -P)/ih"; IR="$IH/orca/cc"; mkdir -p "$IR"
+(cd "$HERE/../.." && tar --exclude=.git -cf - .) | tar -xf - -C "$IR"
+git init -q -b main "$IR"; git -C "$IR" add -A; git -C "$IR" -c user.name=t -c user.email=t@t commit -q -m seed --no-verify
+sed -E 's/^([A-Z_]+)=$/\1=x/' "$HERE/../../values.env.example" > "$SB/values.env"
+env -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM HOME="$IH" CLAUDE_CONFIG_VALUES="$SB/values.env" CLAUDE_CONFIG_ALLOW_LIVE_DIFF=1 bash "$IR/install.sh" >"$SB/inst.out" 2>&1
+[ "$(readlink "$IR/.git/hooks/commit-msg")" = "$IR/git/repo-hooks/commit-msg" ] && ok "install.sh: 주 체크아웃 .git/hooks/commit-msg 링크" || ko "install 링크" "$(tail -3 "$SB/inst.out")"
+again=$(env -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM HOME="$IH" CLAUDE_CONFIG_VALUES="$SB/values.env" CLAUDE_CONFIG_ALLOW_LIVE_DIFF=1 bash "$IR/install.sh" 2>&1)
+[[ "$again" == *"SKIP   저장소 commit-msg 훅"* ]] && ok "install.sh: 재실행은 건너뜀(멱등)" || ko "install 멱등" ""
+
+# ---- git-guard: 문구 오탐 방지(명령 위치의 git 만 판정) ----
+exp "git-guard 오탐: heredoc 본문의 git push --force 문구는 통과" $GG $'cat > f.txt <<\'EOF\'\nrun git push --force origin x\nforce-with-lease push 설명\nEOF\ngit status' "$R"
+exp "git-guard 오탐: python heredoc 안의 reset --hard 문구는 통과" $GG $'python3 - <<\'PY\'\nprint("git reset --hard")\nPY\ngit diff --stat' "$R"
+exp "git-guard 오탐: echo 따옴표 안 force-with-lease push 는 통과" $GG "git log -1 && echo 'git push --force-with-lease origin x'" "$R"
+exp "git-guard 오탐: git notes -m 메시지 안 branch -D 문구는 통과" $GG 'git notes add -m "docs: git branch -D 와 git push --force 설명"' "$R"
+exp "git-guard 오탐: python -c 문자열 안 git clean -fd 는 통과" $GG "git status; python3 -c 'print(\"git clean -fd\")'" "$R"
+exp "git-guard: 실제 git push --force-with-lease 는 계속 확인" $GG 'git push --force-with-lease origin feat/x' "$R" ask
+exp "git-guard: heredoc 뒤의 실제 force-with-lease push 도 확인" $GG $'cat <<\'E\'\n문구\nE\ngit push --force-with-lease origin x' "$R" ask
+exp "git-guard: 실제 git push --force 는 계속 차단" $GG 'git push --force origin x' "$R" deny
+exp "git-guard: heredoc 뒤의 실제 reset --hard 도 차단" $GG $'cat <<\'E\'\n문구\nE\ngit reset --hard' "$R" deny
+exp "git-guard: bash -c 안의 실제 push --force 는 차단" $GG 'bash -c "git push --force origin x"' "$R" deny
+exp "git-guard: 따옴표 안 \$( ) 로 실행되는 push --force 는 차단" $GG 'echo "$(git push --force origin x)"' "$R" deny
+
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]

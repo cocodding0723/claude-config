@@ -4,10 +4,13 @@
 # 공유 브랜치(main/master/dev/develop/release/*) 이력 보호. 작업 브랜치 재작성은 허용.
 input=$(cat)
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
+# heredoc 본문·따옴표 안 문구(echo·python 문자열 등)는 명령이 아니므로 지우고 판정. 실패하면 원문 그대로
+GUARD_DIR=$(cd "$(dirname "$(perl -MCwd=realpath -e 'print realpath shift' "${BASH_SOURCE[0]}")")" && pwd -P)
+stripped=$(printf '%s' "$cmd" | python3 -I "$GUARD_DIR/lib/strip_text.py" 2>/dev/null) && [ -n "$stripped" ] && cmd="$stripped"
 cwd=$(printf '%s' "$input" | jq -r '.cwd // ""')
 
-printf '%s' "$cmd" | grep -Eq '(^|[[:space:];&|(])git[[:space:]]' || exit 0   # git 명령 아니면 즉시 통과
-G='(^|[[:space:];&|(])git[[:space:]]+(-[^[:space:]]+[[:space:]]+)*'
+printf '%s' "$cmd" | grep -Eq '(^|[[:space:];&|("`'"'"'])git[[:space:]]' || exit 0   # git 명령 아니면 즉시 통과
+G='(^|[[:space:];&|("`'"'"'])git[[:space:]]+(-[^[:space:]]+[[:space:]]+)*'   # 따옴표·백틱 바로 뒤도 명령 위치(bash -c "git …"). 문구 속 git 은 strip_text.py 가 이미 지움
 SHARED_RE='^(main|master|dev|develop|release/.+)$'          # 공유 브랜치 이력 보호
 # 새 브랜치 이름 규칙. 기본 feat/ fix/ hotfix/ release/ + sprint-YYYYMMDD/. 저장소별 확장: git config hooks.branchPrefixes "chore/ docs/" (공백·쉼표 구분)
 EXTRA_PREFIX_RE=$(git -C "${cwd:-.}" config --get hooks.branchPrefixes 2>/dev/null | tr ',' ' ' | tr -s ' ' '\n' | sed 's/[][\.*^$(){}+?|]/\\&/g' | sed '/^$/d' | sed 's/$/[^[:space:]]+/' | paste -sd'|' -)
