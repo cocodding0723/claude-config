@@ -129,6 +129,109 @@ rm -rf "$W/ok1" "$W/ok2"; mkdir -p "$W/bad2/.git"
 reset; LRM_SCRUM_COLLECT="$S/scrum_collect.py" LRM_GIT="$D/fake_git.sh" LRM_GH="$D/fake_gh.sh" LRM_SCRUM_WS_ROOT="$W" post --date $WK; rc=$?
 [ $rc = 1 ] && grep -q -- "--kind warn" "$D/sent.log" && grep -q "collect_all_empty(commits)" "$D/sent.log" && ok "전부 실패(빈 날과 구분) → 초안 없이 warn" || ko "전체 실패 warn" "rc=$rc"
 
+# ---- 허브별 진행 상세(가짜 gh·상태 파일) ----
+H="$D/hubdir"; HW="$D/hubws"; mkdir -p "$H/hub-status" "$HW/coord-ui-hub" "$HW/coord-qa-hub"
+cat > "$H/hub-status/ui.json" <<'J'
+{"slug":"ui","updatedAt":"2026-11-13T10:00:00+09:00","tasks":["오토마 4개 push, CI 대기"],"branches":["feat/a"],"next":"CI 확인","blockers":["#731 병합 대기"]}
+J
+echo '{"slug":' > "$H/hub-status/broken.json"
+cat > "$H/progress.json" <<'J'
+{"items":[{"bucket":"wait","group":"ui","title":"ui: 서버 답 대기"},{"bucket":"wait","group":"장부","title":"F1 내부"},{"bucket":"doing","group":"ui","title":"ui: 진행"}]}
+J
+printf '시각\t무엇\t왜\t근거\t결과\t되돌리기\n2026-11-01 10:00:00\t옛 결정\t왜\t-\t결과\t-\n2026-11-13 09:00:00\t새 결정\t이유\t-\t적용\t-\n' > "$HW/coord-ui-hub/decisions.tsv"
+cat > "$D/gh_prs.sh" <<'G'
+#!/bin/bash
+cat <<'J'
+[{"number":7,"title":"A 기능","isDraft":false,"headRefName":"feat/a","baseRefName":"dev","url":"https://x/pull/7","reviewDecision":"",
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"unity","status":"COMPLETED","conclusion":"FAILURE"},{"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
+  {"__typename":"CheckRun","name":"wake","status":"COMPLETED","conclusion":"SKIPPED"},{"__typename":"CheckRun","name":"slow","status":"IN_PROGRESS","conclusion":""}]},
+ {"number":9,"title":"주인 없는 PR","isDraft":true,"headRefName":"feat/zzz","baseRefName":"dev","url":"https://x/pull/9","statusCheckRollup":[]}]
+J
+G
+chmod +x "$D/gh_prs.sh"
+hp() { LRM_HUB_DIR="$H" LRM_GH="$D/gh_prs.sh" LRM_GIT="$D/fake_git.sh" LRM_SCRUM_WS_ROOT="$HW" python3 "$S/scrum_collect.py" --date $WK --since '2026-11-12 10:00' > "$D/hp.json"; }
+hp; python3 - "$D/hp.json" <<'PY' && ok "허브별 진행: 상태 파일·대기·브랜치가 맞는 PR 검사 요약·최근 결정만(깨진 파일·내부 묶음 제외)" || ko "허브 진행" "$(head -c 600 "$D/hp.json")"
+import json, sys
+d = json.load(open(sys.argv[1])); hp = d["hub_progress"]
+assert not [e for e in d["errors"] if e.startswith("hub_progress")], d["errors"]
+assert [h["hub"] for h in hp["hubs"]] == ["ui"], hp
+h = hp["hubs"][0]
+assert h["next"] == "CI 확인" and h["blockers"] == ["#731 병합 대기"] and h["waiting"] == ["서버 답 대기"], h
+pr = h["prs"][0]; c = pr["checks"]
+assert pr["number"] == 7 and c["fail"] == 1 and c["pass"] == 2 and c["pending"] == 1 and c["failed"] == ["unity"], pr
+assert [p["number"] for p in hp["other_prs"]] == [9] and hp["other_prs"][0]["draft"] is True
+assert [x["what"] for x in h["decisions"]] == ["새 결정"], h["decisions"]
+PY
+rm -rf "$H/hub-status" "$H/progress.json"; hp; python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["hub_progress"]["hubs"]==[] and len(d["hub_progress"]["other_prs"])==2' "$D/hp.json" && ok "상태 파일·progress.json 이 없어도 열린 PR 만으로 수집(실패 아님)" || ko "상태 파일 없음"
+printf '#!/bin/bash\necho boom >&2; exit 1\n' > "$D/gh_bad.sh"; chmod +x "$D/gh_bad.sh"
+LRM_HUB_DIR="$H" LRM_GH="$D/gh_bad.sh" LRM_GIT="$D/fake_git.sh" LRM_SCRUM_WS_ROOT="$HW" python3 "$S/scrum_collect.py" --date $WK > "$D/hp.json"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["hub_progress"]=={} or d["hub_progress"]==[]; assert any(e.startswith("hub_progress:") for e in d["errors"]), d["errors"]' "$D/hp.json" && ok "gh 실패 → hub_progress 오류 기록(다른 출처는 계속)" || ko "gh 실패" "$(head -c 400 "$D/hp.json")"
+
+# ---- 이미지·영상 첨부(수집기) ----
+M="$D/mediadir"; mkdir -p "$M/sub/deep/deeper/deepest" "$M/.ssh" "$H" "$M/old"
+for n in new1.png new2.jpg sub/new3.mp4 .ssh/shot.png secret.env.png sub/note.txt sub/deep/deeper/deepest/too-deep.png; do echo img > "$M/$n"; done
+echo img > "$M/old/old.png"; touch -t 202001010000 "$M/old/old.png"
+truncate -s 51m "$M/huge.mp4"
+echo img > "$M/dup-a.png"; mkdir -p "$M/copy"; echo img > "$M/copy/dup-a.png"   # 같은 이름·크기 복사본
+echo vid > "$D/rep-orig.mp4"; mkdir -p "$D/stg"; echo vid > "$D/stg/rep-staged.mp4"
+now=$(date +%s)
+printf '{"at":"%s","hub":"x","files":["%s","/없는/경로/gone.mp4","%s"],"staged":{"/없는/경로/gone.mp4":"%s"}}\n' "$now" "$D/rep-orig.mp4" "$D/ok.html" "$D/stg/rep-staged.mp4" > "$H/hub-reports.jsonl"
+printf '{"at":"1000","hub":"x","files":["%s"]}\n' "$D/rep-old.mp4" >> "$H/hub-reports.jsonl"; echo old > "$D/rep-old.mp4"
+mc() { LRM_HUB_DIR="$H" LRM_SCRUM_MEDIA_DIR="$M" LRM_GH="$D/fake_gh.sh" LRM_GIT="$D/fake_git.sh" LRM_SCRUM_WS_ROOT="$HW" python3 "$S/scrum_collect.py" --date "$(date +%F)" > "$D/mc.json"; }
+mc; python3 - "$D/mc.json" <<'PY' && ok "첨부 선택: 허브 보고(원본·복사본)+정리 기록, 최신 이틀·이미지 영상만, 비밀·초과·깊은 폴더·중복 제외, 상한 5" || ko "첨부 선택" "$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["attachments"])' "$D/mc.json")"
+import json, sys
+a = json.load(open(sys.argv[1]))["attachments"]
+names = [f["name"] for f in a["files"]]
+assert sorted(names[:2]) == ["rep-orig.mp4", "rep-staged.mp4"], names   # 허브 보고가 먼저, 원본 없으면 복사본
+assert len(names) == 5, names                                   # 상한
+for bad in ("old.png", "shot.png", "secret.env.png", "huge.mp4", "note.txt", "too-deep.png", "rep-old.mp4"):
+    assert bad not in names, bad
+assert names.count("dup-a.png") <= 1
+why = {s["why"] for s in a["skipped"]}
+assert any("민감" in w for w in why) and any("크기 초과" in w for w in why), a["skipped"]
+assert all("/" not in s["name"] for s in a["skipped"]), "경로가 skipped 에 담김"
+PY
+rm -rf "$M" "$H/hub-reports.jsonl"; mc; python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["attachments"]=={"files":[],"skipped":[]} and not d["errors"], d' "$D/mc.json" && ok "첨부 폴더·보고 기록이 없으면 빈 목록(오류 아님)" || ko "첨부 없음" "$(cat "$D/mc.json" | head -c 300)"
+
+# ---- 이미지·영상 첨부(발송) ----
+reset; echo media > "$D/plan-collect"; post --date $WK; rc=$?
+[ $rc = 0 ] && [ "$(sent)" = 5 ] && [ "$(sed -n 1p "$D/sent.log")" != "" ] && ! sed -n 1p "$D/sent.log" | grep -q "2026-11-12.md" && grep -c -- "--thread 1700000000.000100" "$D/sent.log" | grep -qx 4 && grep -q "초안 전체" "$D/sent.log" && grep -q "첨부 2개" "$D/sent.log" && ok "요약 글(첨부 파일 없음) → 스레드 4건(초안·첨부 2·실패 경고 1)" || ko "스레드 순서" "rc=$rc $(sent)"
+grep -q "첨부 일부 못 올림" "$D/sent.log" && grep -q -- "--kind warn" "$D/sent.log" && grep -q "첨부 2/2 실패" "$D/scrum.log" && sent_has 2026-11-12 && ok "첨부 하나 실패 → 스레드 경고 1건·로그, 초안은 보냄으로 확정" || ko "첨부 실패 처리"
+reset; echo media-bad > "$D/plan-collect"; post --date $WK; rc=$?
+[ $rc = 0 ] && [ "$(sent)" = 3 ] && ! grep -q "\.env\.png\|big\.mp4" "$D/sent.log" && grep -q "a\.png" "$D/sent.log" && ok "발송 직전 재검사: 비밀 파일·50MB 초과는 후보에 있어도 올리지 않음" || ko "발송 직전 재검사" "rc=$rc $(sent)"
+reset; post --date $WK; [ "$(sent)" = 1 ] && grep -q -- "--kind doc" "$D/sent.log" && grep -q "2026-11-12.md" "$D/sent.log" && ! grep -q "첨부 .*개" "$D/sent.log" && ok "첨부가 없으면 기존처럼 초안 파일 1건 발송(스레드 없음)" || ko "첨부 없음 발송"
+reset; echo media > "$D/plan-collect"; echo 5 > "$D/send-fails"; post --date $WK; rc=$?
+[ $rc = 1 ] && ! sent_has 2026-11-12 && ok "요약 글이 끝내 거절되면 실패(보냄 기록 없음)" || ko "요약 거절" "rc=$rc"
+
+# ---- 팀 공유 사항 칸 ----
+SH="$D/share.md"; export LRM_SCRUM_SHARE_FILE="$SH"; rm -f "$SH"
+reset; post --date $WK; ! grep -q "팀 공유 사항" "$D"/draft/2026-11-12.md && ! grep -q "경고: 팀 공유" "$D/sent.log" && ok "공유 사항 파일이 없으면 칸·경고 모두 생략" || ko "공유 파일 없음"
+printf '# 주석만\n\n' > "$SH"; reset; post --date $WK; ! grep -q "팀 공유 사항" "$D"/draft/2026-11-12.md && ok "주석·빈 줄뿐인 파일도 칸 생략" || ko "빈 공유 파일"
+cat > "$SH" <<'J'
+# 시험
+날짜: 2026-11-12
+- 앱 설치 안내 [문서](https://example.com/a) 정리함
+매점 2일차부터 열림
+- 허브 내부 사정 공유
+- 키 token=FAKE_TEST_SECRET 노출
+- 결정 D-ABC123 안내
+J
+reset; post --date $WK; f="$D/draft/2026-11-12.md"
+python3 - "$f" <<'PY' && ok "공유 사항: 막힌 것 앞에 한 칸(4칸 들여쓰기), 불릿 표시 유무 모두 허용" || ko "공유 칸 위치" "$(cat "$f")"
+import sys
+L = open(sys.argv[1], encoding="utf-8").read().splitlines()
+i = L.index("- **팀 공유 사항**")
+assert L[i + 1] == "    - 앱 설치 안내 [문서](https://example.com/a) 정리함" and L[i + 2] == "    - 매점 2일차부터 열림", L
+assert L[i + 3].startswith("- **막힌 것**"), L
+PY
+! grep -q "허브 내부\|FAKE_TEST_SECRET\|D-ABC123" "$f" "$D/sent.log" && grep -q "경고: 팀 공유 사항 3줄을 뺌" "$D/sent.log" && ok "로컬 용어·비밀·내부 번호 줄은 빼고 뺀 줄 수만 경고(원문은 Slack·초안에 없음)" || ko "공유 줄 거름" "$(cat "$D/sent.log")"
+! grep -q "FAKE_TEST_SECRET\|허브 내부" "$D/scrum.log" && ok "빼는 줄의 원문은 로그에도 없음" || ko "로그 원문"
+sed -i.bak 's/2026-11-12/2026-11-11/' "$SH"; rm -f "$SH.bak"; reset; post --date $WK
+! grep -q "팀 공유 사항" "$D/draft/2026-11-12.md" && grep -q "날짜(2026-11-11)가 오늘" "$D/scrum.log" && ok "날짜 줄이 오늘이 아니면 낡은 공유 사항으로 보고 생략" || ko "낡은 공유"
+{ echo '날짜: 2026-11-12'; for i in $(seq 15); do echo "- 줄 $i"; done; } > "$SH"; reset; post --date $WK
+[ "$(grep -c '^    - 줄 ' "$D/draft/2026-11-12.md")" = 12 ] && grep -q "경고: 팀 공유 사항 3줄을 뺌" "$D/sent.log" && ok "공유 사항 12줄 상한" || ko "공유 상한"
+rm -f "$SH"; unset LRM_SCRUM_SHARE_FILE
+
 # ---- --preflight(첫 실행 전 점검) ----
 cat > "$D/pf_gh.sh" <<'G'
 #!/bin/bash

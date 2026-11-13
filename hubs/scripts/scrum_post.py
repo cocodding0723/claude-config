@@ -2,6 +2,7 @@
 """평일 스크럼 본인 칸 초안을 claude 로 쓰고 Slack 봇 DM 1건으로 보냄. launchd(ai.lrm.scrum)가 scrum_run.sh 로 호출.
 흐름: 평일·날짜 잠금 확인 → scrum_collect.py 재료 수집 → claude -p 를 모델 순서대로 시도(양식 검증 통과분 채택)
       → 초안 파일 저장 → slack_notify.sh --kind doc 1회(초안 파일 첨부). 모델이 전부 실패하면 --kind warn 1건.
+      오늘·어제 만든 이미지·영상이 있으면(최대 5개) 요약 글 1건을 먼저 올리고 초안 파일과 첨부를 그 스레드에 답글로 올림.
 Confluence·Jira 는 읽기만(초안 작성 claude 에 읽기 도구만 허용). 쓰기 없음.
 사용: scrum_post.py [--dry-run] [--date YYYY-MM-DD] [--force] [--out 파일]
   --dry-run  Slack·상태 파일 없이 초안을 파일(<draft-dir>/<날짜>.dry.md)과 표준 출력에 냄
@@ -34,6 +35,11 @@ LOCK = DIR / "scrum.lock"
 DRAFT_DIR = Path(os.environ.get("LRM_SCRUM_DRAFT_DIR", Path.home() / "Documents/90_정리기록/scrum-draft"))
 LOG = Path(os.environ.get("LRM_SCRUM_LOG", Path.home() / "orca/archive/scrum_post.log"))
 ENV_FILE = DIR / "scrum.env"  # SCRUM_NAME=<회의록 본인 칸 제목>. 예시는 hubs/scrum.env.example
+SHARE_FILE = Path(os.environ.get("LRM_SCRUM_SHARE_FILE", DIR / "scrum-share.md"))  # 팀 공유 사항 원본. 예시는 hubs/scrum-share.example.md
+SHARE_TITLE = "팀 공유 사항"
+SHARE_MAX_LINES = 12
+SHARE_LINE_MAX = 200
+SHARE_DATE_RE = re.compile(r"^날짜\s*:\s*(\d{4}-\d{2}-\d{2})\s*$")  # 선택 머리 줄. 있으면 초안 날짜와 같을 때만 씀(어제 공유 사항 재게시 방지)
 
 
 def load_name():
@@ -70,11 +76,11 @@ DENY_TOOLS = ("Bash", "Read", "Write", "Edit", "WebFetch", "WebSearch", "Task",
 ATLASSIAN_MCP = {"mcpServers": {"atlassian": {"type": "http", "url": "https://mcp.atlassian.com/v2/mcp"}}}
 MCP_CONFIG = os.environ.get("LRM_SCRUM_MCP_CONFIG") or json.dumps(ATLASSIAN_MCP)  # JSON 문자열 또는 파일 경로(시험에서 가짜 MCP 로 교체)
 CLAUDE_TIMEOUT = int(os.environ.get("LRM_SCRUM_CLAUDE_TIMEOUT", "900"))
-MAX_LINES = 30  # 칸 길이 상한(11-12 실측 25줄 안팎에 여유)
+MAX_LINES = 45  # 칸 길이 상한(11-12 실측 25줄 + 진행 상세·PR·막힘 줄)
 RETRY_WAITS = [int(x) for x in os.environ.get("LRM_SCRUM_RETRY_WAITS", "30,90").split(",") if x]  # Slack 이 거절한 발송만 재시도
 NET_HOST = os.environ.get("LRM_SCRUM_NET_HOST", "api.anthropic.com")
 NET_WAIT_SEC = int(os.environ.get("LRM_SCRUM_NET_WAIT", "120"))  # 깨어난 직후 네트워크가 붙기를 기다리는 최대 시간
-SOURCES = ("prs", "commits", "hub_reports", "handoffs", "instructions")  # scrum_collect.collect 의 출처 키
+SOURCES = ("prs", "commits", "hub_reports", "handoffs", "instructions")  # scrum_collect.collect 의 출처 키. hub_progress 는 보강 출처라 '전 출처 빔' 판정에서 뺌
 LOST_LABEL = {"commits_partial": "commits 일부 워크트리"}  # 경고 줄에 쓸 이름
 REQUIRED_SOURCES = ("prs", "commits")  # 둘 다 못 모이면 초안이 근거 없음
 # Slack 본문·경고·로그에 나가면 안 되는 문자열. 첨부 초안은 비밀만, 본문 주제는 내부 번호도 거름
@@ -82,6 +88,8 @@ SECRET_RE = re.compile(r"(?i)\b(?:token|secret|passw(?:or)?d|api[_-]?key|authori
                        r"|bearer\s+[A-Za-z0-9._~+/=-]{8,}|\bxox[abprs]-|\bsk-[A-Za-z0-9]{8,}|\bgh[pousr]_[A-Za-z0-9]{10,}"
                        r"|\bAKIA[0-9A-Z]{12,}|-----BEGIN|\beyJ[A-Za-z0-9_-]{15,}\.")
 INTERNAL_ID_RE = re.compile(r"\b(?:LRM-\d+|D-[A-Za-z0-9]{1,16}|T-[A-Za-z0-9]{1,16}|ctx_[0-9a-f]+|task_[0-9a-f]+|term_[0-9a-f-]+)\b")
+# 공유 사항에 나가면 안 되는 로컬 작업 용어(팀원이 모르는 말). 허브·워커·코디네이터와 내부 번호
+LOCAL_TERM_RE = re.compile(r"허브|워커|코디네이터|묶음 번호|결정 번호|\b(?:ctx|task|term)_[0-9a-f-]+|\b[DT]-[A-Za-z0-9]{1,16}\b")
 SLACK_TAG = "scrum"
 NO_ATLASSIAN = "@@atlassian-unavailable@@"  # 초안 작성 claude 가 Jira·Confluence 를 못 읽었을 때 맨 끝에 붙이는 표시
 PREFLIGHT_TIMEOUT = int(os.environ.get("LRM_SCRUM_PREFLIGHT_TIMEOUT", "60"))
@@ -237,6 +245,42 @@ def ask_claude(model, prompt):
     return out.stdout, ""
 
 
+def load_share(date):
+    """(공유 사항 줄 목록, 뺀 줄 수). 파일이 없거나 비면 ([], 0): 칸을 만들지 않음. 날짜 줄이 오늘이 아니면 낡은 파일이라 생략.
+    비밀·내부 용어가 든 줄, 상한 초과 줄은 빼고 뺀 수만 알림(원문은 로그에도 안 남김)"""
+    try:
+        raw = SHARE_FILE.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return [], 0
+    lines, dropped = [], 0
+    for ln in raw:
+        t = ln.strip()
+        m = SHARE_DATE_RE.match(t)
+        if m:
+            if m.group(1) != date.isoformat():
+                log("공유 사항 파일 날짜(%s)가 오늘(%s)과 달라 생략" % (m.group(1), date))
+                return [], 0
+            continue
+        t = re.sub(r"^[-*]\s+", "", t)
+        if not t or t.startswith(("#", "<!--")):
+            continue
+        if SECRET_RE.search(t) or LOCAL_TERM_RE.search(t) or len(t) > SHARE_LINE_MAX or len(lines) >= SHARE_MAX_LINES:
+            dropped += 1
+            continue
+        lines.append(t)
+    return lines, dropped
+
+
+def add_share(draft, lines):
+    """'팀 공유 사항' 최상위 불릿을 마지막 '막힌 것' 줄 앞(없으면 끝)에 끼움"""
+    if not lines:
+        return draft
+    block = ["- **%s**" % SHARE_TITLE] + ["    - %s" % t for t in lines]
+    body = draft.splitlines()
+    at = next((i for i, ln in enumerate(body) if ln.startswith("- **막힌 것**")), len(body))
+    return "\n".join(body[:at] + block + body[at:]) + "\n"
+
+
 def write_draft(text, path):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -265,6 +309,30 @@ def topics(draft):
         if m:
             out.append(" ".join(INTERNAL_ID_RE.sub("", m.group(1)).split()) or "(주제)")  # 내부 번호는 첨부에만 둠
     return out
+
+
+def pick_media(text):
+    """수집기 JSON 의 첨부 후보 중 지금도 올릴 수 있는 이미지·영상 경로(비밀 파일·크기 초과·없는 파일은 hub_report 규칙으로 다시 걸러냄)"""
+    try:
+        files = json.loads(text).get("attachments", {}).get("files", [])
+    except (ValueError, AttributeError):
+        return []
+    paths = [f.get("path") for f in files if isinstance(f, dict)] if isinstance(files, list) else []
+    return [p for p in paths if isinstance(p, str) and collect.media_kind(p) and not collect.hub_report.file_problem(p)][:collect.MEDIA_MAX_FILES]
+
+
+def posted_ts(text):
+    """slack_notify.sh 가 낸 'ok <ts>' 줄의 메시지 ts. 없으면 빈 문자열"""
+    m = re.search(r"^ok (\d{1,12}\.\d{1,9})\s*$", text or "", re.M)
+    return m.group(1) if m else ""
+
+
+def delivered_top(intent):
+    """전송 의도 이후 올라간 요약 글(스레드 첨부 방식)의 발송 기록. 없으면 None"""
+    for r in collect.jsonl(SENT_LOG):
+        if r.get("kind") == "text" and r.get("tag") == SLACK_TAG and r.get("form_kind") == "doc" and r.get("ts") and collect.num(r.get("at")) >= intent["at"]:
+            return r
+    return None
 
 
 def delivered(intent):
@@ -311,12 +379,16 @@ def local_alert(msg):
         pass
 
 
-def summary_message(date, since, draft, model, missed, no_atl, lost=()):
+def summary_message(date, since, draft, model, missed, no_atl, lost=(), media=0, share_dropped=0):
     ts = topics(draft)
     n = sum(1 for ln in draft.splitlines() if ln.startswith("    - "))
     lines = ["%s 스크럼 초안 도착" % date.strftime("%m-%d"),
              "• 주제 %d개 · 세부 %d줄. 전체는 첨부 파일" % (len(ts), n),
              "• 주제: %s" % " · ".join(ts)]
+    if media:
+        lines.append("• 첨부 %d개(오늘·어제 만든 화면·영상). 초안 파일과 함께 이 글의 스레드에 있음" % media)
+    if share_dropped:
+        lines.append("• 경고: 팀 공유 사항 %d줄을 뺌(비밀·내부 용어·길이·개수 상한). 공유 사항 파일 확인" % share_dropped)
     if missed:
         lines.append("• 경고: %s 초안이 안 나갔음(그날 Mac 이 자고 있었을 수 있음)" % missed)
     if no_atl:
@@ -326,6 +398,31 @@ def summary_message(date, since, draft, model, missed, no_atl, lost=()):
         lines.append("• 경고: 재료 수집 누락(%s) — 해당 출처 내용이 초안에 빠졌을 수 있음" % ", ".join(names))
     lines += ["", "참고: 모델 %s · 범위 %s 이후" % (model, since.strftime("%m-%d %H:%M"))]
     return "\n".join(lines)
+
+
+def send_threaded(args, path, media, intent):
+    """요약 글 → 스레드에 초안 파일 → 첨부 순서로 올림. (종료 코드, 출력). 초안 파일까지 올라가야 0.
+    첨부 개별 실패는 로그와 스레드 경고 1건으로 알리고 전체 성공으로 침(초안이 본체)"""
+    rc, text = notify(args, confirm=lambda: delivered_top(intent))
+    if rc != 0:
+        return rc, text
+    ts = posted_ts(text) or (delivered_top(intent) or {}).get("ts", "")
+    if not ts:
+        return NOTIFY_RC_UNKNOWN, "요약 글 ts 확인 불가"
+    thread = ["--kind", "doc", "--tag", SLACK_TAG, "--thread", ts]
+    rc, text = notify([*thread, "초안 전체", str(path)], confirm=lambda: delivered(intent))
+    if rc != 0:
+        return rc, text
+    failed = 0
+    for i, m in enumerate(media, 1):
+        r, t = notify([*thread, "첨부 %d/%d" % (i, len(media)), m], retry=False)
+        if r != 0:
+            failed += 1
+            log("첨부 %d/%d 실패 rc=%d %s" % (i, len(media), r, redact(t[:120])))
+    if failed:
+        notify(["--kind", "warn", "--tag", SLACK_TAG, "--thread", ts,
+                "첨부 일부 못 올림\n• 못 올린 첨부 %d개 (크기·권한·네트워크 중 하나)\n• 원본은 로컬에 있음. 로그 %s" % (failed, LOG)], retry=False)
+    return 0, text
 
 
 def failure_message(date, fails):
@@ -471,6 +568,8 @@ def run(a, date, state):
                 local_alert("초안 작성 실패 — 로그 확인")
         return 1
 
+    share, share_dropped = load_share(date)
+    draft = add_share(draft, share)
     path = Path(a.out) if a.out else DRAFT_DIR / ("%s.%smd" % (date, "dry." if a.dry_run else ""))
     write_draft(draft, path)
     if a.dry_run:
@@ -480,8 +579,12 @@ def run(a, date, state):
     intent = {"at": int(time.time()), "path": str(path), "model": model}
     state["pending"][date.isoformat()] = intent  # 전송 전에 의도를 남겨 중간에 죽어도 재실행이 중복 게시하지 않게 함
     save_state(state)
-    rc, text = notify(["--kind", "doc", "--tag", SLACK_TAG, summary_message(date, since, draft, model, missed, no_atl, lost), str(path)],
-                      confirm=lambda: delivered(intent))
+    media = pick_media(mat.stdout)
+    msg = summary_message(date, since, draft, model, missed, no_atl, lost, len(media), share_dropped)
+    if media:
+        rc, text = send_threaded(["--kind", "doc", "--tag", SLACK_TAG, msg], path, media, intent)
+    else:
+        rc, text = notify(["--kind", "doc", "--tag", SLACK_TAG, msg, str(path)], confirm=lambda: delivered(intent))
     if rc != 0:
         unknown = rc in (NOTIFY_RC_TIMEOUT, NOTIFY_RC_UNKNOWN)
         if not unknown:

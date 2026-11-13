@@ -15,7 +15,9 @@ case "${1:-}" in
   --date     초안 날짜(기본 오늘)
   --force    평일·'오늘 이미 보냄' 검사 생략(수동 재실행)
   --preflight  발송 없이 gh·claude·Atlassian MCP·Slack 봇 스크립트만 점검(첫 자동 실행 전)
+초안에는 허브별 진행 상세, 오늘·어제 이미지·영상 첨부(스레드, 최대 5개), 팀 공유 사항 칸이 들어감.
 환경: LRM_SCRUM_MODELS(쉼표, 기본 claude-fable-5-1,claude-fable-5-2,claude-opus-5-5) · LRM_SCRUM_DRAFT_DIR · LRM_SCRUM_LOG · LRM_HUB_DIR
+      LRM_SCRUM_SHARE_FILE(팀 공유 사항, 기본 ~/.config/lrm-hubs/scrum-share.md. 예시 hubs/scrum-share.example.md) · LRM_SCRUM_MEDIA_DIR(첨부 후보 폴더, 기본 ~/Documents/90_정리기록)
 종료 코드: 0 발송·건너뜀·dry-run 성공, 1 초안 작성 또는 발송 실패, 2 인자 오류, 3 환경 오류(python3 없음)
 예:
   scrum_run.sh --dry-run --date 2026-11-12
