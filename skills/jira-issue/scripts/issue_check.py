@@ -17,13 +17,16 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 SUMMARY_RE = re.compile(r"^\[[^\]]+\] .+")
 SUMMARY_MAX = 40
 EPIC = "에픽"
-# 근거 단계별 허용 상태(LRM 실제 이름, 11-13 조회). 완료는 병합 뒤 사람 확인 후 전환이라 병합 직후엔 확인 대기도 허용
+# 근거 단계별 허용 상태. 게임 저장소 jira-pr-status.yml 규칙: 브랜치·커밋·PR 열림 = 진행 중, dev 병합 = 확인 대기
+# 완료는 사람만 전환하므로 입력(pre)에서는 허용하지 않고, 점검(post)에서는 병합 뒤 사람이 바꾼 값으로 인정
 STAGE_STATUS = {
     "todo": {"해야 할 일"},
     "doing": {"진행 중"},
-    "review": {"확인 대기"},
-    "done": {"완료", "확인 대기"},
+    "merged": {"확인 대기", "완료"},
 }
+HUMAN_ONLY = "완료"
+# 병합 전에 나오면 안 되는 상태. 불일치가 아니라 오류로 다룸
+MERGE_ONLY = {"확인 대기", "완료"}
 # 사람이 정하는 상태. 어느 단계에서도 불일치로 보지 않음
 HOLD_STATUS = "보류"
 FIELDS = ("key", "parent", "status", "due", "assignee", "evidence")
@@ -31,13 +34,11 @@ LABELS = {"key": "키", "parent": "상위", "status": "상태", "due": "기한",
 
 
 def stage_of(ev):
-    """근거로 실제 단계 판정. PR 병합 > PR > 브랜치·커밋 > 착수 전."""
+    """근거로 실제 단계 판정. dev 병합 > 브랜치·커밋·PR 열림 > 착수 전."""
     ev = ev or {}
     if ev.get("merged"):
-        return "done"
-    if ev.get("pr"):
-        return "review"
-    if ev.get("commits") or ev.get("branch"):
+        return "merged"
+    if ev.get("pr") or ev.get("commits") or ev.get("branch"):
         return "doing"
     return "todo"
 
@@ -71,8 +72,12 @@ def check_pre(d):
         errs.append("상태 없음")
     else:
         stage = stage_of(d.get("evidence"))
-        if status != HOLD_STATUS and status not in STAGE_STATUS[stage]:
-            warns.append(f"상태 불일치: 근거는 '{stage}' 단계, 입력 상태 '{status}' → 발급 직후 {sorted(STAGE_STATUS[stage])[0]} 로 전환")
+        if status == HUMAN_ONLY:
+            errs.append("완료는 사람만 전환. 병합 근거가 있으면 확인 대기로 입력")
+        elif status in MERGE_ONLY and stage != "merged":
+            errs.append(f"'{status}' 는 dev 병합 뒤 상태. 근거는 '{stage}' 단계(PR 열림은 진행 중)")
+        elif status != HOLD_STATUS and status not in STAGE_STATUS[stage]:
+            warns.append(f"상태 불일치: 근거는 '{stage}' 단계, 입력 상태 '{status}' → 발급 직후 {min(STAGE_STATUS[stage], key=len)} 로 전환")
     return errs, warns
 
 
@@ -87,7 +92,9 @@ def check_post(items):
                     miss.append(label)
         if it.get("status") and it.get("evidence") is not None:
             stage = stage_of(it["evidence"])
-            if it["status"] != HOLD_STATUS and it["status"] not in STAGE_STATUS[stage]:
+            if it["status"] in MERGE_ONLY and stage != "merged":
+                miss.append(f"상태({it['status']} 는 dev 병합 뒤 상태, 근거는 {stage} 단계)")
+            elif it["status"] != HOLD_STATUS and it["status"] not in STAGE_STATUS[stage]:
                 miss.append(f"상태({stage} 단계와 불일치)")
         rows.append((it, miss))
     return rows

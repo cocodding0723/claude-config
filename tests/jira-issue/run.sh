@@ -41,15 +41,21 @@ out=$(run pre "$W/stale.json"); rc=$?
 [ "$rc" = 0 ] && echo "$out" | grep -q '경고: 상태 불일치' && ok "커밋 있는데 해야 할 일 → 경고" || ko "상태 불일치 경고" "rc=$rc $out"
 run pre --strict "$W/stale.json" >/dev/null; [ $? = 1 ] && ok "--strict 는 경고도 실패" || ko "strict" ""
 
-w pr "$BASE,\"status\":\"확인 대기\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"pr\":\"#12\"}"
-out=$(run pre "$W/pr.json"); echo "$out" | grep -q '통과' && ok "PR 있고 확인 대기 → 일치" || ko "PR 단계" "$out"
-
+w pr "$BASE,\"status\":\"진행 중\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"pr\":\"#12\"}"
+out=$(run pre "$W/pr.json"); echo "$out" | grep -q '통과' && ok "PR 열림 + 진행 중 → 일치" || ko "PR 열림 진행 중" "$out"
+w pr2 "$BASE,\"status\":\"확인 대기\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"pr\":\"#12\"}"
+out=$(run pre "$W/pr2.json"); rc=$?
+[ "$rc" = 1 ] && echo "$out" | grep -q '오류:.*dev 병합 뒤' && ok "PR 열림 + 확인 대기 → 오류" || ko "PR 열림 확인 대기" "rc=$rc $out"
+w mg "$BASE,\"status\":\"확인 대기\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"pr\":\"#12\",\"merged\":true}"
+out=$(run pre "$W/mg.json"); rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q '통과' && ok "dev 병합 + 확인 대기 → 통과" || ko "dev 병합 확인 대기" "rc=$rc $out"
+w dn "$BASE,\"status\":\"완료\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"pr\":\"#12\",\"merged\":true}"
+out=$(run pre "$W/dn.json"); rc=$?
+[ "$rc" = 1 ] && echo "$out" | grep -q '완료는 사람만' && ok "에이전트 입력 완료 → 오류" || ko "완료 입력" "rc=$rc $out"
 w hold "$BASE,\"status\":\"보류\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"commits\":[\"a\"]}"
 out=$(run pre "$W/hold.json"); echo "$out" | grep -q '통과' && ok "보류는 단계와 무관하게 허용" || ko "보류" "$out"
 w rv "$BASE,\"status\":\"리뷰 중\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"pr\":\"#12\"}"
-out=$(run pre "$W/rv.json"); echo "$out" | grep -q '경고: 상태 불일치.*확인 대기' && ok "없는 상태 '리뷰 중' → 경고, 전환 안내는 확인 대기" || ko "리뷰 중" "$out"
-w mg "$BASE,\"status\":\"확인 대기\",\"parent\":{\"key\":\"LRM-10\",\"reason\":\"r\"},\"evidence\":{\"pr\":\"#12\",\"merged\":true}"
-out=$(run pre "$W/mg.json"); echo "$out" | grep -q '통과' && ok "병합 직후 확인 대기 허용(완료는 사람 확인 뒤)" || ko "병합 확인 대기" "$out"
+out=$(run pre "$W/rv.json"); echo "$out" | grep -q '경고: 상태 불일치.*진행 중' && ok "없는 상태 '리뷰 중' → 경고, 전환 안내는 진행 중" || ko "리뷰 중" "$out"
 
 # 점검 표
 cat > "$W/post.json" <<'J'
