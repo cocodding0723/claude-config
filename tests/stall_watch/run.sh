@@ -46,9 +46,9 @@ def t(i, status, title, hub):
     return {"id": i, "status": status, "title": title, "created_by_process_incarnation": "wt::/x/coord-%s-hub@@abc:def" % hub if hub else "wt::/x/other@@a:b"}
 tasks = {"run_1": [t("T1", "blocked", "알파 옛 작업 LRM-1", "alpha"), t("T2", "completed", "끝난 작업", "alpha"), t("T3", "dispatched", "베타 구현 LRM-3", "beta"),
                    t("T4", "dispatched", "최근 관찰 작업", "beta"), t("T5", "dispatched", "관찰 없음 작업", "beta"), t("T6", "blocked", "알파 새 작업 <@U1>", "alpha")]}
-def term(h, title, wt, agent="claude", conn=True):
-    return {"handle": h, "title": title, "worktreePath": wt, "agentIdentity": agent, "connected": conn}
-terms = [term("term_a1", "알파 코디", "/x/coord-alpha-hub"), term("term_b1", "서버 허브 이어받기", "/x/coord-beta-hub"), term("term_b2", "서버 허브 복원", "/x/coord-beta-hub"),
+def term(h, title, wt, agent="claude", conn=True, out=0):
+    return {"handle": h, "title": title, "worktreePath": wt, "agentIdentity": agent, "connected": conn, "writable": True, "orphaned": False, "lastOutputAt": out}
+terms = [term("term_a1", "알파 코디", "/x/coord-alpha-hub"), term("term_b1", "서버 허브 이어받기", "/x/coord-beta-hub", out=1000), term("term_b2", "서버 허브 복원", "/x/coord-beta-hub", out=2000),
          term("term_b3", "베타 죽은 창", "/x/coord-beta-hub", conn=False)]
 for name, val in (("workers_retained", retained), ("workers_active", active), ("tasks", tasks), ("terminals", terms)):
     json.dump(val, open(os.path.join(d, name + ".json"), "w"), ensure_ascii=False)
@@ -121,8 +121,9 @@ c.register("D-STTEST000001", "notify", {"hubs": [{"slug": "alpha", "lines": ["�
 PY
 python3 -I "$CA" handle --did D-STTEST000001 --pick 1 > "$SB/o"
 chk "알리기(1번): 알파 코디네이터(1개)에만 한 줄 전송" 'grep -c "^term_a1	" "$FAKE_DIR/sends.log" | grep -qx 1 && grep -q "^term_a1	\[멈춘 워커 감시\] 응답 없는 워커: 알파 새 작업" "$FAKE_DIR/sends.log"'
-chk "코디네이터 2개인 베타는 허브에 보내지 않고 메인에 중복 사실만" '! grep -q "^term_b" "$FAKE_DIR/sends.log" && grep -q "^$MAINH	.*중복 코디네이터: beta (서버 허브 이어받기 / 서버 허브 복원)" "$FAKE_DIR/sends.log"'
-chk "전송 총 2건뿐, 워커·터미널 종료·재시작 명령 없음" '[ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 2 ] && ! grep -Eq "worker-(stop|release|start)|terminal (close|stop|kill)" "$FAKE_DIR/calls.log"'
+chk "코디네이터 2개인 베타: 마지막 출력이 최근인 term_b2 에만 전송 + 중복 사실은 메인에" 'grep -q "^term_b2	.*베타 구현" "$FAKE_DIR/sends.log" && ! grep -q "^term_b1" "$FAKE_DIR/sends.log" && grep -q "^$MAINH	.*중복 코디네이터: beta (서버 허브 이어받기 / 서버 허브 복원)" "$FAKE_DIR/sends.log"'
+chk "선택 근거 한 줄이 결과 문구에 있음, 종료 0" 'grep -q "beta: 코디네이터 2개 중 마지막 출력이 가장 최근인 1개에 전송" "$SB/o"'
+chk "전송 총 3건뿐, 워커·터미널 종료·재시작 명령 없음" '[ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 3 ] && ! grep -Eq "worker-(stop|release|start)|terminal (close|stop|kill)" "$FAKE_DIR/calls.log"'
 
 # ---- 6. 승인 대기(확인 창에서 5분 이상 멈춤) ----------------------------------------------------------
 # addappr 분 디스패치 작업 허브: 확인 창이 뜬 진행 워커·작업·터미널·화면 줄을 픽스처에 추가
@@ -212,7 +213,31 @@ chk "여러 줄 JSON: 다음 줄의 password 값 가림" '! printf "%s" "$CARD" 
 chk "빈 줄을 사이에 둔 Authorization: / Bearer 값 가림" '! printf "%s" "$CARD" | grep -q "zzzz9999yyyy8888"'
 chk "token = 다음 줄 값 가림" '! printf "%s" "$CARD" | grep -q "plainsplit77"'
 
-# ---- 10. orca 경로 ----
+# ---- 10. 다중 터미널 선택·orca 경로 -------------------------------------------------------------------
+python3 - <<'PY'
+import json, os
+d = os.environ["FAKE_DIR"]
+def t(h, out, **kw):
+    r = {"handle": h, "title": "c", "worktreePath": "/x/coord-gamma-hub", "agentIdentity": "claude", "connected": True, "writable": True, "orphaned": False, "lastOutputAt": out}
+    r.update(kw); return r
+json.dump([t("term_g1", 100), t("term_g2", 900, orphaned=True), t("term_g3", 800, writable=False), t("term_g4", 700, connected=False), t("term_g5", 300), t("term_g6", 500, agentIdentity="codex")],
+          open(os.path.join(d, "terminals.json"), "w"))
+PY
+: > "$FAKE_DIR/sends.log"
+python3 - <<PY > "$SB/o"
+import sys; sys.path.insert(0, "$SCRIPTS")
+import card_actions as c
+print(c.run_notify({"hubs": [{"slug": "gamma", "lines": ["x"]}]}))
+PY
+chk "다중 터미널: 고아·쓰기 불가·끊김·codex 제외 뒤 가장 최근 출력(term_g5)에 전송" '[ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 1 ] && grep -q "^term_g5	" "$FAKE_DIR/sends.log"'
+python3 -c 'import json,os;json.dump([],open(os.path.join(os.environ["FAKE_DIR"],"terminals.json"),"w"))'
+: > "$FAKE_DIR/sends.log"
+python3 - <<PY > "$SB/o"
+import sys; sys.path.insert(0, "$SCRIPTS")
+import card_actions as c
+print(c.run_notify({"hubs": [{"slug": "gamma", "lines": ["x"]}]}))
+PY
+chk "후보 0개: '코디네이터 터미널 없음'" 'grep -q "gamma: 코디네이터 터미널 없음" "$SB/o" && [ ! -s "$FAKE_DIR/sends.log" ]'
 # launchd 최소 PATH(env -i): orca 경로를 bare 'orca' 로 두면 rc 127 → '없음' 오판. 후보 경로 탐색 결과와 같아야 함
 PYBIN=$(command -v python3)
 MINI=$(env -i PATH=/usr/bin:/bin "$PYBIN" -I -c "
