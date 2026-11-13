@@ -257,7 +257,8 @@ def hub_state(t, quiet, get):
 
 
 def hub_name(base):
-    return re.sub(r"(-hub)+$", "", re.sub(r"^(coord-)+", "", base)) or base
+    import progress_collect  # 지연 가져오기(순환 방지)
+    return progress_collect.hub_slug(base)  # 작업 공간 수 집계 키(workspace_counts)와 같은 규칙
 
 
 def terminal_list(get):

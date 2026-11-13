@@ -217,5 +217,37 @@ class FakeOrcaRoute(Base):
             self.assertNotIn("terminal list", f.read())
 
 
+class SlugFolder(Base):
+    """hubs.tsv slug(끝이 -hub 인 것·옛 coord-*-hub 형식 포함) → 전달 slug → 실제 폴더 in_hub 일치"""
+    CASES = (("automa-hub", "automa-hub", "/w/coord-automa-hub-hub"), ("data-source-hub", "data-source-hub", "/w/coord-data-source-hub-hub"),
+             ("coord-server-hub", "server", "/w/coord-server-hub"), ("ui-layer", "ui-layer", "/w/coord-ui-layer-hub"))
+
+    def test_decision_to_delivery_slug_matches_hub_folder(self):
+        import hub_dups
+        self.write("hubs.tsv", "".join(f"{raw}\tN\t-\t-\t-\n" for raw, _, _ in self.CASES))
+        for raw, want, folder in self.CASES:
+            with self.subTest(hub=raw):
+                self.map_decision("D-1", raw)
+                slug = self.route_mod.Router(self.store, lambda t: True).hub_of("D-1")
+                self.assertEqual(slug, want)
+                self.assertTrue(hub_dups.in_hub({"worktreePath": folder}, slug=slug))
+
+    def test_folder_names_and_slugs_normalize_once(self):
+        import progress_collect as pc
+        import panel_collect
+        for value, want in (("coord-automa-hub-hub", "automa-hub"), ("coord-server-hub", "server"), ("coord-ui-layer-hub", "ui-layer"),
+                            ("automa-hub", "automa-hub"), ("ui-layer", "ui-layer")):
+            self.assertEqual(pc.hub_slug(value), want)
+        self.assertEqual(panel_collect.hub_name("coord-automa-hub-hub"), "automa-hub")  # 옆 패널 허브 칸 = 작업 공간 수 키
+
+    def test_workspace_counts_key_matches_status_file_slug(self):
+        import progress_collect as pc
+        wts = [{"id": "h", "path": "/w/coord-automa-hub-hub", "childWorktreeIds": ["c"]}, {"id": "c", "path": "/w/c"},
+               {"id": "s", "path": "/w/coord-server-hub"}, {"id": "u", "path": "/w/coord-ui-layer-hub", "childWorktreeIds": ["c"]}]
+        out = pc.workspace_counts(wts, [{"worktreeId": "c"}])
+        self.assertEqual(out["automa-hub"], {"children": 1, "active": 1})  # hub-status/automa-hub.json 과 같은 키
+        self.assertEqual(set(out), {"automa-hub", "server", "ui-layer"})
+
+
 if __name__ == "__main__":
     unittest.main()

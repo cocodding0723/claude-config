@@ -262,9 +262,13 @@ def collect_prs(gh, repos):
     return out
 
 
-def hub_slug(base):
-    """작업 폴더 이름 coord-<이름>-hub → 허브 상태 파일 slug(panel_collect.hub_name 과 같은 규칙)"""
-    return re.sub(r"(-hub)+$", "", re.sub(r"^(coord-)+", "", base)) or base
+def hub_slug(value):
+    """폴더 이름 또는 hubs.tsv slug → 전달용 slug(hub_dups.in_hub 가 찾는 /coord-<slug>-hub 의 <slug>).
+    'coord-' 로 시작하면 폴더 이름으로 보고 앞 coord- 한 번·끝 -hub 한 번만 제거(coord-automa-hub-hub → automa-hub, coord-server-hub → server).
+    아니면 이미 slug 라 그대로(automa-hub·ui-layer). 끝 -hub 를 반복 제거하면 automa-hub 가 automa 로 깨짐"""
+    if not value.startswith("coord-"):
+        return value
+    return re.sub(r"-hub$", "", value[len("coord-"):]) or value
 
 
 def workspace_counts(worktrees, terminals):
