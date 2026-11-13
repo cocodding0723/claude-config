@@ -94,7 +94,6 @@
       "Read(~/.ssh/**)"
     ],
     "ask": [
-      "Bash(git merge:*)",
       "Bash(git tag -d:*)",
       "Bash(git tag --delete:*)",
       "Bash(git tag -f:*)",
@@ -115,6 +114,18 @@
             "command": "~/.claude/hooks/git-guard.sh",
             "timeout": 10,
             "statusMessage": "git-guard 검사 중"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/search-guard.sh",
+            "timeout": 10,
+            "statusMessage": "search-guard 검사 중"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ai-trace-guard.sh",
+            "timeout": 10,
+            "statusMessage": "ai-trace-guard 검사 중"
           },
           {
             "type": "command",

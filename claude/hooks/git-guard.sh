@@ -9,7 +9,11 @@ cwd=$(printf '%s' "$input" | jq -r '.cwd // ""')
 printf '%s' "$cmd" | grep -Eq '(^|[[:space:];&|(])git[[:space:]]' || exit 0   # git 명령 아니면 즉시 통과
 G='(^|[[:space:];&|(])git[[:space:]]+(-[^[:space:]]+[[:space:]]+)*'
 SHARED_RE='^(main|master|dev|develop|release/.+)$'          # 공유 브랜치 이력 보호
-PREFIX_RE='^(feat|feature|fix|hotfix|release)/[^[:space:]]+$'   # 새 브랜치 이름 규칙
+# 새 브랜치 이름 규칙. 기본 feat/ fix/ hotfix/ release/ + sprint-YYYYMMDD/. 저장소별 확장: git config hooks.branchPrefixes "chore/ docs/" (공백·쉼표 구분)
+EXTRA_PREFIX_RE=$(git -C "${cwd:-.}" config --get hooks.branchPrefixes 2>/dev/null | tr ',' ' ' | tr -s ' ' '\n' | sed 's/[][\.*^$(){}+?|]/\\&/g' | sed '/^$/d' | sed 's/$/[^[:space:]]+/' | paste -sd'|' -)
+PREFIX_RE="^((feat|feature|fix|hotfix|release)/[^[:space:]]+|sprint-[0-9]{8}/[^[:space:]]+${EXTRA_PREFIX_RE:+|$EXTRA_PREFIX_RE})\$"
+WORK_RE="^((feat|feature|fix|hotfix|chore|docs)/[^[:space:]]+|sprint-[0-9]{8}/[^[:space:]]+${EXTRA_PREFIX_RE:+|$EXTRA_PREFIX_RE})\$"   # 작업 브랜치(병합 받아오기 허용 대상)
+SYNC_RE='^(origin|upstream)/(main|master|dev|develop)$'      # 받아오기 전용 병합 대상(원격 추적 브랜치)
 
 deny() { jq -cn --arg r "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'; exit 0; }
 ask()  { jq -cn --arg r "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"ask",permissionDecisionReason:$r}}'; exit 0; }
@@ -40,6 +44,19 @@ if printf '%s' "$cmd" | grep -Eq "${G}(commit)[^|;&]*--amend"; then
   is_shared "$br" && deny "공유 브랜치 '$br'에서 commit --amend 차단됨. 공유 브랜치 히스토리는 바꾸지 않습니다. 새 커밋으로 수정하세요."
 fi
 
+# ---- merge: 작업 브랜치로 origin/dev·origin/main 받아오기는 확인 없이 허용, 그 밖의 병합은 확인 ----
+# 공유 브랜치로의 병합 규칙(--no-ff)은 아래에서 그대로 차단. 모든 병합 확인은 이 훅이 맡음(settings 의 git merge ask 규칙 대체)
+if printf '%s' "$cmd" | grep -Eq "${G}(merge)[[:space:]]" && ! printf '%s' "$cmd" | grep -Eq '[;&|`$(]'; then
+  br=$(cur_branch)
+  if printf '%s' "$br" | grep -Eq "$WORK_RE" && ! is_shared "$br"; then
+    targets=$(printf '%s' "$cmd" | sed -E "s/^.*git[[:space:]]+(-[^[:space:]]+[[:space:]]+)*merge[[:space:]]+//" | tr -s ' ' '\n' | grep -v '^-' | sed '/^$/d')
+    if [ -n "$targets" ] && ! printf '%s' "$targets" | grep -Evq "$SYNC_RE" \
+       && ! printf '%s' "$cmd" | grep -Eq -- '--(abort|continue|quit|squash)\b'; then
+      jq -cn --arg r "작업 브랜치 '$br' 로 원격 기준 브랜치 받아오기: 확인 없이 허용" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",permissionDecisionReason:$r}}'; exit 0
+    fi
+  fi
+fi
+
 # ---- merge: 공유 브랜치로 병합할 때는 --no-ff (merge commit 남기기) ----
 if printf '%s' "$cmd" | grep -Eq "${G}(merge)[[:space:]]" && ! printf '%s' "$cmd" | grep -Eq "${G}(merge)[^|;&]*(--no-ff|--ff-only|--squash|--abort|--continue|--quit)\b"; then
   br=$(cur_branch)
@@ -48,14 +65,15 @@ if printf '%s' "$cmd" | grep -Eq "${G}(merge)[[:space:]]" && ! printf '%s' "$cmd
   fi
 fi
 
-# ---- 새 브랜치 이름 규칙: feat/ fix/ hotfix/ release/ ----
+# ---- 새 브랜치 이름 규칙: feat/ fix/ hotfix/ release/ sprint-YYYYMMDD/ (+ hooks.branchPrefixes) ----
 newbr=$(printf '%s' "$cmd" | grep -Eo "${G}(checkout[[:space:]]+-b|switch[[:space:]]+-c|worktree[[:space:]]+add[^|;&]*[[:space:]]-b)[[:space:]]+[^[:space:]|;&]+" | head -1 | awk '{print $NF}')
 [ -z "$newbr" ] && newbr=$(printf '%s' "$cmd" | grep -Eo "${G}branch[[:space:]]+[^-[:space:]|;&][^[:space:]|;&]*" | head -1 | awk '{print $NF}')   # git branch NAME
 if [ -n "$newbr" ] && ! printf '%s' "$newbr" | grep -Eq "$PREFIX_RE|$SHARED_RE"; then
-  ask "새 브랜치 이름 '$newbr' 이 규칙(feat/… fix/… hotfix/… release/…)에 맞지 않습니다. 이대로 만들까요?"
+  ask "새 브랜치 이름 '$newbr' 이 규칙(feat/… fix/… hotfix/… release/… sprint-YYYYMMDD/…, 저장소별 확장은 git config hooks.branchPrefixes)에 맞지 않습니다. 이대로 만들까요?"
 fi
 
 # ---- ask 승격 ----
+printf '%s' "$cmd" | grep -Eq "${G}(merge)[[:space:]]" && ask "git merge 확인 필요 (작업 브랜치로 origin/dev·origin/main 받아오기만 확인 없이 허용됩니다)."
 printf '%s' "$cmd" | grep -Eq -- '--force-with-lease' && ask "force-with-lease push — 원격 히스토리가 바뀝니다. 확인 필요."
 printf '%s' "$cmd" | grep -Eq "${G}(commit)[^|;&]*--no-verify" && ask "--no-verify는 pre-commit 훅을 건너뜁니다. 확인 필요."
 printf '%s' "$cmd" | grep -Eq "${G}(pull)\b" && ! printf '%s' "$cmd" | grep -Eq "${G}(pull)[^|;&]*--rebase" \
