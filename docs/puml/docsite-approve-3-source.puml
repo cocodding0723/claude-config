@@ -1,0 +1,15 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontSize 13
+skinparam RectangleRoundCorner 10
+title 공통 원천: 사용자 확인 항목 한 곳에서 세 화면을 만듦
+rectangle "progress.json 스냅샷\n+ 결정 카드 기록 + 확인 기록" as SRC
+rectangle "confirm_items.py\n항목 + 종류 + 상태(함·안 함·근거)" as CI #FFF8C5
+rectangle "문서 사이트\n첫 화면 확인 목록" as W #DAFBE1
+rectangle "Slack 할 일 목록\nprogress_digest" as T #FFF8C5
+rectangle "옆 패널 approvals\npanel_collect" as B #FFF8C5
+SRC --> CI : todo_items.build_rows\ntodo_facts.Facts 재사용
+CI --> W
+CI --> T
+CI --> B
+@enduml

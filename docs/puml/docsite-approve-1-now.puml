@@ -1,0 +1,18 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontSize 13
+skinparam RectangleRoundCorner 10
+title 지금: 결정 답은 Slack 에서만 받고, 허브까지는 메인이 손으로 전달
+rectangle "사용자\nSlack 카드 버튼" as U
+rectangle "slack_socket.py\nDecide.finish" as S
+rectangle "기록 3곳\ninbox 한 줄 · done 한 줄\ncard-actions" as R
+rectangle "메인 터미널\n'[Slack→메인] 결정 D = 선택 N'" as M #FFEBE9
+rectangle "허브 코디네이터\n'사용자 원문: …'" as H
+rectangle "문서 모아보기 페이지\n읽기·문서 보내기만" as P
+U --> S : 버튼 클릭
+S --> R : 기록
+S --> M : send_main
+M --> H : 메인 세션이 사람 대신 전달
+P ..> R : 답 상태만 읽음
+note right of M : 메인이 멈추거나 바쁘면\n허브가 답을 못 받음
+@enduml
