@@ -4,6 +4,8 @@
 스냅샷이 없거나 10분 넘게 낡으면(패널 수집기 멈춤) 그 자리에서 수집해 씀(파일은 쓰지 않음). 장부(feedback-ledger.tsv)가 정본. 이 도구가 만든 행만 상태 파일에 기억해 고치고 완료 처리하며, 손으로 넣은 행은 건드리지 않음.
 직전 전송 내용의 해시가 같으면 아무것도 보내지 않음. 목록 갱신·DM 중 하나라도 실패하면 해시를 저장하지 않아 다음 회차에 재시도함
 (목록 갱신은 상태 파일 기준 차이만 보내 반복해도 안전, DM 은 성공한 내용의 해시를 따로 저장해 중복 전송 안 함).
+행 정리: 끝난 대상(PR 병합·닫힘, 결정 카드 답, 장부 완료)의 행은 완료 체크, 같은 대상(PR·결정·장부 번호)의 행은 1개로 합쳐 나머지는 완료+보관(삭제 아님).
+허브 칸은 근거로 바로잡음(PR=head 브랜치 작업 공간의 부모 허브, 결정=카드를 올린 허브, 근거 없으면 '미상'). 새 행은 급함 높은 순 → 종류 → 오래된 순으로 만들고 정렬 열이 있으면 같은 값을 채움(todo_facts·todo_sync).
 PR 조회가 실패하면 'PR 조회 실패' 한 줄만 남기고 계속함. 수집기가 직전 PR 값을 유지하므로 PR 행을 완료 처리하지 않음.
 
 환경: LRM_HUB_DIR 작업 폴더 · LRM_PROGRESS 스냅샷 경로(수집 환경 변수는 progress_collect.py 참고) · LRM_DIGEST_STATE 상태 파일
@@ -32,7 +34,9 @@ import hub_report  # noqa: E402
 import progress_collect as pc  # noqa: E402
 import slack_list_create  # noqa: E402
 import tls_ctx  # noqa: E402
+import todo_facts  # noqa: E402
 import todo_items  # noqa: E402
+import todo_sync  # noqa: E402
 
 HUB_DIR = os.path.expanduser(os.environ.get("LRM_HUB_DIR") or "~/.config/lrm-hubs")
 DEFAULT_LIST_ID = "F0CH5KARYBB"
@@ -73,6 +77,7 @@ class Item:
     quote: str = ""  # 원본 첫 줄(DM 에 보이는 항목만 조회)
     since: float = 0.0  # 생긴 시각(epoch). 목록 정렬용, 모르면 0
     row: object = None  # 사용자 할 일이면 todo_items.Row. 목록에는 row 가 있는 항목만 올림
+    order: object = None  # 정렬 열 값(todo_items.order_value). 목록에 정렬 열이 있을 때만 채움
 
     def wants_link(self):
         """원본 메시지가 있어야 하는 항목(장부·허브·결정). PR 은 제목에 번호가 있어 제외"""
@@ -94,7 +99,7 @@ class Item:
     def sig(self):
         """목록 행에 보이는 값 묶음. 바뀌면 행을 고침"""
         r = self.row
-        return [self.line() if r else self.title, self.bucket, self.link] + ([r.kind, r.urgency, r.hub, r.answer] if r else [])
+        return [self.line() if r else self.title, self.bucket, self.link] + ([r.kind, r.urgency, r.hub, r.answer] if r else []) + ([self.order] if self.order is not None else [])
 
 
 @dataclass
@@ -441,9 +446,9 @@ def dm_visible(items, limit=NAMES_MAX):
     return [i for b in (WAIT, BLOCK) for i in [x for x in items if x.bucket == b][:limit]]
 
 
-def plan_list(items, state, now=0.0):
-    """상태 파일 기준 차이 → [('create'|'update'|'done'|'archive', item, record_id)]. 손으로 넣은 행은 상태에 없어 대상 아님.
-    끝난 행은 상태의 done: 키로 옮겨 ARCHIVE_AFTER_S 뒤 보관 처리"""
+def plan_list(items, state, now=0.0, dups=()):
+    """상태 파일 기준 차이 → [('create'|'update'|'done'|'dedupe'|'archive', item, record_id)]. 손으로 넣은 행은 상태에 없어 대상 아님.
+    끝난 행은 상태의 done: 키로 옮겨 ARCHIVE_AFTER_S 뒤 보관 처리. dups 의 키(다른 행에 합쳐진 중복)는 바로 완료+보관"""
     ops, current = [], {i.key: i for i in items}
     for it in items:
         old = state["items"].get(it.key)
@@ -456,11 +461,12 @@ def plan_list(items, state, now=0.0):
             if now and now - old.get("done_at", now) >= ARCHIVE_AFTER_S:
                 ops.append(("archive", Item(key, old["bucket"], old["title"]), old["record"]))
         elif key not in current:
-            ops.append(("done", Item(key, old["bucket"], old["title"]), old["record"]))
-    # 새 행은 사용자가 먼저 볼 순서(급함 높은 것 → 오래된 것 먼저)로 만듦. 목록은 만든 순서로 보임
+            ops.append(("dedupe" if key in dups else "done", Item(key, old["bucket"], old["title"]), old["record"]))
+    # 새 행은 정렬 순서(급함 높은 것 → 종류 → 오래된 것)로 만듦. 목록 API 에 행 순서 변경이 없어 만든 순서가 기본 표시 순서
     order = {WAIT: 0, BLOCK: 1, DOING: 2}
-    urg = lambda it: -(it.row.urgency if it.row else 0)  # noqa: E731
-    creates = sorted((o for o in ops if o[0] == "create"), key=lambda o: (urg(o[1]), order.get(o[1].bucket, 3), o[1].since or float("inf"), o[1].key))
+    # 행 정보가 없는 항목(옛 호출)은 종류 대신 답 대기 → 막힘 → 진행 중 순
+    rank = lambda it: todo_items.sort_key(it.row) if it.row else (0, order.get(it.bucket, 3), it.since or float("inf"), it.title)  # noqa: E731
+    creates = sorted((o for o in ops if o[0] == "create"), key=lambda o: (rank(o[1]), o[1].key))
     return creates + [o for o in ops if o[0] != "create"]
 
 
@@ -474,6 +480,7 @@ def row_fields(conf, it):
         out["urgency"] = {"number": [r.urgency]}
         out["hub"] = {"rich_text": rich(r.hub)} if r.hub else None
         out["answer"] = {"rich_text": rich(r.answer)}
+        out["order"] = {"number": [it.order]} if it.order is not None else None
         pick = (conf.options.get("kind") or {}).get(r.kind)
         out["kind"] = {"select": [pick]} if pick else None
     return {k: v for k, v in out.items() if v and k in conf.cols}
@@ -496,6 +503,10 @@ def apply_list(conf, ops, state, now=0.0):
                 cells = [{"row_id": rec, "column_id": conf.cols[k], **v} for k, v in row_fields(conf, it).items()]
                 api(conf, "slackLists.items.update", {"list_id": conf.list_id, "cells": cells})
                 state["items"][it.key].update(title=it.title, bucket=it.bucket, link=it.link, sig=it.sig())
+            elif op == "dedupe":  # 다른 행에 합쳐진 중복: 완료와 보관을 한 번에 체크(삭제 아님)
+                cells = [mark(rec, "done", checkbox=True)] + ([mark(rec, "archive", checkbox=True)] if "archive" in conf.cols else [])
+                api(conf, "slackLists.items.update", {"list_id": conf.list_id, "cells": cells})
+                del state["items"][it.key]
             elif op == "done":
                 api(conf, "slackLists.items.update", {"list_id": conf.list_id, "cells": [mark(rec, "done", checkbox=True)]})
                 state["items"][DONE_PREFIX + rec] = {**state["items"].pop(it.key), "done_at": now or time.time()}
@@ -525,6 +536,67 @@ def send_dm(conf, text):
         raise Fail(f"DM 전송 실패(종료 코드 {p.returncode}: {one_line(p.stderr, 60)})", 1)
 
 
+# ---------- 행 정리 ----------
+
+FACTS_KEEP_S = 30 * 24 * 3600  # 근거 캐시 보관 기간
+
+
+def pr_repo_hints(items):
+    """수집기가 아는 열린 PR 키('pr:owner/name#N') → {번호: 저장소}"""
+    out = {}
+    for i in items:
+        if i.key.startswith(pc.PR_PREFIX) and "#" in i.key:
+            repo, num = i.key[len(pc.PR_PREFIX):].rsplit("#", 1)
+            if repo:
+                out[num] = repo
+    return out
+
+
+def make_facts(items, state, now, use_pr):
+    """근거 조회 객체. 상태 파일의 facts 칸을 캐시로 씀"""
+    cfg = pc.conf_from_env(read_panel=use_pr)
+    cache = state.setdefault("facts", {})
+    for k in [k for k, v in cache.items() if not isinstance(v, dict) or now - v.get("at", 0) > FACTS_KEEP_S]:
+        del cache[k]
+    f = todo_facts.Facts(cfg["gh"], cfg["repos"], todo_facts.orca_worktrees, set(), cache, now, use_pr=use_pr)
+    f.repo_hint = pr_repo_hints(items)
+    return todo_facts.load_local(f, pc.HUB_DIR, cfg["ledger"])
+
+
+def settle_rows(rows, facts, state):
+    """행 정리: 끝난 대상은 완료, 같은 대상은 합침, 허브 칸은 근거로 바로잡음. 반환: (남은 행, {버린 키: ('done'|'dup', 근거})"""
+    closed = facts.closed([t for r in rows for t in r.targets])
+    prefer = [k for k in state["items"] if not k.startswith(DONE_PREFIX)]
+    kept, dropped = todo_sync.settle(rows, closed, prefer)
+    for r in kept:
+        found = facts.hub(r.targets) if r.targets else None
+        if r.kind == todo_items.MERGE and r.targets:
+            r.hub = found or todo_items.UNKNOWN_HUB  # 허브 상태 줄의 PR 언급은 근거가 아님(오기재 원인)
+        elif found:
+            r.hub = found
+        elif r.key.startswith("decision:"):
+            r.hub = todo_items.UNKNOWN_HUB
+    return kept, {r.key: (kind, why) for r, kind, why in dropped}
+
+
+ACTION_LABEL = {"create": "새 행", "update": "수정", "done": "완료 처리", "dedupe": "합침(완료·보관)", "archive": "보관"}
+
+
+def describe_ops(ops, state, why):
+    """계획된 목록 작업을 사람이 읽는 표 행으로: [{action, key, title, detail}]. 허브 칸이 바뀌는 수정은 '허브 수정'"""
+    out = []
+    for op, it, _ in ops:
+        label, detail = ACTION_LABEL[op], why.get(it.key, ("", ""))[1]
+        if op == "update":
+            old = (state["items"].get(it.key) or {}).get("sig") or []
+            if len(old) > 5 and it.row and old[5] != it.row.hub:
+                label, detail = "허브 수정", f"{old[5] or '(빈 칸)'} → {it.row.hub}"
+        elif op == "done" and not detail:
+            detail = "수집 항목에서 사라짐"
+        out.append({"action": label, "key": it.key, "title": it.line(), "detail": detail})
+    return out
+
+
 # ---------- 실행 ----------
 
 def run(conf, a):
@@ -534,19 +606,32 @@ def run(conf, a):
     items, notes, groups = load_items(use_pr=not a.no_pr)
     now = time.time()
     seen = state.setdefault("seen", {})  # 허브 항목의 대기 시간 기준(처음 본 시각)
-    rows = {r.key: r for r in todo_items.build_rows([(i.key, i.bucket, i.title, i.since) for i in items], now, seen)}
+    same_title = []
+    all_rows = todo_items.build_rows([(i.key, i.bucket, i.title, i.since) for i in items], now, seen, same_title)
+    facts_before = json.dumps(state.get("facts"), sort_keys=True)
+    facts = make_facts(items, state, now, not a.no_pr)
+    kept, dropped = settle_rows(all_rows, facts, state)
+    gone = set(dropped)  # 목록·DM 에서 뺄 항목: 끝난 대상과 합쳐진 중복(같은 제목 중복은 DM 에 그대로 셈)
+    dropped.update({k: ("dup", "같은 제목의 행") for k in same_title})
+    rows = {r.key: r for r in kept}
+    items = [i for i in items if i.key not in gone]
     todo = [i for i in items if i.key in rows]
+    with_order = "order" in conf.cols
     for i in todo:
         i.row = rows[i.key]
+        i.order = todo_items.order_value(i.row) if with_order else None
         seen.setdefault(i.key, now)
     for k in [k for k in seen if k not in rows]:
         del seen[k]
+    for msg in facts.errors:
+        notes.append(msg)
     links = Links(conf, state["links"], offline=a.dry_run)
     shown = dm_visible(items)
     resolve_links(todo + [i for i in shown if i not in todo], links, shown)  # 링크 조회는 목록·DM 에 나가는 항목만
     links.prune()
     digest = digest_hash(items, groups)
-    ops = plan_list(todo, state, now)
+    ops = plan_list(todo, state, now, {k for k, (kind, _) in dropped.items() if kind == "dup"})
+    table = describe_ops(ops, state, dropped)
     text = dm_text(items, conf.list_url, groups)
     # 해시가 같아도 못 보낸 목록 작업이 남았으면 동기화(--no-list 로 건너뛴 행, 링크만 바뀐 행)
     changed = a.force or digest != state["hash"] or (bool(ops) and not a.no_list)
@@ -554,7 +639,7 @@ def run(conf, a):
         "counts": {b: sum(1 for i in items if i.bucket == b) for b, _, _ in BUCKETS},
         "items": [{"key": i.key, "bucket": i.bucket, "title": i.title} for i in items],
         "notes": notes, "groups": groups, "changed": changed, "dm": text,
-        "list_ops": [{"op": op, "key": it.key, "title": it.line()} for op, it, _ in ops],
+        "list_ops": [{"op": op, "key": it.key, "title": it.line()} for op, it, _ in ops], "changes": table,
     }
     if a.json:
         print(json.dumps(result, ensure_ascii=False, indent=1))
@@ -564,9 +649,13 @@ def run(conf, a):
         print("변화 없음 — 전송 안 함" if not changed else f"DM: {text}")
     if a.dry_run:
         if not a.json:
-            print(f"(--dry-run) 목록 변경 {len(ops)}건: " + ", ".join(f"{op} {it.key}" for op, it, _ in ops) if ops else "(--dry-run) 목록 변경 없음")
+            print(f"(--dry-run) 목록 변경 {len(ops)}건" if ops else "(--dry-run) 목록 변경 없음")
+            for c in table:
+                print(f"  - {c['action']} · {c['title']} [{c['key']}]" + (f" — {c['detail']}" if c["detail"] else ""))
         return 0
     if not changed:
+        if json.dumps(state.get("facts"), sort_keys=True) != facts_before:
+            save_state(conf.state, state)  # 변화가 없어도 근거 캐시는 남겨 병합된 PR 을 다시 묻지 않음
         return 0
 
     errors = []

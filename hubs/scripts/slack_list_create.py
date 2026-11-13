@@ -37,6 +37,7 @@ API_TIMEOUT_S = 15
 ACCESS_LEVEL = "owner"
 USER_ID_RE = re.compile(r"^[UW][A-Z0-9]{6,}$")
 # 진행 목록(progress_digest.py)이 쓰는 칸과 같은 구성. 종류 선택지는 todo_items.KINDS 가 정본
+# 정렬: 급함 높은 순 → 종류 → 오래된 순을 숫자 하나로 만든 값(todo_items.order_value). Slack 목록 API 에 행 순서 변경이 없어 보기 정렬(오름차순)로 씀
 # 보관: 끝난 행을 일정 시간 뒤 체크함. Slack 에 보기 필터 API 가 없어, 목록 보기에서 '보관 해제만' 필터를 한 번 걸어 숨김
 SCHEMA = [
     {"key": "title", "name": "할 일", "type": "text", "is_primary_column": True},
@@ -48,6 +49,7 @@ SCHEMA = [
     {"key": "done", "name": "완료", "type": "checkbox"},
     {"key": "link", "name": "링크", "type": "text"},
     {"key": "archive", "name": "보관", "type": "checkbox"},
+    {"key": "order", "name": "정렬", "type": "number"},
 ]
 
 
