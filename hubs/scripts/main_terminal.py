@@ -5,6 +5,7 @@ Orca 재시작으로 터미널 핸들이 바뀌면 main.env 의 MAIN_TERMINAL �
 orca terminal list 에서 메인 후보를 찾고, 정확히 1개면 MAIN_TERMINAL 줄만 원자적으로 교체함. 0개·2개 이상이면 건드리지 않고 후보 수만 돌려줌.
 핸들 값은 출력하지 않음(호출자가 로그에 앞 글자만 남김). Orca 호출은 run(args, timeout) -> (rc, JSON|None) 으로 주입받음.
 후보 = 제목이 TITLE_KEY 로 시작하는 메인 체크아웃의 claude 터미널(워커 제목에 표식이 끼어도 후보가 되지 않게 앞부분 일치).
+그런 후보가 0개면 제목 무관하게 메인 체크아웃의 claude 터미널 중 lastOutputAt 이 가장 최근인 1개를 후보로 삼음.
 main.env 갱신은 파일 잠금 아래에서 현재 핸들을 재검증한 뒤 씀(폴러·소켓·set_main_terminal.sh 가 같은 잠금 공유). 잠금 밖 직접 편집은 보호하지 않음.
 
 CLI: main_terminal.py [--dry-run] [--env 경로]   재탐색. 종료 코드 0 갱신(또는 dry-run 에서 1개 발견), 2 오류, 3 후보 0개·2개 이상
@@ -144,16 +145,20 @@ def list_rows(run):
 
 
 def candidates(run, spec):
-    """메인 후보 핸들 목록|None(조회 실패·목록 잘림·모양 이상). 제목이 TITLE_KEY 로 시작 + target_why 통과(메인 체크아웃·claude·연결됨·쓰기 가능)"""
+    """메인 후보 핸들 목록|None(조회 실패·목록 잘림·모양 이상). target_why 통과(메인 체크아웃·claude·연결됨·쓰기 가능) 전제.
+    1순위: 제목이 TITLE_KEY 로 시작. 1순위가 0개면 2순위로 제목 무관 메인 체크아웃 터미널 중 lastOutputAt 이 가장 최근인 1개
+    (팀 모드 리더 pane 제목이 달라 후보가 0 이 되던 사고 대응). 1순위가 여럿이면 그대로 여럿(모호하면 건드리지 않음)"""
     rows = list_rows(run)
     if rows is None:
         return None
+    ok_rows = [t for t in rows if not target_why(t, spec)]
     out = []
-    for t in rows:
-        h = t["handle"]
-        if str(t.get("title") or "").startswith(TITLE_KEY) and not target_why(t, spec) and h not in out:
-            out.append(h)
-    return out
+    for t in ok_rows:
+        if str(t.get("title") or "").startswith(TITLE_KEY) and t["handle"] not in out:
+            out.append(t["handle"])
+    if out or not ok_rows:
+        return out
+    return [max(ok_rows, key=lambda t: t.get("lastOutputAt") if isinstance(t.get("lastOutputAt"), (int, float)) else 0)["handle"]]
 
 
 def fate(run, match):
