@@ -1,12 +1,19 @@
 #!/bin/bash
 # 허브 코디네이터 터미널 순찰표: 허브·에이전트·마지막 출력 나이·막힘·중복.
 # 사용: patrol.sh [--json]   설정: ORCA_MAIN_CONFIG (HUB_ROOT, STALE_MINUTES)
+#       patrol.sh --inbox [--json] [--peek]  받은 편지함(hub-inbox/main.jsonl)의 읽은 위치 이후 새 줄. 자동 알림은 터미널 입력 대신 여기로 옴.
+#         읽은 위치(inode+오프셋)는 main-inbox.offset 에 기록(--peek 은 기록 안 함). 회전·잘림이면 옛 파일 잔여분 또는 처음부터. 허브 조회(orca)는 하지 않음
 # 워커 소멸: 지난 순찰에 있던 허브 하위 워커 터미널이 사라지면 브랜치·마지막 커밋과 함께 1회 표시(상태 PATROL_STATE)
-# 종료 코드: 0 정상, 1 orca 조회 실패, 2 설정 오류
+# 종료 코드: 0 정상, 1 orca 조회 실패(--inbox 는 편지함 읽기·쓰기 실패), 2 설정 오류(--inbox 는 인자 오류)
 set -eu
 CONF="${ORCA_MAIN_CONFIG:-$HOME/.config/lrm-hubs/main.env}"
 [ -f "$CONF" ] || { echo "설정 없음: $CONF (references/main.env.example 참고)" >&2; exit 2; }
 . "$CONF"
+if [ "${1:-}" = "--inbox" ]; then
+  shift
+  export LRM_HUB_DIR="${LRM_HUB_DIR:-${HUB_SCRIPTS:-$HOME/.config/lrm-hubs}}"  # 받은 편지함·읽은 위치 파일이 있는 작업 폴더
+  exec python3 -I "$LRM_HUB_DIR/main_inbox.py" read --since-offset "$@"
+fi
 OUT=$(orca terminal list --json 2>/dev/null) || { echo "orca terminal list 실패" >&2; exit 1; }
 printf '%s' "$OUT" | PATROL_STATE="${PATROL_STATE:-$HOME/.config/lrm-hubs/patrol-workers.json}" HUB_ROOT="$HUB_ROOT" STALE="${STALE_MINUTES:-60}" MODE="${1:-}" python3 -c '
 import json,sys,os,time,collections,subprocess

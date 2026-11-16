@@ -46,4 +46,16 @@ lst "$H"; o2=$(bash "$PATROL" 2>&1); o3=$(bash "$PATROL" 2>&1)
 grep -q '사라진 워커 0개' <<<"$o1" && grep -q '🫥 워커 사라짐 feat-a term_worker_a .*feat/a .*워커 결과 커밋' <<<"$o2" && ! grep -q '🫥' <<<"$o3" && ok "사라진 워커를 마지막 커밋과 함께 1회 표시" || ko "워커 소멸" "$o2 | $o3"
 lst "$H"; j=$(bash "$PATROL" --json); python3 -c 'import json,sys;d=json.loads(sys.argv[1]);assert "hubs" in d and d["gone"]==[]' "$j" && ok "--json 은 hubs·gone" || ko "json" "$j"
 
+# patrol --inbox: 받은 편지함 새 줄만 1회 읽고 읽은 위치 기록. orca 조회 없음. 임시 작업 폴더만 씀
+HD="$SB/inbox-hub"; mkdir -p "$HD"; cp "$ROOT/hubs/scripts/main_inbox.py" "$HD/"; : > "$SB/calls"
+printf 'HUB_ROOT=%s/ws\nHUB_SCRIPTS=%s\n' "$SB" "$HD" > "$SB/main-inbox.env"
+PI() { ORCA_MAIN_CONFIG="$SB/main-inbox.env" LRM_HUB_DIR="$HD" bash "$PATROL" --inbox "$@"; }
+n0=$(PI 2>&1 | tail -1)
+LRM_HUB_DIR="$HD" python3 -I "$HD/main_inbox.py" append --kind ci --source ci_watch "CI 실패 PR#9" >/dev/null
+LRM_HUB_DIR="$HD" python3 -I "$HD/main_inbox.py" append --kind stall --source card_actions "응답 없는 워커" >/dev/null
+p1=$(PI --peek 2>&1); p2=$(PI 2>&1); p3=$(PI 2>&1)
+grep -q '새 줄 0건' <<<"$n0" && grep -q 'CI 실패 PR#9' <<<"$p1" && grep -q '응답 없는 워커' <<<"$p2" && grep -q '새 줄 0건' <<<"$p3" && [ -s "$HD/main-inbox.offset" ] && ! grep -q '^terminal' "$SB/calls" \
+  && ok "patrol --inbox: 새 줄 표 출력(--peek 은 위치 불변)·읽은 뒤 다시 읽으면 0건·orca 호출 없음" || ko "patrol --inbox" "$n0 | $p1 | $p2 | $p3"
+LRM_HUB_DIR="$HD" python3 -I "$HD/main_inbox.py" append --kind review --source adv_review "지적 1건" >/dev/null
+j=$(PI --json 2>&1); python3 -c 'import json,sys;r=json.loads(sys.argv[1].splitlines()[0]);assert r["kind"]=="review" and r["source"]=="adv_review"' "$j" && ok "patrol --inbox --json: 줄마다 JSON" || ko "inbox json" "$j"
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"; [ "$FAIL" = 0 ]
