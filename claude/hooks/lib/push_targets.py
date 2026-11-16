@@ -123,10 +123,20 @@ def emit(obj):
     print(json.dumps(obj, ensure_ascii=False))
 
 
-def main():
-    cwd = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] else os.getcwd()
-    here, envs, svars = cwd, [], {}
-    for toks in segments(drop_heredoc(sys.stdin.read())):
+SHELLS = {"bash", "sh", "zsh"}
+
+
+def shell_payload(toks):
+    """bash -c '<명령>' 의 명령 문자열. -c 없으면 None"""
+    for i, t in enumerate(toks[1:], 1):
+        if t.startswith("-") and not t.startswith("--") and "c" in t and i + 1 < len(toks):
+            return toks[i + 1]
+    return None
+
+
+def scan(cmd, here, envs, svars):
+    """cmd 한 덩어리를 훑어 push 대상 출력. 해석 불가면 err 출력 후 False. bash -c '…' 는 하위 셸이라 cd 가 밖으로 안 번짐"""
+    for toks in segments(drop_heredoc(cmd)):
         assigns = []
         while toks and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[0]) or toks[0] in ("export", "env")):
             if "=" in toks[0]:
@@ -146,8 +156,13 @@ def main():
             args = [t for t in toks[1:] if t not in ("-P", "-L", "--")]
             r = resolve(here, args[0], svars) if args else HOME
             if r is None:
-                emit({"err": "cd 경로에 변수·치환: " + args[0]}); return
+                emit({"err": "cd 경로에 변수·치환: " + args[0]}); return False
             here = r
+            continue
+        if toks[0] in SHELLS:
+            inner = shell_payload(toks)
+            if inner is not None and not scan(inner, here, envs, dict(svars)):
+                return False
             continue
         if toks[0] != "git":
             continue
@@ -157,7 +172,7 @@ def main():
             if t == "-C" and k + 1 < len(toks):
                 r = resolve(d, toks[k + 1], svars)
                 if r is None:
-                    emit({"err": "-C 경로에 변수·치환: " + toks[k + 1]}); return
+                    emit({"err": "-C 경로에 변수·치환: " + toks[k + 1]}); return False
                 d, k = r, k + 2
             elif t in ("-c", "--config-env") and k + 1 < len(toks):
                 cfg.append(toks[k + 1]); k += 2
@@ -182,6 +197,12 @@ def main():
                 pos.append(t)
             k += 1
         emit({"dir": d, "flags": flags, "remote": pos[0] if pos else "", "refs": pos[1:], "cfg": cfg, "env": envs})
+    return True
+
+
+def main():
+    cwd = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] else os.getcwd()
+    scan(sys.stdin.read(), cwd, [], {})
 
 
 if __name__ == "__main__":
