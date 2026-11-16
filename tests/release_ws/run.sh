@@ -78,7 +78,8 @@ rel --dispatch d_s1; chk "다른 워커가 쓰는 곳: 거부 종료 5·삭제 �
 rel --dispatch d_arc; chk "보관 불일치(복제 불가): 삭제 안 함, 종료 1" '[ "$RC" = 1 ] && [ -e "$W/arcfail" ] && [ "$(rm_calls)" = 0 ] && grep -q "삭제 실패" "$SB/out"' "rc=$RC $(cat "$SB/out")"
 rel --dispatch d_dry --dry-run; chk "--dry-run: release·삭제 없음, 이 워커 터미널은 쉬는 중으로 침 → 삭제 가능 종료 0" '[ "$RC" = 0 ] && ! grep -q "worker-release" "$FAKE/orca.calls" && [ "$(rm_calls)" = 0 ] && [ -e "$W/dry_ws" ] && grep -q "삭제 가능" "$SB/out"' "rc=$RC $(cat "$SB/out")"
 rel --dispatch d_dry --dry-run --json; chk "--json: status·workspace 한 줄" 'jq -e ".status == \"candidate\" and (.workspace | test(\"dry_ws\"))" "$SB/out" >/dev/null' "$(cat "$SB/out")"
-rel --dispatch d_nc; chk "병합된 PR 뒤 push 안 한 커밋: 남김 종료 4·삭제 안 함" '[ "$RC" = 4 ] && [ -e "$W/newcommit" ] && [ "$(rm_calls)" = 0 ] && grep -q "남김(unmerged)" "$SB/out"' "rc=$RC $(cat "$SB/out")"
+rel --dispatch d_nc --released; chk "병합된 PR 뒤 push 안 한 커밋: 로컬 브랜치가 남으므로 공간만 삭제 종료 0" '[ "$RC" = 0 ] && [ ! -e "$W/newcommit" ] && grep -q "미병합(브랜치 유지)" "$SB/out"' "rc=$RC $(cat "$SB/out")"
+chk "--released: 삭제 전 worker-release 없음(정리 뒤 기록 정리만)" '[ "$(grep -n "worker-release --dispatch d_nc" "$FAKE/orca.calls" | head -1 | cut -d: -f1)" -gt "$(grep -n "^worktree rm" "$FAKE/orca.calls" | head -1 | cut -d: -f1)" ]'
 rel --dispatch d_ic; chk "gitignore 코드 파일(secret/Foo.cs): 남김 종료 4·삭제 안 함" '[ "$RC" = 4 ] && [ -e "$W/ignored_code/secret/Foo.cs" ] && [ "$(rm_calls)" = 0 ] && grep -q "secret/Foo.cs" "$SB/out"' "rc=$RC $(cat "$SB/out")"
 rel --dispatch d_kp --dry-run; chk "--dry-run(깨끗): 삭제 가능" '[ "$RC" = 0 ] && [ -e "$W/kid_parent" ]'
 

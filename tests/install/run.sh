@@ -88,7 +88,7 @@ mk_current | add_extras > "$SB/.claude/settings.json"
 CUR_BYTES=$(shasum "$SB/.claude/settings.json" | cut -d' ' -f1)
 cp "$SB/.claude/settings.json" "$SB/settings.original"
 hooks_of() { jq '[.hooks[]?[]] | length' "$1"; }
-[ "$(hooks_of "$SB/.claude/settings.json")" = 26 ] && ok "준비: 현재 설정 훅 26개(기본 7+Orca 15+추가 3+중복 1)" || ko "준비" "훅 수 $(hooks_of "$SB/.claude/settings.json")"
+[ "$(hooks_of "$SB/.claude/settings.json")" = 28 ] && ok "준비: 현재 설정 훅 28개(기본 9+Orca 15+추가 3+중복 1)" || ko "준비" "훅 수 $(hooks_of "$SB/.claude/settings.json")"
 SKILLS_BEFORE=$(ls "$SB/.claude/skills" | wc -l | tr -d ' ')
 
 # ---- 1. dry-run: 아무것도 바뀌지 않음 --------------------------------------

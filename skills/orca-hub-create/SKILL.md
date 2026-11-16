@@ -26,7 +26,7 @@ description: Orca 에 새 코디네이터 허브(sparse 관리 워크스페이�
 - 코디네이터 Opus 5.5(`claude-opus-5-5`). 워커 모델·허브당 동시 워커 수는 `references/common-rules.txt` 가 정본이다(여기에 숫자를 다시 적지 않는다).
 - 코디네이터는 배정·판정·보고만. 파일 쓰기·구현·긴 조사 금지.
 - 워커는 Orca 오케스트레이션으로만, 허브 하위 sparse 워크스페이스 1개씩.
-- 게임 프로젝트 작업의 하위 워크스페이스는 Jira 선발급(중복 검색, 같은 티켓 하위 작업은 키 재사용). 사용자 개인 업무(오케스트레이션·스킬·도구·개인 보고·스크럼 초안·정리)는 Jira 없이 `[개인] 하는 일`.
+- 게임 프로젝트 작업의 하위 워크스페이스는 컨펌된 계획서에 적힌 Jira 를 발급한 뒤 만든다(중복 검색, 같은 티켓 하위 작업은 키 재사용). 계획에 없는 티켓은 계획서에 추가 후 재컨펌. 사용자 개인 업무(오케스트레이션·스킬·도구·개인 보고·스크럼 초안·정리)는 Jira 없이 `[개인] 하는 일`.
 - 워커 bypass, 승인 요청은 코디네이터가 처리. 새 PR(검수 뒤)·dev/main 병합·강제 push·reset --hard·clean·branch -D 만 사용자 승인. 일반 push·열린 PR 갱신·추천안 결정·개발 Firebase 쓰기는 무승인(11-13 D-CFGAPPLY, common-rules '승인 경계' 절). 승인이 필요하면 허브 창에 묻지 말고 hub_report.py decide Slack 카드로.
 - rm 은 리터럴 경로·`${VAR:?}`·`mktemp -d`. Unity activate 는 녹화 때만 사전 고지.
 - Slack·Confluence 게시는 인증이 없으면 메인 코디네이터에 파일 경로와 핵심 3줄을 넘긴다.
@@ -38,3 +38,8 @@ description: Orca 에 새 코디네이터 허브(sparse 관리 워크스페이�
 - 메인 체크아웃은 미커밋 보존 때문에 sparse 로 바꾸지 않는다.
 - 이미 코디네이터 터미널이 살아 있는 허브에는 스크립트가 새 코디네이터를 띄우지 않고 중단한다. 의도적으로 하나 더 띄우려면 `--force`.
 - `common-rules.txt` 개정은 이미 떠 있는 코디네이터에 반영되지 않는다. 필요하면 `--resume` 으로 재기동한다.
+
+## 기능 코디네이터 (11-16)
+
+기능 하나를 끝까지 맡는 허브는 `hubs/scripts/feature_open.sh` 로 만들고 `hubs/scripts/feature_close.sh` 로 끝낸다.
+`feature_open.sh` 는 위 `create_hub.sh` 를 `--branch feature/<slug> --base <기준>` 으로 호출한다. 역할 템플릿은 `hubs/roles/role-feature.txt`.

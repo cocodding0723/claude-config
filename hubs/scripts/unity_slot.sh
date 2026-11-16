@@ -1,12 +1,12 @@
 #!/bin/bash
-# Unity 동시 실행 슬롯(최대 2개, LRM_UNITY_SLOTS 로 조정). 대기표 순서대로 배정. 11-16 사용자 '2개로 늘려서 병렬'. 메모리는 Unity 1개 8GB 안팎이라 2개 = 16GB 감시
+# Unity 동시 실행 슬롯(기본 1개, LRM_UNITY_SLOTS 로 조정). 대기표 순서대로 배정. 11-16 하네스 1단계에서 1개로 환원(11-12 메모리 누적 맥 리셋 사고, Unity 1개 8GB 안팎). 호출은 unity-run 경유
 # 사용: unity_slot.sh acquire <작업이름>   → 슬롯 번호 출력(블록)
 #       LRM_SLOT_PRIORITY=1 이면 대기열 맨 앞에 선다(사용자 최우선 작업만). 실행 중 슬롯은 뺏지 않음
 #       unity_slot.sh release <슬롯번호>
 #       unity_slot.sh status
 set -u
 ROOT="${LRM_UNITY_SLOT_DIR:-/tmp/lrm-unity-slots}"
-MAX="${LRM_UNITY_SLOTS:-2}"
+MAX="${LRM_UNITY_SLOTS:-1}"
 mkdir -p "$ROOT/queue"
 
 alive() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
@@ -15,7 +15,8 @@ reap() {
   for d in "$ROOT"/slot-*; do
     [ -d "$d" ] || continue
     pid=$(cat "$d/pid" 2>/dev/null)
-    alive "$pid" || rm -rf -- "${d:?}"
+    # child: unity-run 이 기록한 Unity pid. 래퍼가 kill -9 로 죽어도 Unity 가 살아 있으면 유지
+    alive "$pid" || alive "$(cat "$d/child" 2>/dev/null)" || rm -rf -- "${d:?}"
   done
   for q in "$ROOT"/queue/*; do
     [ -f "$q" ] || continue
@@ -32,6 +33,8 @@ case "${1:-}" in
     echo "$owner $name" > "$ticket"
     while :; do
       reap
+      # 소유자가 죽어 표가 회수되면 대기 종료. 고아 대기 루프 방지
+      [ -f "$ticket" ] || { echo "오류: 소유 pid $owner 종료로 대기표 회수. 다시 실행" >&2; exit 3; }
       first=$(ls "$ROOT/queue" | sort | head -1)
       if [ "$ROOT/queue/$first" = "$ticket" ]; then
         for i in $(seq 1 "$MAX"); do

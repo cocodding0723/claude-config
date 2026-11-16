@@ -11,11 +11,10 @@ cp ~/Documents/90_정리기록/20261116-수진-오토마-UI-시안/인게임_찬
 cp ~/Documents/90_정리기록/20261116-수진-오토마-UI-시안/인게임_승부실패.png "$WS/Assets/Editor/RenderBg/bg_fail.png"
 cp "$WS/Assets/Editor/RenderBg/bg_fail.png" "$WS/Assets/Editor/RenderBg/bg_rumor-success.png"
 cp ~/.config/lrm-hubs/tools/ModalRenderer.cs ~/.config/lrm-hubs/tools/RenderShots.cs "$WS/Assets/Editor/"
-export LRM_SLOT_OWNER_PID=$$ LRM_UNITY_SLOTS=2 LRM_SLOT_PRIORITY=1
-S=$(bash ~/.config/lrm-hubs/unity_slot.sh acquire outcome-prefab-build)
-trap 'bash ~/.config/lrm-hubs/unity_slot.sh release "$S"; rm -rf "$WS/Assets/Editor/RenderBg" "$WS/Assets/Editor/RenderBg.meta" "$WS"/Assets/Editor/{ModalRenderer,RenderShots}.cs{,.meta}' EXIT
+export LRM_SLOT_PRIORITY=1
+trap 'rm -rf "$WS/Assets/Editor/RenderBg" "$WS/Assets/Editor/RenderBg.meta" "$WS"/Assets/Editor/{ModalRenderer,RenderShots}.cs{,.meta}' EXIT
 for V in ${VARS//,/ }; do
-/Applications/Unity/Hub/Editor/6000.3.16f1/Unity.app/Contents/MacOS/Unity -batchmode -projectPath "$WS" -executeMethod TmpMissionOutcomeBuilder.Run -variant $V \
+~/.config/lrm-hubs/unity-run --name outcome-prefab-build -- /Applications/Unity/Hub/Editor/6000.3.16f1/Unity.app/Contents/MacOS/Unity -batchmode -projectPath "$WS" -executeMethod TmpMissionOutcomeBuilder.Run -variant $V \
   -renderOut "$WS/TestResults/modalrender" -renderTag "${TAG}_$V" -renderMotion "${LRM_RENDER_MOTION:-1}" -renderMotionSec "${LRM_RENDER_MOTION_SEC:-0.45}" -renderShowGroups "${LRM_RENDER_SHOW_GROUPS:-}" -renderSizes "$SIZES" -renderPrefabs "$P" -renderBg "Assets/Editor/RenderBg/bg_$V.png" -logFile "$(render_log_path "$WS" "outcome-${TAG}_$V")" >/dev/null 2>&1
 echo "$V exit=$?"
 render_check_output "$WS/TestResults/modalrender" "${TAG}_$V" "$WS/TestResults/outcome-${TAG}_$V.log" || RC=4

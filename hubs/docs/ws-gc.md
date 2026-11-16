@@ -45,7 +45,7 @@
 
 | 번호 | 조건 | 건너뛸 때 코드 |
 |---|---|---|
-| 1 | 브랜치 PR 이 모두 MERGED·CLOSED(`gh pr list --head`). PR 이 없으면 HEAD 가 origin 에 전부 있어야 함(detached 포함) | `pr_open` 열린 PR 이 하나라도 있음 · `unmerged` PR 없고 origin 에 없는 커밋 있음 · `gh_fail` gh 조회 실패 |
+| 1 | 열린 PR 이 없음(`gh pr list --head`). 이름 있는 브랜치가 로컬에 남는 곳은 미병합이어도 후보(공간만 지우고 브랜치·커밋은 유지, DETAIL 에 `미병합(브랜치 유지)`). detached HEAD 는 HEAD 가 origin 에 있어야 함 | `pr_open` 열린 PR 이 하나라도 있음 · `unmerged` detached 이고 origin 에 없는 커밋 있음 · `gh_fail` gh 조회 실패 |
 | 2 | 미커밋 변경 0. 아래 부산물은 0 으로 침 | `dirty` |
 | 3 | 마지막 활동이 N일 이상 전(기본 2). Orca 활동 시각과 마지막 커밋 시각 중 늦은 쪽 | `idle` |
 | 4 | 서브모듈 안에 미커밋·미push 가 없음 | `submodule` |
@@ -76,6 +76,7 @@
 | 보관·로그 폴더 | `~/orca/archive` | `--archive-dir`·`WS_GC_ARCHIVE` |
 | 로그 파일 | `~/orca/archive/ws_gc.log` | `--log`·`WS_GC_LOG` (2MB 넘으면 `.1` 로 돌림) |
 | 최소 휴지 일수 | 2 | `--days`·`WS_GC_MIN_IDLE_DAYS` |
+| 로컬 브랜치가 남는 곳의 유예(분) | 60 | `WS_GC_FRESH_GRACE_MIN`. 막 만든 빈 공간 보호용. 이 시간만 지나면 휴지 일수 대신 후보 |
 | 부산물·보관 대상 정규식, 보호 브랜치, 허브 접두사 | 블록 안 | 파일 수정 |
 | Slack 전송 스크립트 | `~/.config/lrm-hubs/slack_notify.sh` | `WS_GC_NOTIFY`(시험용) |
 
@@ -157,7 +158,7 @@ bash tests/ws_gc/mutate.sh   # 결함을 심은 사본에서 시험이 실패하
 | 소스 폴더 | `Assets/ Packages/ ProjectSettings/` 아래(`CFG_SOURCE_DIR_RE`). 허용 목록과 겹쳐도(예 `Assets/TestResults/`) 항상 | 보존 |
 | 추적 파일 수정 | 추적 파일이 바뀐 모든 경우. `.meta`·`*SDF*.asset` 부산물 예외보다 항상 우선(예외는 미추적 파일에만 적용) | 보존 |
 | 미확인 | 위 어디에도 없는 미추적·gitignore 파일(예 `secret/Foo.cs`, `result.json`, `reports/s.md`, `Foo.CS`) | 보존(`dirty`) |
-| 확인된 부산물 | 줄바꿈만 바뀐 추적 사운드 `LICENSE.txt`, 미추적 `*.meta`·`*SDF*.asset`. 파일 단위이고 폴더 이름은 보지 않음 | 0 으로 침 |
+| 확인된 부산물 | 줄바꿈(`--ignore-cr-at-eol`)·실행 비트만 바뀐 추적 파일, 작업 사본 sha256 이 HEAD 포인터 oid 와 같은 LFS 파일, 미추적 `*.meta`·`*SDF*.asset`, `Library/PackageManager/`. 파일 단위이고 폴더 이름은 보지 않음 | 0 으로 침. 삭제 전 되돌리고, rm 이 미커밋으로 거부하면 재확인 뒤 `--force` |
 
 - 서브모듈: 안에도 상위와 같은 분류를 적용한다(미추적·gitignore 소스, 결과물, 부산물이 하나라도 있으면 `submodule` 로 보존, 미push 커밋도 포함).
 - 보관 대조는 파일 수·내용을 비교하되, tar 가 한글 이름을 NFC→NFD 로 풀어도 같은 이름으로 짝지어 본다(`diff -r` 이름 바이트 오탐 방지).
@@ -177,6 +178,8 @@ bash ~/.config/lrm-hubs/release_ws.sh --dispatch <id> [--dry-run] [--json]
 ```
 
 `worker-release` 로 터미널을 닫은 뒤 `ws_gc.sh --path <그 작업 공간> --days 0 --apply` 로 같은 판정을 한 번 돌린다(판정 복사 없음). 종료 코드: 0 삭제, 1 삭제 실패, 2 인자 오류, 3 환경 오류, 4 남김(코드 변경·열린 PR·미병합 등, 이유 출력), 5 거부(허브 폴더·다른 워커나 터미널이 쓰는 곳·하위 보유). `--dry-run` 은 release 없이 판정만 하며 이 워커 터미널은 쉬는 중으로 친다.
+
+자동 호출: `session_gc.py --apply`(launchd 주기)가 worker_done 으로 끝난 워커를 `worker-release` 한 직후 `release_ws.sh --dispatch <id> --released` 를 부른다. 코디네이터가 부르지 않아도 끝난 작업 공간이 정리된다. 결과는 `session-gc.log` 의 release 줄 뒤에 붙는다.
 
 ### 30분 주기와 허브당 10개 상한
 

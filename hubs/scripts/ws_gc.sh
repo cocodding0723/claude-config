@@ -11,6 +11,7 @@ CFG_ROOT="${WS_GC_ROOT:-$HOME/orca/workspaces}"          # <저장소>/<워크�
 CFG_ARCHIVE="${WS_GC_ARCHIVE:-$HOME/orca/archive}"       # 결과물 보관·로그·잠금 위치
 CFG_LOG="${WS_GC_LOG:-$CFG_ARCHIVE/ws_gc.log}"
 CFG_MIN_IDLE_DAYS="${WS_GC_MIN_IDLE_DAYS:-2}"            # 마지막 활동 후 이 일수 이상 지나야 후보
+CFG_FRESH_GRACE_MIN="${WS_GC_FRESH_GRACE_MIN:-60}"       # 브랜치가 남는 깨끗한 곳은 일수 대신 이 분만 지나면 후보(막 만든 빈 공간 보호)
 CFG_HUB_PREFIX="coord-"                                  # 허브 폴더 접두사(항상 제외)
 CFG_GAME_REPO_DIR="${WS_GC_GAME_REPO:-LoveRevolutionMaker}"  # 부모 자동 연결 대상 저장소 폴더(<root>/ 바로 아래)
 CFG_TICKET_RE='LRM-[0-9]+'                               # 같은 티켓 판정에 쓰는 이름·브랜치·폴더 패턴
@@ -31,7 +32,7 @@ CFG_SOURCE_DIR_RE='^(Assets|Packages|ProjectSettings)/'
 CFG_CACHE_RE='^(Library|Temp|obj|Logs|UserSettings|\.vs|\.idea|node_modules)/$|(^|/)(\.dart_tool|node_modules|__pycache__)/$|^[^/]+\.(csproj|sln)$|^\.flutter-plugins(-dependencies)?$|^\.claude/settings\.local\.json$|^\.DS_Store$|^Library/BurstCache/$|^(android/\.gradle|android/app/build|android/build|build|ios/Flutter/ephemeral|ios/Pods|ios/\.symlinks)/$|^android/local\.properties$|^ios/Flutter/(Generated\.xcconfig|flutter_export_environment\.sh)$'
 # 캐시 폴더 안에서 "지워도 되는 것" 목록(도구가 다시 만드는 하위 경로). 캐시 폴더 안의 파일은 이 목록에 든 것만 버리고,
 # 목록 밖은 확장자와 상관없이 전부 미확인으로 보존함(.kt·.mp4 같은 목록에 없는 파일도 보존)
-CFG_CACHE_GENERATED_RE='^(Library/(PackageCache|Artifacts|Bee|ScriptAssemblies|ShaderCache|StateCache|BuildCache|PlayerDataCache|APIUpdater|Search|SourceAssetDB|BuildProfiles|BurstCache)/|android/\.gradle/|android/app/build/|android/build/|build/|ios/Flutter/ephemeral/|ios/Pods/|ios/\.symlinks/|android/local\.properties$|ios/Flutter/(Generated\.xcconfig|flutter_export_environment\.sh)$|(.*/)?node_modules/|(.*/)?__pycache__/|(.*/)?\.dart_tool/|Temp/|Logs/|\.vs/|obj/(Debug|Release)/)|^Library/([^/.]+|[^/]+\.(asset|json|meta|txt|log))$|^obj/(project\.assets\.json|[^/]+\.nuget\.[^/]+)$'
+CFG_CACHE_GENERATED_RE='^(Library/(PackageManager|PackageCache|Artifacts|Bee|ScriptAssemblies|ShaderCache|StateCache|BuildCache|PlayerDataCache|APIUpdater|Search|SourceAssetDB|BuildProfiles|BurstCache)/|android/\.gradle/|android/app/build/|android/build/|build/|ios/Flutter/ephemeral/|ios/Pods/|ios/\.symlinks/|android/local\.properties$|ios/Flutter/(Generated\.xcconfig|flutter_export_environment\.sh)$|(.*/)?node_modules/|(.*/)?__pycache__/|(.*/)?\.dart_tool/|Temp/|Logs/|\.vs/|obj/(Debug|Release)/)|^Library/([^/.]+|[^/]+\.(asset|json|meta|txt|log))$|^obj/(project\.assets\.json|[^/]+\.nuget\.[^/]+)$'
 CFG_INBOX="${WS_GC_INBOX:-$HOME/.config/lrm-hubs/hub-inbox}"  # 허브별 보관 색인(<허브 slug>.tsv). 허브 폴더 coord-<slug>-hub 에서 slug 를 뗌
 CFG_KEEP_CODE_LOG_MAX=5                                  # 보존 근거로 로그·JSON 에 남길 경로 수
 CFG_RM_DIRTY_RE='modified or untracked|contain(s|ing) submodules|uncommitted|dirty'  # orca rm 거부 문구 중 미커밋 변경 계열만 force 허용(잠금·사용 중 등은 제외)
@@ -54,12 +55,14 @@ usage() {
 대상에서 빼는 곳: coord-* 허브, 메인 체크아웃, 살아 있는 터미널·워커가 붙은 곳, 하위 워크스페이스가 남은 곳,
   main·master·develop·dev·release/* 브랜치, Orca 에 등록되지 않은 폴더, 지금 이 명령을 실행 중인 폴더.
 지우는 조건(전부 충족):
-  1 브랜치 PR 이 MERGED·CLOSED(OPEN 이 하나라도 있으면 제외)이고 현재 HEAD 가 origin 에 있음(원격 브랜치가 지워졌으면 병합된 PR 의 마지막 커밋과 같을 때). PR 이 없어도 HEAD 가 origin 에 있어야 함(detached 포함)
-  2 미커밋 변경 0. Unity 재임포트 부산물(.meta·TMP 폰트 아틀라스, 줄바꿈만 바뀐 사운드 LICENSE.txt)은 0 으로 치고 목록을 로그에 남김.
+  1 브랜치 PR 이 OPEN 이 아님. 이름 있는 브랜치가 로컬에 남는 곳은 미병합이어도 후보(공간만 지우고 브랜치·커밋은 유지).
+    detached HEAD 는 현재 HEAD 가 origin 에 있어야 함(원격 브랜치가 지워졌으면 병합된 PR 의 마지막 커밋과 같을 때)
+  2 미커밋 변경 0. Unity 재임포트 부산물(.meta·TMP 폰트 아틀라스, 줄바꿈·실행 비트만 바뀐 파일, 내용이 HEAD 포인터와 같은 LFS 파일)은
+    0 으로 치고 목록을 로그에 남김. 부산물은 지우기 전에 되돌리고, 되돌려도 rm 이 미커밋으로 거부하면 재확인 뒤 --force.
     추적 안 되는 결과물만 있어도 후보: 허용 목록(docs/out·evidence·TestResults 폴더, 루트의 html·md·png·jpg·gif·mp4·txt·log)에 든 것만.
     추적 파일 수정, 허용 목록 밖 미추적·gitignore 파일, Assets·Packages·ProjectSettings 아래 파일이 하나라도 있으면 보존하고
     KEEP_CODE 로 기록(--json 의 keep_code)
-  3 마지막 활동(Orca 활동 시각·마지막 커밋 중 늦은 것)이 --days 일 이상 전
+  3 마지막 활동(Orca 활동 시각·마지막 커밋 중 늦은 것)이 --days 일 이상 전. 로컬 브랜치가 남는 곳은 WS_GC_FRESH_GRACE_MIN(기본 60)분만 지나면 됨
   4 서브모듈 안에 미커밋·미push 가 없음
 절차(--apply): 허용 목록 결과물(미추적·gitignore)을 <archive>/<저장소>/<폴더>/ 로 복제 → byte 단위 대조(불일치·복사 실패면 삭제 안 함)
   → orca worktree rm(브랜치는 지우지 않음) → 허브 색인 한 줄(~/.config/lrm-hubs/hub-inbox/<허브 slug>.tsv: 시각·작업 공간·보관 경로·파일 수)
@@ -283,6 +286,16 @@ regen_ok() {
   [ -n "$lines" ] || return 1
   ! printf '%s\n' "$lines" | grep -Evq -- "$re"
 }
+# LFS 추적 파일의 작업 사본 sha256 이 HEAD 포인터의 oid 와 같으면 0(내려받은 실파일·포인터 그대로 두 경우 모두 내용 동일)
+lfs_same() {
+  local p="$1" f="$2" oid ptr
+  [ "$(git -C "$p" check-attr filter -- "$f" 2>/dev/null | awk '{print $NF}')" = lfs ] || return 1
+  ptr=$(git -C "$p" cat-file -p "HEAD:$f" 2>/dev/null | head -c 400) || return 1
+  oid=$(printf '%s\n' "$ptr" | awk '/^oid sha256:/ { sub(/^oid sha256:/, ""); print; exit }')
+  [ -n "$oid" ] && [ -f "$p/$f" ] || return 1
+  [ "$(shasum -a 256 -- "$p/$f" | cut -d' ' -f1)" = "$oid" ] && return 0
+  git -C "$p" cat-file -p "HEAD:$f" 2>/dev/null | cmp -s - "$p/$f"
+}
 classify_changes() {
   local p="$1" k path why
   : > "$TMP/noise.txt"; : > "$TMP/licenses.txt"; : > "$TMP/outputs.txt"; : > "$TMP/keep.txt"
@@ -305,7 +318,8 @@ classify_changes() {
       N) N_NOISE=$((N_NOISE + 1)); printf '부산물 %s\n' "$path" >> "$TMP/noise.txt" ;;
       L) why=""
          if [[ "$path" =~ $CFG_LICENSE_RE ]] && git -C "$p" diff HEAD --ignore-all-space --ignore-cr-at-eol --quiet -- "$path" 2>/dev/null; then why=줄바꿈만
-         elif git -C "$p" diff HEAD --ignore-cr-at-eol --quiet -- "$path" 2>/dev/null; then why=줄바꿈만  # 내용은 같고 CRLF 만 다름
+         elif git -C "$p" -c core.fileMode=false diff HEAD --ignore-cr-at-eol --quiet -- "$path" 2>/dev/null; then why=줄바꿈만  # 내용은 같고 CRLF·실행 비트만 다름
+         elif lfs_same "$p" "$path"; then why=LFS동일
          elif [[ "$path" =~ $CFG_REGEN_RE ]] && regen_ok "$p" "$path"; then why=다시쓰임; fi
          if [ -n "$why" ]; then
            N_LIC=$((N_LIC + 1)); printf '%s %s\n' "$why" "$path" >> "$TMP/noise.txt"
@@ -340,8 +354,8 @@ protected_branch() { local b="$1" x; for x in $CFG_PROTECTED_BRANCHES; do [ "$b"
 
 # evaluate 경로 최근활동ms 살아있는하위수 → 0 후보, 1 건너뜀(REASON·DETAIL)
 evaluate() {
-  local p="$1" last_ms="$2" kids="$3" br last_c last age prs
-  REASON="" DETAIL="" PR_LABEL=""
+  local p="$1" last_ms="$2" kids="$3" br last_c last age prs keep_br
+  REASON="" DETAIL="" PR_LABEL="" UNMERGED_KEPT=0 keep_br=0
   case "$(basename "$p")" in "$CFG_HUB_PREFIX"*) REASON=hub; return 1 ;; esac
   [ -e "$p/.git" ] || { REASON=missing; return 1; }
   case "$PWD/" in "$p"/*) REASON=current; return 1 ;; esac
@@ -352,7 +366,11 @@ evaluate() {
   last_c=$(git -C "$p" log -1 --format=%ct 2>/dev/null || echo 0)
   last=$((last_ms / 1000)); [ "$last_c" -gt "$last" ] && last="$last_c"
   age=$(( (NOW - last) / 86400 ))
-  if [ "$age" -lt "$DAYS" ]; then REASON=idle; DETAIL="${age}일 전 활동"; return 1; fi
+  # 브랜치가 로컬에 남는 곳(이름 있는 브랜치)은 공간을 지워도 커밋을 잃지 않음 → 미병합·최근 활동이어도 후보(유예 CFG_FRESH_GRACE_MIN 분만 둠)
+  keep_br=0; [ -n "$br" ] && git -C "$p" show-ref --verify --quiet "refs/heads/$br" && keep_br=1
+  if [ "$age" -lt "$DAYS" ]; then
+    if [ "$keep_br" = 0 ] || [ $(( (NOW - last) / 60 )) -lt "$CFG_FRESH_GRACE_MIN" ]; then REASON=idle; DETAIL="${age}일 전 활동"; return 1; fi
+  fi
   classify_changes "$p"
   if [ "$N_REAL" -gt 0 ]; then REASON=dirty; DETAIL="미커밋 ${N_REAL}건(추적 수정 ${N_TRACKED}·미확인 ${N_UNVERIFIED})"; return 1; fi
   if [ -n "$br" ]; then
@@ -365,12 +383,14 @@ evaluate() {
   # 원격 ref 에 없어도 HEAD 가 병합된 PR 의 마지막 커밋과 같으면 원격 브랜치가 지워진 경우라 허용
   if [ "$(git -C "$p" rev-list --count HEAD --not --remotes 2>/dev/null || echo 1)" != 0 ]; then
     head_sha=$(git -C "$p" rev-parse HEAD 2>/dev/null)
-    if [ -z "$PR_LABEL" ] || ! echo "$prs" | jq -e --arg h "$head_sha" 'any(.[]; .state == "MERGED" and .headRefOid == $h)' >/dev/null 2>&1; then
+    if [ "$keep_br" = 1 ]; then UNMERGED_KEPT=1
+    elif [ -z "$PR_LABEL" ] || ! echo "$prs" | jq -e --arg h "$head_sha" 'any(.[]; .state == "MERGED" and .headRefOid == $h)' >/dev/null 2>&1; then
       REASON=unmerged; DETAIL="${PR_LABEL:+PR $PR_LABEL 이후 }origin 에 없는 커밋 있음"; return 1
     fi
   fi
   submodules_clean "$p" || { REASON=submodule; DETAIL="서브모듈 안 미커밋·미push"; return 1; }
   DETAIL="idle=${age}d branch=${br:-detached} pr=${PR_LABEL:--}"
+  [ "$UNMERGED_KEPT" = 1 ] && DETAIL="$DETAIL 미병합(브랜치 유지)"
   [ "$N_OUT" -gt 0 ] && DETAIL="$DETAIL 결과물=$N_OUT"
   return 0
 }

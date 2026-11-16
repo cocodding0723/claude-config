@@ -23,6 +23,8 @@ class PollBudgetTest(unittest.TestCase):
             os.makedirs(x, exist_ok=True)
         import shutil
         shutil.copy(os.path.join(SCRIPTS, "slack_poll.sh"), scripts)
+        os.makedirs(os.path.join(scripts, "lib"), exist_ok=True)
+        shutil.copy(os.path.join(SCRIPTS, "lib", "py.sh"), os.path.join(scripts, "lib"))  # slack_poll.sh 가 source 함
         with open(os.path.join(scripts, "report_sender.py"), "w") as f:
             f.write("import os,sys\nopen(os.environ['LRM_HUB_DIR']+'/budget','a').write(os.environ.get('LRM_REPORT_BUDGET_S','none')+'\\n')\n")
         with open(os.path.join(bindir, "curl"), "w") as f:

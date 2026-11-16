@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PreToolUse(Bash): 새 PR 은 draft 로만(gh pr create 에 --draft 필수), draft 해제(gh pr ready 등)는 그 PR 의 사용자 승인 기록이 있을 때만.
+# PreToolUse(Bash): 새 PR 은 draft 로만(gh pr create 에 --draft 필수) + 생성 승인 기록 D-PR<해시>(사용자 11-16), draft 해제(gh pr ready 등)는 그 PR 의 사용자 승인 기록이 있을 때만.
 # 승인 기록 = 결정 카드 D-RDY<번호>(pick 1/approve) 또는 문서 사이트 PR 병합 승인(pr-approve.jsonl). 판정 불가는 ask. 11-13 D-PRDRAFT.
 # 명령 해석은 lib/pr_guard.py(따옴표·heredoc 안 글자 무시, cd·-R 추적). stdin: hook JSON.
 input=$(cat)

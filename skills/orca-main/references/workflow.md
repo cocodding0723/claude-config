@@ -8,19 +8,19 @@
 |---|---|---|---|
 | 1 | 요청 접수·담당 허브 결정 | 메인 | 이 스킬, `patrol.sh` |
 | 2 | 맞는 허브 없음 → 허브 생성 | 메인 | `orca-hub-create` (`create_hub.sh`) |
-| 3 | Jira 선발급(게임 작업) / `[개인]` 이름(개인 업무) | 허브 | `jira-issue` |
+| 3 | 계획서 컨펌 1회 → 메인이 `plan-approvals/<plan-id>.json` 기록 → 적힌 Jira 발급(게임 작업) / `[개인]` 이름(개인 업무) | 메인·허브 | `jira-issue` |
 | 4 | 워커 워크스페이스 + 호스트 선택 | 허브 | `create_worker_ws.sh`, `pick_host.sh` |
 | 5 | 구조 영향 → 구조안 승인 | 허브→메인→사용자 | `doc-kit` + `check.py`, 결정 카드 |
 | 6 | 구현 | 워커 | `orca-coordinator` 배정, 모델 라우팅(common-rules) |
 | 7 | 코드 정리 | 워커 | `pretty-code`, `csharp-readable-layout`, `comment-lint` |
 | 8 | 독립 리뷰(다른 모델) | 허브 | `code-review`, `blast-radius` |
-| 9 | 테스트 | 허브 / QA 허브 | Roslyn 컴파일 → QA 통합 워크트리 EditMode+녹화 1회, `unity_slot.sh` |
+| 9 | 테스트 | 허브 / QA 허브 | Roslyn 컴파일 → QA 통합 워크트리 EditMode+녹화 1회, `unity-run --name "<허브>:<작업>" -- <명령>` |
 | 10 | 기능 단위 로컬 커밋 | 워커 | `review-before-commit` 기준, 무인 판단은 `decision-log` |
 | 11 | 완료 문서·영상 | 문서 허브 | `doc-kit`, 비주얼은 `ux-flow-board` + 전후 비교 |
 | 12 | 완료 기록(`hub_report.py add --kind done`, 증거 경로) + Jira 댓글 | 허브 | `jira-issue` 댓글 규칙 |
 | 13 | 사용자 보고 | 메인 | `slack_notify.sh` + `html_preview.sh`, `slack_pending.sh` |
 | 14 | 사용자 검수 → fixup 반복 | 허브 | — |
-| 15 | 새 PR (사용자 검수 뒤, push 는 무승인) | 허브 | `create-pr`, `pr-review-game` |
+| 15 | draft PR (계획서에 적힌 것만, push 는 무승인, 머지 전 `board-merge-check`) | 허브 | `create-pr`, `pr-review-game` |
 | 16 | 병합 확인 → 정리 | 허브 | `worktree-gc`, 허브 자동 정리 규칙, `orphan_check.sh` |
 
 ## 상시 장치

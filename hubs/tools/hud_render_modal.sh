@@ -9,10 +9,8 @@ render_prepare_ws "$WS" || exit $?
 LOG=$(render_log_path "$WS" "modalrender-$TAG")
 mkdir -p "$WS/Assets/Editor"
 cp ~/.config/lrm-hubs/tools/ModalRenderer.cs ~/.config/lrm-hubs/tools/RenderShots.cs "$WS/Assets/Editor/"
-export LRM_SLOT_OWNER_PID=$$
-S=$(~/.config/lrm-hubs/unity_slot.sh acquire modal-render)
-cleanup() { ~/.config/lrm-hubs/unity_slot.sh release "$S"; rm -f "$WS"/Assets/Editor/{ModalRenderer,RenderShots}.cs{,.meta}; }
+cleanup() { rm -f "$WS"/Assets/Editor/{ModalRenderer,RenderShots}.cs{,.meta}; }
 trap cleanup EXIT
-/Applications/Unity/Hub/Editor/6000.3.16f1/Unity.app/Contents/MacOS/Unity -batchmode -projectPath "$WS" -executeMethod ModalRenderer.Run \
+~/.config/lrm-hubs/unity-run --name modal-render -- /Applications/Unity/Hub/Editor/6000.3.16f1/Unity.app/Contents/MacOS/Unity -batchmode -projectPath "$WS" -executeMethod ModalRenderer.Run \
   -renderOut "$WS/TestResults/modalrender" -renderTag "$TAG" -renderMotion "${LRM_RENDER_MOTION:-1}" -renderMotionSec "${LRM_RENDER_MOTION_SEC:-0.45}" -renderShowGroups "${LRM_RENDER_SHOW_GROUPS:-}" -renderSizes "$SIZES" -renderPrefabs "$PF" -renderBg "$BG" -logFile "$LOG" >/dev/null 2>&1
 render_check_output "$WS/TestResults/modalrender" "$TAG" "$LOG"
