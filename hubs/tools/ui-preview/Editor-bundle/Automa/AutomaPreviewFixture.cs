@@ -1,6 +1,7 @@
 #nullable enable
 using System.Collections.Generic;
 using System.IO;
+using UnityEngine;
 using System.Linq;
 using Game.Data.ExternalModule.RemoteGameDataModule;
 using Game.Data.Module.AutomaModule.Model;
@@ -55,18 +56,27 @@ namespace Tests.Editor.UiPreview.Automa
 
             var goalIntro = builder.GoalIntro(builder.PlayerStats(player.GetStat));
             var dayStart = player.Snapshot();
+            var lastDay = tables.Spawns.Rows.Where(row => row.StageId == stage.Id).Select(row => row.ToDay).DefaultIfEmpty(FirstDay).Max();
             AutomaMissionCardInput? card = null;
+            AutomaDailySummaryDialogData? issuedSummary = null;
             for (var tick = 1; tick <= ticksPerDay; tick++)
             {
                 if (run.OnTickStarted(FirstDay, tick) != null && card == null)
                 {
                     card = builder.ActiveCard();
+                    issuedSummary = builder.DailySummary(FirstDay, builder.PlayerStats(player.GetStat, dayStart), lastDay - FirstDay);
                 }
             }
 
             run.OnDayEnded();
-            var lastDay = tables.Spawns.Rows.Where(row => row.StageId == stage.Id).Select(row => row.ToDay).DefaultIfEmpty(FirstDay).Max();
             var summary = builder.DailySummary(FirstDay, builder.PlayerStats(player.GetStat, dayStart), lastDay - FirstDay);
+
+            // 첫날 미션이 하루 안에 끝나면 결산에 진행 중 미션 행이 비어 화면 확인 불가. 발급 직후 시점 결산으로 대체
+            if (summary.State.ActiveMission == null && issuedSummary != null)
+            {
+                Debug.Log("[UiPreview] 하루 결산: 그날 끝 진행 중 미션 없음 → 미션 발급 직후 시점 결산 사용");
+                summary = issuedSummary;
+            }
             var result = builder.Result(run.Finish(player.GetStat));
             return new AutomaPreviewFixture(goalIntro, summary, result, card);
         }
