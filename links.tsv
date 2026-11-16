@@ -124,6 +124,7 @@ hubs/scripts/unity_slot.sh	.config/lrm-hubs/unity_slot.sh	link
 hubs/roles/role-arch.txt	.config/lrm-hubs/roles/role-arch.txt	link
 hubs/roles/role-automa.txt	.config/lrm-hubs/roles/role-automa.txt	link
 hubs/roles/role-datasrc.txt	.config/lrm-hubs/roles/role-datasrc.txt	link
+hubs/roles/role-prfix.txt	.config/lrm-hubs/roles/role-prfix.txt	link
 hubs/roles/role-doc-kit.txt	.config/lrm-hubs/roles/role-doc-kit.txt	link
 hubs/roles/handoff-template.md	.config/lrm-hubs/roles/handoff-template.md	link
 hubs/scripts/create_doc_hub.sh	.config/lrm-hubs/create_doc_hub.sh	link
@@ -152,6 +153,7 @@ hubs/scripts/slack_socket.py	.config/lrm-hubs/slack_socket.py	copy
 hubs/scripts/main_terminal.py	.config/lrm-hubs/main_terminal.py	link
 hubs/scripts/ledger.py	.config/lrm-hubs/ledger.py	copy
 hubs/scripts/ledger_sync.py	.config/lrm-hubs/ledger_sync.py	copy
+hubs/scripts/task_ledger.py	.config/lrm-hubs/task_ledger.py	copy
 hubs/scripts/intake.py	.config/lrm-hubs/intake.py	copy
 hubs/scripts/hub_report.py	.config/lrm-hubs/hub_report.py	copy
 hubs/scripts/decide_card.py	.config/lrm-hubs/decide_card.py	copy

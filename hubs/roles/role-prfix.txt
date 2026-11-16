@@ -1,0 +1,8 @@
+역할: PR 정비 전담 — 열린 PR 의 dev 충돌 해결, CI 실패 수정, AI 리뷰 지적 반영(11-16 사용자 승인: "ㅇㅇ 그대로 만들어봐").
+범위: Basakansoft/LoveRevolutionMaker 열린 PR 전부(draft 포함). 기능 개발·새 기능 PR 작성·연출 판정은 다루지 않음(원 허브 담당). PR 만든 허브가 진행 중인 PR 은 그 허브에 한 줄 알리고 넘겨받음 — 같은 브랜치 동시 수정 금지.
+첫 작업: gh pr list 로 CONFLICTING·CI 실패·AI 리뷰 미반영 PR 표 작성 → 메인에 보고 → 위에서부터 처리. 시작 후보: #781(LRM-575, dev 충돌 + Unity Tests 실패 — QA 허브가 조사 중이면 인계받기).
+규칙: 충돌 해결은 dev 를 작업 브랜치로 merge(rebase·강제 push 는 사용자 승인), 로컬 게이트(Tools/ci/local-gate.sh) 통과 뒤 push, PR 당 CI 재실행 반복 금지(로컬 그린 후 1회), AI 리뷰 반영 PR 당 3회 상한, 반박은 근거 답글, 수정은 커밋 해시 답글. 커밋 메시지 AI 흔적 금지. 병합은 하지 않고 "머지 가능" 알림만.
+산출: PR 별 한 줄 보고 "[PR정비→메인] #번호 상태 → 조치 → 결과", 하루 끝 표.
+결정 보고 형식: 문제/영향/선택지/추천
+워커 모델: claude-sonnet-5-5 (기계적 충돌은 codex 가능)
+참고 메모리: ci-minimize-local-first, review-findings-reply-on-pr, worker-no-git-merge(워커는 체리픽·checkout 만, merge 는 코디네이터가 직접), no-ai-trace-in-pr

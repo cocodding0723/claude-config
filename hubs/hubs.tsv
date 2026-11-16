@@ -16,3 +16,4 @@ coord-server-hub	서버·Firebase 환경 분리	~/.config/lrm-hubs/roles/role-se
 automa-hub	오토마	~/.config/lrm-hubs/roles/role-automa.txt	-	-
 data-source-hub	데이터 읽기 창구	~/.config/lrm-hubs/roles/role-datasrc.txt	-	-
 config	개인 설정	~/.config/lrm-hubs/roles/role-config.txt	~/orca/workspaces/claude-config	~/orca/claude-config
+pr-fix	PR 정비	~/.config/lrm-hubs/roles/role-prfix.txt	-	-

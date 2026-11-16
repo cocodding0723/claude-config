@@ -2,7 +2,23 @@
 # Global commit-msg: optional ticket-id check. Active only when the repo sets
 #   git config hooks.ticketPattern '^[A-Z]+-[0-9]+ '     (ERE, matched against the subject line)
 # Merge / fixup! / squash! commits are exempt. Escape hatch: git commit --no-verify
+# 게임 저장소(lg_applies)는 이어서 AI 흔적 줄(AI 공동 작성자·Generated with)을 메시지에서 지움. 규칙은 lib/ai_trace.sh 한 곳.
 HOOK_NAME=commit-msg "$(dirname "$0")/_chain" "$@" || exit $?
+LIB="${CLAUDE_HOOKS_DIR:-$HOME/.claude/hooks}/lib"
+if [ -f "$LIB/local_gate_repo.sh" ] && [ -f "$LIB/ai_trace.sh" ]; then
+  . "$LIB/local_gate_repo.sh"; . "$LIB/ai_trace.sh"
+  if lg_applies .; then
+    msg=$1; tmp=$(mktemp) || exit 0
+    # 끝 빈 줄 정리는 지운 줄이 있을 때만(그 밖의 메시지는 그대로)
+    n=$(grep -Eic "$AI_STRIP_RE" "$msg")
+    if [ "$n" -gt 0 ]; then
+      grep -Eiv "$AI_STRIP_RE" "$msg" > "$tmp"
+      awk '{ l[NR]=$0 } END { e=NR; while (e>0 && l[e] ~ /^[[:space:]]*$/) e--; for (i=1;i<=e;i++) print l[i] }' "$tmp" > "$msg"
+      echo "commit-msg: AI 흔적 줄 ${n}개 삭제" >&2
+    fi
+    rm -f "$tmp"
+  fi
+fi
 pat=$(git config --get hooks.ticketPattern 2>/dev/null); [ -n "$pat" ] || exit 0
 subject=$(grep -v '^#' "$1" | sed '/^[[:space:]]*$/d' | head -1)
 case "$subject" in "Merge "*|"fixup! "*|"squash! "*|"Revert "*) exit 0;; esac
