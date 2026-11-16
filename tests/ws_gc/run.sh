@@ -110,8 +110,8 @@ gc() { # 인자를 ws_gc.sh 에 전달. 결과: RC, $SB/out
 }
 has() { grep -q -- "$1" "$ARC/ws_gc.log"; }
 rm_calls() { grep -c '^worktree rm' "$FAKE/orca.calls" || true; }
-CAND="merged noise worker_idle nopr_pushed det_ok sub_clean"       # 삭제 후보(최근·허브 등은 아님)
-SKIPS="closed_local:unmerged dirty:dirty dirty_lic:dirty recent:idle coord-hub:hub live:live worker_active:live pr_open:pr_open nopr_local:unmerged det_local:unmerged prot:protected ghfail:gh_fail sub_dirty:submodule orphan_dir:not_orca"
+CAND="merged noise worker_idle nopr_pushed det_ok sub_clean closed_local nopr_local"  # 삭제 후보. 로컬 브랜치가 남는 미병합(closed_local·nopr_local)도 포함
+SKIPS="dirty:dirty dirty_lic:dirty recent:idle coord-hub:hub live:live worker_active:live pr_open:pr_open det_local:unmerged prot:protected ghfail:gh_fail sub_dirty:submodule orphan_dir:not_orca"
 
 # ---- 0. 문법·인자 --------------------------------------------------------------------------
 bash -n "$GC" && ok "bash -n 통과" || ko "bash -n" ""
@@ -131,7 +131,7 @@ for e in $SKIPS; do n="${e%%:*}" r="${e##*:}"; chk "dry-run 건너뜀: $n ($r)" 
 chk "dry-run: 메인 체크아웃은 평가 대상 아님" '! has "repoA/mainco"'
 chk "dry-run: 부산물 근거 로그(.meta·줄바꿈만)" 'has "NOISE   부산물 Assets/Sound/s.meta" && has "NOISE   줄바꿈만 Assets/Sound/s/a.LICENSE.txt"'
 chk "dry-run: 진짜 LICENSE 변경은 dirty" 'has "SKIP dirty repoA/dirty_lic"'
-chk "dry-run: 요약 줄 기록" 'has "END 삭제 후보 6개"'
+chk "dry-run: 요약 줄 기록" 'has "END 삭제 후보 8개"'
 chk "dry-run: Slack progress 1회" '[ "$(wc -l < "$FAKE/notify.calls" | tr -d " ")" = 1 ] && grep -q -- "--kind progress" "$FAKE/notify.calls" && grep -q "시험 점검" "$FAKE/notify.calls"'
 chk "dry-run: Slack 본문에 양식 A 골격" 'grep -q "시험 점검⏎⏎• 결과:" "$FAKE/notify.calls"'
 gc --no-slack; chk "--no-slack 은 전송 안 함" '[ ! -s "$FAKE/notify.calls" ]'
@@ -149,7 +149,7 @@ chk "apply 종료 0" '[ "$RC" = 0 ]' "rc=$RC $(tail -3 "$SB/out")"
 for n in $CAND; do chk "apply 삭제됨: $n" '[ ! -e "$W/$n" ]'; done
 for e in $SKIPS; do n="${e%%:*}"; chk "apply 유지: $n" '[ -e "$W/$n" ]'; done
 chk "apply 유지: 메인 체크아웃" '[ -e "$W/mainco" ]'
-chk "apply: rm 호출 = 후보 수 + 서브모듈 강제 1" '[ "$(rm_calls)" = 7 ]' "calls=$(rm_calls)"
+chk "apply: rm 호출 = 후보 수 + 서브모듈 강제 1" '[ "$(rm_calls)" = 9 ]' "calls=$(rm_calls)"
 chk "apply: 서브모듈 거부 → --force 재시도" 'grep -q "^worktree rm --worktree path:$W/sub_clean --force" "$FAKE/orca.calls" && has "RM_RETRY_FORCE"'
 chk "apply: 서브모듈 거부된 sub_dirty 는 rm 시도 자체 없음" '! grep -q "sub_dirty" "$FAKE/orca.calls"'
 chk "apply: 브랜치 삭제 옵션 없음" '! grep -q -- "--delete-branch" "$FAKE/orca.calls"'
@@ -160,7 +160,7 @@ chk "apply: 보관 로그에 파일 수 대조" 'has "ARCHIVE TestResults 파일
 chk "apply: 쉬는 워커 worker-release" 'grep -q "^orchestration worker-release --dispatch d_idle" "$FAKE/orca.calls"'
 chk "apply: 활동 중 워커는 release 안 함" '! grep -q "d_active" "$FAKE/orca.calls"'
 chk "apply: 삭제 로그에 브랜치 유지 표기" 'has "DELETE repoA/merged .*브랜치는 유지"'
-chk "apply: 요약·Slack(삭제 7개)" 'has "END 삭제 6개" && grep -q "자동 정리 완료" "$FAKE/notify.calls" && grep -q "삭제 6개" "$FAKE/notify.calls"'
+chk "apply: 요약·Slack(삭제 9개)" 'has "END 삭제 8개" && grep -q "자동 정리 완료" "$FAKE/notify.calls" && grep -q "삭제 8개" "$FAKE/notify.calls"'
 chk "apply: 브랜치는 저장소에 그대로" 'git -C "$O/repoA.git" rev-parse --verify -q refs/heads/feat/merged >/dev/null'
 
 # ---- 4. 반복 실행 안전 ------------------------------------------------------------------------
@@ -300,7 +300,7 @@ chk "[2] 추적 파일 수정(TextMesh Pro/Logic.cs): 보존, force 삭제 없�
 gc --only assets_tr --apply; chk "[7] Assets/TestResults/Foo.CS·png: 소스 폴더라 허용 목록과 겹쳐도 보존" 'untouched assets_tr && has "미확인 무시파일 Assets/TestResults/"'
 gc --only root_cs --apply; chk "[7] 루트 Foo.CS: 허용 확장자가 아니라 보존" 'untouched root_cs && has "미확인 미추적 Foo.CS"'
 # [6] HEAD 가 원격에 있어야 함
-gc --only old_pr_new_commit --apply; chk "[6] PR 병합 뒤 push 안 한 커밋: 보존(unmerged)" 'untouched old_pr_new_commit && has "SKIP unmerged repoA/old_pr_new_commit — PR #61 MERGED 이후 origin 에 없는 커밋 있음"'
+gc --only old_pr_new_commit --apply; chk "[6] PR 병합 뒤 push 안 한 커밋: 로컬 브랜치가 남으므로 공간만 삭제·브랜치 유지" '[ ! -e "$W/old_pr_new_commit" ] && has "DELETE repoA/old_pr_new_commit .*미병합(브랜치 유지)" && ! grep -q -- "--delete-branch" "$FAKE/orca.calls"'
 gc --only merged_gone --apply; chk "[6] 원격 브랜치가 지워져도 HEAD 가 병합된 PR 의 마지막 커밋이면 삭제" '[ ! -e "$W/merged_gone" ] && [ "$RC" = 0 ]'
 # 공백·따옴표 경로
 FAKE_RM_CHECK_DIRTY=1 gc --only spaces --apply
@@ -474,6 +474,35 @@ MM0=$(grep -c ARCHIVE_MISMATCH "$ARC/ws_gc.log")
 FAKE_RM_CHECK_DIRTY=1 gc --only nfd_out --apply
 chk "[N] 한글 파일명 보관: 삭제 성공·불일치 없음" '[ ! -e "$W/nfd_out" ] && [ "$(grep -c ARCHIVE_MISMATCH "$ARC/ws_gc.log")" = "$MM0" ] && [ "$RC" = 0 ]' "$(grep nfd_out "$ARC/ws_gc.log" | tail -3)"
 chk "[N] 보관본에 한글 파일 2개" '[ "$(find "$ARC/repoA/nfd_out/TestResults/parts" -type f | wc -l | tr -d " ")" = 2 ]'
+
+# [Q] 끝난 공간 자동 정리(lrm-qpy): 로컬 브랜치가 남는 미병합·오늘 활동한 곳, LFS·실행 비트 부산물
+setms() { perl -pi -e 's#^(\Q'"$W/$1"'\E\t[^\t]*\t)\d+#${1}'"$2"'#' "$SB/reg.tsv"; }
+recentc() { echo "$1" > "$W/$1/g.txt"; git -C "$W/$1" add -A; GIT_AUTHOR_DATE="@$2" GIT_COMMITTER_DATE="@$2" git -C "$W/$1" commit -q -m "$1"; }
+NOWS=$(date +%s)
+for n in q_today q_fresh q_det q_lfs q_lfs_bad q_mode; do mk "$n" "feat/$n" local; done
+recentc q_today $((NOWS - 7200)); setms q_today $(( (NOWS - 7200) * 1000 ))   # 2시간 전 끝남·미push
+recentc q_fresh $((NOWS - 600)); setms q_fresh $(( (NOWS - 600) * 1000 ))    # 10분 전: 유예 안
+git -C "$W/q_det" checkout -q --detach; detach q_det
+for n in q_lfs q_lfs_bad; do
+  printf 'real-gif-bytes\n' > "$SB/blob.$n"; oid=$(shasum -a 256 "$SB/blob.$n" | cut -d' ' -f1)
+  printf '*.gif filter=lfs diff=lfs merge=lfs -text\n' > "$W/$n/.gitattributes"
+  printf 'version https://git-lfs.github.com/spec/v1\noid sha256:%s\nsize 15\n' "$oid" > "$W/$n/pic.gif"
+  git -C "$W/$n" add -A; oldc "$n" lfs
+  cp "$SB/blob.$n" "$W/$n/pic.gif"   # 내려받은 실파일(포인터 oid 와 같음)
+done
+printf 'other-bytes\n' > "$W/q_lfs_bad/pic.gif"
+chmod +x "$W/q_mode/f.txt"
+regen
+gc --only q_; chk "[Q] 2시간 전 끝난 미병합(로컬 브랜치): 후보" 'has "CANDIDATE repoA/q_today .*미병합(브랜치 유지)"' "$(grep q_today "$ARC/ws_gc.log" | tail -2)"
+chk "[Q] 10분 전 활동: 유예로 보존(idle)" 'has "SKIP idle repoA/q_fresh"'
+chk "[Q] detached·미push: 보존(unmerged)" 'has "SKIP unmerged repoA/q_det"'
+chk "[Q] LFS 포인터와 같은 실파일: 부산물로 후보" 'has "CANDIDATE repoA/q_lfs " && has "LFS동일 pic.gif"' "$(grep q_lfs "$ARC/ws_gc.log" | tail -3)"
+chk "[Q] LFS 내용이 다름: 보존(dirty)" 'has "SKIP dirty repoA/q_lfs_bad"'
+chk "[Q] 실행 비트만 바뀜: 부산물로 후보" 'has "CANDIDATE repoA/q_mode "' "$(grep q_mode "$ARC/ws_gc.log" | tail -2)"
+FAKE_RM_CHECK_DIRTY=1 gc --only q_ --apply
+chk "[Q] apply: 부산물 되돌린 뒤 삭제(q_today·q_lfs·q_mode)" '[ ! -e "$W/q_today" ] && [ ! -e "$W/q_lfs" ] && [ ! -e "$W/q_mode" ]' "$(grep -E "q_(lfs|mode|today)" "$ARC/ws_gc.log" | tail -4)"
+chk "[Q] apply: 보존 대상은 그대로(q_fresh·q_det·q_lfs_bad)" '[ -e "$W/q_fresh" ] && [ -e "$W/q_det" ] && [ -e "$W/q_lfs_bad" ]'
+chk "[Q] apply: 브랜치 삭제 옵션 없음" '! grep -q -- "--delete-branch" "$FAKE/orca.calls"'
 
 bash "$HERE/adopt.sh" || FAIL=$((FAIL + 1))
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
