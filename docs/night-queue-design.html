@@ -177,7 +177,7 @@ details.ref{margin-top:30px;color:var(--muted);font-size:14px}
 <tr><td>부하</td><td><code>sysctl -n vm.loadavg</code>(오늘 5.29), 공통 규칙의 12 이하 기준</td><td>1분 평균 12 이하</td></tr>
 <tr><td>Orca·터미널 메모리</td><td><code>orca diagnostics memory</code>(출력 형식 미확인)</td><td>dry-run 에서 형식만 수집</td></tr>
 <tr><td>디스크 여유</td><td><code>df</code>(오늘 11-16 디스크 100%로 셸이 멈춘 일이 실제로 있었다)</td><td>20GB 이상</td></tr>
-<tr><td>Unity 슬롯</td><td><code>unity_slot.sh status</code>(슬롯 1개, 대기표 방식)</td><td><code>uses</code> 에 unity 가 있으면 슬롯이 비어 있고 대기 0 일 때만</td></tr></table>
+<tr><td>Unity 슬롯</td><td><code>unity_slot.sh status</code>(슬롯 2개, 대기표 방식)</td><td><code>uses</code> 에 unity 가 있으면 슬롯이 비어 있고 대기 0 일 때만</td></tr></table>
 <p>야간 동시 활성 워커 합계는 3(추정)으로 시작한다. 디스패처는 슬롯을 직접 잡지 않는다. 슬롯은 워커가 쓰는 시점에 <code>acquire</code> 로 잡고(PID 기반이라 죽은 프로세스는 자동 반환), 야간 항목은 <code>LRM_SLOT_PRIORITY</code> 를 쓰지 않아 낮 사용자 작업 뒤에 선다.</p>
 
 <h2>4. 승인 경계 — 공통 규칙과 대조</h2>

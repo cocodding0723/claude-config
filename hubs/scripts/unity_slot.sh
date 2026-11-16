@@ -1,12 +1,12 @@
 #!/bin/bash
-# Unity 동시 실행 슬롯(최대 1개, LRM_UNITY_SLOTS 로 조정). 대기표 순서대로 배정.
+# Unity 동시 실행 슬롯(최대 2개, LRM_UNITY_SLOTS 로 조정). 대기표 순서대로 배정. 11-16 사용자 '2개로 늘려서 병렬'. 메모리는 Unity 1개 8GB 안팎이라 2개 = 16GB 감시
 # 사용: unity_slot.sh acquire <작업이름>   → 슬롯 번호 출력(블록)
 #       LRM_SLOT_PRIORITY=1 이면 대기열 맨 앞에 선다(사용자 최우선 작업만). 실행 중 슬롯은 뺏지 않음
 #       unity_slot.sh release <슬롯번호>
 #       unity_slot.sh status
 set -u
 ROOT="${LRM_UNITY_SLOT_DIR:-/tmp/lrm-unity-slots}"
-MAX="${LRM_UNITY_SLOTS:-1}"
+MAX="${LRM_UNITY_SLOTS:-2}"
 mkdir -p "$ROOT/queue"
 
 alive() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }
