@@ -2,7 +2,7 @@
 # board-merge-check 시험. 가짜 bd·임시 git 저장소만 사용, 실제 작업판은 건드리지 않음
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-CHK="$ROOT/tools/board/board-merge-check"
+CHK="$ROOT/board/bin/board-merge-check"
 T="$(mktemp -d)"; trap 'rm -rf "${T:?}"' EXIT
 PASS=0 FAIL=0
 
