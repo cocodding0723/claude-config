@@ -193,3 +193,6 @@ hubs/scripts/night_dispatch.py	.config/lrm-hubs/night_dispatch.py	link
 hubs/night_policy.tsv	.config/lrm-hubs/night_policy.tsv	link
 hubs/launchd/ai.lrm.nightdraft.plist	.config/lrm-hubs/ai.lrm.nightdraft.plist	copy
 hubs/launchd/ai.lrm.nightdispatch.plist	.config/lrm-hubs/ai.lrm.nightdispatch.plist	copy
+board/bin/board-done	orca/board/bin/board-done	link
+board/templates/card-mockup.md	orca/board/templates/card-mockup.md	link
+board/templates/card-task.md	orca/board/templates/card-task.md	link

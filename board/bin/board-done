@@ -1,0 +1,279 @@
+#!/usr/bin/env python3
+"""작업판 카드 완료 게이트. 카드 종류별 증거를 검사한 뒤에만 bd close 함."""
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from datetime import datetime
+
+USAGE_EPILOG = """\
+증거는 카드 notes 나 코멘트에 한 줄씩 단다:
+  evidence:compile=<컴파일 로그>        error CS 줄 0
+  evidence:editmode=<NUnit 결과 xml>   failed 0, 실패 결과 없음
+  evidence:mapping=<대응표 md>          시안 카드만. "연결 기능" 빈 칸 0
+  evidence:prefab-diff=<비교 결과>      시안 카드만. 불일치 0
+  evidence:screenshot=<png>  evidence:recording=<mp4>   --epic 만
+같은 종류가 여럿이면 마지막 줄(notes 다음 코멘트 순)만 봄. '<종류>=' 를 생략하면 파일 이름으로 추정함. 모든 파일은 존재·비어 있지 않음·카드 claim 이후 수정이어야 함.
+
+카드 종류: label kind:mockup → 시안 카드, 그 외 → 일반 카드.
+
+예:
+  board-done bd-12 ui-worker
+  board-done bd-12 ui-worker --dry-run --json
+  board-done --epic bd-3 coordinator
+
+종료 코드:
+  0 닫음·이미 닫힘(또는 --dry-run 통과)  2 사용법  3 환경(bd 없음·작업판 폴더 없음)  4 카드 없음·상태 불일치
+  5 작업자 불일치  6 증거 누락  7 증거 내용 불합격  8 bd close 실패
+"""
+
+EXIT_OK, EXIT_USAGE, EXIT_ENV, EXIT_STATE, EXIT_ACTOR, EXIT_MISSING, EXIT_INVALID, EXIT_CLOSE = 0, 2, 3, 4, 5, 6, 7, 8
+
+REQUIRED = {
+    "task": ["compile", "editmode"],
+    "mockup": ["compile", "editmode", "mapping", "prefab-diff"],
+    "epic": ["screenshot", "recording"],
+}
+
+GUESS = [
+    ("mapping", re.compile(r"(mapping|대응표).*\.md$", re.I)),
+    ("prefab-diff", re.compile(r"prefab.*(diff|compare|비교)", re.I)),
+    ("editmode", re.compile(r"editmode.*\.xml$|\.xml$", re.I)),
+    ("compile", re.compile(r"compile.*\.(log|txt)$|\.log$", re.I)),
+    ("screenshot", re.compile(r"\.(png|jpe?g)$", re.I)),
+    ("recording", re.compile(r"\.(mp4|mov|webm)$", re.I)),
+]
+
+EMPTY_CELL = {"", "-", "—", "미정", "todo", "tbd", "?"}
+EVIDENCE_RE = re.compile(r"^\s*evidence:\s*(?:([a-z-]+)=)?(\S.*?)\s*$", re.M)
+
+
+class Fail(Exception):
+    def __init__(self, code, cause, fix):
+        super().__init__(cause)
+        self.code, self.cause, self.fix = code, cause, fix
+
+
+def bd(*args, actor=None):
+    env = dict(os.environ)
+    if actor:
+        env["BD_ACTOR"] = actor
+    return subprocess.run(["bd", *args], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
+
+
+def bd_json(*args):
+    r = bd(*args, "--json")
+    if r.returncode != 0:
+        return None
+    try:
+        return json.loads(r.stdout)
+    except json.JSONDecodeError:
+        return None
+
+
+def parse_time(s):
+    return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+
+
+def load_card(card_id):
+    d = bd_json("show", card_id)
+    if not d:
+        raise Fail(EXIT_STATE, f"카드 {card_id} 를 찾지 못함", "bd list 로 id 확인. BOARD_DIR 가 맞는 작업판인지 확인")
+    return d[0] if isinstance(d, list) else d
+
+
+def collect_evidence(card):
+    texts = [card.get("notes") or ""]
+    for c in bd_json("comments", card["id"]) or []:
+        texts.append(c.get("text") or "")
+    found = {}
+    for t in texts:
+        for kind, path in EVIDENCE_RE.findall(t):
+            if not kind:
+                kind = next((k for k, rx in GUESS if rx.search(path)), "unknown")
+            found.setdefault(kind, []).append(os.path.expanduser(path))
+    return found
+
+
+def check_file(path, since):
+    if not os.path.isfile(path):
+        return f"{path} 없음"
+    if os.path.getsize(path) == 0:
+        return f"{path} 비어 있음"
+    if os.path.getmtime(path) < since:
+        return f"{path} 가 카드 claim 이전에 수정됨(낡은 증거)"
+    return None
+
+
+def read(path):
+    with open(path, encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+def check_compile(path):
+    errs = [l for l in read(path).splitlines() if re.search(r"\berror CS\d+", l)]
+    return f"{path} 에 컴파일 오류 {len(errs)}줄: {errs[0].strip()[:160]}" if errs else None
+
+
+def check_editmode(path):
+    text = read(path)
+    m = re.search(r"<test-run\b[^>]*>", text)
+    if not m:
+        return f"{path} 가 NUnit 결과 xml 이 아님(<test-run> 없음)"
+    head = m.group(0)
+    failed = re.search(r'\bfailed="(\d+)"', head)
+    total = re.search(r'\btotal="(\d+)"', head)
+    if total and total.group(1) == "0":
+        return f"{path} 실행된 시험 0개"
+    if (failed and failed.group(1) != "0") or re.search(r'\bresult="Failed', head):
+        return f"{path} 실패한 시험 있음(failed={failed.group(1) if failed else '?'})"
+    return None
+
+
+def check_mapping(path):
+    rows = [l.strip() for l in read(path).splitlines() if l.strip().startswith("|")]
+    header = next((r for r in rows if "연결 기능" in r), None)
+    if not header:
+        return f"{path} 에 '연결 기능' 열이 있는 대응표 없음"
+    cells = lambda r: [c.strip() for c in r.strip("|").split("|")]
+    col = next(i for i, c in enumerate(cells(header)) if "연결 기능" in c)
+    body = [r for r in rows[rows.index(header) + 1:] if not re.fullmatch(r"[|\s:\-]+", r)]
+    body = [r for r in body if not cells(r)[0].startswith("예)")]
+    if not body:
+        return f"{path} 대응표에 행 없음"
+    empty = [cells(r)[0] for r in body if len(cells(r)) <= col or cells(r)[col].lower() in EMPTY_CELL]
+    if empty:
+        return f"{path} 연결 기능 빈 행 {len(empty)}개: {', '.join(empty[:5])}"
+    return None
+
+
+def check_prefab_diff(path):
+    text = read(path)
+    try:
+        d = json.loads(text)
+        n = d.get("mismatches") if isinstance(d, dict) else None
+        n = len(n) if isinstance(n, list) else n
+        if n is None:
+            return f"{path} JSON 에 mismatches 필드 없음"
+        return f"{path} 프리팹 값 불일치 {n}건" if n else None
+    except json.JSONDecodeError:
+        bad = [l for l in text.splitlines() if re.match(r"\s*(MISMATCH|불일치|FAIL)\b", l, re.I)]
+        return f"{path} 프리팹 값 불일치 {len(bad)}건: {bad[0].strip()[:160]}" if bad else None
+
+
+CONTENT = {
+    "compile": check_compile,
+    "editmode": check_editmode,
+    "mapping": check_mapping,
+    "prefab-diff": check_prefab_diff,
+}
+
+FIX = {
+    "compile": "컴파일을 다시 돌려 로그를 남기고 evidence:compile=<경로> 추가",
+    "editmode": "관련 EditMode 를 돌려 결과 xml 을 남기고 evidence:editmode=<경로> 추가",
+    "mapping": "templates/card-mockup.md 의 대응표를 채우고 evidence:mapping=<경로> 추가",
+    "prefab-diff": "프리팹 값 비교를 돌려 결과를 남기고 evidence:prefab-diff=<경로> 추가",
+    "screenshot": "기능 묶음 화면을 촬영하고 evidence:screenshot=<png> 추가",
+    "recording": "기능 묶음 녹화를 남기고 evidence:recording=<mp4> 추가",
+}
+
+
+def gate(card, actor, epic):
+    if epic and card.get("issue_type") != "epic":
+        raise Fail(EXIT_STATE, f"{card['id']} 는 epic 이 아님(issue_type={card.get('issue_type')})", "--epic 없이 다시 실행")
+    if not epic and card.get("issue_type") == "epic":
+        raise Fail(EXIT_STATE, f"{card['id']} 는 epic", "board-done --epic 으로 실행")
+    assignee = card.get("assignee") or ""
+    if not epic and card.get("status") != "in_progress":
+        raise Fail(EXIT_STATE, f"{card['id']} 상태가 {card.get('status')}(집지 않음)", f"board-claim {card['id']} {actor} 뒤 작업")
+    if assignee and assignee != actor:
+        raise Fail(EXIT_ACTOR, f"{card['id']} 담당은 {assignee}, 요청 작업자는 {actor}", "담당 작업자 이름으로 실행하거나 담당자를 바꿈")
+
+    if epic:
+        kids = bd_json("children", card["id"]) or []
+        open_kids = [k["id"] for k in kids if k.get("status") != "closed"]
+        if open_kids:
+            raise Fail(EXIT_STATE, f"하위 카드 {len(open_kids)}개 안 닫힘: {', '.join(open_kids[:5])}", "하위 카드를 board-done 으로 먼저 닫음")
+        kind = "epic"
+    else:
+        kind = "mockup" if "kind:mockup" in (card.get("labels") or []) else "task"
+
+    since = parse_time(card.get("started_at") or card["created_at"])
+    found = collect_evidence(card)
+    checks = []
+    for need in REQUIRED[kind]:
+        # 같은 종류는 마지막 줄만 봄. 틀린 증거를 지우지 않고 새 줄로 바로잡게 함
+        paths = found.get(need, [])[-1:]
+        if not paths:
+            checks.append({"kind": need, "ok": False, "code": EXIT_MISSING, "cause": f"evidence:{need} 줄 없음", "fix": FIX[need]})
+            continue
+        for p in paths:
+            err = check_file(p, since)
+            code = EXIT_MISSING if err else EXIT_INVALID
+            if not err and need in CONTENT:
+                err = CONTENT[need](p)
+            checks.append({"kind": need, "path": p, "ok": not err, **({"code": code, "cause": err, "fix": FIX[need]} if err else {})})
+    return kind, checks
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        prog="board-done",
+        description="작업판 카드 완료 게이트. 증거 검사를 통과해야만 BD_ACTOR=<작업자> 로 bd close 함.",
+        epilog=USAGE_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    ap.add_argument("card_id", help="카드 id")
+    ap.add_argument("actor", help="카드를 집은 작업자 이름(BD_ACTOR 로 씀)")
+    ap.add_argument("--epic", action="store_true", help="기능 묶음(epic) 완료. 하위 카드 전부 닫힘 + 화면 촬영·녹화 요구")
+    ap.add_argument("--dry-run", action="store_true", help="검사만 하고 닫지 않음")
+    ap.add_argument("--json", action="store_true", help="결과를 JSON 한 개로 stdout 에 출력")
+    try:
+        a = ap.parse_args()
+    except SystemExit as e:
+        sys.exit(EXIT_OK if e.code == 0 else EXIT_USAGE)
+
+    out = {"id": a.card_id, "actor": a.actor, "epic": a.epic, "dry_run": a.dry_run}
+    board = os.environ.get("BOARD_DIR", os.path.expanduser("~/orca/board"))
+    try:
+        if not shutil.which("bd"):
+            raise Fail(EXIT_ENV, "bd 명령 없음", "brew install beads 또는 PATH 확인")
+        if not os.path.isdir(board):
+            raise Fail(EXIT_ENV, f"작업판 폴더 {board} 없음", "BOARD_DIR=<작업판 경로> board-done <id> <작업자>")
+        os.chdir(board)
+        card = load_card(a.card_id)
+        if card.get("status") == "closed":
+            out.update(ok=True, closed=False, already=True, exit=EXIT_OK)
+            print(json.dumps(out, ensure_ascii=False) if a.json else f"이미 닫힘: {a.card_id}")
+            sys.exit(EXIT_OK)
+        kind, checks = gate(card, a.actor, a.epic)
+        out.update(kind=kind, checks=checks)
+        bad = [c for c in checks if not c["ok"]]
+        if bad:
+            code = min(c["code"] for c in bad)
+            raise Fail(code, "; ".join(c["cause"] for c in bad), " / ".join(dict.fromkeys(c["fix"] for c in bad)))
+        if not a.dry_run:
+            reason = "board-done: " + ", ".join(f"{c['kind']}={c['path']}" for c in checks)
+            r = bd("close", a.card_id, "--reason", reason, "--json", actor=a.actor)
+            if r.returncode != 0 or "cannot close" in (r.stdout + r.stderr):
+                raise Fail(EXIT_CLOSE, f"bd close 실패: {(r.stderr or r.stdout).strip()[:300]}", "메시지 원인 해소 뒤 다시 실행")
+        out.update(ok=True, closed=not a.dry_run, exit=EXIT_OK)
+    except Fail as f:
+        out.update(ok=False, closed=False, exit=f.code, cause=f.cause, fix=f.fix)
+
+    if a.json:
+        print(json.dumps(out, ensure_ascii=False))
+    elif out["ok"]:
+        print(f"{'검사 통과(닫지 않음)' if a.dry_run else '닫음'}: {a.card_id} ({out['kind']}) → {a.actor}")
+    else:
+        for c in out.get("checks", []):
+            print(f"  {'통과' if c['ok'] else '불합격'} {c['kind']} {c.get('path', '')}", file=sys.stderr)
+        print(f"거부: {out['cause']}\n조치: {out['fix']}", file=sys.stderr)
+    sys.exit(out["exit"])
+
+
+if __name__ == "__main__":
+    main()
