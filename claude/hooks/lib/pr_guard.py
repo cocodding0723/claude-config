@@ -122,6 +122,8 @@ def resolve_pr(arg, repo, here):
     if m:
         return m.group(1), m.group(2)
     if re.fullmatch(r"#?\d+", arg or ""):
+        if not repo and not os.environ.get("GH_REPO") and here is None:
+            raise Unknown("cd 경로에 변수·치환 — 저장소를 알 수 없음(-R 로 지정)")
         repo = repo or os.environ.get("GH_REPO", "") or origin_repo(here)
         if not re.fullmatch(r"[\w.\-]+/[\w.\-]+", repo):  # HOST/OWNER/REPO 형태도 해석 불가로 둠
             raise Unknown("저장소를 알 수 없음(-R 로 지정)")
@@ -199,10 +201,8 @@ def check_cmd(cmd, here, depth=0):
     for toks in pt.segments(pt.drop_heredoc(cmd)):
         if toks and toks[0] == "cd":
             args = [t for t in toks[1:] if t not in ("-P", "-L", "--")]
-            r = pt.resolve(here, args[0]) if args else HOME
-            if r is None:
-                raise Unknown("cd 경로에 변수·치환 — 저장소를 알 수 없음")
-            here = r
+            # 경로를 못 풀어도 여기서 ask 하지 않음. gh 조각이 저장소를 필요로 할 때만 판정 불가(here=None)
+            here = pt.resolve(here, args[0]) if args else HOME
             continue
         res = check_segment(toks, here, depth)
         if res:

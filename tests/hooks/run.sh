@@ -239,6 +239,14 @@ exp "pr-draft: cd 로 옮긴 저장소 기준으로 판정" $PD "cd $PR && gh pr
 chmod 000 "$HUB/slack-inbox.jsonl"
 exp "pr-draft: 승인 기록을 못 읽으면 ask" $PD 'gh pr ready 12' "$PR" ask
 chmod 600 "$HUB/slack-inbox.jsonl"
+# cd 경로가 변수여도 gh 조각이 없으면 판정 대상 아님 / gh 가 있으면 경로와 무관한 규칙은 그대로
+exp "pr-draft: cd 변수 뒤 worker-start 지시서의 gh 글자는 통과" $PD 'cd "$W" && orca orchestration worker-start --from t --spec "끝나면 gh pr create 하지 말 것" --agent claude' "$PR"
+exp "pr-draft: cd 변수 뒤 echo 인자의 gh 글자는 통과" $PD "cd \"\$W\" && echo 'gh pr create -t x'" "$PR"
+exp "pr-draft: cd 변수 뒤 heredoc 본문의 gh 글자는 통과" $PD $'cd "$W" && cat <<\'EOF\'\ngh pr create -t x\nEOF' "$PR"
+exp "pr-draft: cd 변수 뒤 실제 create(--draft 없음)는 거부 유지" $PD 'cd "$W" && gh pr create -t x' "$PR" deny
+exp "pr-draft: cd 변수 뒤 실제 create --draft 는 통과" $PD 'cd "$W" && gh pr create --draft -t x' "$PR"
+exp "pr-draft: cd 변수 뒤 ready 는 저장소 모르면 ask 유지" $PD 'cd "$W" && gh pr ready 12' "$PR" ask
+exp "pr-draft: cd 변수 뒤 ready -R 는 승인 기록 기준으로 판정" $PD 'cd "$W" && gh pr ready 12 -R Org/RepoB' "$PR" deny
 
 # ---- commit-msg 훅: 게임 저장소에서 AI 흔적 줄 삭제 ----
 GH_HOOKS="$HERE/../../git/hooks"
