@@ -9,6 +9,9 @@ import subprocess
 import sys
 from datetime import datetime
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
+import board_scope as bs  # noqa: E402
+
 USAGE_EPILOG = """\
 증거는 카드 notes 나 코멘트에 한 줄씩 단다:
   evidence:compile=<컴파일 로그>        error CS 줄 0
@@ -16,6 +19,12 @@ USAGE_EPILOG = """\
   evidence:mapping=<대응표 md>          시안 카드만. "연결 기능" 빈 칸 0
   evidence:prefab-diff=<비교 결과>      시안 카드만. 불일치 0
   evidence:screenshot=<png>  evidence:recording=<mp4>   --epic 만
+  evidence:review=<판정 json>          --epic 만. {"verdict":"pass","reviewer_model":..,"author_model":..} 두 모델이 달라야 함
+증거 줄 끝에 commit=<해시> 를 붙여 어느 커밋의 증거인지 묶는다. 카드 label branch:<브랜치>·repo:<저장소 경로> 가 필요하고,
+해시가 그 브랜치 끝과 같아야 하며 파일은 그 커밋 시각 이후에 만들어져야 함(낡은 증거·다른 커밋 증거 거부).
+BOARD_COMPILE_CMD 가 있으면 게이트가 repo 에서 직접 컴파일을 돌려 compile 증거를 만든다(작업자 로그 대신 씀).
+epic 이 닫히고 label feature:<slug> 가 있으면 BOARD_FEATURE_CLOSE(기본 ~/.config/lrm-hubs/feature_close.sh) --slug <slug> --yes 를
+분리 실행해 기능 코디네이터를 정리함(BOARD_FEATURE_CLOSE=off 로 끔).
 같은 종류가 여럿이면 마지막 줄(notes 다음 코멘트 순)만 봄. '<종류>=' 를 생략하면 파일 이름으로 추정함. 모든 파일은 존재·비어 있지 않음·카드 claim 이후 수정이어야 함.
 
 카드 종류: label kind:mockup → 시안 카드, 그 외 → 일반 카드.
@@ -35,7 +44,7 @@ EXIT_OK, EXIT_USAGE, EXIT_ENV, EXIT_STATE, EXIT_ACTOR, EXIT_MISSING, EXIT_INVALI
 REQUIRED = {
     "task": ["compile", "editmode"],
     "mockup": ["compile", "editmode", "mapping", "prefab-diff"],
-    "epic": ["screenshot", "recording"],
+    "epic": ["screenshot", "recording", "review"],
 }
 
 GUESS = [
@@ -48,7 +57,7 @@ GUESS = [
 ]
 
 EMPTY_CELL = {"", "-", "—", "미정", "todo", "tbd", "?"}
-EVIDENCE_RE = re.compile(r"^\s*evidence:\s*(?:([a-z-]+)=)?(\S.*?)\s*$", re.M)
+EVIDENCE_RE = re.compile(r"^\s*evidence:\s*(?:([a-z-]+)=)?(\S.*?)(?:\s+commit=([0-9a-f]{7,40}))?\s*$", re.M)
 
 
 class Fail(Exception):
@@ -91,11 +100,54 @@ def collect_evidence(card):
         texts.append(c.get("text") or "")
     found = {}
     for t in texts:
-        for kind, path in EVIDENCE_RE.findall(t):
+        for kind, path, sha in EVIDENCE_RE.findall(t):
             if not kind:
                 kind = next((k for k, rx in GUESS if rx.search(path)), "unknown")
-            found.setdefault(kind, []).append(os.path.expanduser(path))
+            found.setdefault(kind, []).append((os.path.expanduser(path), sha))
     return found
+
+
+def git(repo, *args):
+    r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def branch_head(card):
+    """(repo, 브랜치, 끝 해시, 커밋 시각). label 이 없거나 브랜치를 못 읽으면 Fail"""
+    repo, branch = os.path.expanduser(bs.label(card, "repo")), bs.label(card, "branch")
+    if not repo or not branch:
+        raise Fail(EXIT_MISSING, f"{card['id']} 에 branch:·repo: label 없음(증거를 커밋에 묶을 수 없음)",
+                   f"bd label add {card['id']} branch:<브랜치> && bd label add {card['id']} repo:<저장소 경로>")
+    head = git(repo, "rev-parse", "--verify", "-q", branch + "^{commit}")
+    if not head:
+        raise Fail(EXIT_ENV, f"{repo} 에서 브랜치 {branch} 를 못 읽음", "repo:·branch: label 확인")
+    return repo, branch, head, float(git(repo, "show", "-s", "--format=%ct", head) or 0)
+
+
+def check_commit(sha, head, branch):
+    if not sha:
+        return "증거 줄에 commit=<해시> 없음"
+    if not head.startswith(sha):
+        return f"증거 커밋 {sha[:12]} 가 {branch} 끝 {head[:12]} 와 다름(낡은 증거)"
+    return None
+
+
+def gate_compile(card, repo, head):
+    """BOARD_COMPILE_CMD 를 repo 에서 실행해 증거 로그를 만든다. repo 의 HEAD 가 브랜치 끝이어야 함"""
+    cmd = os.environ.get("BOARD_COMPILE_CMD")
+    if not cmd:
+        return None
+    if git(repo, "rev-parse", "HEAD") != head:
+        raise Fail(EXIT_STATE, f"{repo} 의 HEAD 가 브랜치 끝 {head[:12]} 가 아님(게이트 컴파일 불가)", f"git -C {repo} checkout <브랜치> 뒤 다시 실행")
+    os.makedirs(".evidence", exist_ok=True)
+    log = os.path.abspath(os.path.join(".evidence", f"{card['id']}-compile-{head[:12]}.log"))
+    r = subprocess.run(cmd, shell=True, cwd=repo, capture_output=True, text=True)
+    with open(log, "w", encoding="utf-8") as f:
+        f.write(r.stdout + r.stderr + f"\n# exit {r.returncode}\n")
+    if r.returncode != 0 and not re.search(r"\berror CS\d+", r.stdout + r.stderr):
+        with open(log, "a", encoding="utf-8") as f:
+            f.write(f"error CS0000: BOARD_COMPILE_CMD 종료 {r.returncode}\n")
+    return log
 
 
 def check_file(path, since):
@@ -150,6 +202,23 @@ def check_mapping(path):
     return None
 
 
+def check_review(path):
+    try:
+        d = json.loads(read(path))
+    except json.JSONDecodeError:
+        return f"{path} 가 JSON 아님"
+    if not isinstance(d, dict):
+        return f"{path} 가 JSON 객체 아님"
+    rev, auth = (str(d.get(k) or "").strip().lower() for k in ("reviewer_model", "author_model"))
+    if not rev or not auth:
+        return f"{path} 에 reviewer_model·author_model 없음"
+    if rev == auth:
+        return f"{path} 검수 모델이 구현 모델과 같음({rev})"
+    if str(d.get("verdict", "")).lower() != "pass":
+        return f"{path} 판정 {d.get('verdict')!r}(pass 아님): {str(d.get('reasons', ''))[:160]}"
+    return None
+
+
 def check_prefab_diff(path):
     text = read(path)
     try:
@@ -169,6 +238,7 @@ CONTENT = {
     "editmode": check_editmode,
     "mapping": check_mapping,
     "prefab-diff": check_prefab_diff,
+    "review": check_review,
 }
 
 FIX = {
@@ -178,6 +248,7 @@ FIX = {
     "prefab-diff": "프리팹 값 비교를 돌려 결과를 남기고 evidence:prefab-diff=<경로> 추가",
     "screenshot": "기능 묶음 화면을 촬영하고 evidence:screenshot=<png> 추가",
     "recording": "기능 묶음 녹화를 남기고 evidence:recording=<mp4> 추가",
+    "review": "구현과 다른 모델이 판정 json 을 쓰고 evidence:review=<경로> commit=<해시> 추가",
 }
 
 
@@ -201,8 +272,13 @@ def gate(card, actor, epic):
     else:
         kind = "mockup" if "kind:mockup" in (card.get("labels") or []) else "task"
 
-    since = parse_time(card.get("started_at") or card["created_at"])
+    repo, branch, head, head_time = branch_head(card)
+    since = max(parse_time(card.get("started_at") or card["created_at"]), head_time)
     found = collect_evidence(card)
+    if kind != "epic":
+        log = gate_compile(card, repo, head)
+        if log:
+            found.setdefault("compile", []).append((log, head))
     checks = []
     for need in REQUIRED[kind]:
         # 같은 종류는 마지막 줄만 봄. 틀린 증거를 지우지 않고 새 줄로 바로잡게 함
@@ -210,13 +286,32 @@ def gate(card, actor, epic):
         if not paths:
             checks.append({"kind": need, "ok": False, "code": EXIT_MISSING, "cause": f"evidence:{need} 줄 없음", "fix": FIX[need]})
             continue
-        for p in paths:
-            err = check_file(p, since)
+        for p, sha in paths:
+            err = check_commit(sha, head, branch)
+            if err:
+                err = f"{need}: {err}"
+            else:
+                err = check_file(p, since)
             code = EXIT_MISSING if err else EXIT_INVALID
             if not err and need in CONTENT:
                 err = CONTENT[need](p)
             checks.append({"kind": need, "path": p, "ok": not err, **({"code": code, "cause": err, "fix": FIX[need]} if err else {})})
     return kind, checks
+
+
+def spawn_feature_close(card):
+    """epic 완료 뒤 기능 코디네이터 정리를 분리 실행. 코디네이터 터미널이 닫혀도 끝까지 돌게 새 세션으로 띄움"""
+    slug = bs.label(card, "feature")
+    script = os.environ.get("BOARD_FEATURE_CLOSE", os.path.expanduser("~/.config/lrm-hubs/feature_close.sh"))
+    if not slug or script == "off":
+        return "건너뜀"
+    if not os.path.isfile(script):
+        return f"건너뜀: {script} 없음"
+    log = os.path.abspath(os.path.join(".evidence", f"{card['id']}-feature-close.log"))
+    os.makedirs(".evidence", exist_ok=True)
+    with open(log, "a") as f:
+        subprocess.Popen(["bash", script, "--slug", slug, "--yes"], stdout=f, stderr=f, stdin=subprocess.DEVNULL, start_new_session=True)
+    return f"실행: {script} --slug {slug} --yes (로그 {log})"
 
 
 def main():
@@ -261,6 +356,8 @@ def main():
             if r.returncode != 0 or "cannot close" in (r.stdout + r.stderr):
                 raise Fail(EXIT_CLOSE, f"bd close 실패: {(r.stderr or r.stdout).strip()[:300]}", "메시지 원인 해소 뒤 다시 실행")
         out.update(ok=True, closed=not a.dry_run, exit=EXIT_OK)
+        if a.epic and not a.dry_run:
+            out["feature_close"] = spawn_feature_close(card)
     except Fail as f:
         out.update(ok=False, closed=False, exit=f.code, cause=f.cause, fix=f.fix)
 

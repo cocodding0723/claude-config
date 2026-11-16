@@ -12,9 +12,13 @@ export BOARD_DIR="$SB/board" BD_LAST_TOUCHED_FALLBACK=0
 mkdir -p "$BOARD_DIR" "$SB/ev" && cd "$BOARD_DIR" && git init -q && bd init --quiet >/dev/null 2>&1 \
   || { echo "bd init 실패"; exit 1; }
 
-new_card() { bd create "$1" ${2:+--labels "$2"} --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'; }
+# 작업자 브랜치 w 가 있는 임시 저장소. 증거 줄은 commit=<w 끝> 로 묶음
+GR="$SB/repo"; git init -q -b main "$GR" && git -C "$GR" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git -C "$GR" branch w
+HEAD_W=$(git -C "$GR" rev-parse w); sleep 1
+BL="branch:w,repo:$GR"
+new_card() { bd create "$1" --labels "${2:+$2,}$BL" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'; }
 claim() { BD_ACTOR="$2" bd update "$1" --claim --json >/dev/null; sleep 1; }
-ev() { bd comments add "$1" "evidence:$2" >/dev/null; }
+ev() { bd comments add "$1" "evidence:$2 commit=$HEAD_W" >/dev/null; }
 status() { bd show "$1" --json | python3 -c 'import json,sys;d=json.load(sys.stdin);print((d[0] if isinstance(d,list) else d)["status"])'; }
 # expect <이름> <기대 종료 코드> <명령...>
 expect() {
@@ -51,7 +55,7 @@ expect "EditMode 실패 거부" 7 "$BIN" "$t3" w1
 
 t4=$(new_card "일반4"); claim "$t4" w1
 good_compile "$SB/ev/compile4.log"; ev "$t4" "$SB/ev/compile4.log"
-good_xml "$SB/ev/editmode4.xml"; bd update "$t4" --notes "evidence:$SB/ev/editmode4.xml" >/dev/null
+good_xml "$SB/ev/editmode4.xml"; bd update "$t4" --notes "evidence:$SB/ev/editmode4.xml commit=$HEAD_W" >/dev/null
 expect "dry-run 통과" 0 "$BIN" "$t4" w1 --dry-run
 [ "$(status "$t4")" = in_progress ] && ok "dry-run 은 닫지 않음" || ko "dry-run 은 닫지 않음"
 "$BIN" "$t4" w1 --json > "$SB/j" 2>/dev/null
@@ -77,15 +81,50 @@ printf '{"mismatches":0}\n' > "$SB/ev/pd.json"
 expect "시안 카드 닫힘" 0 "$BIN" "$m" w1
 
 # epic
-e=$(bd create "묶음" -t epic --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
-k=$(bd create "하위" --parent "$e" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+e=$(bd create "묶음" -t epic --labels "$BL" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+k=$(bd create "하위" --parent "$e" --labels "$BL" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
 expect "epic 을 --epic 없이 거부" 4 "$BIN" "$e" lead
 expect "하위 카드 열림 거부" 4 "$BIN" --epic "$e" lead
 claim "$k" w1; good_compile "$SB/ev/kc.log"; ev "$k" "compile=$SB/ev/kc.log"; good_xml "$SB/ev/kx.xml"; ev "$k" "editmode=$SB/ev/kx.xml"
 "$BIN" "$k" w1 >/dev/null 2>&1
 expect "촬영·녹화 없음 거부" 6 "$BIN" --epic "$e" lead
 printf 'png' > "$SB/ev/s.png"; printf 'mp4' > "$SB/ev/r.mp4"; ev "$e" "$SB/ev/s.png"; ev "$e" "$SB/ev/r.mp4"
+expect "검수 판정 없음 거부" 6 "$BIN" --epic "$e" lead
+printf '{"verdict":"pass","reviewer_model":"gpt-6-astra","author_model":"GPT-6-astra"}' > "$SB/ev/rv.json"; ev "$e" "review=$SB/ev/rv.json"
+expect "검수 모델 = 구현 모델 거부" 7 "$BIN" --epic "$e" lead
+printf '{"verdict":"fail","reviewer_model":"claude-fable-5","author_model":"gpt-6-astra","reasons":"버튼 미연결"}' > "$SB/ev/rv.json"
+expect "검수 불합격 판정 거부" 7 "$BIN" --epic "$e" lead
+printf '{"verdict":"pass","reviewer_model":"claude-fable-5","author_model":"gpt-6-astra"}' > "$SB/ev/rv.json"
 expect "epic 닫힘" 0 "$BIN" --epic "$e" lead
+
+# 커밋 묶기
+g=$(new_card "커밋"); claim "$g" w1
+good_compile "$SB/ev/g.log"; good_xml "$SB/ev/g.xml"
+bd comments add "$g" "evidence:compile=$SB/ev/g.log" >/dev/null; ev "$g" "editmode=$SB/ev/g.xml"
+expect "commit= 없는 증거 거부" 6 "$BIN" "$g" w1
+git -C "$GR" -c user.name=t -c user.email=t@t commit -q --allow-empty -m next; git -C "$GR" branch -f w HEAD
+ev "$g" "compile=$SB/ev/g.log"
+expect "브랜치가 앞으로 가면 이전 커밋 증거 거부" 6 "$BIN" "$g" w1
+git -C "$GR" branch -f w "$HEAD_W"
+h=$(bd create "label 없음" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'); claim "$h" w1
+expect "branch:·repo: label 없으면 거부" 6 "$BIN" "$h" w1
+
+# 게이트가 직접 컴파일
+git -C "$GR" checkout -q w
+gc=$(new_card "게이트 컴파일"); claim "$gc" w1
+good_compile "$SB/ev/gc.log"; ev "$gc" "compile=$SB/ev/gc.log"; good_xml "$SB/ev/gc.xml"; ev "$gc" "editmode=$SB/ev/gc.xml"
+expect "게이트 컴파일 오류면 작업자 로그가 깨끗해도 거부" 7 env BOARD_COMPILE_CMD='echo "A.cs(1,1): error CS0103: x"' "$BIN" "$gc" w1 --dry-run
+expect "게이트 컴파일 명령 실패도 거부" 7 env BOARD_COMPILE_CMD='exit 9' "$BIN" "$gc" w1 --dry-run
+expect "게이트 컴파일 통과" 0 env BOARD_COMPILE_CMD='echo Compilation succeeded' "$BIN" "$gc" w1 --dry-run
+ls "$BOARD_DIR"/.evidence/"$gc"-compile-*.log >/dev/null 2>&1 && ok "게이트 컴파일 로그를 작업판에 남김" || ko "게이트 컴파일 로그"
+
+# epic 닫히면 기능 코디네이터 정리 실행
+printf '#!/bin/bash\necho "$@" > "%s/fc.args"\n' "$SB" > "$SB/fc.sh"
+fe=$(bd create "기능 묶음" -t epic --labels "feature:demo,$BL" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+sleep 1; printf 'png' > "$SB/ev/s2.png"; printf 'mp4' > "$SB/ev/r2.mp4"; cp "$SB/ev/rv.json" "$SB/ev/rv2.json"; ev "$fe" "$SB/ev/s2.png"; ev "$fe" "$SB/ev/r2.mp4"; ev "$fe" "review=$SB/ev/rv2.json"
+expect "feature: epic 닫힘" 0 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epic "$fe" lead
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$SB/fc.args" ] && break; sleep 0.3; done
+[ "$(cat "$SB/fc.args" 2>/dev/null)" = "--slug demo --yes" ] && ok "epic 닫힘 뒤 feature_close --slug --yes 실행" || ko "feature_close 연결" "$(cat "$SB/fc.args" 2>/dev/null)"
 
 expect "인자 부족은 2" 2 "$BIN" onlyid
 expect "--help 는 0" 0 "$BIN" --help
