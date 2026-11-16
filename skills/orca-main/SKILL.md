@@ -45,6 +45,21 @@ description: Orca 메인 코디네이터를 운영한다 — 허브 순찰, 허�
 
 옆 패널의 허브 상태·결정 대기·최근 기록·PR 수는 수집기(launchd `ai.lrm.panelcollect`)가 90초마다 `panel-auto.json` 에 쓴다. 메인은 `PANEL_JSON` 의 손 칸(`headline`·`approvals`·`todos`·`history`)만, 결정 카드를 보내거나 답을 받을 때 고친다. `panel-auto.json` 은 쓰지 않는다. 패널 맨 위 ⚠️ 는 수집기가 멈췄다는 뜻이다(`$HUB_SCRIPTS/docs/panel.md`).
 
+## 2-1. 계획 승인 기록
+
+메인 세션은 `ORCA_ROLE=main` 으로 시작한다(예: `ORCA_ROLE=main claude`). 아니면 기록 쓰기를 훅이 거부한다.
+사용자가 Slack 에서 계획서를 컨펌하면 `~/.config/lrm-hubs/plan-approvals/<plan-id>.json` 을 쓴다.
+
+```json
+{"plan_id":"<파일 이름과 같게>","approved_at":"2026-11-16T23:00:00+09:00",
+ "approver_quote":"<사용자 답 원문 일부, 그대로>","source":{"slack_ts":"<그 답의 ts>"},
+ "tickets":[{"summary":"…"}],"prs":[{"repo":"Org/Repo","branch":"feat/…"}],"jira_transitions":[{"key":"LRM-1","to":"진행 중"}]}
+```
+
+- 인용문은 `slack-inbox.jsonl` 의 그 ts 답 본문에 그대로 들어 있어야 한다. 이모지 반응은 답으로 치지 않는다.
+- 7일 지나면 무효다. 계획에 없는 항목은 계획서에 더한 뒤 다시 컨펌받는다.
+- ready 전환·dev/main 병합·라이브는 이 기록으로 허용되지 않는다.
+
 ## 3. 허브 관리
 
 - 새 허브: `orca-hub-create` 스킬. 맞는 허브가 없으면 워커를 메인에서 띄우지 않고 허브부터.
