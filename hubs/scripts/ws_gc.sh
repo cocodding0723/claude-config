@@ -41,6 +41,7 @@ CFG_LOG_MAX_BYTES=2097152                                # 로그가 이 크기�
 CFG_MAX_PAGES=50                                         # worker-list 쪽 수 상한
 CFG_NOTIFY="${WS_GC_NOTIFY:-$HOME/.config/lrm-hubs/slack_notify.sh}"
 CFG_SLACK_TAG="ws-gc"
+CFG_PLACE_LOCK_WAIT=900                                  # 같은 곳을 다른 실행이 처리 중일 때 기다리는 최대 초(넘으면 건너뜀)
 # ───────────────────────────────────────────────────────────────────────────────────────────
 
 usage() {
@@ -80,6 +81,7 @@ usage() {
   --quiet          화면 출력 생략(로그 파일에만 기록. launchd 용)
   --json           화면에는 요약 JSON 만 출력(상세는 stderr·로그)
   --root·--archive-dir·--log  위치 덮어쓰기(WS_GC_ROOT·WS_GC_ARCHIVE·WS_GC_LOG). 색인 폴더는 WS_GC_INBOX
+잠금: 전체 점검은 하나만 실행. 곳마다 따로 잠가 --path·--parent 는 전체 실행 도중에도 대기 없이 진행(같은 곳이면 끝나길 기다림).
 로그: 기본 ~/orca/archive/ws_gc.log (한 줄에 시각·모드·판정·이유·경로). 반복 실행해도 안전함(이미 지운 곳은 대상이 아님).
 Slack: 끝에 progress 요약 1줄(slack_notify.sh --kind progress). 후보·삭제가 없으면 보내지 않음.
 종료 코드: 0 정상(건너뜀 포함), 1 삭제 단계 실패 있음, 2 인자 오류, 3 환경 오류(orca·gh·jq 없음, orca 응답 없음 → 판정 불가라 아무것도 안 지움)
@@ -120,9 +122,11 @@ MODE=$([ "$APPLY" = 1 ] && echo APPLY || echo DRY)
 mkdir -p "$CFG_ARCHIVE" || die "보관 폴더 생성 실패: $CFG_ARCHIVE — 권한 확인" 3
 mkdir -p "$(dirname "$CFG_LOG")" || die "로그 폴더 생성 실패: $CFG_LOG" 3
 
-# 동시 실행 방지(launchd 회차·release_ws 가 겹칠 때). 파일 잠금(flock)을 쥔 채 자기 자신을 다시 실행함.
+# 전체 점검(·--only)끼리의 동시 실행 방지(launchd 회차가 겹칠 때). 파일 잠금(flock)을 쥔 채 자기 자신을 다시 실행함.
+# 이 잠금은 "전체 실행 1개"만 보장함. 삭제 안전은 곳마다 잡는 place_lock 이 맡으므로 --path·--parent(release_ws·create_worker_ws)는 이 잠금을 쓰지 않고
+# 전체 실행 도중에 끼어듦(11-16 전체 실행이 잠금을 1시간 쥐어 release_ws 가 막힌 건)
 # 잠금은 프로세스가 죽으면 커널이 풀어 stale 판정·잠금 탈취가 없고, 잠금 파일은 지우지 않음(지우면 두 실행이 서로 다른 파일을 잠금)
-if [ -z "${WS_GC_LOCKED:-}" ]; then
+if [ -z "${WS_GC_LOCKED:-}" ] && [ -z "$ONLYPATH$PARENT" ]; then
   export WS_GC_LOCKED=1
   exec "$PY" -c 'import fcntl, os, sys
 fd = os.open(sys.argv[1], os.O_CREAT | os.O_RDWR, 0o644)
@@ -136,7 +140,7 @@ os.execv("/bin/bash", ["bash"] + sys.argv[2:])' "$CFG_ARCHIVE/.ws_gc.flock" "$0"
 fi
 [ -f "$CFG_LOG" ] && [ "$(wc -c < "$CFG_LOG")" -gt "$CFG_LOG_MAX_BYTES" ] && mv -f "$CFG_LOG" "$CFG_LOG.1"
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/ws_gc.XXXXXX") || die "임시 폴더 생성 실패" 3
-trap 'rm -rf "${TMP:?}"' EXIT
+trap 'place_unlock; rm -rf "${TMP:?}"' EXIT
 
 NOW=$(date +%s)
 log() { # log 판정 메시지
@@ -171,6 +175,40 @@ echo "$WL" | jq -r --arg root "$CFG_ROOT/" '
   | select((.isMainWorktree | not) and (.path | startswith($root)))
   | [.path, (.lastActivityAt // 0), ((.childWorktreeIds // []) | map(select(. as $c | $ids | index($c))) | length), ($par[.id] // "")] | @tsv' > "$TMP/rows.tsv"
 echo "$WL" | jq -r '.result.worktrees[].path' | sort -u > "$TMP/registered"
+
+# ── 곳 단위 잠금 ──────────────────────────────────────────────────────────────────────────
+# 한 곳의 판정·보관·삭제를 같은 곳의 다른 실행(전체·--path·--parent)과 겹치지 않게 함. 잠금은 곳마다 따로라 서로 다른 곳은 대기 없이 진행.
+# 잠금 보유 프로세스는 python 하나(kernel flock): 이 스크립트가 죽으면 부모가 바뀐 것을 보고 스스로 끝나 잠금이 풀림. 잠금 파일은 지우지 않음.
+# (macOS bash 3.2 는 coproc 이 없어 FIFO 로 "잡음" 신호만 받음)
+LOCK_PY='import fcntl, os, sys, time
+fd = os.open(sys.argv[1], os.O_CREAT | os.O_RDWR, 0o644)
+end = time.time() + float(sys.argv[2])
+while True:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        break
+    except OSError:
+        if time.time() >= end:
+            print("busy", flush=True); sys.exit(0)
+        time.sleep(0.2)
+print("ok", flush=True)
+ppid = os.getppid()
+while os.getppid() == ppid:
+    time.sleep(1)'
+LK_PID=""
+place_lock() { # place_lock 경로 → 0 잡음, 1 대기 시간 초과
+  local key ans=""
+  key="$(basename "$1")-$(printf '%s' "$1" | cksum | cut -d' ' -f1)"
+  mkdir -p "$CFG_ARCHIVE/.ws_gc.locks" && rm -f "$TMP/lk.out" && mkfifo "$TMP/lk.out" || return 1
+  "$PY" -c "$LOCK_PY" "$CFG_ARCHIVE/.ws_gc.locks/$key.flock" "$CFG_PLACE_LOCK_WAIT" > "$TMP/lk.out" &
+  LK_PID=$!
+  exec 9< "$TMP/lk.out"
+  read -r -u 9 ans
+  exec 9<&-
+  [ "$ans" = ok ] && return 0
+  wait "$LK_PID" 2>/dev/null; LK_PID=""; return 1
+}
+place_unlock() { [ -z "$LK_PID" ] || { kill "$LK_PID" 2>/dev/null; wait "$LK_PID" 2>/dev/null; LK_PID=""; }; }
 
 # ── 판정 ──────────────────────────────────────────────────────────────────────────────────
 REASON="" DETAIL="" PR_LABEL="" N_NOISE=0 N_LIC=0 N_OUT=0 N_TRACKED=0 N_UNVERIFIED=0
@@ -439,11 +477,8 @@ log "START root=$CFG_ROOT days=$DAYS only=${ONLY:--} path=${ONLYPATH:--} parent=
   { [ -e "$d/.git" ] && ! grep -Fxq -- "$d" "$TMP/registered"; } && { echo not_orca >> "$TMP/skips"; log "SKIP not_orca ${d#"$CFG_ROOT"/}"; }
 done
 
-while IFS=$'\t' read -r p last_ms kids parent; do
-  [ -n "$p" ] || continue
-  [ -z "$ONLY" ] || case "$p" in *"$ONLY"*) ;; *) continue ;; esac
-  [ -z "$ONLYPATH" ] || [ "$p" = "$ONLYPATH" ] || continue
-  [ -z "$PARENT" ] || [ "$parent" = "$PARENT" ] || continue
+# 한 곳의 판정·보관·삭제. 호출 쪽이 place_lock 을 잡고 부름(전역 p·parent·last_ms·kids·name 사용)
+process_place() {
   name="${p#"$CFG_ROOT"/}"
   if ! evaluate "$p" "$last_ms" "$kids"; then
     echo "$REASON" >> "$TMP/skips"; log "SKIP $REASON $name ${DETAIL:+— $DETAIL}"
@@ -454,7 +489,7 @@ while IFS=$'\t' read -r p last_ms kids parent; do
       jq -nc --arg n "$name" --argjson t "$N_TRACKED" --argjson u "$N_UNVERIFIED" --rawfile f "$TMP/keep.txt" --argjson max "$CFG_KEEP_CODE_LOG_MAX" \
         '{name:$n, tracked:$t, unverified:$u, files:($f | split("\n") | map(select(length > 0)) | .[:$max])}' >> "$TMP/keepcode.jsonl"
     fi
-    continue
+    return 0
   fi
   N_CAND=$((N_CAND + 1)); [ "$N_OUT" -gt 0 ] && N_CAND_OUT=$((N_CAND_OUT + 1))
   size_kb=$(du -sk "$p" 2>/dev/null | cut -f1); size_kb="${size_kb:-0}"; CAND_KB=$((CAND_KB + size_kb))
@@ -466,11 +501,11 @@ while IFS=$'\t' read -r p last_ms kids parent; do
   if [ "$APPLY" = 0 ]; then
     log "CANDIDATE $name $DETAIL size=$(human "$size_kb") 보관예정=[$(preview_outputs "$p")]"
     item candidate ok "$DETAIL"
-    continue
+    return 0
   fi
   dest="$CFG_ARCHIVE/$(dirname "$name")/$(basename "$name")"
   ARCHIVED_FILES=0
-  if ! archive_outputs "$p" "$dest"; then echo archive_fail >> "$TMP/skips"; N_FAIL=$((N_FAIL + 1)); log "SKIP archive_fail $name — 보관 복제·대조 실패, 삭제 안 함(디스크 여유 확인)"; echo "$name" >> "$TMP/failed.txt"; item failed archive_fail "보관 복제·대조 실패"; continue; fi
+  if ! archive_outputs "$p" "$dest"; then echo archive_fail >> "$TMP/skips"; N_FAIL=$((N_FAIL + 1)); log "SKIP archive_fail $name — 보관 복제·대조 실패, 삭제 안 함(디스크 여유 확인)"; echo "$name" >> "$TMP/failed.txt"; item failed archive_fail "보관 복제·대조 실패"; return 0; fi
   if remove_ws "$p" "$dest"; then
     N_DEL=$((N_DEL + 1)); FREED_KB=$((FREED_KB + size_kb)); [ "$N_OUT" -gt 0 ] && N_DEL_OUT=$((N_DEL_OUT + 1))
     log "DELETE $name $DETAIL size=$(human "$size_kb") 보관파일=$ARCHIVED_FILES (브랜치는 유지)"
@@ -481,13 +516,26 @@ while IFS=$'\t' read -r p last_ms kids parent; do
     echo rm_fail >> "$TMP/skips"; N_FAIL=$((N_FAIL + 1)); log "SKIP rm_fail $name — orca worktree rm 거부, 보관본은 남음"
     echo "$name" >> "$TMP/failed.txt"; item failed rm_fail "orca worktree rm 거부"
   fi
+}
+while IFS=$'\t' read -r p last_ms kids parent; do
+  [ -n "$p" ] || continue
+  [ -z "$ONLY" ] || case "$p" in *"$ONLY"*) ;; *) continue ;; esac
+  [ -z "$ONLYPATH" ] || [ "$p" = "$ONLYPATH" ] || continue
+  [ -z "$PARENT" ] || [ "$parent" = "$PARENT" ] || continue
+  name="${p#"$CFG_ROOT"/}"
+  # 곳마다 잠그고 풀어 --path 가 전체 실행 사이에 끼어들 수 있게 함. 잠금 안에서 판정하므로 다른 실행이 먼저 지운 곳은 missing 으로 건너뜀
+  if ! place_lock "$p"; then
+    echo lock_busy >> "$TMP/skips"; log "SKIP lock_busy $name — 같은 곳을 다른 실행이 ${CFG_PLACE_LOCK_WAIT}초 넘게 처리 중"; item skip lock_busy "다른 실행이 처리 중"; continue
+  fi
+  process_place
+  place_unlock
 done < "$TMP/rows.tsv"
 
 # ── 요약 ──────────────────────────────────────────────────────────────────────────────────
 label() { case "$1" in
   hub) echo 허브 ;; current) echo 현재작업 ;; children) echo 하위있음 ;; live) echo 터미널·워커 ;; idle) echo 최근활동 ;; dirty) echo 미커밋 ;;
   pr_open) echo PR열림 ;; unmerged) echo 미병합 ;; gh_fail) echo PR조회실패 ;; protected) echo 보호브랜치 ;; submodule) echo 서브모듈 ;;
-  not_orca) echo 미등록 ;; missing) echo 폴더없음 ;; archive_fail) echo 보관실패 ;; rm_fail) echo 삭제실패 ;; *) echo "$1" ;; esac; }
+  not_orca) echo 미등록 ;; missing) echo 폴더없음 ;; archive_fail) echo 보관실패 ;; lock_busy) echo 잠금대기 ;; rm_fail) echo 삭제실패 ;; *) echo "$1" ;; esac; }
 SKIP_TXT=$(sort "$TMP/skips" | uniq -c | while read -r n r; do printf '%s %s·' "$(label "$r")" "$n"; done | sed 's/·$//')
 N_SKIP=$(wc -l < "$TMP/skips" | tr -d ' ')
 N_KEEP_CODE=$(wc -l < "$TMP/keepcode.jsonl" | tr -d ' ')

@@ -125,7 +125,7 @@ gc
 chk "dry-run 종료 0" '[ "$RC" = 0 ]' "rc=$RC"
 chk "dry-run: 폴더 목록 불변" '[ "$(cd "$ROOT" && find . -mindepth 2 -maxdepth 2 -type d | sort)" = "$dirs_before" ]'
 chk "dry-run: orca worktree rm 호출 0" '[ "$(rm_calls)" = 0 ]' "calls=$(rm_calls)"
-chk "dry-run: 보관 폴더에 결과물 없음" '[ -z "$(find "$ARC" -type f ! -name ws_gc.log ! -name .ws_gc.flock | head -1)" ]'
+chk "dry-run: 보관 폴더에 결과물 없음" '[ -z "$(find "$ARC" -type f ! -name ws_gc.log ! -name "*.flock" | head -1)" ]'
 for n in $CAND; do chk "dry-run 후보: $n" 'has "CANDIDATE repoA/$n "'; done
 for e in $SKIPS; do n="${e%%:*}" r="${e##*:}"; chk "dry-run 건너뜀: $n ($r)" 'has "SKIP $r .*$n"'; done
 chk "dry-run: 메인 체크아웃은 평가 대상 아님" '! has "repoA/mainco"'
@@ -428,6 +428,28 @@ chk "[5] 동시 실행 4개: 하나만 실행" '[ "$(grep -c "START" "$SB/par/lo
 gc --only nothing_matches; chk "[5] 끝난 뒤 다시 실행 가능(잠금이 남지 않음)" '[ "$RC" = 0 ] && has "START"'
 chk "[5] 잠금은 pid 파일·잠금 폴더가 아님" '[ ! -d "$ARC/.ws_gc.lock" ] && [ -f "$ARC/.ws_gc.flock" ]'
 
+# ---- 9. 곳 단위 잠금·Flutter 생성물·보관 대조(11-16) ----
+lock_env() { env PATH="$BIN:$PATH" FAKE_DIR="$FAKE" FAKE_ROOT="$ROOT" WS_GC_NOTIFY="$HERE/fake_send.sh" "$@"; }
+excl() { printf '%s\n' "$2" >> "$W/$1/.git/info/exclude"; }
+for n in zlk_a zlk_b zlk_c zlk2_a zlk2_b; do mk "$n" "feat/$n"; pr "feat/$n" '[{"number":80,"state":"MERGED"}]'; done
+regen
+# [L1] 전체 실행 도중 --path 는 기다리지 않고 진행(전체 실행이 잠금을 오래 쥐지 않음), 먼저 지운 곳은 전체 실행이 건너뜀(중복 삭제 없음)
+: > "$FAKE/orca.calls"
+(FAKE_GH_SLEEP=3 lock_env bash "$GC" --root "$ROOT" --archive-dir "$ARC" --log "$SB/lk.log" --apply --no-slack --only zlk_ > "$SB/lk.out" 2>&1 &)
+sleep 1.5; T0=$(date +%s)
+lock_env bash "$GC" --root "$ROOT" --archive-dir "$ARC" --log "$SB/lk2.log" --apply --no-slack --path "$W/zlk_c" > "$SB/lk2.out" 2>&1; RC2=$?; T1=$(date +%s)
+chk "[L1] 전체 실행 도중 --path: 대기 없이 그 곳 삭제" '[ "$RC2" = 0 ] && [ $((T1 - T0)) -le 2 ] && [ ! -e "$W/zlk_c" ] && ! grep -q "이미 실행 중" "$SB/lk2.out" && grep -q "DELETE repoA/zlk_c" "$SB/lk2.log"' "rc=$RC2 초=$((T1 - T0)) $(tail -2 "$SB/lk2.log")"
+for _ in $(seq 60); do pgrep -f "log $SB/lk.log" > /dev/null || break; sleep 0.5; done
+chk "[L1] 전체 실행은 나머지를 삭제하고 먼저 지워진 곳은 missing 으로 건너뜀" '[ ! -e "$W/zlk_a" ] && [ ! -e "$W/zlk_b" ] && grep -q "SKIP missing repoA/zlk_c" "$SB/lk.log" && [ "$(grep -c "worktree rm --worktree path:$W/zlk_c" "$FAKE/orca.calls")" = 1 ]' "$(tail -4 "$SB/lk.log")"
+chk "[L1] 곳별 잠금 파일은 남고 전체 실행 잠금과 별개" '[ -d "$ARC/.ws_gc.locks" ] && [ -n "$(ls "$ARC/.ws_gc.locks")" ]'
+# [L2] 같은 곳을 전체 실행이 처리 중이면 --path 가 그 곳만 기다렸다 이어받음(두 번 지우지 않음)
+: > "$FAKE/orca.calls"
+(FAKE_GH_SLEEP=3 lock_env bash "$GC" --root "$ROOT" --archive-dir "$ARC" --log "$SB/lk3.log" --apply --no-slack --only zlk2_ > "$SB/lk3.out" 2>&1 &)
+sleep 1.5
+lock_env bash "$GC" --root "$ROOT" --archive-dir "$ARC" --log "$SB/lk4.log" --apply --no-slack --path "$W/zlk2_a" > "$SB/lk4.out" 2>&1
+for _ in $(seq 60); do pgrep -f "log $SB/lk3.log" > /dev/null || break; sleep 0.5; done
+chk "[L2] 같은 곳 동시 처리: 삭제 1번, 나중 실행은 missing" '[ ! -e "$W/zlk2_a" ] && [ "$(grep -c "worktree rm --worktree path:$W/zlk2_a" "$FAKE/orca.calls")" = 1 ] && [ "$(grep -c "DELETE repoA/zlk2_a" "$SB/lk3.log" "$SB/lk4.log" | awk -F: "{s+=\$2} END{print s}")" = 1 ]' "$(tail -3 "$SB/lk4.log")"
+# [L3] 전체 실행끼리는 여전히 하나만(위 [5]) — --path 는 전체 실행 잠금을 안 씀
 bash "$HERE/adopt.sh" || FAIL=$((FAIL + 1))
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]

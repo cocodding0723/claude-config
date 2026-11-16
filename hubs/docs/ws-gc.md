@@ -166,7 +166,7 @@ bash tests/ws_gc/mutate.sh   # 결함을 심은 사본에서 시험이 실패하
 - 색인: `~/.config/lrm-hubs/hub-inbox/<허브 slug>.tsv` 에 `시각 · 작업 공간 · 보관 경로 · 파일 수` 를 탭으로 한 줄 추가한다(`WS_GC_INBOX`). 허브 slug 는 부모 폴더 `coord-<slug>-hub` 에서 뗀다. 부모가 없으면 `_none.tsv`. 보관한 파일이 있을 때만 쓰고, 삭제가 성공한 뒤에 쓴다.
 - 서브모듈·LICENSE 줄바꿈 규칙은 그대로다.
 - HEAD 검사: PR 상태와 별개로 현재 HEAD 가 원격 ref 에 있어야 한다. 없으면 `unmerged` 로 보존한다. 단 HEAD 가 병합된 PR 의 마지막 커밋(`headRefOid`)과 같으면 원격 브랜치가 지워진 경우라 허용한다.
-- 동시 실행 방지: 파일 잠금(`~/orca/archive/.ws_gc.flock`)을 쥔 채 자기 자신을 다시 실행한다. 프로세스가 죽으면 커널이 잠금을 풀어, 죽은 pid 판정·잠금 탈취가 없다. 이미 돌고 있으면 "이미 실행 중" 으로 끝난다.
+- 동시 실행 방지: 전체 점검(`--only` 포함)끼리는 파일 잠금(`~/orca/archive/.ws_gc.flock`)을 쥔 채 자기 자신을 다시 실행해 하나만 돈다. 이미 돌고 있으면 "이미 실행 중" 으로 끝난다. 곳 단위 삭제 안전은 곳마다 따로 잡는 잠금(`~/orca/archive/.ws_gc.locks/<폴더>-<해시>.flock`)이 맡는다: 판정·보관·삭제 한 곳 동안만 쥐고 놓으므로 `--path`(release_ws)·`--parent`(create_worker_ws)는 전체 실행 사이에 대기 없이 끼어들고, 같은 곳을 동시에 처리하면 나중 실행이 기다렸다가 `missing` 으로 건너뛴다(최대 900초, 넘으면 `lock_busy`). 잠금은 프로세스가 죽으면 커널이 풀어, 죽은 pid 판정·잠금 탈취가 없다.
 
 ### 반납 = 삭제: `release_ws.sh`
 
