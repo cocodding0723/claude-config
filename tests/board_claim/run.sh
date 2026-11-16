@@ -24,6 +24,24 @@ expect "~ 표기 집음" 0 "$BIN" "$d" w4
 expect "~ 와 \$HOME 표기 겹침 거부" 3 "$BIN" "$e" w5
 STALE_HOURS=0 "$BIN" "$e" w5 >/dev/null 2>"$SB/err"; grep -q '해제 후보' "$SB/err" && ok "갱신 없는 겹침 카드는 해제 후보 경고" || ko "해제 후보 경고" "$(cat "$SB/err")"
 expect "이미 집힌 카드를 다른 작업자가 집으면 13" 13 "$BIN" "$a" w9
+# 같은 저장소의 다른 작업 공간(worktree)·다른 clone 은 같은 파일로 봄. 다른 저장소의 같은 상대 경로는 안 겹침
+G="$SB/main"; git init -q -b dev "$G" && git -C "$G" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+git -C "$G" worktree add -q "$SB/wsA" -b wa && git -C "$G" worktree add -q "$SB/wsB" -b wb
+wa=$(new_card wa "file:Assets/UI/,repo:$SB/wsA"); wb=$(new_card wb "file:Assets/UI/Panel.cs,repo:$SB/wsB")
+expect "작업 공간 A 카드 집음" 0 "$BIN" "$wa" wA
+expect "repo: 가 다른 작업 공간이어도 같은 저장소의 같은 파일은 겹침 거부" 3 "$BIN" "$wb" wB
+wc_=$(new_card wc "file:$SB/wsB/Assets/UI/Other.cs")
+expect "다른 작업 공간의 절대 경로도 겹침 거부" 3 "$BIN" "$wc_" wC
+O="$SB/other"; git init -q -b dev "$O"; git -C "$O" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+wo=$(new_card wo "file:Assets/UI/,repo:$O")
+expect "다른 저장소의 같은 상대 경로는 안 겹침" 0 "$BIN" "$wo" wO
+git clone -q "$O" "$SB/clone1" 2>/dev/null; git clone -q "$O" "$SB/clone2" 2>/dev/null
+k1=$(new_card k1 "file:src/k/,repo:$SB/clone1"); k2=$(new_card k2 "file:src/k/x.cs,repo:$SB/clone2")
+expect "같은 원격 clone 첫째 집음" 0 "$BIN" "$k1" wK1
+expect "같은 원격 clone 두 번째는 3" 3 "$BIN" "$k2" wK2
+r=$(new_card r "file:src/rel/")
+expect "상대 경로인데 repo: 없으면 2" 2 "$BIN" "$r" w1
+
 n=$(new_card n "")
 expect "file: label 없으면 2" 2 "$BIN" "$n" w1
 expect "--help 0" 0 "$BIN" --help

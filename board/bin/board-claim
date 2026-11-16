@@ -14,7 +14,9 @@ import board_scope as bs  # noqa: E402
 
 EPILOG = """\
 file: 표기는 ~/·상대·./·끝 / 가 섞여도 같은 경로로 맞춘 뒤 '/' 경계로 비교함(file:src/a 는 src/ab 와 안 겹침).
-상대 경로는 --repo(기본: 카드 label repo:<경로>, 없으면 표기 그대로) 기준.
+겹침은 (저장소, 저장소 안 경로) 로 비교함. 저장소는 origin 주소 → 공통 git 폴더 순으로 알아내므로
+작업자마다 repo: 가 다른 작업 공간(worktree·clone)이어도 같은 저장소의 같은 파일이면 겹침.
+상대 경로는 --repo(기본: 카드 label repo:<경로>) 기준이고, 둘 다 없으면 거부(종료 2).
 겹친 카드가 STALE_HOURS(기본 2)시간 넘게 갱신이 없으면 '해제 후보' 경고를 함께 냄. 자동 해제는 하지 않음.
 
 종료 코드: 0 집음 · 2 사용법·file: label 없음 · 3 파일 겹침 · 4 환경(bd 실패) · 13 이미 다른 작업자가 집음
@@ -81,18 +83,23 @@ def main():
         if card.get("status") == "in_progress" and card.get("assignee") not in ("", None, a.actor):
             die(f"거부: {a.card} 는 이미 {card['assignee']} 가 집음", 13)
         repo = os.path.expanduser(a.repo or bs.label(card, "repo"))
-        mine = [bs.norm(p, repo) for p in bs.labels(card, "file")]
-        if not mine:
+        raw = bs.labels(card, "file")
+        if not raw:
             die(f"거부: {a.card} 에 고칠 파일 label(file:<경로>)이 없음. 조치: bd label add {a.card} file:<경로> 뒤 다시 실행", 2)
+        rel = [p for p in raw if not os.path.isabs(os.path.expanduser(p))]
+        if rel and not repo:
+            die(f"거부: {a.card} 의 상대 경로 file:{rel[0]} 의 기준 저장소를 모름. 조치: bd label add {a.card} repo:<작업 공간 경로> 또는 --repo", 2)
+        mine = [bs.locate(p, repo) for p in raw]
 
         for other in bd_json("list", "--status", "in_progress", "--limit", "0"):
             if other.get("id") == a.card:
                 continue
             orepo = os.path.expanduser(bs.label(other, "repo") or repo)
-            for op in (bs.norm(p, orepo) for p in bs.labels(other, "file")):
-                hit = next((p for p in mine if bs.overlap(p, op)), None)
+            for op in (bs.locate(p, orepo) for p in bs.labels(other, "file")):
+                hit = next((p for p in mine if bs.loc_overlap(p, op)), None)
                 if hit:
-                    msg = f"거부: {a.card} 의 {hit} 가 진행 중 카드 {other['id']} 의 {op} 와 겹침. 조치: {other['id']} 끝난 뒤 다시 집거나 파일을 나눔"
+                    msg = (f"거부: {a.card} 의 {bs.loc_text(hit)} 가 진행 중 카드 {other['id']} 의 {bs.loc_text(op)} 와 겹침. "
+                           f"조치: {other['id']} 끝난 뒤 다시 집거나 파일을 나눔")
                     h = age_hours(other)
                     if h > stale:
                         msg += f"\n경고: {other['id']} 는 {h:.1f}시간 갱신 없음 — 해제 후보. 담당({other.get('assignee') or '?'}) 확인 뒤 bd update {other['id']} --status open"

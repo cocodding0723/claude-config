@@ -54,13 +54,18 @@ def file_labels(card):
     return bs.labels(card, "file")
 
 
-def covered(path, prefixes, repo):
+def scope(card, repo):
+    """카드 file: 범위를 (저장소, 경로) 목록으로. 상대 경로 기준은 카드 repo:(없거나 반납됐으면 검사 저장소)"""
+    base = bs.card_repo(card, repo)
+    return [bs.locate(p, base) for p in file_labels(card)]
+
+
+def covered(path, pre, repo):
     # .meta 는 원본(폴더 .meta 는 폴더)이 범위 안이면 같이 통과
-    full = bs.norm(path, repo)
-    pre = [bs.norm(p, repo) for p in prefixes]
-    if any(bs.covers(p, full) for p in pre):
+    full = bs.locate(path, repo)
+    if any(bs.loc_covers(p, full) for p in pre):
         return True
-    return full.endswith(".meta") and any(bs.covers(p, full[:-5]) for p in pre)
+    return full[1].endswith(".meta") and any(bs.loc_covers(p, (full[0], full[1][:-5])) for p in pre)
 
 
 def resolve_base(card, board):
@@ -101,12 +106,13 @@ def main():
         fail(f"거부: 비교 기준 없음. 조치: --base <기능 통합 브랜치> 를 주거나 bd label add {a.card} base:<ref>")
     rng = f"{a.base}...{a.branch}"
     files = [f for f in run(["git", "diff", "--name-only", "--no-renames", rng], repo).splitlines() if f]
-    outside = [f for f in files if not covered(f, mine, repo)]
+    mine_loc = scope(card, repo)
+    outside = [f for f in files if not covered(f, mine_loc, repo)]
 
     others = []
     for c in bd_json(["list", "--status", "in_progress,closed", "--limit", "0"], board):
         if c.get("id") != a.card and file_labels(c):
-            others.append((c["id"], c.get("status", ""), file_labels(c)))
+            others.append((c["id"], c.get("status", ""), scope(c, repo)))
 
     warnings = []
     for f in files:
