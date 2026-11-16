@@ -28,6 +28,20 @@ chk "show·prompt 가 근거를 되살려 표시" 'hs show --slug ev | grep -q "
 chk "근거 형식 오류 거부: 종료 코드 2 + 기존 파일 유지" 'before=$(cat "$SB/status/ev.json"); hs write --slug ev --blocker "x [pr:746]" 2>"$SB/e"; [ $? = 2 ] && grep -q "형식 오류" "$SB/e" && [ "$before" = "$(cat "$SB/status/ev.json")" ]'
 chk "알 수 없는 근거 종류 거부" 'hs write --slug ev --blocker "x [foo:bar]" 2>"$SB/e"; [ $? = 2 ] && grep -q "미지원" "$SB/e"'
 
+# ---- 진행 줄 근거 ---------------------------------------------------------------------------
+hs write --slug tk --task "구현 [task:T0123] [pr:Basakansoft/LoveRevolutionMaker#7]" --task "근거 없는 줄" --blocker "장부 대기 [task:T0007]" >/dev/null
+chk "진행 줄 근거는 {text, refs}, 없는 줄은 문자열" 'hs show --slug tk --json | python3 -c "import json,sys;d=json.load(sys.stdin);assert d[\"tasks\"][0]=={\"text\":\"구현\",\"refs\":[{\"kind\":\"task\",\"id\":\"T0123\"},{\"kind\":\"pr\",\"id\":\"Basakansoft/LoveRevolutionMaker#7\"}]} and d[\"tasks\"][1]==\"근거 없는 줄\" and d[\"blockers\"][0][\"refs\"]==[{\"kind\":\"task\",\"id\":\"T0007\"}], d"'
+chk "show·prompt 가 진행 줄 근거를 되살려 표시" 'hs show --slug tk | grep -q "진행 작업: 구현 \[task:T0123\]" && hs prompt --slug tk | grep -q "진행 작업: 구현 \[task:T0123\]"'
+chk "진행 줄 근거 오류 거부: 종료 코드 2 + --task 안내" 'before=$(cat "$SB/status/tk.json"); hs write --slug tk --task "x [task:12]" 2>"$SB/e"; [ $? = 2 ] && grep -q -- "--task" "$SB/e" && [ "$before" = "$(cat "$SB/status/tk.json")" ]'
+printf '{"slug":"old","updatedAt":"2099-01-01T00:00:00+00:00","tasks":["옛 문자열 줄"],"blockers":[]}\n' > "$SB/status/old.json"
+chk "문자열 tasks 파일도 show·prompt 정상" 'hs show --slug old | grep -q "진행 작업: 옛 문자열 줄" && hs prompt --slug old | grep -q "진행 작업: 옛 문자열 줄"'
+
+# ---- 옛 이름 상태 파일(server.json) 읽기 호환 ----------------------------------------------
+printf '{"slug":"server","updatedAt":"2099-01-01T00:00:00+00:00","tasks":["서버 옛 줄"],"blockers":[]}\n' > "$SB/status/server.json"
+chk "slug coord-server-hub 로 옛 이름 파일 show·prompt" 'hs show --slug coord-server-hub | grep -q "진행 작업: 서버 옛 줄" && hs prompt --slug coord-server-hub | grep -q "진행 작업: 서버 옛 줄"'
+hs write --slug coord-server-hub --task "서버 새 줄" >/dev/null
+chk "새 이름으로 쓰면 새 파일이 우선, 옛 파일은 그대로" 'hs show --slug coord-server-hub | grep -q "서버 새 줄" && grep -q "서버 옛 줄" "$SB/status/server.json" && [ -f "$SB/status/coord-server-hub.json" ]'
+
 # ---- 원자적 쓰기 ----------------------------------------------------------------------------
 chk "임시 파일 잔여 없음" '[ -z "$(ls -A "$SB/status" | grep "^\.tmp-")" ]'
 chk "replace 실패 시 원본 유지·임시 파일 정리" 'python3 - "$HS" "$SB/status" <<PY

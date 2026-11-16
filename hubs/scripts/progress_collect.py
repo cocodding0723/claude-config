@@ -6,7 +6,7 @@
 원료별로 ok·err·at·tried·stale·value 를 둠(panel-auto.json 형식). 원료 하나가 실패하면 그 원료만 이전 값 + stale:true 로 두고 나머지는 그대로.
 PR(gh)은 PR_INTERVAL_S 초에 한 번만 조회하고 그 사이는 직전 값을 씀.
 
-환경: LRM_HUB_DIR 작업 폴더 · LRM_PROGRESS 스냅샷 경로 · LRM_LEDGER 장부 · LRM_HUB_STATUS_DIR 허브 상태 폴더
+환경: LRM_HUB_DIR 작업 폴더 · LRM_PROGRESS 스냅샷 경로 · LRM_LEDGER 장부 · LRM_TASKS 작업 장부(진행 줄·막힘의 [task:T…] 근거) · LRM_HUB_STATUS_DIR 허브 상태 폴더
       LRM_DIGEST_GH gh 명령(없으면 PATH → /opt/homebrew/bin·/usr/local/bin) · LRM_DIGEST_REPOS PR 조회 저장소(쉼표, 없으면 PANEL_GH_REPOS 환경 변수 → 작업 폴더 panel.env → 현재 저장소) · LRM_HUB_STATUS_STALE_HOURS 낡음 기준(기본 24)
       LRM_ORCA orca 명령(없으면 PATH → 알려진 설치 위치) · LRM_PROGRESS_PR_INTERVAL PR 조회 간격 초(기본 300) · LRM_PROGRESS_PR_BUDGET PR 조회 전체 시간 상한 초(기본 30)
 종료 코드: 0 성공(원료 일부 실패 포함), 2 설정·입력 오류
@@ -54,6 +54,8 @@ WAIT_WORDS = ("병합 대기", "승인 대기", "답 대기", "결정 대기", "
 STALE_TAG = "낡음"
 NO_EVIDENCE_TAG = "근거 없음·오래됨"
 UNMERGED_TAG = "PR 닫힘·미병합"
+STOPPED_LABEL = "정지 허브"  # 세션 없이 낡은 허브의 줄을 접은 한 줄의 머리말
+USER_WORDS = ("사용자", "외부", "님")  # 막힘 문구가 포함하면 사용자·외부가 풀 일(접어도 본문에 남김)
 SEEN_KEEP_S = 7 * 86400  # 사라진 막힘의 최초 관측 기록 보관 기간
 EVIDENCE_CLOSED = "closed"  # blocker_evidence.CLOSED·UNMERGED 와 같은 값(순환 가져오기 회피)
 EVIDENCE_UNMERGED = "unmerged"
@@ -176,21 +178,51 @@ def blocker_id(text):
     return short_hash(" ".join(str(text).split()).casefold())
 
 
-def collect_hubs(status_dir, old_items=(), refs=None, resolver=None, resolved=None, seen=None, now=None):
-    """허브 상태 파일 전부 → (항목, 알림, 읽기 실패 허브). 낡은 허브는 제목에 '낡음'.
-    막힘에 근거(refs)가 있고 resolver 가 '닫힘'으로 판정하면 막힘에서 빼고 resolved 목록에만 기록. 근거 없는 막힘이 낡았으면 제목에 '근거 없음·오래됨'(삭제는 안 함).
+def stopped_item(slug, name, at, tasks, blockers, ref):
+    """세션 없이 낡은 허브의 남은 줄(진행 tasks·막힘 blockers 문구 목록)을 접은 항목 하나. 사용자·외부가 풀 막힘은 본문(제목 둘째 줄부터)에 한 줄씩 남김"""
+    mine = [b for b in blockers if needs_user(b) or any(w in b for w in USER_WORDS)]
+    head = f"{STOPPED_LABEL}: {name} — 진행 {len(tasks)}·막힘 {len(blockers)} (마지막 갱신 {at.astimezone().strftime('%m-%d')})"
+    it = item(f"hub:{slug}:stopped", WAIT if mine else BLOCK, head, slug, ref=ref, since=at.timestamp())
+    it["title"] = "\n".join([it["title"]] + [f"· {one_line(b)}" for b in mine])  # 본문 줄은 한 줄 요약 규칙(one_line)을 줄마다 적용
+    return it
+
+
+def collect_hubs(status_dir, old_items=(), refs=None, resolver=None, resolved=None, seen=None, now=None, live=None, hub_names=None, slugs=None):
+    """허브 상태 파일 전부 → (항목, 알림, 읽기 실패 허브). 허브 칸·항목 키는 hubs.tsv slug 하나로 통일(옛 이름 파일 server.json 도 coord-server-hub 로 읽고, 새 이름 파일이 있으면 옛 이름 파일은 무시). 낡은 허브는 제목에 '낡음'.
+    줄(진행 줄·막힘)에 근거(refs)가 있고 resolver 가 '닫힘'으로 판정하면 목록에서 빼고 resolved 목록에만 기록. 진행 줄은 병합 없이 닫힌 PR 도 끝남(막힘은 유지).
+    근거 없는 막힘이 낡았으면 제목에 '근거 없음·오래됨'(삭제는 안 함).
     '오래됨' 기준은 막힘별 최초 관측 시각(seen: "슬러그:문구해시" → {first, last}, 수집기 소유). 상태 파일 updatedAt 은 허브가 다시 쓸 때마다 갱신돼 근거가 못 됨.
-    사라진 막힘 기록은 SEEN_KEEP_S 뒤 정리. 손상 파일은 그 허브의 이전 항목(old_items)을 그대로 두어 목록에서 완료 처리되지 않게 함"""
+    사라진 막힘 기록은 SEEN_KEEP_S 뒤 정리. 손상 파일은 그 허브의 이전 항목(old_items)을 그대로 두어 목록에서 완료 처리되지 않게 함.
+    live: 허브 세션이 있는 허브 slug 집합을 돌려주는 함수(실패는 예외). 상태 파일은 있는데 세션이 없고 updatedAt 이 낡음 기준을 넘은 허브는
+    남은 줄을 stopped_item 한 줄로 접음. 세션 조회가 실패하면 접지 않음(오판 방지). 세션이 있는데 낡은 허브는 '낡음' 표시만 유지.
+    hub_names: {slug: 표시 이름}, slugs: hubs.tsv slug 집합(상태 파일 이름 → 허브 slug 변환용)"""
     out, notes, failed = [], [], []
     seen = {} if seen is None else seen
     now = time.time() if now is None else now
+    hub_names = hub_names or {}
     try:
-        names = sorted(n for n in os.listdir(status_dir) if n.endswith(".json"))
+        files = sorted(n for n in os.listdir(status_dir) if n.endswith(".json"))
     except FileNotFoundError:
         return out, notes, failed
     limit_s = hub_status.stale_hours() * 3600
-    for name in names:
-        slug = name[: -len(".json")]
+    done = set()
+    sessions = []  # 세션 조회 메모: 처음 필요할 때 한 번만 부름. [집합] 또는 [None](실패)
+
+    def has_session(slug):
+        if not sessions:
+            try:
+                sessions.append(live() if live else None)
+            except Exception:  # noqa: BLE001 — 조회 실패는 접지 않는 쪽으로
+                sessions.append(None)
+        return None if sessions[0] is None else slug in sessions[0]
+
+    stems = {n[: -len(".json")]: hub_slug(n[: -len(".json")], slugs) for n in files}
+    for name in sorted(files, key=lambda n: stems[n[: -len(".json")]] != n[: -len(".json")]):  # 새 이름(slug 그대로) 파일 먼저
+        stem = name[: -len(".json")]
+        slug = stems[stem]
+        if slug in done:
+            continue
+        done.add(slug)
         try:
             with open(os.path.join(status_dir, name), encoding="utf-8") as f:
                 data = json.load(f)
@@ -198,7 +230,7 @@ def collect_hubs(status_dir, old_items=(), refs=None, resolver=None, resolved=No
         except (OSError, ValueError) as e:
             bad = str(e)
         if bad:
-            kept = [i for i in old_items if isinstance(i, dict) and i.get("group") == slug]
+            kept = [i for i in old_items if isinstance(i, dict) and i.get("group") in (slug, stem)]
             out += kept
             failed.append(slug)
             notes.append(f"허브 상태 {slug} 읽기 실패({one_line(bad, 40)}) — 이전 항목 {len(kept)}개 유지")
@@ -206,12 +238,19 @@ def collect_hubs(status_dir, old_items=(), refs=None, resolver=None, resolved=No
         at = hub_status.parse_iso(data.get("updatedAt", ""))
         stale = at is None or (time.time() - at.timestamp()) > limit_s
         tag = f"[{STALE_TAG}] " if stale else ""
-        ref = refs.for_hub(slug) if refs else None
+        ref = (refs.for_hub(slug) or refs.for_hub(stem)) if refs else None
         since = at.timestamp() if at else 0.0
-        for task in data.get("tasks", []):
-            out.append(item(f"hub:{slug}:t:{short_hash(task)}", WAIT if needs_user(task) else DOING, f"{tag}{slug}: {task}", slug, ref=ref, since=since))
+        lines, task_texts, blocker_texts = [], [], []
+        for entry in data.get("tasks", []):
+            task, trefs = hub_status.entry_text(entry), hub_status.entry_refs(entry)
+            if trefs and resolver and resolver(trefs, unmerged_ends=True) == EVIDENCE_CLOSED:  # 진행 줄은 PR 병합·병합 없이 닫힘 모두 끝남
+                if resolved is not None:
+                    resolved.append({"hub": slug, "line": "task", "text": one_line(task), "refs": trefs})
+                continue
+            task_texts.append(task)
+            lines.append(item(f"hub:{slug}:t:{short_hash(task)}", WAIT if needs_user(task) else DOING, f"{tag}{slug}: {task}", slug, ref=ref, since=since))
         for b in data.get("blockers", []):
-            blocker, brefs = hub_status.blocker_text(b), hub_status.blocker_refs(b)
+            blocker, brefs = hub_status.entry_text(b), hub_status.entry_refs(b)
             state = resolver(brefs) if resolver and brefs else None
             if state == EVIDENCE_CLOSED:
                 if resolved is not None:
@@ -225,7 +264,11 @@ def collect_hubs(status_dir, old_items=(), refs=None, resolver=None, resolved=No
             it = item(f"hub:{slug}:b:{short_hash(blocker)}", WAIT if needs_user(blocker) else BLOCK, f"{btag}{slug}: {blocker}", slug, ref=ref, since=since)
             if state:
                 it["evidence"] = state  # open·unknown(확인 불가 — 막힘 유지)
-            out.append(it)
+            blocker_texts.append(blocker)
+            lines.append(it)
+        if lines and stale and at is not None and has_session(slug) is False:
+            lines = [stopped_item(slug, hub_names.get(slug) or slug, at, task_texts, blocker_texts, ref)]
+        out += lines
     for k in [k for k, v in seen.items() if not isinstance(v, dict) or now - v.get("last", v.get("first", 0)) > SEEN_KEEP_S]:
         del seen[k]
     return out, notes, failed
@@ -267,20 +310,18 @@ def collect_prs(gh, repos):
     return out
 
 
+def load_hub_names(path=None):
+    """hubs.tsv → {slug: 표시 이름}. 못 읽으면 빈 표"""
+    import ci_review  # 지연 가져오기: 순환 방지
+    return ci_review.load_hub_names(path or os.path.join(HUB_DIR, "hubs.tsv"))
+
+
 def load_slugs(path=None):
     """hubs.tsv 의 slug 목록. 못 읽으면 빈 집합(= 폴더 이름 규칙만 적용)"""
-    import ci_review  # 지연 가져오기: 순환 방지
-    return set(ci_review.load_hub_names(path or os.path.join(HUB_DIR, "hubs.tsv")))
+    return set(load_hub_names(path))
 
 
-def legacy_slug(slug):
-    """옛 규칙(앞 coord- 반복·끝 -hub 반복 제거). 상태 파일(hub-status/<이름>.json)·보고의 hub 값이 이 형태로 남아 있음"""
-    return re.sub(r"(-hub)+$", "", re.sub(r"^(coord-)+", "", slug)) or slug
-
-
-def status_key(slug):
-    """전달 slug → 상태 파일 이름·진행 목록 허브 칸·작업 공간 수 키(표시용). coord- 로 시작하는 slug 만 옛 규칙으로 줄임(coord-server-hub → server)"""
-    return legacy_slug(slug) if slug.startswith("coord-") else slug
+legacy_slug = hub_status.legacy_slug  # 옛 이름(server)으로 남은 상태 파일·보고의 hub 값을 현재 slug(coord-server-hub)로 잇는 데만 씀
 
 
 def hub_slug(value, slugs=None):
@@ -314,9 +355,25 @@ def workspace_counts(worktrees, terminals, slugs=None):
         kids = {c for c in w.get("childWorktreeIds") or [] if isinstance(c, str)}
         kids |= {i for i, x in rows.items() if x.get("parentWorktreeId") == wid}
         kids = {k for k in kids if not (rows.get(k) or {}).get("isArchived")}
-        slot = out.setdefault(status_key(hub_slug(base, slugs)), {"children": 0, "active": 0})
+        slot = out.setdefault(hub_slug(base, slugs), {"children": 0, "active": 0})
         slot["children"] += len(kids)
         slot["active"] += sum(1 for k in kids if k in used)
+    return out
+
+
+def live_hubs(listing, slugs=None):
+    """orca terminal list 의 result → 허브 세션(작업 폴더 coord-* + 에이전트가 붙은 터미널, 옆 패널과 같은 기준)이 있는 허브 slug 집합.
+    목록이 잘렸거나 형식이 틀리면 SourceError — 없는 것으로 오판해 허브 줄을 접지 않게 함"""
+    terms = listing.get("terminals") if isinstance(listing, dict) else None
+    if not isinstance(terms, list) or listing.get("truncated"):
+        raise SourceError("orca terminal list 불완전 — 허브 세션 판정 불가")
+    out = set()
+    for t in terms:
+        if not isinstance(t, dict) or not t.get("agentIdentity"):
+            continue
+        base = os.path.basename(str(t.get("worktreePath") or "").rstrip("/"))
+        if base.startswith("coord-"):
+            out.add(hub_slug(base, slugs))
     return out
 
 
@@ -340,9 +397,31 @@ def orca_bin():
     return main_terminal.find_orca()
 
 
-def query_workspaces():
+def query_terminals():
+    return orca_json("terminal", "list", "--limit", LIST_LIMIT)
+
+
+def query_workspaces(terminals=query_terminals):
+    """terminals: orca terminal list 의 result 를 돌려주는 함수(허브 세션 판정과 같은 응답을 재사용하려고 주입)"""
     return workspace_counts(orca_json("worktree", "list", "--limit", LIST_LIMIT).get("worktrees"),
-                            orca_json("terminal", "list", "--limit", LIST_LIMIT).get("terminals"), load_slugs())
+                            terminals().get("terminals"), load_slugs())
+
+
+def once(fn):
+    """한 회차 안에서 fn 결과(또는 예외)를 재사용. 실패해도 다시 부르지 않음"""
+    box = []
+
+    def call():
+        if not box:
+            try:
+                box.append((True, fn()))
+            except Exception as e:  # noqa: BLE001 — 호출한 쪽(run_source·접기 판정)이 종류별로 처리
+                box.append((False, e))
+        ok, v = box[0]
+        if not ok:
+            raise v
+        return v
+    return call
 
 
 def query_pending(now):
@@ -414,6 +493,7 @@ def conf_from_env(read_panel=True):
     env = os.environ.get
     return {
         "ledger": env("LRM_LEDGER") or os.path.join(HUB_DIR, "feedback-ledger.tsv"),
+        "tasks": env("LRM_TASKS") or os.path.join(HUB_DIR, "tasks.jsonl"),
         "status_dir": os.path.expanduser(env("LRM_HUB_STATUS_DIR") or os.path.join(HUB_DIR, "hub-status")),  # 작업 폴더 밑이 기본(시험이 격리됨)
         "report_state": env("LRM_REPORT_STATE") or os.path.join(HUB_DIR, "report-sender.state.json"),
         "gh": gh_bin(),
@@ -421,8 +501,8 @@ def conf_from_env(read_panel=True):
     }
 
 
-def build(conf, prev, now, pending=None, workers=None, use_pr=True, workspaces=None):
-    """스냅샷 dict. prev 는 직전 스냅샷(없으면 {}). pending·workers 는 panel_collect 가 이미 모은 값, workspaces 는 {slug: {children, active}} 를 돌려주는 함수(없으면 orca 직접 조회).
+def build(conf, prev, now, pending=None, workers=None, use_pr=True, workspaces=None, sessions=None):
+    """스냅샷 dict. prev 는 직전 스냅샷(없으면 {}). pending·workers 는 panel_collect 가 이미 모은 값, workspaces 는 {slug: {children, active}} 를 돌려주는 함수(없으면 orca 직접 조회), sessions 는 허브 세션이 있는 slug 집합을 돌려주는 함수(없으면 workspaces 와 같은 terminal list 응답으로 판정, 실패는 줄을 접지 않음).
     pending 이 없으면 결정 대기를 직접 조회함(결정 원료를 끄면 미해결 결정이 목록에서 완료 처리되므로 끄지 않음)"""
     old = prev.get("sources", {}) if isinstance(prev, dict) else {}
     hub_notes, hub_failed = [], []
@@ -432,12 +512,17 @@ def build(conf, prev, now, pending=None, workers=None, use_pr=True, workspaces=N
     blocker_seen = {k: dict(v) for k, v in (prev.get("blockerSeen") or {}).items() if isinstance(v, dict) and isinstance(v.get("first"), (int, float))} if isinstance(prev, dict) and isinstance(prev.get("blockerSeen"), dict) else {}
     resolved = (prev.get("resolved") or []) if isinstance(prev, dict) and isinstance(prev.get("resolved"), list) else []
 
+    terminals = once(query_terminals)  # 하위 작업 공간 수·허브 세션 판정이 같은 응답을 씀
+    hub_names = load_hub_names()
+    slugs = set(hub_names)
+
     def hubs():
         import blocker_evidence  # 지연 가져오기: todo_facts 가 이 모듈을 가져옴
         old_value = (old.get("hubs") or {}).get("value") or []
         resolver = blocker_evidence.Resolver(conf, evidence_cache, now, use_pr)
         fresh_resolved = []
-        found, hub_notes[:], hub_failed[:] = collect_hubs(conf["status_dir"], old_value, refs, resolver, fresh_resolved, blocker_seen, now)
+        found, hub_notes[:], hub_failed[:] = collect_hubs(conf["status_dir"], old_value, refs, resolver, fresh_resolved, blocker_seen, now,
+                                                         live=sessions or (lambda: live_hubs(terminals(), slugs)), hub_names=hub_names, slugs=slugs)
         hub_notes.extend(resolver.notes())
         resolved[:] = fresh_resolved  # 이번 회차에 근거가 닫혀 빠진 막힘만(상태 파일에 남아 있는 동안 매 회차 다시 기록됨)
         return found
@@ -459,7 +544,7 @@ def build(conf, prev, now, pending=None, workers=None, use_pr=True, workspaces=N
     src["decisions"] = run_source(lambda: decision_items(pending if pending is not None else query_pending(now)), old.get("decisions"), now)
     src["workers"] = {"ok": workers is not None, "err": None if workers is not None else "n/a", "at": now if workers is not None else None,
                       "tried": now, "stale": workers is None, "value": workers, "off": workers is None}
-    src["workspaces"] = run_source(workspaces or query_workspaces, old.get("workspaces"), now)
+    src["workspaces"] = run_source(workspaces or (lambda: query_workspaces(terminals)), old.get("workspaces"), now)
     groups = {slug: {**c, "warn": c["children"] > CHILD_WARN} for slug, c in (src["workspaces"].get("value") or {}).items()}
     items, seen = [], set()
     for name in SOURCES:
@@ -518,14 +603,14 @@ def write_snapshot(path, snap):
         raise
 
 
-def refresh(pending=None, workers=None, write=True, use_pr=True, conf=None, workspaces=None):
+def refresh(pending=None, workers=None, write=True, use_pr=True, conf=None, workspaces=None, sessions=None):
     """직전 스냅샷을 읽어 새로 만들고(write 면) 원자 교체. 손상된 직전 파일은 무시하고 새로 씀. 반환: 스냅샷"""
     path = snapshot_path()
     try:
         prev = load_snapshot(path) or {}
     except SourceError:
         prev = {}
-    snap = build(conf or conf_from_env(read_panel=use_pr), prev, int(time.time()), pending, workers, use_pr, workspaces)
+    snap = build(conf or conf_from_env(read_panel=use_pr), prev, int(time.time()), pending, workers, use_pr, workspaces, sessions)
     if write:
         write_snapshot(path, snap)
     return snap

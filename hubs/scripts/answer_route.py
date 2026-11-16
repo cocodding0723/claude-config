@@ -61,7 +61,7 @@ class Router:
         import todo_facts
         p = lambda name: os.path.join(self.store.dir, name)  # noqa: E731
         names = ci_review.load_hub_names(p("hubs.tsv"))
-        known = set(names) | {pc.status_key(s) for s in names} | {pc.legacy_slug(s) for s in names}  # 보고의 hub 값은 slug·상태 파일 이름·옛 별칭 모두 있음
+        known = set(names) | {pc.legacy_slug(s) for s in names}  # 이미 쌓인 보고의 hub 값에 옛 별칭(server)이 남아 있음. 새 보고는 slug
         try:
             sent, reports = panel_collect.jsonl(p("slack-sent.jsonl")), panel_collect.jsonl(p("hub-reports.jsonl"))
         except (panel_collect.SourceError, UnicodeDecodeError):

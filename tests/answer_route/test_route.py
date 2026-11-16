@@ -365,22 +365,23 @@ class SlugFolder(Base):
             self.assertEqual(pc.hub_slug(value, set()), want)
         self.assertEqual(panel_collect.hub_name("coord-automa-hub-hub"), "automa-hub")
 
-    def test_display_key_is_status_file_name(self):
-        """전달 slug 와 상태 파일 이름이 다른 허브: 표시용(status_key)은 server, 전달용은 coord-server-hub"""
+    def test_display_key_is_hubs_table_slug(self):
+        """서버 허브도 표시용·전달용·상태 파일 이름이 hubs.tsv slug(coord-server-hub) 하나. 옛 별칭 server 는 읽기 호환만"""
         import progress_collect as pc
         import panel_collect
         slugs = {"coord-server-hub", "automa-hub"}
-        self.assertEqual(panel_collect.hub_name("coord-coord-server-hub-hub", slugs), "server")
+        self.assertEqual(panel_collect.hub_name("coord-coord-server-hub-hub", slugs), "coord-server-hub")
         self.assertEqual(panel_collect.hub_name("coord-automa-hub-hub", slugs), "automa-hub")
-        self.assertEqual(pc.status_key("coord-server-hub"), "server")
+        self.assertFalse(hasattr(pc, "status_key"))  # 별도 상태 파일 키 규칙 없음
+        self.assertEqual(pc.legacy_slug("coord-server-hub"), "server")  # 옛 보고·옛 상태 파일 이름 읽기용
 
-    def test_workspace_counts_key_matches_status_file_slug(self):
+    def test_workspace_counts_key_matches_hub_slug(self):
         import progress_collect as pc
         wts = [{"id": "h", "path": "/w/coord-automa-hub-hub", "childWorktreeIds": ["c"]}, {"id": "c", "path": "/w/c"},
                {"id": "s", "path": "/w/coord-coord-server-hub-hub"}, {"id": "u", "path": "/w/coord-ui-layer-hub", "childWorktreeIds": ["c"]}]
         out = pc.workspace_counts(wts, [{"worktreeId": "c"}], {"coord-server-hub", "automa-hub", "ui-layer"})
         self.assertEqual(out["automa-hub"], {"children": 1, "active": 1})  # hub-status/automa-hub.json 과 같은 키
-        self.assertEqual(set(out), {"automa-hub", "server", "ui-layer"})
+        self.assertEqual(set(out), {"automa-hub", "coord-server-hub", "ui-layer"})  # 서버도 상태 파일·진행 목록과 같은 slug
 
 
 if __name__ == "__main__":

@@ -205,7 +205,7 @@ def collect_hub_progress(since):
         if not isinstance(d, dict) or not d.get("slug"):
             continue
         hubs[d["slug"]] = {"hub": d["slug"], "updated": d.get("updatedAt", ""),
-                           "tasks": [clip(t) for t in d.get("tasks") or []][:6], "next": clip(d.get("next")),
+                           "tasks": [clip(t.get("text") if isinstance(t, dict) else t) for t in d.get("tasks") or []][:6], "next": clip(d.get("next")),
                            "blockers": [clip(b.get("text") if isinstance(b, dict) else b) for b in d.get("blockers") or []][:6],
                            "waiting": [], "prs": [], "decisions": decisions.get(d["slug"], [])}
         branches = set(d.get("branches") or [])

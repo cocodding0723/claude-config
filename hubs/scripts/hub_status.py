@@ -25,21 +25,23 @@ LIST_FIELDS = (
     ("workers", "워커"),
     ("blockers", "차단"),
 )
-# 막힘 근거 표기: 문구 안의 [종류:ID]. 상태 파일에는 {text, refs:[{kind,id}]} 로 저장(근거 없으면 문자열 그대로)
+# 근거 표기(진행 줄·막힘 공통): 문구 안의 [종류:ID]. 상태 파일에는 {text, refs:[{kind,id}]} 로 저장(근거 없으면 문자열 그대로)
 REF_ID = {
     "pr": re.compile(r"^(?:[\w.-]+/[\w.-]+)?#\d+$"),
     "decision": re.compile(r"^D-[A-Z0-9][A-Z0-9-]*$"),
     "ticket": re.compile(r"^[A-Z][A-Z0-9]+-\d+$"),
+    "task": re.compile(r"^T\d{4,}$"),  # 작업 장부(task_ledger.py) 번호
 }
-REF_FORMAT = {"pr": "pr:Owner/Repo#746", "decision": "decision:D-CFGAPPLY", "ticket": "ticket:LRM-436"}
+REF_FORMAT = {"pr": "pr:Owner/Repo#746", "decision": "decision:D-CFGAPPLY", "ticket": "ticket:LRM-436", "task": "task:T0123"}
 REF_TAG = re.compile(r"\[([a-z]+):([^\]]*)\]")
+REF_FIELDS = ("tasks", "blockers")  # 근거 표기를 받는 필드
 GENERIC = "상태 파일 없음 — HANDOFF.md 와 run-list 로 이어받기"
 
 EPILOG = """종료 코드: 0 성공, 1 대상 없음·파일 손상, 2 인자 오류·비밀 값 거부
-막힘 근거: --blocker 문구 끝에 [pr:Owner/Repo#N] [decision:D-ID] [ticket:LRM-N] 를 붙임(여러 개 가능). PR 병합·닫힘, 결정 답이 확인되면 수집기가 막힘에서 뺌
+근거: --task·--blocker 문구 끝에 [pr:Owner/Repo#N] [decision:D-ID] [ticket:LRM-N] [task:T0123] 를 붙임(여러 개 가능). PR 병합·닫힘(막힘은 병합만), 결정 답, 작업 장부 완료·버림이 확인되면 수집기가 그 줄을 목록에서 뺌
 환경: LRM_HUB_STATUS_DIR 상태 폴더, LRM_HUB_STATUS_STALE_HOURS 낡음 기준 시간(기본 24)
 예:
-  hub_status.py write --slug ui-layer --run run_ab12 --task "LRM-266 구현" --next "리뷰 배정"
+  hub_status.py write --slug ui-layer --run run_ab12 --task "LRM-266 구현 [task:T0123]" --next "리뷰 배정"
   hub_status.py write --slug ui-layer --blocker "서버 병합 대기 [pr:Basakansoft/LoveRevolutionMaker#746]" --blocker "설정 적용 답 대기 [decision:D-CFGAPPLY]"
   hub_status.py show --slug ui-layer --json
   hub_status.py prompt --slug ui-layer
@@ -60,6 +62,18 @@ def status_path(slug):
     if not SLUG_RE.match(slug or ""):
         raise Fail(f"slug '{slug}' 형식 오류 — 소문자·숫자·하이픈만 허용(예: ui-layer)")
     return os.path.join(status_dir(), slug + ".json")
+
+
+def legacy_slug(slug):
+    """옛 규칙(앞 coord- 반복·끝 -hub 반복 제거). 옛 상태 파일(예: coord-server-hub 허브의 server.json)·보고의 hub 값이 이 형태로 남아 있음"""
+    return re.sub(r"(-hub)+$", "", re.sub(r"^(coord-)+", "", slug)) or slug
+
+
+def read_path(slug):
+    """읽기용 경로: <slug>.json 이 없고 옛 이름 파일만 있으면 그 파일. 쓰기는 항상 status_path(slug)"""
+    path = status_path(slug)
+    old = os.path.join(status_dir(), legacy_slug(slug) + ".json") if SLUG_RE.match(legacy_slug(slug)) else path
+    return old if not os.path.exists(path) and os.path.exists(old) else path
 
 
 def now_iso():
@@ -102,7 +116,7 @@ def atomic_write(path, text):
 
 
 def load(slug):
-    path = status_path(slug)
+    path = read_path(slug)
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
@@ -125,14 +139,14 @@ def schema_error(data):
             return f"필드 타입 오류: {key} 는 문자열이어야 함"
     for key, _ in LIST_FIELDS:
         v = data.get(key, [])
-        ok = blocker_ok if key == "blockers" else lambda i: isinstance(i, str)
+        ok = entry_ok if key in REF_FIELDS else lambda i: isinstance(i, str)
         if not isinstance(v, list) or not all(ok(i) for i in v):
-            return f"필드 타입 오류: {key} 는 문자열 목록이어야 함" + (" (막힘은 {text, refs} 객체도 허용)" if key == "blockers" else "")
+            return f"필드 타입 오류: {key} 는 문자열 목록이어야 함" + (" ({text, refs} 객체도 허용)" if key in REF_FIELDS else "")
     return None
 
 
-def blocker_ok(b):
-    """막힘 한 건: 문자열(옛 형식·근거 없음) 또는 {text: 문자열, refs: [{kind, id}]}"""
+def entry_ok(b):
+    """진행 줄·막힘 한 건: 문자열(옛 형식·근거 없음) 또는 {text: 문자열, refs: [{kind, id}]}"""
     if isinstance(b, str):
         return True
     if not isinstance(b, dict) or not isinstance(b.get("text"), str):
@@ -141,37 +155,37 @@ def blocker_ok(b):
     return isinstance(refs, list) and all(isinstance(r, dict) and isinstance(r.get("kind"), str) and isinstance(r.get("id"), str) for r in refs)
 
 
-def blocker_text(b):
+def entry_text(b):
     return b if isinstance(b, str) else b["text"]
 
 
-def blocker_refs(b):
-    """막힘의 근거 목록 [{kind, id}]. 옛 문자열 막힘은 빈 목록"""
+def entry_refs(b):
+    """줄의 근거 목록 [{kind, id}]. 옛 문자열 줄은 빈 목록"""
     return [] if isinstance(b, str) else list(b.get("refs") or [])
 
 
-def full_pr_id(short):
+def full_pr_id(short, opt="--blocker"):
     """'#746' → 'Owner/Repo#746'. 감시 저장소가 정확히 하나일 때만 허용(여럿이면 어느 PR 인지 알 수 없어 거부)"""
     sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # python -I 는 스크립트 폴더를 경로에 넣지 않음
     import progress_collect  # 지연 가져오기: progress_collect 가 이 모듈을 가져옴
     repos = progress_collect.conf_from_env()["repos"]
     if len(repos) != 1:
         why = f"감시 저장소가 {len(repos)}개라 '{short}' 는 어느 저장소 PR 인지 알 수 없음" if repos else f"감시 저장소 설정이 없어 '{short}' 의 저장소를 알 수 없음"
-        raise Fail(f"막힘 근거 [pr:{short}] 단축형 거부 — {why}. 전체 형식으로 다시 실행. 예: [{REF_FORMAT['pr']}]")
+        raise Fail(f"{opt} 근거 [pr:{short}] 단축형 거부 — {why}. 전체 형식으로 다시 실행. 예: [{REF_FORMAT['pr']}]")
     return repos[0] + short
 
 
-def parse_blocker(raw):
-    """'문구 [pr:#746] [decision:D-X]' → 문자열(근거 없음) 또는 {text, refs}. 알 수 없는 종류·잘못된 ID 는 Fail"""
+def parse_entry(raw, opt):
+    """'문구 [pr:#746] [decision:D-X]' → 문자열(근거 없음) 또는 {text, refs}. 알 수 없는 종류·잘못된 ID 는 Fail. opt 는 오류 문구용 옵션 이름(--task·--blocker)"""
     refs = []
     for m in REF_TAG.finditer(raw):
         kind, rid = m.group(1), m.group(2).strip()
         if kind not in REF_ID:
-            raise Fail(f"막힘 근거 종류 '{kind}' 미지원 — {', '.join(REF_FORMAT.values())} 중 하나로 다시 실행")
+            raise Fail(f"{opt} 근거 종류 '{kind}' 미지원 — {', '.join(REF_FORMAT.values())} 중 하나로 다시 실행")
         if not REF_ID[kind].match(rid):
-            raise Fail(f"막힘 근거 [{kind}:{rid}] 형식 오류 — 예: {REF_FORMAT[kind]}")
+            raise Fail(f"{opt} 근거 [{kind}:{rid}] 형식 오류 — 예: {REF_FORMAT[kind]}")
         if kind == "pr" and rid.startswith("#"):
-            rid = full_pr_id(rid)
+            rid = full_pr_id(rid, opt)
         ref = {"kind": kind, "id": rid}
         if ref not in refs:
             refs.append(ref)
@@ -179,15 +193,15 @@ def parse_blocker(raw):
         return raw
     text = one_line(REF_TAG.sub("", raw))
     if not text:
-        raise Fail("--blocker 에 근거만 있고 문구가 없음 — 막힌 이유를 문구로 함께 적고 다시 실행")
+        raise Fail(f"{opt} 에 근거만 있고 문구가 없음 — 내용을 문구로 함께 적고 다시 실행")
     return {"text": text, "refs": refs}
 
 
 def item_text(key, item):
-    """한 줄 표시. 막힘은 근거를 [종류:ID] 로 되살림"""
-    if key != "blockers":
+    """한 줄 표시. 진행 줄·막힘은 근거를 [종류:ID] 로 되살림"""
+    if key not in REF_FIELDS:
         return one_line(item)
-    return one_line(blocker_text(item) + "".join(f" [{r['kind']}:{r['id']}]" for r in blocker_refs(item)))
+    return one_line(entry_text(item) + "".join(f" [{r['kind']}:{r['id']}]" for r in entry_refs(item)))
 
 
 def one_line(v):
@@ -237,11 +251,11 @@ def cmd_write(a):
         "slug": a.slug,
         "updatedAt": now_iso(),
         "runId": a.run or "",
-        "tasks": a.task,
+        "tasks": [parse_entry(t, "--task") for t in a.task],
         "branches": a.branch,
         "workers": a.worker,
         "next": a.next or "",
-        "blockers": [parse_blocker(b) for b in a.blocker],
+        "blockers": [parse_entry(b, "--blocker") for b in a.blocker],
     }
     atomic_write(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
     if a.json:
@@ -288,11 +302,11 @@ def parser():
     w = sub.add_parser("write", help="상태 기록(파일 전체를 이번 값으로 교체)", description="상태 기록. 반복 옵션(--task 등)은 여러 번 지정. 지정하지 않은 필드는 비움.", epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
     w.add_argument("--slug", required=True, help="허브 slug(예: ui-layer)")
     w.add_argument("--run", help="Run ID")
-    w.add_argument("--task", action="append", default=[], help="진행 작업 한 줄(반복)")
+    w.add_argument("--task", action="append", default=[], help="진행 작업 한 줄(반복). 끝에 근거 [pr:Owner/Repo#N]·[decision:D-ID]·[ticket:LRM-N]·[task:T0123] 가능")
     w.add_argument("--branch", action="append", default=[], help="작업 브랜치(반복)")
     w.add_argument("--worker", action="append", default=[], help="워커: 디스패치·워크트리 경로(반복)")
     w.add_argument("--next", help="다음 할 일")
-    w.add_argument("--blocker", action="append", default=[], help="차단·결정 대기(반복). 끝에 근거 [pr:Owner/Repo#N]·[decision:D-ID]·[ticket:LRM-N] 가능")
+    w.add_argument("--blocker", action="append", default=[], help="차단·결정 대기(반복). 끝에 근거 [pr:Owner/Repo#N]·[decision:D-ID]·[ticket:LRM-N]·[task:T0123] 가능")
     w.add_argument("--json", action="store_true", help="결과를 JSON 으로 출력")
     w.set_defaults(fn=cmd_write)
     s = sub.add_parser("show", help="상태 조회", epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)

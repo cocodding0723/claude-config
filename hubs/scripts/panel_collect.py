@@ -262,9 +262,9 @@ def hub_state(t, quiet, get):
 
 
 def hub_name(base, slugs=None):
-    """옆 패널 허브 칸 이름(표시용). 작업 공간 수 키(workspace_counts)·상태 파일 이름과 같은 규칙"""
+    """옆 패널 허브 칸 이름(표시용). 작업 공간 수 키(workspace_counts)·상태 파일 이름과 같은 hubs.tsv slug"""
     import progress_collect  # 지연 가져오기(순환 방지)
-    return progress_collect.status_key(progress_collect.hub_slug(base, slugs))
+    return progress_collect.hub_slug(base, slugs)
 
 
 def terminal_list(get):
@@ -745,9 +745,12 @@ def collect_progress(src, repos, write, get):
     conf = progress_collect.conf_from_env()
     conf["gh"], conf["repos"] = os.environ.get("PANEL_GH", "gh"), repos
     workers = (src["workers"].get("value") or {})
+    listing = progress_collect.once(lambda: terminal_list(get))  # 하위 작업 공간 수·허브 세션 판정이 같은 응답을 씀
+    slugs = progress_collect.load_slugs()
     snap = progress_collect.refresh(pending=src["pending"].get("value"), workers={"live": workers["live"]} if "live" in workers else None,
                                     write=write, use_pr=bool(repos), conf=conf,
-                                    workspaces=lambda: progress_collect.workspace_counts(get("worktree", "list", "--limit", LIST_LIMIT).get("worktrees"), terminals(get), progress_collect.load_slugs()))
+                                    workspaces=lambda: progress_collect.workspace_counts(get("worktree", "list", "--limit", LIST_LIMIT).get("worktrees"), listing().get("terminals"), slugs),
+                                    sessions=lambda: progress_collect.live_hubs(listing(), slugs))
     return {"counts": snap["counts"], "items": snap["items"], "notes": snap["notes"], "groups": snap["groups"]}
 
 
