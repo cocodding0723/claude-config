@@ -202,6 +202,53 @@ class LocalQaTest(unittest.TestCase):
             self.assertIn("기록 없음", self.check("해당 없음(도구·CI·문서) — 게이트 통과 커밋 cafebabe"))
         self.assertIn("경고", buf.getvalue())
 
+    def fake_gh(self, files=None, fail=False):
+        """PATH 맨 앞에 가짜 gh: 'pr diff <n> --name-only -R <저장소>' 에 files 를 출력, fail 이면 종료 1. 인자는 args.txt 에 기록"""
+        d = os.path.join(self.tmp, "bin")
+        os.makedirs(d, exist_ok=True)
+        gh = os.path.join(d, "gh")
+        with open(gh, "w") as f:
+            f.write('#!/bin/sh\necho "$@" > "%s/args.txt"\n' % self.tmp)
+            f.write("exit 1\n" if fail else 'cat <<EOF\n%s\nEOF\n' % "\n".join(files or []))
+        os.chmod(gh, 0o755)
+        old = os.environ["PATH"]
+        os.environ["PATH"] = d + os.pathsep + old
+        self.addCleanup(os.environ.__setitem__, "PATH", old)
+
+    CODE_ONLY = "코드 전용(화면 파일 0개) — EditMode 12 통과"
+
+    def test_code_only_passes_when_pr_has_no_screen_files(self):
+        self.fake_gh(["Assets/Scripts/Rival/RivalSlot.cs", "Assets/Scripts/Rival/RivalSlot.cs.meta", "Assets/Data/Rival.asset", "README.md"])
+        self.assertEqual(self.check(self.CODE_ONLY), "")
+        args = open(os.path.join(self.tmp, "args.txt")).read()
+        self.assertIn("pr diff 746 --name-only", args)
+        self.assertIn("-R Basakansoft/LoveRevolutionMaker", args)
+
+    def test_code_only_rejected_with_screen_files(self):
+        self.fake_gh(["Assets/Scripts/A.cs", "Assets/Art/UI/Rival/Slot.png", "Assets/Prefabs/Slot.prefab"])
+        why = self.check(self.CODE_ONLY)
+        for word in ("화면 파일 2개", "Slot.png", "Slot.prefab", "조치", "녹화"):
+            self.assertIn(word, why)
+
+    def test_code_only_rejected_when_gh_fails(self):
+        self.fake_gh(fail=True)
+        why = self.check(self.CODE_ONLY)
+        for word in ("조회하지 못해", "(a)", "(b)", "조치"):
+            self.assertIn(word, why)
+
+    def test_code_only_needs_result(self):
+        self.fake_gh(["Assets/Scripts/A.cs"])
+        self.assertIn("명령 결과", self.check("코드 전용(화면 파일 0개)"))
+
+    def test_screen_file_classifier(self):
+        for path in ("a/b.prefab", "S.unity", "x.uxml", "x.USS", "i.png", "Assets/UI/Slot.asset", "Assets/Resources/UI/x.json", "m.mat"):
+            self.assertTrue(dc.is_screen_file(path), path)
+        for path in ("Assets/Scripts/A.cs", "Assets/Scripts/UI/Presenter.cs", "Assets/Scripts/UI/Presenter.cs.meta", "Assets/Data/Rival.asset", "docs/a.md"):
+            self.assertFalse(dc.is_screen_file(path), path)
+
+    def test_example_mentions_code_only(self):
+        self.assertIn("코드 전용", self.check(None))
+
     def test_other_cards_unaffected(self):
         self.assertEqual(self.check(None, did="D-0001"), "")
         self.assertEqual(self.check(None, did=None), "")
