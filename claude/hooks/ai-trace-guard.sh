@@ -39,7 +39,8 @@ check_range() {
   if git -C "$top" rev-parse -q --verify "refs/remotes/$remote/$dst" >/dev/null 2>&1; then base="refs/remotes/$remote/$dst"
   elif git -C "$top" rev-parse -q --verify "refs/remotes/$remote/HEAD" >/dev/null 2>&1; then base="refs/remotes/$remote/HEAD"
   fi
-  if [ -n "$base" ]; then range="$base..$src"
+  # 원격 어느 브랜치에도 이미 있는 커밋(남이 dev 에 넣은 것)은 제외. 실제로 새로 나갈 커밋만 검사
+  if [ -n "$base" ]; then range="$src --not $base --remotes=$remote"
   else range="-50 $src"; warn=" (원격 기준 브랜치를 못 찾아 최근 50개만 검사)"; fi
   # shellcheck disable=SC2086
   hit=$(git -C "$top" log --format='%h %B' $range 2>/dev/null | grep -Eiv '^$' | grep -Ei "$TRACE_RE" | head -1)
