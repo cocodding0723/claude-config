@@ -4,15 +4,26 @@ set -euo pipefail
 REPO="${REPO:-$HOME/orca/LoveRevolutionMaker}"
 WS_ROOT="${WS_ROOT:-$HOME/orca/workspaces/LoveRevolutionMaker}"
 SLUG="" NAME="" PATHS="/docs/ /.claude/ /CLAUDE.md /AGENTS.md" ROLE_FILE="" RESUME="" MODEL="claude-opus-5-5" FORCE=0
+BASE="origin/dev" BRANCH="" DRY=0
 while [ $# -gt 0 ]; do case "$1" in
   --slug) SLUG="$2"; shift 2;; --name) NAME="$2"; shift 2;; --paths) PATHS="$2"; shift 2;;
   --role-file) ROLE_FILE="$2"; shift 2;; --resume) RESUME="$2"; shift 2;; --model) MODEL="$2"; shift 2;; --force) FORCE=1; shift;;
+  --base) BASE="$2"; shift 2;; --branch) BRANCH="$2"; shift 2;; --dry-run) DRY=1; shift;;
   *) echo "알 수 없는 인자: $1" >&2; exit 2;; esac; done
 : "${SLUG:?--slug 필요}" "${NAME:?--name 필요}" "${ROLE_FILE:?--role-file 필요}"
 HUB="$WS_ROOT/coord-${SLUG}-hub"
+# --branch: 그 브랜치를 허브에 체크아웃(없으면 BASE 에서 생성). 기본은 BASE 에 detached
+if [ -n "$BRANCH" ]; then
+  if git -C "$REPO" show-ref -q --verify "refs/heads/$BRANCH"; then WT_OPT=(); WT_REF="$BRANCH"; else WT_OPT=(-b "$BRANCH"); WT_REF="$BASE"; fi
+else WT_OPT=(--detach); WT_REF="$BASE"; fi
+if [ "$DRY" = 1 ]; then
+  [ -d "$HUB" ] && echo "hub=$HUB (있음, 생성 생략)" || echo "hub=$HUB 생성: git worktree add --no-checkout ${WT_OPT[*]:-} $WT_REF / sparse: $PATHS"
+  echo "기동: orca agent launch --agent claude --worktree path:$HUB --model $MODEL --effort high (role: $ROLE_FILE)"
+  exit 0
+fi
 if [ ! -d "$HUB" ]; then
-  git -C "$REPO" fetch -q origin dev || echo "⚠️ fetch 실패 — 로컬 origin/dev 로 진행"
-  GIT_LFS_SKIP_SMUDGE=1 git -C "$REPO" worktree add -q --no-checkout --detach "$HUB" origin/dev
+  git -C "$REPO" fetch -q origin || echo "⚠️ fetch 실패 — 로컬 ${BASE} 로 진행"
+  GIT_LFS_SKIP_SMUDGE=1 git -C "$REPO" worktree add -q --no-checkout ${WT_OPT[@]+"${WT_OPT[@]}"} "$HUB" "$WT_REF"
   # shellcheck disable=SC2086
   git -C "$HUB" sparse-checkout set --no-cone $PATHS
   GIT_LFS_SKIP_SMUDGE=1 git -C "$HUB" checkout -q

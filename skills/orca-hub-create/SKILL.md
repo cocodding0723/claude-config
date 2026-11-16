@@ -38,3 +38,8 @@ description: Orca 에 새 코디네이터 허브(sparse 관리 워크스페이�
 - 메인 체크아웃은 미커밋 보존 때문에 sparse 로 바꾸지 않는다.
 - 이미 코디네이터 터미널이 살아 있는 허브에는 스크립트가 새 코디네이터를 띄우지 않고 중단한다. 의도적으로 하나 더 띄우려면 `--force`.
 - `common-rules.txt` 개정은 이미 떠 있는 코디네이터에 반영되지 않는다. 필요하면 `--resume` 으로 재기동한다.
+
+## 기능 코디네이터 (11-16)
+
+기능 하나를 끝까지 맡는 허브는 `hubs/scripts/feature_open.sh` 로 만들고 `hubs/scripts/feature_close.sh` 로 끝낸다.
+`feature_open.sh` 는 위 `create_hub.sh` 를 `--branch feature/<slug> --base <기준>` 으로 호출한다. 역할 템플릿은 `hubs/roles/role-feature.txt`.
