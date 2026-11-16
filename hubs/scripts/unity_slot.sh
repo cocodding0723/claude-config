@@ -15,7 +15,8 @@ reap() {
   for d in "$ROOT"/slot-*; do
     [ -d "$d" ] || continue
     pid=$(cat "$d/pid" 2>/dev/null)
-    alive "$pid" || rm -rf -- "${d:?}"
+    # child: unity-run 이 기록한 Unity pid. 래퍼가 kill -9 로 죽어도 Unity 가 살아 있으면 유지
+    alive "$pid" || alive "$(cat "$d/child" 2>/dev/null)" || rm -rf -- "${d:?}"
   done
   for q in "$ROOT"/queue/*; do
     [ -f "$q" ] || continue
@@ -32,6 +33,8 @@ case "${1:-}" in
     echo "$owner $name" > "$ticket"
     while :; do
       reap
+      # 소유자가 죽어 표가 회수되면 대기 종료. 고아 대기 루프 방지
+      [ -f "$ticket" ] || { echo "오류: 소유 pid $owner 종료로 대기표 회수. 다시 실행" >&2; exit 3; }
       first=$(ls "$ROOT/queue" | sort | head -1)
       if [ "$ROOT/queue/$first" = "$ticket" ]; then
         for i in $(seq 1 "$MAX"); do
