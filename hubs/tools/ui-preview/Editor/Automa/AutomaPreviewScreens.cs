@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Game.Data.ExternalModule.LocalizationModule;
 using Game.Data.Module.StatModule.Model;
 using Game.SceneView.Module.Modal.Module.AutomaDailySummaryDialog;
+using Game.SceneView.Module.Modal.Module.AutomaGoalIntroDialog;
 using Game.Data.Module.AutomaModule.Model;
 using Game.SceneView.Module.Modal.Module.AutomaInfoDialog;
 using Game.SceneView.Module.Modal.Module.AutomaNoticeDialog;
@@ -26,10 +27,9 @@ namespace Tests.Editor.UiPreview.Automa
             yield return new MissingPreviewScreen("automa-outcome", $"{MissingPrefab}(AutomaMissionOutcomeDialog)");
             yield return new UiPreviewScreen("automa-goal-intro", root =>
             {
-                // AutomaGoalIntroPsdDialog 가 dev 에 없어 지금 연결된 정보창으로 표시
                 var presenter = new AutomaGoalIntroPresenter(LocalizationManager.GetText, stat => stat.GetName());
-                var dialog = UiPreviewPrefabs.Spawn<AutomaInfoDialog>(nameof(AutomaInfoDialog), root, true);
-                var data = new AutomaInfoDialogData(presenter.Build(fixture().GoalIntro));
+                var dialog = UiPreviewPrefabs.Spawn<AutomaGoalIntroDialog>(nameof(AutomaGoalIntroDialog), root, true);
+                var data = new AutomaGoalIntroDialogData(presenter.Build(fixture().GoalIntro, fixture().Result.Parts));
                 InitLaidOut(dialog, () => dialog.InitModal(data, null));
                 dialog.OnModalDisplay();
             });
@@ -56,6 +56,19 @@ namespace Tests.Editor.UiPreview.Automa
                 var view = UiPreviewPrefabs.Spawn<AutomaMissionCardView>("AutomaMissionCard", root, false);
                 view.Render(presenter.Build(input));
             });
+            yield return new UiPreviewScreen("automa-mission-banner", root => RenderBanner(root, fixture, null));
+            yield return new UiPreviewScreen("automa-mission-banner-success", root => RenderBanner(root, fixture, AutomaMissionOutcome.Success));
+        }
+
+        private static void RenderBanner(Transform root, Func<AutomaPreviewFixture> fixture, AutomaMissionOutcome? outcome)
+        {
+            var card = fixture().MissionCard
+                ?? throw new InvalidOperationException("첫 스테이지 첫날 발급 미션 없음. --stage 로 미션이 있는 스테이지 지정");
+            var input = new AutomaMissionCardInput(card.Mission, card.Effects, card.Rival, card.Stat, card.Target,
+                outcome.HasValue ? card.Target : card.Progress, card.TicksLeft, outcome, card.PartsAcquired, card.PartsTotal);
+            var presenter = new AutomaMissionBannerPresenter(LocalizationManager.GetText, stat => stat.GetName());
+            var view = UiPreviewPrefabs.Spawn<AutomaMissionBannerView>("AutomaMissionBanner", root, false);
+            view.Render(presenter.Build(input));
         }
 
         private const int NoticeTarget = 40;
