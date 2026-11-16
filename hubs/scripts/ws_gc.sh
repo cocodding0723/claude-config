@@ -27,10 +27,11 @@ CFG_OUTPUT_ROOT_RE='^[^/]+\.(html|md|png|jpe?g|gif|mp4|txt|log)$'       # 작업
 # 게임 소스 폴더 아래는 허용 목록과 겹쳐도 항상 보존(새 에셋·코드일 수 있음)
 CFG_SOURCE_DIR_RE='^(Assets|Packages|ProjectSettings)/'
 # 다시 만들어지는 gitignore 캐시 후보(폴더는 끝에 /). 폴더 이름만으로 캐시라고 단정하지 않음: 아래 CFG_CACHE_GENERATED_RE 밖 파일이 안에 있으면 보존
-CFG_CACHE_RE='^(Library|Temp|obj|Logs|UserSettings|\.vs|\.idea|node_modules)/$|(^|/)(\.dart_tool|node_modules|__pycache__)/$|^[^/]+\.(csproj|sln)$|^\.flutter-plugins(-dependencies)?$|^\.claude/settings\.local\.json$|^\.DS_Store$'
+# Flutter 생성물(android/.gradle·android/app/build·build·ios/Flutter/ephemeral·ios/Pods 와 매번 다시 쓰는 설정 3종)·Unity BurstCache 는 폴더째 접어 펼치지 않음(속도)
+CFG_CACHE_RE='^(Library|Temp|obj|Logs|UserSettings|\.vs|\.idea|node_modules)/$|(^|/)(\.dart_tool|node_modules|__pycache__)/$|^[^/]+\.(csproj|sln)$|^\.flutter-plugins(-dependencies)?$|^\.claude/settings\.local\.json$|^\.DS_Store$|^Library/BurstCache/$|^(android/\.gradle|android/app/build|build|ios/Flutter/ephemeral|ios/Pods)/$|^android/local\.properties$|^ios/Flutter/(Generated\.xcconfig|flutter_export_environment\.sh)$'
 # 캐시 폴더 안에서 "지워도 되는 것" 목록(도구가 다시 만드는 하위 경로). 캐시 폴더 안의 파일은 이 목록에 든 것만 버리고,
 # 목록 밖은 확장자와 상관없이 전부 미확인으로 보존함(.kt·.mp4 같은 목록에 없는 파일도 보존)
-CFG_CACHE_GENERATED_RE='^(Library/(PackageCache|Artifacts|Bee|ScriptAssemblies|ShaderCache|StateCache|BuildCache|PlayerDataCache|APIUpdater|Search|SourceAssetDB|BuildProfiles)/|(.*/)?node_modules/|(.*/)?__pycache__/|(.*/)?\.dart_tool/|Temp/|Logs/|\.vs/|obj/(Debug|Release)/)|^Library/([^/.]+|[^/]+\.(asset|json|meta|txt|log))$|^obj/(project\.assets\.json|[^/]+\.nuget\.[^/]+)$'
+CFG_CACHE_GENERATED_RE='^(Library/(PackageCache|Artifacts|Bee|ScriptAssemblies|ShaderCache|StateCache|BuildCache|PlayerDataCache|APIUpdater|Search|SourceAssetDB|BuildProfiles|BurstCache)/|android/\.gradle/|android/app/build/|build/|ios/Flutter/ephemeral/|ios/Pods/|android/local\.properties$|ios/Flutter/(Generated\.xcconfig|flutter_export_environment\.sh)$|(.*/)?node_modules/|(.*/)?__pycache__/|(.*/)?\.dart_tool/|Temp/|Logs/|\.vs/|obj/(Debug|Release)/)|^Library/([^/.]+|[^/]+\.(asset|json|meta|txt|log))$|^obj/(project\.assets\.json|[^/]+\.nuget\.[^/]+)$'
 CFG_INBOX="${WS_GC_INBOX:-$HOME/.config/lrm-hubs/hub-inbox}"  # 허브별 보관 색인(<허브 slug>.tsv). 허브 폴더 coord-<slug>-hub 에서 slug 를 뗌
 CFG_KEEP_CODE_LOG_MAX=5                                  # 보존 근거로 로그·JSON 에 남길 경로 수
 CFG_RM_DIRTY_RE='modified or untracked|contain(s|ing) submodules|uncommitted|dirty'  # orca rm 거부 문구 중 미커밋 변경 계열만 force 허용(잠금·사용 중 등은 제외)
@@ -211,6 +212,7 @@ place_lock() { # place_lock 경로 → 0 잡음, 1 대기 시간 초과
 place_unlock() { [ -z "$LK_PID" ] || { kill "$LK_PID" 2>/dev/null; wait "$LK_PID" 2>/dev/null; LK_PID=""; }; }
 
 # ── 판정 ──────────────────────────────────────────────────────────────────────────────────
+MAIN_FOR="" MAIN_DIR=""  # same_as_main 캐시(곳마다 본체 경로 1회)
 REASON="" DETAIL="" PR_LABEL="" N_NOISE=0 N_LIC=0 N_OUT=0 N_TRACKED=0 N_UNVERIFIED=0
 # 변경 분류(확신 없으면 보존): 추적 수정·허용 목록 밖 파일(미추적·gitignore) → N_REAL(N_TRACKED·N_UNVERIFIED, 근거 $TMP/keep.txt),
 # 허용 목록의 결과물 → $TMP/outputs.txt(보관 대상, 그중 미추적 파일 수 N_OUT), 확인된 부산물 → $TMP/noise.txt(근거 로그용).
@@ -235,11 +237,12 @@ ignored_entries() {
   local p="$1" e
   git -C "$p" ls-files -o -i --exclude-standard --directory -z 2>/dev/null | tr '\0' '\n' | while IFS= read -r e; do
     case "$e" in
-      */) if printf '%s' "$e" | grep -Eq -e "$CZ"; then
-            # 캐시 후보 폴더: 이름만 믿지 않고, 생성 목록(CFG_CACHE_GENERATED_RE)에 없는 파일을 "!경로" 로 내보내 미확인 처리
-            (cd "$p" && find "${e%/}" \( -type f -o -type l \) -print 2>/dev/null) | GZ="$CFG_CACHE_GENERATED_RE" awk '$0 ~ ENVIRON["GZ"] { next } { print "!" $0 }'
+      */) if [[ "$e" =~ $CZ ]]; then
+            # 캐시 후보 폴더. 폴더째 생성 목록에 드는 곳(.dart_tool·android/.gradle·build 등)은 안을 열지 않음(파일 수천 개를 훑는 비용).
+            # 일부만 생성 목록인 폴더(Library·.idea·obj)는 목록 밖 파일을 "!경로" 로 내보내 미확인 처리(이름만 믿지 않음)
+            [[ "$e" =~ $CGZ ]] || (cd "$p" && find "${e%/}" \( -type f -o -type l \) -print 2>/dev/null) | GZ="$CFG_CACHE_GENERATED_RE" awk '$0 ~ ENVIRON["GZ"] { next } { print "!" $0 }'
             printf '%s\n' "$e"
-          elif printf '%s' "$e" | grep -Eq -e "$DZ" -e "$SZ"; then printf '%s\n' "$e"
+          elif [[ "$e" =~ $DZ ]] || [[ "$e" =~ $SZ ]]; then printf '%s\n' "$e"
           else git -C "$p" ls-files -o -i --exclude-standard -z -- "$e" 2>/dev/null | tr '\0' '\n'; fi ;;
       *) printf '%s\n' "$e" ;;
     esac
@@ -262,10 +265,15 @@ regen_line_re() {
 }
 # 미확인 파일(미추적·gitignore)이 같은 저장소 본체(메인 체크아웃)의 같은 경로 파일과 byte 단위로 같으면 0. 사본이 본체에 남으므로 지워도 잃는 것이 없음(인증 설정·IDE 설정 사본 등)
 same_as_main() {
-  local p="$1" f="$2" common main
-  common=$(git -C "$p" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
-  main=$(cd "$(dirname "$common")" 2>/dev/null && pwd -P) || return 1
-  [ "$main" != "$(cd "$p" 2>/dev/null && pwd -P)" ] && [ -f "$p/$f" ] && [ ! -L "$p/$f" ] && [ -f "$main/$f" ] && cmp -s -- "$p/$f" "$main/$f"
+  local p="$1" f="$2" common
+  if [ "$MAIN_FOR" != "$p" ]; then  # 본체 경로는 곳마다 1회만 계산(파일마다 git·cd 를 부르면 수천 건에서 분 단위)
+    MAIN_FOR="$p"; MAIN_DIR=""
+    if common=$(git -C "$p" rev-parse --path-format=absolute --git-common-dir 2>/dev/null); then
+      MAIN_DIR=$(cd "$(dirname "$common")" 2>/dev/null && pwd -P) || MAIN_DIR=""
+      [ "$MAIN_DIR" != "$(cd "$p" 2>/dev/null && pwd -P)" ] || MAIN_DIR=""
+    fi
+  fi
+  [ -n "$MAIN_DIR" ] && [ -f "$p/$f" ] && [ ! -L "$p/$f" ] && [ -f "$MAIN_DIR/$f" ] && cmp -s -- "$p/$f" "$MAIN_DIR/$f"
 }
 # 추적 파일의 바뀐 줄(줄바꿈 차이 무시)이 전부 허용 형식이면 0. 바뀐 줄을 못 읽거나 하나라도 밖이면 1
 regen_ok() {
@@ -278,7 +286,7 @@ regen_ok() {
 classify_changes() {
   local p="$1" k path why
   : > "$TMP/noise.txt"; : > "$TMP/licenses.txt"; : > "$TMP/outputs.txt"; : > "$TMP/keep.txt"
-  N_REAL=0 N_NOISE=0 N_LIC=0 N_OUT=0 N_TRACKED=0 N_UNVERIFIED=0
+  N_REAL=0 N_NOISE=0 N_LIC=0 N_OUT=0 N_TRACKED=0 N_UNVERIFIED=0 MAIN_FOR=""
   export NZ="$CFG_NOISE_RE" LZ="$CFG_LICENSE_RE" GZ="$CFG_REGEN_RE" CGZ="$CFG_CACHE_GENERATED_RE" DZ="$CFG_OUTPUT_DIRS_RE" RZ="$CFG_OUTPUT_ROOT_RE" SZ="$CFG_SOURCE_DIR_RE" CZ="$CFG_CACHE_RE"
   if ! { git -C "$p" status --porcelain=v1 -z --untracked-files=all --ignore-submodules=all 2>/dev/null | tr '\0' '\n' | awk -v MODE_=tracked "$CLASSIFY_AWK" \
       && ignored_entries "$p" | awk -v MODE_=ignored "$CLASSIFY_AWK"; } > "$TMP/chg.tsv"; then
@@ -370,6 +378,19 @@ evaluate() {
 # ── 삭제 절차 ─────────────────────────────────────────────────────────────────────────────
 # 결과물 보관: $TMP/outputs.txt 의 경로를 tar 로 복제한 뒤 항목마다 원본과 byte 단위로 대조(파일 cmp·폴더 diff -r).
 # 복사 실패·내용 불일치·보관본에 남는 파일은 모두 1(삭제하지 않음). 성공하면 ARCHIVED_FILES 에 파일 수
+# 원본·보관본 폴더가 파일 수·내용까지 같으면 0. diff -r 은 이름 바이트로 짝을 지어, tar 가 한글 이름을 NFC→NFD 로 바꿔 푼 보관본(APFS 는 같은 이름으로 취급)을
+# 오탐함(11-16 TestResults 한글 파일 2곳 archive_fail). 어긋나면 경로 조회(정규화 무시)로 파일마다 직접 대조
+tree_same() {
+  local s="$1" d="$2" f
+  diff -rq "$s" "$d" >/dev/null 2>&1 && return 0
+  [ "$(count_files "$s")" = "$(count_files "$d")" ] || return 1
+  while IFS= read -r -d '' f; do
+    f="${f#"$s"/}"
+    if [ -L "$s/$f" ]; then [ "$(readlink "$s/$f")" = "$(readlink "$d/$f" 2>/dev/null)" ] || return 1
+    else [ -f "$d/$f" ] && [ ! -L "$d/$f" ] && cmp -s -- "$s/$f" "$d/$f" || return 1; fi
+  done < <(find "$s" \( -type f -o -type l \) -print0)
+  return 0
+}
 archive_outputs() {
   local p="$1" dest="$2" e src n total=0
   ARCHIVED_FILES=0
@@ -379,7 +400,7 @@ archive_outputs() {
   while IFS= read -r e; do
     e="${e%/}"; src="$p/$e"
     if [ -L "$src" ]; then [ "$(readlink "$src")" = "$(readlink "$dest/$e" 2>/dev/null)" ] || { log "ARCHIVE_MISMATCH $e 링크가 다름"; return 1; }; n=1
-    elif [ -d "$src" ]; then diff -rq "$src" "$dest/$e" >/dev/null 2>&1 || { log "ARCHIVE_MISMATCH $e 원본 $(count_files "$src")개와 보관본의 내용·파일 수가 다름"; return 1; }; n=$(count_files "$src")
+    elif [ -d "$src" ]; then tree_same "$src" "$dest/$e" || { log "ARCHIVE_MISMATCH $e 원본 $(count_files "$src")개와 보관본의 내용·파일 수가 다름"; return 1; }; n=$(count_files "$src")
     elif [ -f "$src" ]; then cmp -s "$src" "$dest/$e" || { log "ARCHIVE_MISMATCH $e 원본과 보관본의 내용이 다름"; return 1; }; n=1
     else log "ARCHIVE_MISMATCH $e 원본이 사라짐"; return 1; fi
     total=$((total + n)); log "ARCHIVE $e 파일 $n → $dest/$e"

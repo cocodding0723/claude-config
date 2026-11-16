@@ -153,13 +153,15 @@ bash tests/ws_gc/mutate.sh   # 결함을 심은 사본에서 시험이 실패하
 | 구분 | 기준(설정은 `ws_gc.sh` 위쪽 `CFG_*` 한 곳) | 처리 |
 |---|---|---|
 | 허용 결과물 | 결과물 폴더 `docs/out/`·`evidence/`·`TestResults/`(`CFG_OUTPUT_DIRS_RE`), 작업 공간 **루트**의 `*.html *.md *.png *.jpg *.jpeg *.gif *.mp4 *.txt *.log`(`CFG_OUTPUT_ROOT_RE`, 확장자 대소문자 무시) | 보관 → 색인 → 삭제 |
-| 캐시 후보 | gitignore 된 `Library/ Temp/ obj/ Logs/ UserSettings/ .vs/ .idea/ node_modules/ .dart_tool/`, `.flutter-plugins(-dependencies)`, `.claude/settings.local.json`, `.DS_Store`(`CFG_CACHE_RE`). **폴더 이름만으로 캐시로 치지 않는다.** 폴더 안에서는 "지워도 되는 것" 목록(`CFG_CACHE_GENERATED_RE`: `Library/PackageCache·Artifacts·Bee` 등 도구가 다시 만드는 하위 경로, `Library` 바로 아래의 확장자 없는 파일·`.asset .json .meta .txt .log`, `obj/Debug·Release`, `node_modules/`, `.dart_tool/`, `Temp/`, `Logs/`, `.vs/`)에 든 파일만 버리고, 목록 밖 파일은 확장자와 상관없이(`.cs`·`.kt`·`.mp4` 모두) 미확인으로 보존한다 | 생성 목록 밖 파일이 없을 때만 보관 없이 삭제 |
+| 캐시 후보 | gitignore 된 `Library/ Temp/ obj/ Logs/ UserSettings/ .vs/ .idea/ node_modules/ .dart_tool/`, `.flutter-plugins(-dependencies)`, `.claude/settings.local.json`, `.DS_Store`, Flutter 생성물(`android/.gradle/ android/app/build/ build/ ios/Flutter/ephemeral/ ios/Pods/`, `android/local.properties`, `ios/Flutter/Generated.xcconfig`, `ios/Flutter/flutter_export_environment.sh`), `Library/BurstCache/`(`CFG_CACHE_RE`). 폴더째 생성 목록(`CFG_CACHE_GENERATED_RE`)에 드는 곳은 안을 열지 않고 접어 둔 채 캐시로 친다. 그 밖 폴더(`android/app/src/` 등)의 미추적·무시 소스는 그대로 보존한다. **폴더 이름만으로 캐시로 치지 않는다.** 폴더 안에서는 "지워도 되는 것" 목록(`CFG_CACHE_GENERATED_RE`: `Library/PackageCache·Artifacts·Bee` 등 도구가 다시 만드는 하위 경로, `Library` 바로 아래의 확장자 없는 파일·`.asset .json .meta .txt .log`, `obj/Debug·Release`, `node_modules/`, `.dart_tool/`, `Temp/`, `Logs/`, `.vs/`)에 든 파일만 버리고, 목록 밖 파일은 확장자와 상관없이(`.cs`·`.kt`·`.mp4` 모두) 미확인으로 보존한다 | 생성 목록 밖 파일이 없을 때만 보관 없이 삭제 |
 | 소스 폴더 | `Assets/ Packages/ ProjectSettings/` 아래(`CFG_SOURCE_DIR_RE`). 허용 목록과 겹쳐도(예 `Assets/TestResults/`) 항상 | 보존 |
 | 추적 파일 수정 | 추적 파일이 바뀐 모든 경우. `.meta`·`*SDF*.asset` 부산물 예외보다 항상 우선(예외는 미추적 파일에만 적용) | 보존 |
 | 미확인 | 위 어디에도 없는 미추적·gitignore 파일(예 `secret/Foo.cs`, `result.json`, `reports/s.md`, `Foo.CS`) | 보존(`dirty`) |
 | 확인된 부산물 | 줄바꿈만 바뀐 추적 사운드 `LICENSE.txt`, 미추적 `*.meta`·`*SDF*.asset`. 파일 단위이고 폴더 이름은 보지 않음 | 0 으로 침 |
 
 - 서브모듈: 안에도 상위와 같은 분류를 적용한다(미추적·gitignore 소스, 결과물, 부산물이 하나라도 있으면 `submodule` 로 보존, 미push 커밋도 포함).
+- 보관 대조는 파일 수·내용을 비교하되, tar 가 한글 이름을 NFC→NFD 로 풀어도 같은 이름으로 짝지어 본다(`diff -r` 이름 바이트 오탐 방지).
+- 본체와 같은 파일 판정은 곳마다 본체 경로를 1회만 구한다(파일마다 git 을 부르면 수만 건에서 분 단위).
 - gitignore 파일은 git 이 폴더째 묶어 보여 주므로, 허용·캐시·소스 판정이 서지 않는 폴더는 파일 단위로 풀어 본다.
 - 보존 이유는 `KEEP_CODE` 로그와 `--json` 의 `keep_code`(`tracked`·`unverified`·`files`)에 남는다.
 - 보관: 결과물을 `~/orca/archive/<저장소>/<폴더>/` 로 복제한 뒤 항목마다 **byte 단위**로 대조한다(파일은 `cmp`, 폴더는 `diff -r`). 복사 실패·내용 불일치·보관본에 남는 다른 파일이 있으면 `archive_fail` 로 지우지 않는다. 삭제 직전에 한 번 더 판정·보관해, 판정 뒤 새로 생긴 결과물도 보관한다.

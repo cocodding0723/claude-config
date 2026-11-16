@@ -450,6 +450,31 @@ lock_env bash "$GC" --root "$ROOT" --archive-dir "$ARC" --log "$SB/lk4.log" --ap
 for _ in $(seq 60); do pgrep -f "log $SB/lk3.log" > /dev/null || break; sleep 0.5; done
 chk "[L2] 같은 곳 동시 처리: 삭제 1번, 나중 실행은 missing" '[ ! -e "$W/zlk2_a" ] && [ "$(grep -c "worktree rm --worktree path:$W/zlk2_a" "$FAKE/orca.calls")" = 1 ] && [ "$(grep -c "DELETE repoA/zlk2_a" "$SB/lk3.log" "$SB/lk4.log" | awk -F: "{s+=\$2} END{print s}")" = 1 ]' "$(tail -3 "$SB/lk4.log")"
 # [L3] 전체 실행끼리는 여전히 하나만(위 [5]) — --path 는 전체 실행 잠금을 안 씀
+# [F] Flutter·Unity 생성물만 든 곳은 후보, 캐시 폴더 밖 소스는 보존
+for n in fl_gen fl_kt fl_ign_kt; do
+  mk "$n" "feat/$n"; pr "feat/$n" '[{"number":81,"state":"MERGED"}]'
+  mkdir -p "$W/$n/android/.gradle/8.12" "$W/$n/android/app/build/outputs" "$W/$n/build/app" "$W/$n/ios/Flutter/ephemeral" "$W/$n/ios/Pods/P" "$W/$n/Library/BurstCache"
+  echo g > "$W/$n/android/.gradle/8.12/a.bin"; echo a > "$W/$n/android/app/build/outputs/a.apk"; echo b > "$W/$n/build/app/x.txt"
+  echo e > "$W/$n/ios/Flutter/ephemeral/e.txt"; echo p > "$W/$n/ios/Pods/P/p.h"; echo l > "$W/$n/android/local.properties"
+  echo x > "$W/$n/ios/Flutter/Generated.xcconfig"; echo s > "$W/$n/ios/Flutter/flutter_export_environment.sh"; echo z > "$W/$n/Library/BurstCache/b.bin"
+  for x in android/.gradle/ android/app/build/ /build/ ios/Flutter/ephemeral/ ios/Pods/ android/local.properties ios/Flutter/Generated.xcconfig ios/Flutter/flutter_export_environment.sh; do excl "$n" "$x"; done
+done
+mkdir -p "$W/fl_kt/android/app/src/main/kotlin" "$W/fl_ign_kt/android/app/src/main/kotlin"
+echo 'class Only' > "$W/fl_kt/android/app/src/main/kotlin/Only.kt"
+echo 'class Gen' > "$W/fl_ign_kt/android/app/src/main/kotlin/Gen.kt"; excl fl_ign_kt 'Gen.kt'
+regen
+gc --only fl_gen; chk "[F] Flutter·BurstCache 생성물만: 후보(미확인 0)" 'has "CANDIDATE repoA/fl_gen " && ! has "SKIP dirty repoA/fl_gen"' "$(grep fl_gen "$ARC/ws_gc.log" | tail -2)"
+gc --only fl_kt; chk "[F] android 아래 소스 .kt(미추적): 보존" 'has "SKIP dirty repoA/fl_kt" && has "미확인 미추적 android/app/src/main/kotlin/Only.kt"' "$(grep fl_kt "$ARC/ws_gc.log" | tail -2)"
+gc --only fl_ign_kt; chk "[F] android 아래 소스 .kt(gitignore): 보존" 'has "SKIP dirty repoA/fl_ign_kt" && has "미확인 무시파일 android/app/src/main/kotlin/Gen.kt"' "$(grep fl_ign_kt "$ARC/ws_gc.log" | tail -2)"
+FAKE_RM_CHECK_DIRTY=1 gc --only fl_kt --apply; chk "[F] 보존한 .kt 가 그대로 남음" '[ -f "$W/fl_kt/android/app/src/main/kotlin/Only.kt" ] && [ "$(rm_calls)" = 0 ]'
+# [N] 한글 파일명(NFC)을 tar 가 NFD 로 풀어도 보관 대조가 통과(11-16 TestResults 한글 파일 2곳 archive_fail)
+mk nfd_out feat/nfd; pr feat/nfd '[{"number":82,"state":"MERGED"}]'; regen
+mkdir -p "$W/nfd_out/TestResults/parts"; printf 'p' > "$W/nfd_out/TestResults/parts/$(printf '\xeb\x88\x88')_L.png"; printf 'q' > "$W/nfd_out/TestResults/parts/$(printf '\xeb\xa8\xb8\xeb\xa6\xac')_\xec\x95\x9e.png"
+MM0=$(grep -c ARCHIVE_MISMATCH "$ARC/ws_gc.log")
+FAKE_RM_CHECK_DIRTY=1 gc --only nfd_out --apply
+chk "[N] 한글 파일명 보관: 삭제 성공·불일치 없음" '[ ! -e "$W/nfd_out" ] && [ "$(grep -c ARCHIVE_MISMATCH "$ARC/ws_gc.log")" = "$MM0" ] && [ "$RC" = 0 ]' "$(grep nfd_out "$ARC/ws_gc.log" | tail -3)"
+chk "[N] 보관본에 한글 파일 2개" '[ "$(find "$ARC/repoA/nfd_out/TestResults/parts" -type f | wc -l | tr -d " ")" = 2 ]'
+
 bash "$HERE/adopt.sh" || FAIL=$((FAIL + 1))
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
