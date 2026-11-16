@@ -2,16 +2,18 @@
 #
 # UI 화면 단독 미리보기. 부팅·로그인·네트워크 없이 화면 프리팹 하나를 배치모드로 띄워 PNG 로 남긴다.
 #
-#   bash Tools/verify/ui-preview.sh <화면|all>[,<화면>…] [가로x세로 …] [--stage <오토마 스테이지 Id>] [--bundle] [--summary-at day-end|mission-issued] [--prefab-from-commit <작업공간>:<커밋>:<경로>] [--timeout <초>]
+#   bash Tools/verify/ui-preview.sh <화면|all>[,<화면>…] [가로x세로 …] [--stage <오토마 스테이지 Id>] [--bundle] [--summary-at day-end|mission-issued] [--who <요청자>] [--compare <시안 PNG>] [--prefab-from-commit <작업공간>:<커밋>:<경로>] [--timeout <초>]
 #   예) bash Tools/verify/ui-preview.sh automa-daily-summary
 #       bash Tools/verify/ui-preview.sh all 1080x1920 1440x3120
 #
 # 실행: PROJ=<게임 작업 공간> bash <이 폴더>/ui-preview.sh <화면> … (게임 작업 공간 안에서 실행하면 PROJ 생략)
-# 출력: TestResults/ui-preview/<화면>_<가로>x<세로>_t0|t1|t2.png (연출 시작·절반·끝), summary.json, unity.log
+# 출력: TestResults/ui-preview/<요청자>/<화면>_<가로>x<세로>_t0|t1|t2.png (연출 시작·절반·끝), summary.json, unity.log
 # 데이터: 로컬 게임 데이터 저장소(build/game-data-local, 시트 고정본으로 생성) + 데브 번역 표. 없으면 준비 명령을 안내하고 종료.
-# 에디터가 이 프로젝트를 열고 있으면 build/ui-preview-project 에 APFS 복제본을 만들어 그쪽에서 배치로 돈다(에디터 무관).
+# 실행은 항상 build/ui-preview-lanes/lane-N(APFS 복제)에서 한다. 원본 작업 공간은 읽기만. 레인이 다 차면 순번 대기.
 # 종료: 0 성공 / 1 캡처 실패 / 2 실행 불가(인자·데이터·Unity 없음·타임아웃)
 #
+# sh·zsh 로 부르면 배열·<<< 문법에서 깨짐 → bash 로 다시 실행
+if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 set -uo pipefail
 
 # PROJ: 대상 Unity 프로젝트(게임 저장소 작업 공간). 기본은 현재 디렉터리의 git 최상위
@@ -20,8 +22,6 @@ UNITY="${UNITY:-/Applications/Unity/Hub/Editor/$(sed -n 's/^m_EditorVersion: //p
 TOOL_DIR="$(cd "$(dirname "$0")" && pwd)"
 REGISTRY="$TOOL_DIR/Editor"
 INSTALL_REL="Assets/Tests/Editor/UiPreview"
-OUT="$PROJ/TestResults/ui-preview"
-CLONE="$PROJ/build/ui-preview-project"
 STORE="build/game-data-local"
 TIMEOUT=600
 
@@ -34,7 +34,7 @@ usage() {
   echo "#   가능한 화면: all $(screen_names)"
 }
 
-SCREENS=""; SIZES=(); STAGE=""; BUNDLE=0; OVERRIDES=(); SUMMARY_AT=""
+SCREENS=""; SIZES=(); STAGE=""; BUNDLE=0; OVERRIDES=(); SUMMARY_AT=""; WHO="default"; COMPARE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
@@ -42,6 +42,8 @@ while [ $# -gt 0 ]; do
     --prefab-from-commit) shift; OVERRIDES+=("${1:?--prefab-from-commit <작업공간>:<커밋>:<프로젝트 상대 경로> 필요}") ;;
     --stage) shift; STAGE="${1:?--stage 값 필요}" ;;
     --summary-at) shift; SUMMARY_AT="${1:?--summary-at day-end|mission-issued 필요}" ;;
+    --who) shift; WHO="${1:?--who 이름 필요}" ;;
+    --compare) shift; COMPARE="${1:?--compare <시안 PNG> 필요}" ;;
     --timeout) shift; TIMEOUT="${1:?--timeout 값 필요}" ;;
     [0-9]*x[0-9]*) SIZES+=("$1") ;;
     -*) echo "[ui-preview] 알 수 없는 인자: $1 — -h 로 사용법 확인" >&2; exit 2 ;;
@@ -50,6 +52,8 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -n "$SCREENS" ] || { usage >&2; exit 2; }
+case "$WHO" in *[!A-Za-z0-9._-]*) echo "[ui-preview] --who 는 영문·숫자·._- 만" >&2; exit 2 ;; esac
+OUT="$PROJ/TestResults/ui-preview/$WHO"
 
 KNOWN=" all $(screen_names)"
 for name in ${SCREENS//,/ }; do
@@ -61,58 +65,129 @@ done
   exit 2
 }
 
-# 에디터가 이 프로젝트를 열고 있으면 Library 락 때문에 같은 경로로는 배치를 못 띄움 → 복제본에서 실행
-RUN_PROJ="$PROJ"
-if pgrep -f -- "-projectPath $PROJ( |\$)" >/dev/null 2>&1; then
-  RUN_PROJ="$CLONE"
-  if pgrep -f -- "-projectPath $CLONE( |\$)" >/dev/null 2>&1; then
-    echo "[ui-preview] 복제본도 다른 Unity 가 사용 중: $CLONE — 그 실행이 끝난 뒤 재시도" >&2
-    exit 2
-  fi
-  mkdir -p "$CLONE"
-  [ -d "$CLONE/Library" ] || { [ -d "$PROJ/Library" ] && cp -cR "$PROJ/Library" "$CLONE/Library"; }
-  for dir in Assets Packages ProjectSettings "$STORE" Tools/localization/dev-preview; do
-    mkdir -p "$CLONE/$dir"
-    rsync -a --delete --exclude 'Temp/' "$PROJ/$dir/" "$CLONE/$dir/" || { echo "[ui-preview] 복제 실패: $dir" >&2; exit 2; }
+# 동시 요청: 요청마다 원본을 건드리지 않고 APFS 복제 레인(최대 LANES 개)에서 병렬 실행. 레인이 다 차면 순번 대기
+LANES_DIR="$PROJ/build/ui-preview-lanes"
+LANES="${UI_PREVIEW_LANES:-${LRM_UNITY_SLOTS:-4}}"
+QUEUE="$LANES_DIR/queue"
+HISTORY="$LANES_DIR/history.tsv"
+STATUS_EVERY=30
+mkdir -p "$QUEUE"
+
+alive() { [ -n "${1:-}" ] && kill -0 "$1" 2>/dev/null; }
+reap_lanes() {
+  for lock in "$LANES_DIR"/lane-*.lock; do
+    [ -d "$lock" ] || continue
+    alive "$(cat "$lock/pid" 2>/dev/null)" || rm -rf -- "${lock:?}"
   done
-  echo "[ui-preview] 에디터가 열려 있어 복제본에서 실행: $CLONE"
-fi
+  for q in "$QUEUE"/*; do
+    [ -f "$q" ] || continue
+    alive "$(cut -f1 "$q")" || rm -f -- "$q"
+  done
+}
+avg_minutes() {
+  [ -f "$HISTORY" ] || { echo "?"; return; }
+  tail -10 "$HISTORY" | awk -F'\t' '{ s += $1; n++ } END { if (n) printf "%.0f", s / n / 60; else print "?" }'
+}
 
-# Library 가 없는 새 작업 공간은 메인 체크아웃 Library 를 APFS 클론(메인은 읽기만)
-if [ ! -d "$RUN_PROJ/Library" ]; then
-  MAIN=$(git -C "$PROJ" worktree list --porcelain | sed -n '1s/^worktree //p')
-  if [ -n "$MAIN" ] && [ "$MAIN" != "$RUN_PROJ" ] && [ -d "$MAIN/Library" ]; then
-    echo "[ui-preview] Library 클론: $MAIN/Library"
-    cp -cR "$MAIN/Library" "$RUN_PROJ/Library" || { echo "[ui-preview] Library 클론 실패" >&2; exit 2; }
-  fi
-fi
-
-# 도구 코드를 실행 동안만 대상 프로젝트에 넣고 끝나면 지움(게임 저장소 커밋 0)
-INSTALL="$RUN_PROJ/$INSTALL_REL"
-[ ! -e "$INSTALL" ] || { echo "[ui-preview] 이미 있음: $INSTALL — 이전 실행 잔여물이면 지우고 재시도" >&2; exit 2; }
+TICKET="$QUEUE/$(date +%s%N)-$$"
+printf '%s\t%s\t%s\t%s\n' "$$" "$WHO" "$SCREENS" "$(date '+%T')" > "$TICKET"
+LANE=""; LOCK=""; SLOT=""
 BACKUP="$(mktemp -d)"
 RESTORE=()
+CREATED=()
 cleanup() {
-  rm -rf -- "${INSTALL:?}" "${INSTALL:?}.meta"
-  for rel in "${RESTORE[@]+"${RESTORE[@]}"}"; do
-    cp -p "$BACKUP/$rel" "$RUN_PROJ/$rel" 2>/dev/null
-  done
+  [ -z "${UNITY_PID:-}" ] || kill "$UNITY_PID" 2>/dev/null
+  if [ -n "$LANE" ]; then
+    rm -rf -- "${LANE:?}/$INSTALL_REL" "${LANE:?}/$INSTALL_REL.meta"
+    for rel in "${RESTORE[@]+"${RESTORE[@]}"}"; do
+      cp -p "$BACKUP/$rel" "$LANE/$rel" 2>/dev/null
+    done
+    for rel in "${CREATED[@]+"${CREATED[@]}"}"; do
+      rm -f -- "${LANE:?}/$rel"
+    done
+  fi
+  [ -z "$SLOT" ] || bash "$SLOT_TOOL" release "$SLOT" >/dev/null
+  [ -z "$LOCK" ] || rm -rf -- "${LOCK:?}"
+  rm -f -- "${TICKET:?}"
   rm -rf -- "${BACKUP:?}"
 }
 trap cleanup EXIT
+trap 'exit 2' INT TERM
+
+WAITED=0
+while [ -z "$LANE" ]; do
+  reap_lanes
+  POS=$(ls "$QUEUE" | sort | grep -n -- "-$$\$" | cut -d: -f1)
+  FREE_RANK=0
+  if [ "${POS:-1}" -le "$LANES" ]; then
+    for i in $(seq 1 "$LANES"); do
+      if mkdir "$LANES_DIR/lane-$i.lock" 2>/dev/null; then
+        printf '%s\n' "$$" > "$LANES_DIR/lane-$i.lock/pid"
+        printf '%s\t%s\t%s\n' "$WHO" "$SCREENS" "$(date '+%T')" > "$LANES_DIR/lane-$i.lock/info"
+        LOCK="$LANES_DIR/lane-$i.lock"; LANE="$LANES_DIR/lane-$i"
+        break
+      fi
+    done
+  fi
+  [ -n "$LANE" ] && break
+  if [ $((WAITED % STATUS_EVERY)) -eq 0 ]; then
+    AHEAD=$(for lock in "$LANES_DIR"/lane-*.lock; do [ -f "$lock/info" ] && awk -F'\t' '{ printf "%s(%s, %s 시작) ", $2, $1, $3 }' "$lock/info"; done)
+    echo "[ui-preview] 대기 ${POS:-?}번째. 실행 중: ${AHEAD:-없음}. 예상 대기 약 $(avg_minutes)분(최근 실행 평균)"
+  fi
+  sleep 1; WAITED=$((WAITED + 1))
+done
+rm -f -- "$TICKET"
+
+# 레인 준비: 처음이면 APFS 클론, 이후엔 바뀐 파일만 동기화(원본 작업 공간은 읽기만)
+if [ ! -d "$LANE/Library" ]; then
+  SRC_LIB="$PROJ/Library"
+  [ -d "$SRC_LIB" ] || SRC_LIB="$(git -C "$PROJ" worktree list --porcelain | sed -n '1s/^worktree //p')/Library"
+  [ -d "$SRC_LIB" ] || { echo "[ui-preview] 복제할 Library 없음" >&2; exit 2; }
+  echo "[ui-preview] 레인 생성(APFS 클론): $LANE"
+  mkdir -p "$LANE"
+  cp -cR "$SRC_LIB" "$LANE/Library" || { echo "[ui-preview] Library 클론 실패" >&2; exit 2; }
+fi
+# 패키지 매니페스트가 저장소 상대 경로(LocalPackages 등)를 참조하므로 프로젝트 전체를 동기화. 생성물·결과물만 제외
+rsync -a --delete --exclude '/Library/' --exclude '/Temp/' --exclude '/Logs/' --exclude '/obj/' --exclude '/UserSettings/' \
+  --exclude '/TestResults/' --exclude '/build/ui-preview-lanes/' --exclude '/build/ui-preview-project/' --exclude '/.git' \
+  "$PROJ/" "$LANE/" || { echo "[ui-preview] 레인 동기화 실패" >&2; exit 2; }
+RUN_PROJ="$LANE"
+echo "[ui-preview] 실행 레인: $(basename "$LANE") (요청자 $WHO)"
+
+# Unity 동시 실행 상한은 공용 슬롯 도구가 정함(있을 때만)
+SLOT_TOOL="${SLOT_TOOL:-$HOME/.config/lrm-hubs/unity_slot.sh}"
+if [ -f "$SLOT_TOOL" ]; then
+  SLOT=$(LRM_UNITY_SLOTS="${LRM_UNITY_SLOTS:-4}" LRM_SLOT_OWNER_PID=$$ bash "$SLOT_TOOL" acquire "ui-preview-$WHO") || { echo "[ui-preview] Unity 슬롯 획득 실패" >&2; exit 2; }
+fi
+
+INSTALL="$RUN_PROJ/$INSTALL_REL"
+rm -rf -- "${INSTALL:?}" "${INSTALL:?}.meta"
 cp -R "$REGISTRY" "$INSTALL" || { echo "[ui-preview] 도구 복사 실패: $INSTALL" >&2; exit 2; }
 # 다른 작업 공간의 커밋에 있는 프리팹(+.meta)을 실행 동안만 덮고 끝나면 원본 복구(체리픽 없이 수정 확인)
 for spec in "${OVERRIDES[@]+"${OVERRIDES[@]}"}"; do
-  IFS=: read -r SRC_WS SRC_SHA SRC_REL <<<"$spec"
-  [ -n "$SRC_WS" ] && [ -n "$SRC_SHA" ] && [ -n "$SRC_REL" ] || { echo "[ui-preview] 형식: --prefab-from-commit <작업공간>:<커밋>:<경로>" >&2; exit 2; }
+  SRC_WS="${spec%%:*}"; rest="${spec#*:}"; SRC_SHA="${rest%%:*}"; SRC_REL="${rest#*:}"
+  SRC_WS="${SRC_WS/#\~/$HOME}"
+  if [ -z "$SRC_WS" ] || [ -z "$SRC_SHA" ] || [ -z "$SRC_REL" ] || [ "$rest" = "$SRC_REL" ]; then
+    echo "[ui-preview] 형식: --prefab-from-commit <작업공간>:<커밋>:<프로젝트 상대 경로> (받은 값: $spec)" >&2; exit 2
+  fi
+  git -C "$SRC_WS" rev-parse --verify -q "$SRC_SHA^{commit}" >/dev/null || { echo "[ui-preview] 커밋 없음: $SRC_SHA @ $SRC_WS" >&2; exit 2; }
   for rel in "$SRC_REL" "$SRC_REL.meta"; do
-    git -C "$SRC_WS" cat-file -e "$SRC_SHA:$rel" 2>/dev/null || { [ "$rel" = "$SRC_REL" ] && { echo "[ui-preview] 커밋에 없음: $SRC_SHA:$rel" >&2; exit 2; }; continue; }
-    mkdir -p "$BACKUP/$(dirname "$rel")"
-    cp -p "$RUN_PROJ/$rel" "$BACKUP/$rel" || { echo "[ui-preview] 대상에 없음: $rel" >&2; exit 2; }
-    RESTORE+=("$rel")
-    git -C "$SRC_WS" show "$SRC_SHA:$rel" > "$RUN_PROJ/$rel"
+    if ! git -C "$SRC_WS" cat-file -e "$SRC_SHA:$rel" 2>/dev/null; then
+      [ "$rel" = "$SRC_REL" ] && { echo "[ui-preview] 커밋에 없는 파일: $SRC_SHA:$rel" >&2; exit 2; }
+      continue
+    fi
+    if [ -e "$RUN_PROJ/$rel" ]; then
+      mkdir -p "$BACKUP/$(dirname "$rel")"
+      cp -p "$RUN_PROJ/$rel" "$BACKUP/$rel"
+      RESTORE+=("$rel")
+    else
+      # 커밋에서 새로 생긴 파일: 실행 뒤 지움
+      mkdir -p "$RUN_PROJ/$(dirname "$rel")"
+      CREATED+=("$rel")
+    fi
+    git -C "$SRC_WS" cat-file blob "$SRC_SHA:$rel" > "$RUN_PROJ/$rel"
   done
-  echo "[ui-preview] 프리팹 덮음: $SRC_REL @ $SRC_SHA"
+  echo "[ui-preview] 덮음: $SRC_REL @ $SRC_SHA"
 done
 
 # 묶음 브랜치 전용 화면은 dev 에 없는 타입을 써서 기본 목록 위에 덮어씀
@@ -131,9 +206,15 @@ ARGS=(-batchmode -projectPath "$RUN_PROJ" -executeMethod Tests.Editor.UiPreview.
 
 "$UNITY" "${ARGS[@]}" &
 UNITY_PID=$!
-trap 'kill "$UNITY_PID" 2>/dev/null; cleanup' INT TERM
+MEM_LIMIT_KB=$((8 * 1024 * 1024))
 SECONDS=0
 while kill -0 "$UNITY_PID" 2>/dev/null; do
+  RSS=$(ps -o rss= -p "$UNITY_PID" 2>/dev/null | tr -d ' ')
+  if [ "${RSS:-0}" -gt "$MEM_LIMIT_KB" ]; then
+    kill "$UNITY_PID" 2>/dev/null
+    echo "[ui-preview] Unity 메모리 8GB 초과로 중단" >&2
+    exit 2
+  fi
   if [ "$SECONDS" -ge "$TIMEOUT" ]; then
     kill "$UNITY_PID" 2>/dev/null
     echo "[ui-preview] ${TIMEOUT}초 초과로 중단 — $LOG 확인" >&2
@@ -142,8 +223,26 @@ while kill -0 "$UNITY_PID" 2>/dev/null; do
   sleep 1
 done
 wait "$UNITY_PID"; CODE=$?
+UNITY_PID=""
+printf '%s\t%s\t%s\n' "$SECONDS" "$WHO" "$SCREENS" >> "$HISTORY"
 
 grep -E '\[UiPreview\]|error CS' "$LOG" 2>/dev/null | tail -20
 ls -1 "$OUT"/*.png 2>/dev/null
 [ -f "$OUT/summary.json" ] || { echo "[ui-preview] summary.json 없음(코드 $CODE) — $LOG 확인" >&2; exit 2; }
+if [ -n "$COMPARE" ] && [ "$CODE" = 0 ]; then
+  # 파일명 꼬리 규칙: _<대상 ref>+<덮은 커밋…>(+옵션)
+  TAG="$(git -C "$PROJ" rev-parse --short=7 HEAD)"
+  for spec in "${OVERRIDES[@]+"${OVERRIDES[@]}"}"; do
+    sha="$(echo "$spec" | cut -d: -f2 | cut -c1-7)"
+    case "+$TAG+" in *"+$sha+"*) ;; *) TAG="$TAG+$sha" ;; esac
+  done
+  [ -z "$STAGE" ] || TAG="$TAG+$STAGE"
+  [ -z "$SUMMARY_AT" ] || TAG="$TAG+$SUMMARY_AT"
+  mkdir -p "$OUT/compare"
+  for name in ${SCREENS//,/ }; do
+    for png in "$OUT/${name}"_*_t2.png; do
+      [ -f "$png" ] && python3 -I "$TOOL_DIR/compare.py" "$COMPARE" "$png" "$OUT/compare/$(basename "$png" _t2.png)_$TAG.png" "$TAG"
+    done
+  done
+fi
 exit "$CODE"
