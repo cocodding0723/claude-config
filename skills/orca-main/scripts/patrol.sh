@@ -4,6 +4,7 @@
 #       patrol.sh --inbox [--json] [--peek]  받은 편지함(hub-inbox/main.jsonl)의 읽은 위치 이후 새 줄. 자동 알림은 터미널 입력 대신 여기로 옴.
 #         읽은 위치(inode+오프셋)는 main-inbox.offset 에 기록(--peek 은 기록 안 함). 회전·잘림이면 옛 파일 잔여분 또는 처음부터. 허브 조회(orca)는 하지 않음
 # 워커 소멸: 지난 순찰에 있던 허브 하위 워커 터미널이 사라지면 브랜치·마지막 커밋과 함께 1회 표시(상태 PATROL_STATE)
+# 병합 PR → 장부 자동 완료 연결: 순찰 끝에 `python3 -I $LRM_HUB_DIR/ledger_merged.py` 한 줄 추가(기본 dry-run, 후보만 보고). --apply 는 코디네이터가 dry-run 결과를 메인에 보고한 뒤 켬
 # 종료 코드: 0 정상, 1 orca 조회 실패(--inbox 는 편지함 읽기·쓰기 실패), 2 설정 오류(--inbox 는 인자 오류)
 set -eu
 CONF="${ORCA_MAIN_CONFIG:-$HOME/.config/lrm-hubs/main.env}"
