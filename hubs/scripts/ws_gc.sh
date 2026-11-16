@@ -16,19 +16,21 @@ CFG_GAME_REPO_DIR="${WS_GC_GAME_REPO:-LoveRevolutionMaker}"  # 부모 자동 연
 CFG_TICKET_RE='LRM-[0-9]+'                               # 같은 티켓 판정에 쓰는 이름·브랜치·폴더 패턴
 CFG_PROTECTED_BRANCHES="main master develop dev"         # 이 브랜치(와 release/*)가 붙은 곳은 PR 이력이 있어도 제외
 # Unity 재임포트 부산물: 미커밋 0 으로 치는 경로. .meta 와 TMP 폰트 아틀라스 파일만(폴더 이름만으로는 부산물이 아님)
-CFG_NOISE_RE='(\.meta$)|(SDF[^/]*\.asset$)'
+CFG_NOISE_RE='(\.meta$)|(SDF[^/]*\.asset$)|(^[^/]+\.slnx$)'  # 루트 .slnx 는 Unity·IDE 가 만드는 솔루션 파일
 # 사운드 라이선스 파일은 줄바꿈 변경뿐일 때만 부산물로 침(role-config 의 LICENSE.txt 예외)
 CFG_LICENSE_RE='^Assets/(.*/)?Sound/.*\.LICENSE\.txt$'
+# Unity·Firebase 리졸버가 열 때 다시 쓰는 추적 파일. 경로만으로는 부산물이 아님: 바뀐 줄이 전부 regen_line_re 의 해당 줄 형식일 때만 부산물(되돌린 뒤 삭제)
+CFG_REGEN_RE='^(Assets/Plugins/Android/AndroidManifest\.xml|Assets/Plugins/Android/FirebaseApp\.androidlib/res/values/google-services\.xml|Assets/Plugins/Easy Save 3/Resources/ES3/ES3Defaults\.asset|Assets/Editor/SpineSettings\.asset|ProjectSettings/ProjectSettings\.asset)$|\.meta$'
 # ── 결과물 허용 목록: 추적 안 되는(미추적·gitignore) 파일이 여기에 들 때만 보관 뒤 삭제. 목록 밖은 전부 "미확인"이라 작업 공간을 보존 ──
 CFG_OUTPUT_DIRS_RE='^(docs/out|evidence|TestResults)/|/TestResults/'   # 결과물 폴더(대소문자 구분)
 CFG_OUTPUT_ROOT_RE='^[^/]+\.(html|md|png|jpe?g|gif|mp4|txt|log)$'       # 작업 공간 루트의 결과물 파일(확장자 대소문자 무시)
 # 게임 소스 폴더 아래는 허용 목록과 겹쳐도 항상 보존(새 에셋·코드일 수 있음)
 CFG_SOURCE_DIR_RE='^(Assets|Packages|ProjectSettings)/'
 # 다시 만들어지는 gitignore 캐시 후보(폴더는 끝에 /). 폴더 이름만으로 캐시라고 단정하지 않음: 아래 CFG_CACHE_GENERATED_RE 밖 파일이 안에 있으면 보존
-CFG_CACHE_RE='^(Library|Temp|obj|Logs|UserSettings|\.vs|\.idea|node_modules)/$|(^|/)\.dart_tool/$|^\.flutter-plugins(-dependencies)?$|^\.claude/settings\.local\.json$|^\.DS_Store$'
+CFG_CACHE_RE='^(Library|Temp|obj|Logs|UserSettings|\.vs|\.idea|node_modules)/$|(^|/)(\.dart_tool|node_modules|__pycache__)/$|^[^/]+\.(csproj|sln)$|^\.flutter-plugins(-dependencies)?$|^\.claude/settings\.local\.json$|^\.DS_Store$'
 # 캐시 폴더 안에서 "지워도 되는 것" 목록(도구가 다시 만드는 하위 경로). 캐시 폴더 안의 파일은 이 목록에 든 것만 버리고,
 # 목록 밖은 확장자와 상관없이 전부 미확인으로 보존함(.kt·.mp4 같은 목록에 없는 파일도 보존)
-CFG_CACHE_GENERATED_RE='^(Library/(PackageCache|Artifacts|Bee|ScriptAssemblies|ShaderCache|StateCache|BuildCache|PlayerDataCache|APIUpdater|Search|SourceAssetDB)/|node_modules/|(.*/)?\.dart_tool/|Temp/|Logs/|\.vs/|obj/(Debug|Release)/)|^Library/([^/.]+|[^/]+\.(asset|json|meta|txt|log))$|^obj/(project\.assets\.json|[^/]+\.nuget\.[^/]+)$'
+CFG_CACHE_GENERATED_RE='^(Library/(PackageCache|Artifacts|Bee|ScriptAssemblies|ShaderCache|StateCache|BuildCache|PlayerDataCache|APIUpdater|Search|SourceAssetDB|BuildProfiles)/|(.*/)?node_modules/|(.*/)?__pycache__/|(.*/)?\.dart_tool/|Temp/|Logs/|\.vs/|obj/(Debug|Release)/)|^Library/([^/.]+|[^/]+\.(asset|json|meta|txt|log))$|^obj/(project\.assets\.json|[^/]+\.nuget\.[^/]+)$'
 CFG_INBOX="${WS_GC_INBOX:-$HOME/.config/lrm-hubs/hub-inbox}"  # 허브별 보관 색인(<허브 slug>.tsv). 허브 폴더 coord-<slug>-hub 에서 slug 를 뗌
 CFG_KEEP_CODE_LOG_MAX=5                                  # 보존 근거로 로그·JSON 에 남길 경로 수
 CFG_RM_DIRTY_RE='modified or untracked|contain(s|ing) submodules|uncommitted|dirty'  # orca rm 거부 문구 중 미커밋 변경 계열만 force 허용(잠금·사용 중 등은 제외)
@@ -182,13 +184,13 @@ CLASSIFY_AWK='
     xy = substr($0, 1, 2); q = substr($0, 4); if (xy ~ /^[RC]/ || xy ~ /^.[RC]/) skip = 1
     # 부산물 예외는 미추적 파일에만. 추적 파일 수정은 확장자·폴더와 무관하게 R(보존)
     if (xy == "??") print (q ~ ENVIRON["NZ"] ? "N" : (allowed(q) ? "O" : "U")) "\t" q
-    else if (q ~ ENVIRON["LZ"] && xy ~ /^[ M][ M]$/) print "L\t" q
+    else if (xy ~ /^[ M][ M]$/) print "L\t" q  # 수정만: 아래에서 줄바꿈만·다시쓰임을 내용으로 확인, 아니면 보존
     else print "R\t" q
     next }
   { q = $0; if (q == "") next
     if (substr(q, 1, 1) == "!") print "I\t" substr(q, 2)
     else if (q ~ ENVIRON["SZ"]) print "I\t" q
-    else if (q ~ ENVIRON["CZ"]) print "C\t" q
+    else if (q ~ ENVIRON["CZ"] || q ~ ENVIRON["CGZ"]) print "C\t" q  # 상위 폴더째 풀린 경로가 생성 목록 안이면 캐시
     else print (allowed(q) ? "G" : "I") "\t" q }'
 # gitignore 파일 목록. git 이 통째로 묶어 보여 주는 폴더(docs/ 처럼 안에 결과물만 든 경우 포함)는 허용·캐시·소스 판정이 서지 않으면 파일 단위로 풀어서 봄
 ignored_entries() {
@@ -205,27 +207,69 @@ ignored_entries() {
     esac
   done
 }
+# 다시 쓰이는 추적 파일의 허용 줄 형식(바뀐 줄 하나하나가 이 형식이어야 부산물). 목록 밖 경로는 1(보존)
+regen_line_re() {
+  case "$1" in
+    Assets/Plugins/Android/AndroidManifest.xml)  # Firebase 리졸버: scheme 치환·service 태그 한 줄로 합침
+      printf '%s' '^[[:space:]]*(<data android:scheme="[^"]*"[[:space:]]*/>|<service android:name="com\.google\.firebase\.messaging\.MessageForwardingService"[^>]*>(</service>)?|</service>)[[:space:]]*$' ;;
+    Assets/Plugins/Android/FirebaseApp.androidlib/res/values/google-services.xml)  # 설정 파일에서 다시 만든 문자열 값
+      printf '%s' '^[[:space:]]*<string name="[a-z_]+" translatable="false">[^<]*</string>[[:space:]]*$' ;;
+    "Assets/Plugins/Easy Save 3/Resources/ES3/ES3Defaults.asset")  # 어셈블리 이름 목록
+      printf '%s' '^[[:space:]]*- [A-Za-z0-9_.-]+[[:space:]]*$' ;;
+    Assets/Editor/SpineSettings.asset) printf '%s' '^[[:space:]]*textureSettingsReference:.*$' ;;
+    ProjectSettings/ProjectSettings.asset) printf '%s' '^[[:space:]]*companyName: Basakansoft(-[A-Za-z0-9-]+)?[[:space:]]*$' ;;  # 스모크 실행이 회사 이름 뒤에 붙이는 꼬리
+    *.meta) printf '%s' '^guid: [0-9a-f]{32}$' ;;  # .meta 를 지웠다 다시 만들어 guid 만 바뀐 경우
+    *) return 1 ;;
+  esac
+}
+# 미확인 파일(미추적·gitignore)이 같은 저장소 본체(메인 체크아웃)의 같은 경로 파일과 byte 단위로 같으면 0. 사본이 본체에 남으므로 지워도 잃는 것이 없음(인증 설정·IDE 설정 사본 등)
+same_as_main() {
+  local p="$1" f="$2" common main
+  common=$(git -C "$p" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 1
+  main=$(cd "$(dirname "$common")" 2>/dev/null && pwd -P) || return 1
+  [ "$main" != "$(cd "$p" 2>/dev/null && pwd -P)" ] && [ -f "$p/$f" ] && [ ! -L "$p/$f" ] && [ -f "$main/$f" ] && cmp -s -- "$p/$f" "$main/$f"
+}
+# 추적 파일의 바뀐 줄(줄바꿈 차이 무시)이 전부 허용 형식이면 0. 바뀐 줄을 못 읽거나 하나라도 밖이면 1
+regen_ok() {
+  local p="$1" f="$2" re lines
+  re=$(regen_line_re "$f") || return 1
+  lines=$(git -C "$p" diff HEAD --ignore-cr-at-eol -U0 -- "$f" 2>/dev/null | awk '/^@@/ { h = 1; next } h && /^[+-]/ { print substr($0, 2) }') || return 1
+  [ -n "$lines" ] || return 1
+  ! printf '%s\n' "$lines" | grep -Evq -- "$re"
+}
 classify_changes() {
-  local p="$1" k path
+  local p="$1" k path why
   : > "$TMP/noise.txt"; : > "$TMP/licenses.txt"; : > "$TMP/outputs.txt"; : > "$TMP/keep.txt"
   N_REAL=0 N_NOISE=0 N_LIC=0 N_OUT=0 N_TRACKED=0 N_UNVERIFIED=0
-  export NZ="$CFG_NOISE_RE" LZ="$CFG_LICENSE_RE" DZ="$CFG_OUTPUT_DIRS_RE" RZ="$CFG_OUTPUT_ROOT_RE" SZ="$CFG_SOURCE_DIR_RE" CZ="$CFG_CACHE_RE"
+  export NZ="$CFG_NOISE_RE" LZ="$CFG_LICENSE_RE" GZ="$CFG_REGEN_RE" CGZ="$CFG_CACHE_GENERATED_RE" DZ="$CFG_OUTPUT_DIRS_RE" RZ="$CFG_OUTPUT_ROOT_RE" SZ="$CFG_SOURCE_DIR_RE" CZ="$CFG_CACHE_RE"
   if ! { git -C "$p" status --porcelain=v1 -z --untracked-files=all --ignore-submodules=all 2>/dev/null | tr '\0' '\n' | awk -v MODE_=tracked "$CLASSIFY_AWK" \
       && ignored_entries "$p" | awk -v MODE_=ignored "$CLASSIFY_AWK"; } > "$TMP/chg.tsv"; then
     N_REAL=1; return 1
   fi
+  # 미추적 .meta 는 같은 이름 원본(파일 또는 폴더 안 파일)이 추적 중일 때만 부산물. 원본이 없거나 미추적이면 보존(새 에셋일 수 있음)
+  awk -F'\t' '$1 == "N" && $2 ~ /\.meta$/ { print substr($2, 1, length($2) - 5) }' "$TMP/chg.tsv" > "$TMP/metasrc.txt"
+  : > "$TMP/tracked_src.txt"
+  if [ -s "$TMP/metasrc.txt" ]; then
+    tr '\n' '\0' < "$TMP/metasrc.txt" | (cd "$p" && xargs -0 git ls-files --) > "$TMP/tracked_src.txt" 2>/dev/null || { N_REAL=1; return 1; }
+  fi
+  awk -F'\t' 'FILENAME == ARGV[1] { t[$0] = 1; n = split($0, a, "/"); d = ""; for (i = 1; i < n; i++) { d = d (i > 1 ? "/" : "") a[i]; t[d] = 1 }; next }
+    $1 == "N" && $2 ~ /\.meta$/ && !(substr($2, 1, length($2) - 5) in t) { $1 = "U" } { print $1 "\t" $2 }' "$TMP/tracked_src.txt" "$TMP/chg.tsv" > "$TMP/chg2.tsv" && mv "$TMP/chg2.tsv" "$TMP/chg.tsv"
   while IFS=$'\t' read -r k path; do
     case "$k" in
       N) N_NOISE=$((N_NOISE + 1)); printf '부산물 %s\n' "$path" >> "$TMP/noise.txt" ;;
-      L) if git -C "$p" diff HEAD --ignore-all-space --ignore-cr-at-eol --quiet -- "$path" 2>/dev/null; then
-           N_LIC=$((N_LIC + 1)); printf '줄바꿈만 %s\n' "$path" >> "$TMP/noise.txt"
+      L) why=""
+         if [[ "$path" =~ $CFG_LICENSE_RE ]] && git -C "$p" diff HEAD --ignore-all-space --ignore-cr-at-eol --quiet -- "$path" 2>/dev/null; then why=줄바꿈만
+         elif git -C "$p" diff HEAD --ignore-cr-at-eol --quiet -- "$path" 2>/dev/null; then why=줄바꿈만  # 내용은 같고 CRLF 만 다름
+         elif [[ "$path" =~ $CFG_REGEN_RE ]] && regen_ok "$p" "$path"; then why=다시쓰임; fi
+         if [ -n "$why" ]; then
+           N_LIC=$((N_LIC + 1)); printf '%s %s\n' "$why" "$path" >> "$TMP/noise.txt"
            printf '%s\n' "$path" >> "$TMP/licenses.txt"
          else N_REAL=$((N_REAL + 1)); N_TRACKED=$((N_TRACKED + 1)); printf '추적 수정 %s\n' "$path" >> "$TMP/keep.txt"; fi ;;
       O) N_OUT=$((N_OUT + 1)); printf '%s\n' "$path" >> "$TMP/outputs.txt" ;;
       G) printf '%s\n' "$path" >> "$TMP/outputs.txt" ;;
       C) ;;
-      U) N_REAL=$((N_REAL + 1)); N_UNVERIFIED=$((N_UNVERIFIED + 1)); printf '미확인 미추적 %s\n' "$path" >> "$TMP/keep.txt" ;;
-      I) N_REAL=$((N_REAL + 1)); N_UNVERIFIED=$((N_UNVERIFIED + 1)); printf '미확인 무시파일 %s\n' "$path" >> "$TMP/keep.txt" ;;
+      U|I) if same_as_main "$p" "$path"; then N_NOISE=$((N_NOISE + 1)); printf '본체와같음 %s\n' "$path" >> "$TMP/noise.txt"
+           else N_REAL=$((N_REAL + 1)); N_UNVERIFIED=$((N_UNVERIFIED + 1)); printf '%s %s\n' "$([ "$k" = U ] && echo '미확인 미추적' || echo '미확인 무시파일')" "$path" >> "$TMP/keep.txt"; fi ;;
       *) N_REAL=$((N_REAL + 1)); N_TRACKED=$((N_TRACKED + 1)); printf '추적 수정 %s\n' "$path" >> "$TMP/keep.txt" ;;
     esac
   done < "$TMP/chg.tsv"
@@ -337,7 +381,7 @@ remove_ws() {
     classify_changes "$p"
     # 기존 부산물은 허용, 거부 뒤 새로 생긴 부산물·보관 뒤 새로 생긴 결과물은 차단
     [ "$N_REAL" = 0 ] && [ -z "$(sort "$TMP/noise.txt" | comm -13 <(sort "$TMP/noise0.txt") -)" ] && cmp -s "$TMP/outputs0.txt" "$TMP/outputs.txt" && submodules_clean "$p" || return 1
-    if [ "$N_LIC" -gt 0 ] || [ "$N_OUT" -gt 0 ] || [ -f "$p/.gitmodules" ]; then
+    if [ "$N_LIC" -gt 0 ] || [ "$N_OUT" -gt 0 ] || [ "$N_NOISE" -gt 0 ] || [ -f "$p/.gitmodules" ]; then
       log "RM_RETRY_FORCE 보관 파일 수 일치·실변경 0·새 부산물 0·서브모듈 clean 확인, LICENSE ${N_LIC}건·결과물 ${N_OUT}건 → --force"
       orca worktree rm --worktree "path:$p" --force --json >/dev/null 2>&1 && return 0
     fi

@@ -41,6 +41,11 @@ SEED="$SB/seed"; git clone -q "$O/repoA.git" "$SEED" 2>/dev/null
 mkdir -p "$SEED/Assets/Sound/s"
 printf 'TestResults/\ndocs/out/\nLibrary/\n*.html\n*.mp4\nsecret/\n.dart_tool/\n.idea/\nobj/\n' > "$SEED/.gitignore"
 printf 'readme\n' > "$SEED/README.md"; printf 'line1\nline2\n' > "$SEED/Assets/Sound/s/a.LICENSE.txt"
+# 다시 쓰이는 추적 파일(Unity·Firebase 리졸버): 내용 대조 시험용
+mkdir -p "$SEED/Assets/Plugins/Android" "$SEED/Assets/X" "$SEED/ProjectSettings"
+printf '<manifest>\n        <data android:scheme="${applicationId}" />\n  <uses-permission android:name="a" />\n</manifest>\n' > "$SEED/Assets/Plugins/Android/AndroidManifest.xml"
+printf 'fileFormatVersion: 2\nguid: 174513c6b92d84e38b254f1f7d3c97ef\n  spriteMode: 2\n' > "$SEED/Assets/X/pic.png.meta"
+printf 'PlayerSettings:\n  companyName: Basakansoft\n  productName: LRM\n' > "$SEED/ProjectSettings/ProjectSettings.asset"
 git -C "$SEED" add -A; GIT_AUTHOR_DATE=$OLD GIT_COMMITTER_DATE=$OLD git -C "$SEED" commit -q -m seed; git -C "$SEED" push -q origin HEAD:main 2>/dev/null
 
 clone() { git clone -q "$O/repoA.git" "$W/$1" 2>/dev/null; }
@@ -63,7 +68,7 @@ detach() { git -C "$W/$1" checkout -q --detach; perl -pi -e 's#^(\Q'"$W/$1"'\E)\
 mk merged feat/merged;          pr feat/merged '[{"number":11,"state":"MERGED"}]'
 mk closed_local feat/closed local; pr feat/closed '[{"number":12,"state":"CLOSED"}]'
 mk noise feat/noise;            pr feat/noise '[{"number":13,"state":"MERGED"}]'
-  mkdir -p "$W/noise/Assets/X"; echo m > "$W/noise/Assets/X/new.cs.meta"
+  echo m > "$W/noise/Assets/Sound/s.meta"  # 추적 중인 폴더의 .meta(원본 추적 → 부산물)
   printf 'line1\r\nline2\r\n' > "$W/noise/Assets/Sound/s/a.LICENSE.txt"
 mk dirty feat/dirty;            pr feat/dirty '[{"number":14,"state":"MERGED"}]'; echo edit >> "$W/dirty/README.md"
 mk dirty_lic feat/dlic;         pr feat/dlic '[{"number":15,"state":"MERGED"}]'; echo 'line3' >> "$W/dirty_lic/Assets/Sound/s/a.LICENSE.txt"
@@ -124,7 +129,7 @@ chk "dry-run: 보관 폴더에 결과물 없음" '[ -z "$(find "$ARC" -type f ! 
 for n in $CAND; do chk "dry-run 후보: $n" 'has "CANDIDATE repoA/$n "'; done
 for e in $SKIPS; do n="${e%%:*}" r="${e##*:}"; chk "dry-run 건너뜀: $n ($r)" 'has "SKIP $r .*$n"'; done
 chk "dry-run: 메인 체크아웃은 평가 대상 아님" '! has "repoA/mainco"'
-chk "dry-run: 부산물 근거 로그(.meta·줄바꿈만)" 'has "NOISE   부산물 Assets/X/new.cs.meta" && has "NOISE   줄바꿈만 Assets/Sound/s/a.LICENSE.txt"'
+chk "dry-run: 부산물 근거 로그(.meta·줄바꿈만)" 'has "NOISE   부산물 Assets/Sound/s.meta" && has "NOISE   줄바꿈만 Assets/Sound/s/a.LICENSE.txt"'
 chk "dry-run: 진짜 LICENSE 변경은 dirty" 'has "SKIP dirty repoA/dirty_lic"'
 chk "dry-run: 요약 줄 기록" 'has "END 삭제 후보 6개"'
 chk "dry-run: Slack progress 1회" '[ "$(wc -l < "$FAKE/notify.calls" | tr -d " ")" = 1 ] && grep -q -- "--kind progress" "$FAKE/notify.calls" && grep -q "시험 점검" "$FAKE/notify.calls"'
@@ -189,11 +194,11 @@ for n in eol_only eol_other eol_content eol_late eol_arcfail eol_noise_late eol_
   git -C "$W/$n" push -q origin "feat/$n" 2>/dev/null
   git -C "$W/$n" -c core.autocrlf=false checkout -- "$LIC"
 done
-echo m > "$W/lic_noise/Assets/Sound/s/new.cs.meta"
+echo m > "$W/lic_noise/Assets/Sound.meta"
 mk sub_noise feat/sub_noise; pr feat/sub_noise '[{"number":51,"state":"MERGED"}]'
 git -C "$W/sub_noise" -c protocol.file.allow=always submodule add -q "$O/sub.git" Assets/Sub 2>/dev/null
 git -C "$W/sub_noise" add -A; oldc sub_noise sub; git -C "$W/sub_noise" push -q origin feat/sub_noise 2>/dev/null
-echo m > "$W/sub_noise/Assets/new.cs.meta"
+echo m > "$W/sub_noise/Assets/Sound.meta"
 echo edit >> "$W/eol_other/README.md"
 echo content >> "$W/eol_content/$LIC"
 : > "$ARC/repoA/eol_arcfail"
@@ -370,6 +375,50 @@ jq -n --arg p "$W/live_nw" '{ok:true,result:{terminals:[{handle:"term_nw",worktr
 jq -n '{ok:true,result:{workers:[],page:{hasMore:false}}}' > "$GC_FAKE/workers.json"
 gc --only live_nw --apply; chk "[4] 워커 목록이 비었고 터미널이 붙은 곳: 보존(live)" '[ -e "$W/live_nw" ] && has "SKIP live repoA/live_nw" && ! grep -q "^worktree rm" "$GC_FAKE/orca.calls"' "$(tail -3 "$ARC/ws_gc.log")"
 unset GC_FAKE
+
+# [R] 다시 쓰이는 추적 파일: 바뀐 줄이 허용 형식이면 부산물(되돌린 뒤 삭제), 하나라도 밖이면 보존
+MAN=Assets/Plugins/Android/AndroidManifest.xml
+for n in regen_man regen_man_bad regen_meta regen_meta_bad regen_slnx regen_company regen_product; do mk "$n" "feat/$n"; pr "feat/$n" '[{"number":60,"state":"MERGED"}]'; done
+perl -pi -e 's/\$\{applicationId\}/com.basakansoft.loverevolutionmaker/' "$W/regen_man/$MAN"
+perl -pi -e 's/\$\{applicationId\}/com.x/; s#<uses-permission android:name="a" />#<uses-permission android:name="b" />#' "$W/regen_man_bad/$MAN"
+perl -pi -e 's/^guid: .*/guid: c0ba01b6b63654dae912dd8773371ac5/' "$W/regen_meta/Assets/X/pic.png.meta"
+perl -pi -e 's/spriteMode: 2/spriteMode: 1/' "$W/regen_meta_bad/Assets/X/pic.png.meta"
+echo sln > "$W/regen_slnx/LoveRevolutionMaker.slnx"
+perl -pi -e 's/companyName: Basakansoft/companyName: Basakansoft-smoke-stack/' "$W/regen_company/ProjectSettings/ProjectSettings.asset"
+perl -pi -e 's/productName: LRM/productName: LRM2/' "$W/regen_product/ProjectSettings/ProjectSettings.asset"
+jq -R -s '{ok:true,result:{worktrees:(split("\n")|map(select(length>0)|split("\t")|{id:("repo::"+.[0]),path:.[0],branch:.[1],lastActivityAt:(.[2]|tonumber),isMainWorktree:(.[3]=="true"),childWorktreeIds:[]}))}}' "$SB/reg.tsv" > "$FAKE/worktrees.json"
+for n in regen_man regen_meta regen_slnx regen_company; do
+  gc --only "$n"; chk "[R] $n: 다시 쓰인 줄만 → 후보" 'has "CANDIDATE repoA/'"$n"' "' "$(grep "$n" "$ARC/ws_gc.log" | tail -2)"
+done
+for n in regen_man_bad regen_meta_bad regen_product; do
+  gc --only "$n"; chk "[R] $n: 허용 밖 줄 섞임 → 보존" 'has "SKIP dirty repoA/'"$n"'"' "$(grep "$n" "$ARC/ws_gc.log" | tail -2)"
+done
+chk "[R] 근거 로그: 다시쓰임 표기" 'has "다시쓰임 $MAN"'
+# [R] 원본 없는 미추적 .meta(새 에셋의 .meta 일 수 있음)는 보존, CRLF 만 바뀐 일반 추적 파일은 부산물
+mk regen_orphan_meta feat/rom; pr feat/rom '[{"number":63,"state":"MERGED"}]'; echo m > "$W/regen_orphan_meta/Assets/Sound/s/gone.cs.meta"
+mk regen_crlf feat/rcrlf; pr feat/rcrlf '[{"number":64,"state":"MERGED"}]'; perl -pi -e 's/\n/\r\n/' "$W/regen_crlf/README.md"
+jq -R -s '{ok:true,result:{worktrees:(split("\n")|map(select(length>0)|split("\t")|{id:("repo::"+.[0]),path:.[0],branch:.[1],lastActivityAt:(.[2]|tonumber),isMainWorktree:(.[3]=="true"),childWorktreeIds:[]}))}}' "$SB/reg.tsv" > "$FAKE/worktrees.json"
+gc --only regen_orphan_meta; chk "[R] 원본 없는 미추적 .meta → 보존" 'has "SKIP dirty repoA/regen_orphan_meta"' "$(grep regen_orphan "$ARC/ws_gc.log" | tail -2)"
+gc --only regen_crlf; chk "[R] CRLF 만 바뀐 추적 파일 → 후보" 'has "CANDIDATE repoA/regen_crlf " && has "줄바꿈만 README.md"' "$(grep regen_crlf "$ARC/ws_gc.log" | tail -2)"
+# [R] 생성 캐시(루트 csproj·하위 __pycache__·node_modules)는 보존 이유가 아님
+mk regen_cache feat/regen_cache; pr feat/regen_cache '[{"number":61,"state":"MERGED"}]'
+printf 'Assembly-CSharp.csproj\n__pycache__/\nnode_modules/\n' >> "$W/regen_cache/.git/info/exclude"
+echo p > "$W/regen_cache/Assembly-CSharp.csproj"; mkdir -p "$W/regen_cache/Tools/ev/__pycache__" "$W/regen_cache/fn/node_modules/x"; echo b > "$W/regen_cache/Tools/ev/__pycache__/a.pyc"; echo j > "$W/regen_cache/fn/node_modules/x/i.js"
+# [R] 본체와 같은 무시 파일: 본체(SEED)의 작업 트리로 만든 곳에서 byte 비교
+git -C "$SEED" worktree add -q -b feat/wt_same "$W/wt_same" 2>/dev/null; git -C "$SEED" worktree add -q -b feat/wt_diff "$W/wt_diff" 2>/dev/null
+mkdir -p "$SEED/secret"; echo same > "$SEED/secret/auth.asset"
+for n in wt_same wt_diff; do echo "$n" > "$W/$n/f.txt"; git -C "$W/$n" add -A; oldc "$n" "$n"; git -C "$W/$n" push -q -u origin "feat/$n" 2>/dev/null; mkdir -p "$W/$n/secret"; reg "$n" "refs/heads/feat/$n" "$OLD_MS"; pr "feat/$n" '[{"number":62,"state":"MERGED"}]'; done
+echo same > "$W/wt_same/secret/auth.asset"; echo other > "$W/wt_diff/secret/auth.asset"
+jq -R -s '{ok:true,result:{worktrees:(split("\n")|map(select(length>0)|split("\t")|{id:("repo::"+.[0]),path:.[0],branch:.[1],lastActivityAt:(.[2]|tonumber),isMainWorktree:(.[3]=="true"),childWorktreeIds:[]}))}}' "$SB/reg.tsv" > "$FAKE/worktrees.json"
+gc --only regen_cache; chk "[R] 생성 캐시만 → 후보" 'has "CANDIDATE repoA/regen_cache "' "$(grep regen_cache "$ARC/ws_gc.log" | tail -2)"
+gc --only wt_same; chk "[R] 본체와 같은 무시 파일 → 후보" 'has "CANDIDATE repoA/wt_same " && has "본체와같음 secret/auth.asset"' "$(grep wt_same "$ARC/ws_gc.log" | tail -2)"
+gc --only wt_diff; chk "[R] 본체와 다른 무시 파일 → 보존" 'has "SKIP dirty repoA/wt_diff"' "$(grep wt_diff "$ARC/ws_gc.log" | tail -2)"
+FAKE_RM_CHECK_DIRTY=1 gc --apply --only regen_man
+chk "[R] regen_man: 되돌린 뒤 삭제" '[ "$RC" = 0 ] && [ ! -e "$W/regen_man" ]' "$(tail -3 "$ARC/ws_gc.log")"
+FAKE_RM_CHECK_DIRTY=1 gc --apply --only regen_slnx
+chk "[R] regen_slnx: 미추적 부산물만 → force 삭제" '[ "$RC" = 0 ] && [ ! -e "$W/regen_slnx" ]' "$(tail -3 "$ARC/ws_gc.log")"
+gc --apply --only regen_meta_bad
+chk "[R] regen_meta_bad: apply 에도 보존" '[ -e "$W/regen_meta_bad" ]'
 
 # [5] 잠금: 동시에 4개를 띄우면 하나만 실행(나머지는 건너뜀), 끝난 뒤에는 다시 실행됨
 mkdir -p "$SB/par"
