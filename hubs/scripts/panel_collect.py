@@ -745,9 +745,12 @@ def collect_progress(src, repos, write, get):
     conf = progress_collect.conf_from_env()
     conf["gh"], conf["repos"] = os.environ.get("PANEL_GH", "gh"), repos
     workers = (src["workers"].get("value") or {})
+    listing = progress_collect.once(lambda: terminal_list(get))  # 하위 작업 공간 수·허브 세션 판정이 같은 응답을 씀
+    slugs = progress_collect.load_slugs()
     snap = progress_collect.refresh(pending=src["pending"].get("value"), workers={"live": workers["live"]} if "live" in workers else None,
                                     write=write, use_pr=bool(repos), conf=conf,
-                                    workspaces=lambda: progress_collect.workspace_counts(get("worktree", "list", "--limit", LIST_LIMIT).get("worktrees"), terminals(get), progress_collect.load_slugs()))
+                                    workspaces=lambda: progress_collect.workspace_counts(get("worktree", "list", "--limit", LIST_LIMIT).get("worktrees"), listing().get("terminals"), slugs),
+                                    sessions=lambda: progress_collect.live_hubs(listing(), slugs))
     return {"counts": snap["counts"], "items": snap["items"], "notes": snap["notes"], "groups": snap["groups"]}
 
 
