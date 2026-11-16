@@ -64,6 +64,18 @@ def status_path(slug):
     return os.path.join(status_dir(), slug + ".json")
 
 
+def legacy_slug(slug):
+    """옛 규칙(앞 coord- 반복·끝 -hub 반복 제거). 옛 상태 파일(예: coord-server-hub 허브의 server.json)·보고의 hub 값이 이 형태로 남아 있음"""
+    return re.sub(r"(-hub)+$", "", re.sub(r"^(coord-)+", "", slug)) or slug
+
+
+def read_path(slug):
+    """읽기용 경로: <slug>.json 이 없고 옛 이름 파일만 있으면 그 파일. 쓰기는 항상 status_path(slug)"""
+    path = status_path(slug)
+    old = os.path.join(status_dir(), legacy_slug(slug) + ".json") if SLUG_RE.match(legacy_slug(slug)) else path
+    return old if not os.path.exists(path) and os.path.exists(old) else path
+
+
 def now_iso():
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
@@ -104,7 +116,7 @@ def atomic_write(path, text):
 
 
 def load(slug):
-    path = status_path(slug)
+    path = read_path(slug)
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)

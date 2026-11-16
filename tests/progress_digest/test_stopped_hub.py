@@ -45,12 +45,12 @@ class StoppedHubTest(Base):
 
     def test_no_session_stale_hub_folded_to_one_line(self):
         self.hubs_table(("ui", "UI 계층", "-", "-", "-"))
-        day = self.put("ui", ["버튼 구현", "팝업 구현"], ["정오님 확인 대기", "서버 키 발급 막힘"])
+        day = self.put("ui", ["버튼 구현", "팝업 구현"], ["담당자님 확인 대기", "서버 키 발급 막힘"])
         got = self.items()
         self.assertEqual([i["key"] for i in got], ["hub:ui:stopped"])  # 같은 허브 개별 줄은 사라져 digest 가 완료 처리함
         head, *body = got[0]["title"].split("\n")
         self.assertEqual(head, f"정지 허브: UI 계층 — 진행 2·막힘 2 (마지막 갱신 {day})")
-        self.assertEqual(body, ["· 정오님 확인 대기"])  # 사용자·외부가 풀 막힘만 본문에 한 줄씩. 다른 막힘은 접힘
+        self.assertEqual(body, ["· 담당자님 확인 대기"])  # 사용자·외부가 풀 막힘만 본문에 한 줄씩. 다른 막힘은 접힘
         self.assertEqual((got[0]["bucket"], got[0]["group"]), ("wait", "ui"))
 
     def test_user_wait_words_also_kept_in_body(self):
@@ -105,9 +105,17 @@ class StoppedHubTest(Base):
         self.hubs_table(("coord-server-hub", "서버", "-", "-", "-"))
         self.set_terms([self.agent("/w/coord-coord-server-hub-hub")])
         self.put("server", ["서버 작업"], [])
-        self.assertEqual([i["title"] for i in self.items()], ["[낡음] server: 서버 작업"])  # 세션 있음 → 접지 않음
+        self.assertEqual([i["title"] for i in self.items()], ["[낡음] coord-server-hub: 서버 작업"])  # 세션 있음 → 접지 않음. 칸 이름은 hubs.tsv slug
         self.set_terms([])
         self.assertTrue(self.items()[0]["title"].startswith("정지 허브: 서버 — "))
+
+    def test_new_name_file_wins_over_alias_file(self):
+        """허브가 coord-server-hub.json 을 쓰기 시작하면 옛 server.json 은 무시(같은 허브가 두 번 나오지 않음)"""
+        self.hubs_table(("coord-server-hub", "서버", "-", "-", "-"))
+        self.set_terms([self.agent("/w/coord-coord-server-hub-hub")])
+        self.put("server", ["옛 파일 작업"], [])
+        self.put("coord-server-hub", ["새 파일 작업"], [], hours_old=1)
+        self.assertEqual([i["title"] for i in self.items()], ["coord-server-hub: 새 파일 작업"])
 
     def test_other_hub_session_does_not_protect_this_hub(self):
         self.set_terms([self.agent("/w/coord-vfx-hub")])

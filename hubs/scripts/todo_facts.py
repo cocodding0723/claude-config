@@ -172,7 +172,7 @@ def load_local(facts, hub_dir, ledger_path):
     p = lambda name: os.path.join(hub_dir, name)  # noqa: E731
     names = ci_review.load_hub_names(p("hubs.tsv"))
     facts.hub_slugs = set(names)
-    known = set(names) | {pc.status_key(s) for s in names} | {pc.legacy_slug(s) for s in names}  # 보고의 hub 값은 slug·상태 파일 이름·옛 별칭 모두 있음
+    known = set(names) | {pc.legacy_slug(s) for s in names}  # 이미 쌓인 보고의 hub 값에 옛 별칭(server)이 남아 있음. 새 보고는 slug
     try:
         sent = panel_collect.jsonl(p("slack-sent.jsonl"))
         facts.cards = answer_store.AnswerStore(hub_dir).closed_by_did()  # 결정 완료 판정은 answer_store 카드 단위 한 곳

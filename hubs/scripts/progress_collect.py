@@ -188,7 +188,7 @@ def stopped_item(slug, name, at, tasks, blockers, ref):
 
 
 def collect_hubs(status_dir, old_items=(), refs=None, resolver=None, resolved=None, seen=None, now=None, live=None, hub_names=None, slugs=None):
-    """허브 상태 파일 전부 → (항목, 알림, 읽기 실패 허브). 낡은 허브는 제목에 '낡음'.
+    """허브 상태 파일 전부 → (항목, 알림, 읽기 실패 허브). 허브 칸·항목 키는 hubs.tsv slug 하나로 통일(옛 이름 파일 server.json 도 coord-server-hub 로 읽고, 새 이름 파일이 있으면 옛 이름 파일은 무시). 낡은 허브는 제목에 '낡음'.
     줄(진행 줄·막힘)에 근거(refs)가 있고 resolver 가 '닫힘'으로 판정하면 목록에서 빼고 resolved 목록에만 기록. 진행 줄은 병합 없이 닫힌 PR 도 끝남(막힘은 유지).
     근거 없는 막힘이 낡았으면 제목에 '근거 없음·오래됨'(삭제는 안 함).
     '오래됨' 기준은 막힘별 최초 관측 시각(seen: "슬러그:문구해시" → {first, last}, 수집기 소유). 상태 파일 updatedAt 은 허브가 다시 쓸 때마다 갱신돼 근거가 못 됨.
@@ -205,6 +205,7 @@ def collect_hubs(status_dir, old_items=(), refs=None, resolver=None, resolved=No
     except FileNotFoundError:
         return out, notes, failed
     limit_s = hub_status.stale_hours() * 3600
+    done = set()
     sessions = []  # 세션 조회 메모: 처음 필요할 때 한 번만 부름. [집합] 또는 [None](실패)
 
     def has_session(slug):
@@ -215,8 +216,13 @@ def collect_hubs(status_dir, old_items=(), refs=None, resolver=None, resolved=No
                 sessions.append(None)
         return None if sessions[0] is None else slug in sessions[0]
 
-    for name in files:
-        slug = name[: -len(".json")]
+    stems = {n[: -len(".json")]: hub_slug(n[: -len(".json")], slugs) for n in files}
+    for name in sorted(files, key=lambda n: stems[n[: -len(".json")]] != n[: -len(".json")]):  # 새 이름(slug 그대로) 파일 먼저
+        stem = name[: -len(".json")]
+        slug = stems[stem]
+        if slug in done:
+            continue
+        done.add(slug)
         try:
             with open(os.path.join(status_dir, name), encoding="utf-8") as f:
                 data = json.load(f)
@@ -224,7 +230,7 @@ def collect_hubs(status_dir, old_items=(), refs=None, resolver=None, resolved=No
         except (OSError, ValueError) as e:
             bad = str(e)
         if bad:
-            kept = [i for i in old_items if isinstance(i, dict) and i.get("group") == slug]
+            kept = [i for i in old_items if isinstance(i, dict) and i.get("group") in (slug, stem)]
             out += kept
             failed.append(slug)
             notes.append(f"허브 상태 {slug} 읽기 실패({one_line(bad, 40)}) — 이전 항목 {len(kept)}개 유지")
@@ -232,7 +238,7 @@ def collect_hubs(status_dir, old_items=(), refs=None, resolver=None, resolved=No
         at = hub_status.parse_iso(data.get("updatedAt", ""))
         stale = at is None or (time.time() - at.timestamp()) > limit_s
         tag = f"[{STALE_TAG}] " if stale else ""
-        ref = refs.for_hub(slug) if refs else None
+        ref = (refs.for_hub(slug) or refs.for_hub(stem)) if refs else None
         since = at.timestamp() if at else 0.0
         lines, task_texts, blocker_texts = [], [], []
         for entry in data.get("tasks", []):
@@ -260,8 +266,8 @@ def collect_hubs(status_dir, old_items=(), refs=None, resolver=None, resolved=No
                 it["evidence"] = state  # open·unknown(확인 불가 — 막힘 유지)
             blocker_texts.append(blocker)
             lines.append(it)
-        if lines and stale and at is not None and has_session(hub_slug(slug, slugs)) is False:
-            lines = [stopped_item(slug, hub_names.get(hub_slug(slug, slugs)) or hub_names.get(slug) or slug, at, task_texts, blocker_texts, ref)]
+        if lines and stale and at is not None and has_session(slug) is False:
+            lines = [stopped_item(slug, hub_names.get(slug) or slug, at, task_texts, blocker_texts, ref)]
         out += lines
     for k in [k for k, v in seen.items() if not isinstance(v, dict) or now - v.get("last", v.get("first", 0)) > SEEN_KEEP_S]:
         del seen[k]
@@ -315,14 +321,7 @@ def load_slugs(path=None):
     return set(load_hub_names(path))
 
 
-def legacy_slug(slug):
-    """옛 규칙(앞 coord- 반복·끝 -hub 반복 제거). 상태 파일(hub-status/<이름>.json)·보고의 hub 값이 이 형태로 남아 있음"""
-    return re.sub(r"(-hub)+$", "", re.sub(r"^(coord-)+", "", slug)) or slug
-
-
-def status_key(slug):
-    """전달 slug → 상태 파일 이름·진행 목록 허브 칸·작업 공간 수 키(표시용). coord- 로 시작하는 slug 만 옛 규칙으로 줄임(coord-server-hub → server)"""
-    return legacy_slug(slug) if slug.startswith("coord-") else slug
+legacy_slug = hub_status.legacy_slug  # 옛 이름(server)으로 남은 상태 파일·보고의 hub 값을 현재 slug(coord-server-hub)로 잇는 데만 씀
 
 
 def hub_slug(value, slugs=None):
@@ -356,7 +355,7 @@ def workspace_counts(worktrees, terminals, slugs=None):
         kids = {c for c in w.get("childWorktreeIds") or [] if isinstance(c, str)}
         kids |= {i for i, x in rows.items() if x.get("parentWorktreeId") == wid}
         kids = {k for k in kids if not (rows.get(k) or {}).get("isArchived")}
-        slot = out.setdefault(status_key(hub_slug(base, slugs)), {"children": 0, "active": 0})
+        slot = out.setdefault(hub_slug(base, slugs), {"children": 0, "active": 0})
         slot["children"] += len(kids)
         slot["active"] += sum(1 for k in kids if k in used)
     return out

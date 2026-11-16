@@ -262,9 +262,9 @@ def hub_state(t, quiet, get):
 
 
 def hub_name(base, slugs=None):
-    """옆 패널 허브 칸 이름(표시용). 작업 공간 수 키(workspace_counts)·상태 파일 이름과 같은 규칙"""
+    """옆 패널 허브 칸 이름(표시용). 작업 공간 수 키(workspace_counts)·상태 파일 이름과 같은 hubs.tsv slug"""
     import progress_collect  # 지연 가져오기(순환 방지)
-    return progress_collect.status_key(progress_collect.hub_slug(base, slugs))
+    return progress_collect.hub_slug(base, slugs)
 
 
 def terminal_list(get):

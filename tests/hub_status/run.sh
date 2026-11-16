@@ -36,6 +36,12 @@ chk "진행 줄 근거 오류 거부: 종료 코드 2 + --task 안내" 'before=$
 printf '{"slug":"old","updatedAt":"2099-01-01T00:00:00+00:00","tasks":["옛 문자열 줄"],"blockers":[]}\n' > "$SB/status/old.json"
 chk "문자열 tasks 파일도 show·prompt 정상" 'hs show --slug old | grep -q "진행 작업: 옛 문자열 줄" && hs prompt --slug old | grep -q "진행 작업: 옛 문자열 줄"'
 
+# ---- 옛 이름 상태 파일(server.json) 읽기 호환 ----------------------------------------------
+printf '{"slug":"server","updatedAt":"2099-01-01T00:00:00+00:00","tasks":["서버 옛 줄"],"blockers":[]}\n' > "$SB/status/server.json"
+chk "slug coord-server-hub 로 옛 이름 파일 show·prompt" 'hs show --slug coord-server-hub | grep -q "진행 작업: 서버 옛 줄" && hs prompt --slug coord-server-hub | grep -q "진행 작업: 서버 옛 줄"'
+hs write --slug coord-server-hub --task "서버 새 줄" >/dev/null
+chk "새 이름으로 쓰면 새 파일이 우선, 옛 파일은 그대로" 'hs show --slug coord-server-hub | grep -q "서버 새 줄" && grep -q "서버 옛 줄" "$SB/status/server.json" && [ -f "$SB/status/coord-server-hub.json" ]'
+
 # ---- 원자적 쓰기 ----------------------------------------------------------------------------
 chk "임시 파일 잔여 없음" '[ -z "$(ls -A "$SB/status" | grep "^\.tmp-")" ]'
 chk "replace 실패 시 원본 유지·임시 파일 정리" 'python3 - "$HS" "$SB/status" <<PY
