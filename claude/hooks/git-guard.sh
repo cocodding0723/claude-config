@@ -72,13 +72,28 @@ fi
 
 # ---- merge: 작업 브랜치로 origin/dev·origin/main 받아오기는 확인 없이 허용, 그 밖의 병합은 확인 ----
 # 공유 브랜치로의 병합 규칙(--no-ff)은 아래에서 그대로 차단. 모든 병합 확인은 이 훅이 맡음(settings 의 git merge ask 규칙 대체)
-if printf '%s' "$cmd" | grep -Eq "${G}(merge)[[:space:]]" && ! printf '%s' "$cmd" | grep -Eq '[;&|`$(]'; then
-  br=$(cur_branch)
-  if printf '%s' "$br" | grep -Eq "$WORK_RE" && ! is_shared "$br"; then
-    targets=$(printf '%s' "$cmd" | sed -E "s/^.*git[[:space:]]+(-[^[:space:]]+[[:space:]]+)*merge[[:space:]]+//" | tr -s ' ' '\n' | grep -v '^-' | sed '/^$/d')
-    if [ -n "$targets" ] && ! printf '%s' "$targets" | grep -Evq "$SYNC_RE" \
-       && ! printf '%s' "$cmd" | grep -Eq -- '--(abort|continue|quit|squash)\b'; then
-      jq -cn --arg r "작업 브랜치 '$br' 로 원격 기준 브랜치 받아오기: 확인 없이 허용" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",permissionDecisionReason:$r}}'; exit 0
+# 해석은 lib/merge_scope.py(따옴표·리디렉션·cd·-C·'W=리터럴' 변수). $( )·백틱·괄호가 든 명령, 병합 외 쓰기 조각이 섞인 명령은 허용 판정 안 함
+MERGE_DIR=""
+MERGE_FLAG_RE='^(--(no-)?(edit|ff|commit|stat|log|autostash|quiet|verbose)|--ff-only|-q|-v)$'   # 전략 옵션(-s·-X)·--squash 등은 확인 유지
+if printf '%s' "$cmd" | grep -Eq '(^|[[:space:];&|(`])git[[:space:]]([^|;&]*[[:space:]])?merge([[:space:]]|$)' && ! printf '%s' "$cmd" | grep -Eq '[`(]|\$\('; then
+  scope=$(printf '%s' "$raw_cmd" | python3 -I "$GUARD_DIR/lib/merge_scope.py" "$cwd" 2>/dev/null)
+  if [ "$(printf '%s' "$scope" | jq -r '.ok // false' 2>/dev/null)" = true ] && [ "$(printf '%s' "$scope" | jq -r '.pieces | length' 2>/dev/null)" -ge 1 ] 2>/dev/null; then
+    allow=1; why=""
+    while IFS= read -r piece; do
+      d=$(printf '%s' "$piece" | jq -r '.dir // empty')
+      [ -z "$MERGE_DIR" ] && MERGE_DIR=$d
+      printf '%s' "$piece" | jq -e --arg re "$MERGE_FLAG_RE" '(.flags | all(test($re))) and (.targets | length > 0) and (.targets | all(test("'"$SYNC_RE"'")))' >/dev/null 2>&1 || { allow=0; break; }
+      if [ -n "$d" ]; then
+        pb=$(git -C "$d" symbolic-ref --short -q HEAD 2>/dev/null)
+        { printf '%s' "$pb" | grep -Eq "$WORK_RE" && ! is_shared "$pb"; } || { allow=0; break; }
+        why="작업 브랜치 '$pb'"
+      else
+        # 작업 디렉터리를 모르는 외부 변수 경로: 대상이 origin/dev·origin/main 뿐인 로컬 병합이라 허용(dev/main 으로의 push 는 다른 규칙이 막음)
+        why="작업 브랜치(경로는 외부 변수)"
+      fi
+    done < <(printf '%s' "$scope" | jq -c '.pieces[]')
+    if [ "$allow" = 1 ]; then
+      jq -cn --arg r "$why 로 원격 기준 브랜치 받아오기: 확인 없이 허용" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",permissionDecisionReason:$r}}'; exit 0
     fi
   fi
 fi
@@ -86,7 +101,8 @@ fi
 # ---- merge: 공유 브랜치로 병합할 때는 --no-ff (merge commit 남기기) ----
 if printf '%s' "$cmd" | grep -Eq "${G}(merge)[[:space:]]" && ! printf '%s' "$cmd" | grep -Eq "${G}(merge)[^|;&]*(--no-ff|--ff-only|--squash|--abort|--continue|--quit)\b"; then
   br=$(cur_branch)
-  if is_shared "$br" && [ "$(git -C "$cwd" config --get merge.ff 2>/dev/null)" != false ]; then
+  [ -n "$MERGE_DIR" ] && br=$(git -C "$MERGE_DIR" symbolic-ref --short -q HEAD 2>/dev/null)
+  if is_shared "$br" && [ "$(git -C "${MERGE_DIR:-$cwd}" config --get merge.ff 2>/dev/null)" != false ]; then
     deny "'$br'로 병합할 때는 git merge --no-ff <브랜치> 를 사용합니다 (merge commit으로 병합 이력 보존). 이 저장소는 merge.ff=false 설정이 없습니다."
   fi
 fi
@@ -99,7 +115,7 @@ if [ -n "$newbr" ] && ! printf '%s' "$newbr" | grep -Eq "$PREFIX_RE|$SHARED_RE";
 fi
 
 # ---- ask 승격 ----
-printf '%s' "$cmd" | grep -Eq "${G}(merge)[[:space:]]" && ask "git merge 확인 필요 (작업 브랜치로 origin/dev·origin/main 받아오기만 확인 없이 허용됩니다)."
+printf '%s' "$cmd" | grep -Eq '(^|[[:space:];&|(`])git[[:space:]]([^|;&]*[[:space:]])?merge([[:space:]]|$)' && ask "git merge 확인 필요 (작업 브랜치로 origin/dev·origin/main 받아오기만 확인 없이 허용됩니다)."
 printf '%s' "$cmd" | grep -Eq -- '--force-with-lease' && ask "force-with-lease push — 원격 히스토리가 바뀝니다. 확인 필요."
 printf '%s' "$cmd" | grep -Eq "${G}(commit)[^|;&]*--no-verify" && ask "--no-verify는 pre-commit 훅을 건너뜁니다. 확인 필요."
 printf '%s' "$cmd" | grep -Eq "${G}(pull)\b" && ! printf '%s' "$cmd" | grep -Eq "${G}(pull)[^|;&]*--rebase" \
