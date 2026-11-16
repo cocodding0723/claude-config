@@ -2,7 +2,8 @@
 """주기 세션 정리. 끝난 워커 창을 찾아 판정 근거를 출력·기록함. 기본은 시험 모드(조회만), --apply 일 때만 동작.
 
 자동 동작은 한 가지: Orca 감독 워커(dispatch 있음)이고 작업이 completed/failed 로 끝났고(worker_done 이후), 터미널을 Orca 가 소유하며(release 가능),
-입력 칸이 비어 있고(승인 대기·쓰던 글 없음) idle IDLE_MIN 분 이상, 작업 공간 미커밋·미추적 0, 대화 기록 보관이 확인된 창 → orchestration worker-release.
+입력 칸이 비어 있고(승인 대기·쓰던 글 없음) idle IDLE_MIN 분 이상, 작업 공간 미커밋·미추적 0, 대화 기록 보관이 확인된 창 → orchestration worker-release
+→ release_ws.sh --released 로 그 작업 공간 정리(판정은 ws_gc 와 같음. 브랜치는 유지).
 실제 release 직전에 그 한 건만 다시 조회해 하나라도 달라졌으면 건너뜀.
 소유권 불명·사용자 인수·유지 표식 창은 '사람 확인' 으로 목록에만 올리고, 중복 코디네이터도 목록·로그에만 올림(전송·닫기 없음).
 조회 실패·조회 불완전(쪽 상한에 닿고 nextCursor 남음)·판정 불가는 이번 회차 무동작. 감지·화면 판정은 stall_watch·panel_collect 를 import 해 재사용함.
@@ -57,6 +58,8 @@ GONE = "창 없음"
 ORCA = sw.ORCA
 ORCA_TIMEOUT_S = sw.ORCA_TIMEOUT_S
 GIT_TIMEOUT_S = 20
+RELEASE_WS = os.environ.get("LRM_RELEASE_WS") or os.path.join(HERE, "release_ws.sh")  # release 뒤 작업 공간 정리(코디네이터 호출에 기대지 않음)
+RELEASE_WS_TIMEOUT_S = 1800  # 보관 복제·대조가 큰 공간에서 수 분 걸림
 TERM_LIMIT = 1000
 DONE_WORKER = frozenset({"succeeded", "failed"})  # worker_done 으로 끝난 상태. stopped·abandoned 는 종료 보고 없이 멈춘 것이라 제외
 DONE_DISPATCH = frozenset({"completed", "failed"})
@@ -294,8 +297,28 @@ def apply(items: list, ctx: dict) -> list:
             out.append((it, f"건너뜀: 재검증 — {why}"))
             continue
         rc, _d = mt.run_orca(ORCA, ["orchestration", "worker-release", "--dispatch", it["dispatch"], "--json"], ORCA_TIMEOUT_S)
-        out.append((it, "worker-release 완료" if rc == 0 else f"worker-release 실패 rc={rc}"))
+        if rc != 0:
+            out.append((it, f"worker-release 실패 rc={rc}"))
+            continue
+        out.append((it, "worker-release 완료 · " + release_ws(it["dispatch"])))
     return out
+
+
+def release_ws(dispatch: str) -> str:
+    """release 된 워커의 작업 공간을 ws_gc 판정으로 정리. 결과 한 줄. 실패해도 release 결과는 유지(다음 주기 ws_gc 가 다시 봄)"""
+    if not os.path.isfile(RELEASE_WS):
+        return f"작업 공간 정리 건너뜀(release_ws.sh 없음: {RELEASE_WS})"
+    try:
+        p = subprocess.run(["bash", RELEASE_WS, "--dispatch", dispatch, "--released", "--json"], capture_output=True, text=True,
+                           timeout=RELEASE_WS_TIMEOUT_S, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return f"작업 공간 정리 실패({safe(e)})"
+    try:
+        msg = json.loads(p.stdout.strip().splitlines()[-1]).get("message", "")
+    except (ValueError, IndexError):
+        msg = (p.stdout or p.stderr).strip().splitlines()[-1:] or [""]
+        msg = msg[0] if isinstance(msg, list) else msg
+    return f"작업 공간 rc={p.returncode} {safe(msg)}"
 
 
 def describe(it: dict) -> str:

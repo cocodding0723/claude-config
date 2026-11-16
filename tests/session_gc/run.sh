@@ -18,6 +18,9 @@ BIN="$SB/bin"; mkdir -p "$BIN"
 cp "$HERE/fake_orca.py" "$BIN/orca"; chmod +x "$BIN/orca"
 export FAKE_DIR="$SB/fake" LRM_HUB_DIR="$SB/hub" LRM_ORCA="$BIN/orca" HUBS_TSV="$SB/hubs.tsv" LRM_MAIN_ENV="$SB/hub/main.env" LRM_GC_LOG="$SB/hub/gc.log"
 mkdir -p "$FAKE_DIR" "$LRM_HUB_DIR"
+# 가짜 release_ws: 호출 인자만 기록하고 JSON 한 줄 응답
+export LRM_RELEASE_WS="$BIN/release_ws.sh"
+printf '#!/bin/bash\necho "$*" >> "$FAKE_DIR/release_ws.calls"\necho "{\\"status\\":\\"deleted\\",\\"message\\":\\"삭제함: 가짜\\"}"\n' > "$LRM_RELEASE_WS"
 printf 'alpha\t알파 허브\t-\t-\t-\n' > "$HUBS_TSV"
 printf 'MAIN_TERMINAL=term_0000aaaa-0000-4000-8000-000000000001\n' > "$LRM_HUB_DIR/main.env"
 
@@ -96,6 +99,8 @@ chk "--apply: worker-release 는 ctx_1·ctx_f 두 건뿐" '[ "$(releases)" = 2 ]
 chk "--apply: terminal send·close 호출 코드 없음(중복 코디네이터·사람 확인·채택 창에 동작 0)" '! grep -E "^terminal (send|close)" "$FAKE_DIR/calls.log" | grep -q .'
 chk "--apply: release 직전 건마다 재조회(worker-show·terminal show·task-list)" '[ "$(grep -c "^orchestration worker-show" "$FAKE_DIR/calls.log")" = 2 ] && [ "$(grep -c "^terminal show" "$FAKE_DIR/calls.log")" = 2 ]'
 chk "로그에 release 결과 기록" 'grep -q "worker-release 완료" "$LRM_GC_LOG"'
+chk "release 직후 release_ws 자동 호출(--released, 두 건)" '[ "$(grep -c -- "--released" "$FAKE_DIR/release_ws.calls" 2>/dev/null)" = 2 ] && grep -q "^--dispatch ctx_1 --released --json$" "$FAKE_DIR/release_ws.calls"'
+chk "로그에 작업 공간 정리 결과 기록" 'grep -q "작업 공간 rc=0 삭제함: 가짜" "$LRM_GC_LOG"'
 
 # ---- 4. 수집 뒤 상태 변화: 재검증에서 건너뜀 --------------------------------------------------------------
 after() { reset; printf '%s' "$1" > "$FAKE_DIR/after.json"; sg --apply --json > "$SB/oa"; }
