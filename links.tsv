@@ -151,6 +151,7 @@ hubs/launchd/ai.lrm.scrum.plist	Library/LaunchAgents/ai.lrm.scrum.plist	copy
 hubs/launchd/ai.lrm.cinotify.plist	Library/LaunchAgents/ai.lrm.cinotify.plist	copy
 hubs/scripts/slack_socket.py	.config/lrm-hubs/slack_socket.py	copy
 hubs/scripts/main_terminal.py	.config/lrm-hubs/main_terminal.py	link
+hubs/scripts/main_inbox.py	.config/lrm-hubs/main_inbox.py	link
 hubs/scripts/ledger.py	.config/lrm-hubs/ledger.py	copy
 hubs/scripts/ledger_sync.py	.config/lrm-hubs/ledger_sync.py	copy
 hubs/scripts/task_ledger.py	.config/lrm-hubs/task_ledger.py	copy
