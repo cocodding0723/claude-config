@@ -56,3 +56,10 @@ yield return new UiPreviewScreen("화면-이름", root =>
 - 연출이 InitModal 안 첫 재생 때 시작 위치를 잡으므로, 프리팹을 띄우는 즉시 하위 캔버스를 카메라에 붙이고 레이아웃을 확정한다(결과 팝업이 왼쪽으로 몰리던 원인).
 - 수정 커밋을 체리픽 없이 확인: `--prefab-from-commit <작업 공간>:<커밋>:<프로젝트 상대 프리팹 경로>` (여러 번 가능). 실행 동안만 그 커밋의 프리팹·.meta 로 덮고 끝나면 원본 복구.
 - 하루 결산 시점: `--summary-at day-end|mission-issued`. 미지정이면 그날 끝에 진행 중 미션이 없을 때만 미션 발급 직후 시점.
+
+### 요청자용 사용 예
+- 기본: `PROJ=<묶음 작업 공간> bash ui-preview.sh automa-final-result 1080x1920 --bundle --who <이름> --compare <시안.png>` → `TestResults/ui-preview/<이름>/`, compare 는 그 아래 `compare/<화면>_<해상도>_<ref>+<커밋>(+옵션).png`
+- 여러 파일 덮기: `--prefab-from-commit "${W}:<커밋>:<경로>"` 를 여러 번(.meta 동반, 새 파일 지원). 위치가 다르면 `<원본 경로>=<대상 경로>`. 기준이 다른 브랜치의 .cs 는 `--patch-from-commit "${W}:<커밋>:<경로>"`(변경분만). zsh 에서는 `$W:e…` 가 수식자로 먹히므로 꼭 `${W}`
+- 하루 결산 시점: `--summary-at day-end|mission-issued`
+- 동시 실행: 요청마다 `build/ui-preview-lanes/lane-N`(APFS 복제, 기본 4개)에서 병렬, 다 차면 순번 대기(대기 순번·앞 실행·예상 시간 30초마다 출력). 원본 작업 공간은 읽기만
+- HUD: `ingame-top-band`(미션 있음, `--stage main.ch1.2`) / `ingame-top-band-nomission`. 장소·남은 시간·코인은 고정본에 없어 비움

@@ -6,6 +6,8 @@ using Game.Data.Module.AutomaModule.Domain.Mission;
 using Game.Data.Module.AutomaModule.Model;
 using Game.Data.Module.StatModule.Model;
 using Game.SceneView.Module.Modal.Module.AutomaDailySummaryDialog;
+using Game.SceneView.Scene.Ingame.Component.Hud;
+using Game.Util;
 using Game.SceneView.Module.Modal.Module.AutomaGoalIntroDialog;
 using Game.SceneView.Module.Modal.Module.AutomaInfoDialog;
 using Game.SceneView.Module.Modal.Module.AutomaMissionPopupDialog;
@@ -20,8 +22,27 @@ namespace Tests.Editor.UiPreview.Automa
     ///     PR 묶음 브랜치(오토마 UI 시안 반영) 전용 화면 등록. 예고·결과·새 목표 소개·미션 배너가 dev 에 올라오면
     ///     Editor/Automa 기본 목록으로 옮기고 이 파일은 지움.
     /// </summary>
+    internal static class TransformSearch
+    {
+        public static Transform? FindDeep(this Transform parent, string name)
+        {
+            foreach (var child in parent.GetComponentsInChildren<Transform>(true))
+            {
+                if (child.name == name)
+                {
+                    return child;
+                }
+            }
+
+            return null;
+        }
+    }
+
     internal static class AutomaPreviewScreens
     {
+        private const string LocationLabelName = "Text_LocationName";
+        // AutomaMissionBandBinder.RewardIconVariant 와 같은 값(그쪽이 private)
+        private const int RewardIconVariant = 2;
         private const string NoMissionReason = "이 스테이지 첫날 발급 미션 없음. --stage 로 미션이 있는 스테이지 지정";
 
         public static IEnumerable<IUiPreviewScreen> Create(Func<AutomaPreviewFixture> fixture)
@@ -61,6 +82,8 @@ namespace Tests.Editor.UiPreview.Automa
                 var view = UiPreviewPrefabs.Spawn<AutomaMissionCardView>("AutomaMissionCard", root, false);
                 view.Render(presenter.Build(Card(fixture)));
             });
+            yield return new UiPreviewScreen("ingame-top-band", root => RenderTopBand(root, fixture, true));
+            yield return new UiPreviewScreen("ingame-top-band-nomission", root => RenderTopBand(root, fixture, false));
             yield return new UiPreviewScreen("automa-mission-banner", root => RenderBanner(root, fixture, null));
             yield return new UiPreviewScreen("automa-mission-banner-success", root => RenderBanner(root, fixture, AutomaMissionOutcome.Success));
         }
@@ -78,6 +101,46 @@ namespace Tests.Editor.UiPreview.Automa
             var presenter = new AutomaMissionBannerPresenter(LocalizationManager.GetText, stat => stat.GetName());
             var view = UiPreviewPrefabs.Spawn<AutomaMissionBannerView>("AutomaMissionBanner", root, false);
             view.Render(presenter.Build(input));
+        }
+
+        // 미션 띠는 게임 Presenter + 고정본 미션. 장소·남은 시간·코인은 고정본에 없어 비움(시안 견본 문구가 남지 않게)
+        private static void RenderTopBand(Transform root, Func<AutomaPreviewFixture> fixture, bool withMission)
+        {
+            var view = UiPreviewPrefabs.Spawn<IngameTopUIElementView>(nameof(IngameTopUIElementView).Replace("View", string.Empty), root, false);
+            // 게임에서는 상단 영역 부모가 위치를 정함. 미리보기엔 부모가 없어 화면 위쪽에 붙임
+            if (view.transform is RectTransform band)
+            {
+                band.anchorMin = new Vector2(0f, 1f);
+                band.anchorMax = Vector2.one;
+                band.pivot = new Vector2(0.5f, 1f);
+                band.anchoredPosition = Vector2.zero;
+                band.sizeDelta = new Vector2(0f, band.sizeDelta.y);
+            }
+
+            foreach (var label in new[] { view.GoldValue, view.LeftTimeValue })
+            {
+                if (label != null)
+                {
+                    label.text = string.Empty;
+                }
+            }
+
+            var location = view.transform.FindDeep(LocationLabelName);
+            if (location != null && location.TryGetComponent<TMPro.TMP_Text>(out var locationText))
+            {
+                locationText.text = string.Empty;
+            }
+
+            Debug.Log("[UiPreview] 상단 띠: 장소·남은 시간·코인 데이터 없음(비움)");
+            if (!withMission)
+            {
+                view.MissionBand.Render(MissionBandState.Hidden);
+                return;
+            }
+
+            var presenter = new AutomaMissionBandPresenter(LocalizationManager.GetText, stat => stat.GetName(),
+                stat => AddressKeys.Ui.StatIcon(stat, RewardIconVariant));
+            view.MissionBand.Render(presenter.Build(Card(fixture)));
         }
 
         // 종류만 바꾸고 이름·스탯·목표·상대는 픽스처 첫 미션 값

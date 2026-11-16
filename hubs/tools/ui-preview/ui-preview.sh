@@ -2,7 +2,7 @@
 #
 # UI 화면 단독 미리보기. 부팅·로그인·네트워크 없이 화면 프리팹 하나를 배치모드로 띄워 PNG 로 남긴다.
 #
-#   bash Tools/verify/ui-preview.sh <화면|all>[,<화면>…] [가로x세로 …] [--stage <오토마 스테이지 Id>] [--bundle] [--summary-at day-end|mission-issued] [--who <요청자>] [--compare <시안 PNG>] [--prefab-from-commit <작업공간>:<커밋>:<경로>] [--timeout <초>]
+#   bash Tools/verify/ui-preview.sh <화면|all>[,<화면>…] [가로x세로 …] [--stage <오토마 스테이지 Id>] [--bundle] [--summary-at day-end|mission-issued] [--who <요청자>] [--compare <시안 PNG>] [--prefab-from-commit <작업공간>:<커밋>:<경로>] [--patch-from-commit <작업공간>:<커밋>:<경로>] [--timeout <초>]
 #   예) bash Tools/verify/ui-preview.sh automa-daily-summary
 #       bash Tools/verify/ui-preview.sh all 1080x1920 1440x3120
 #
@@ -34,11 +34,12 @@ usage() {
   echo "#   가능한 화면: all $(screen_names)"
 }
 
-SCREENS=""; SIZES=(); STAGE=""; BUNDLE=0; OVERRIDES=(); SUMMARY_AT=""; WHO="default"; COMPARE=""
+SCREENS=""; SIZES=(); STAGE=""; BUNDLE=0; OVERRIDES=(); PATCHES=(); SUMMARY_AT=""; WHO="default"; COMPARE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --bundle) BUNDLE=1 ;;
+    --patch-from-commit) shift; PATCHES+=("${1:?--patch-from-commit <작업공간>:<커밋>:<프로젝트 상대 경로> 필요}") ;;
     --prefab-from-commit) shift; OVERRIDES+=("${1:?--prefab-from-commit <작업공간>:<커밋>:<프로젝트 상대 경로> 필요}") ;;
     --stage) shift; STAGE="${1:?--stage 값 필요}" ;;
     --summary-at) shift; SUMMARY_AT="${1:?--summary-at day-end|mission-issued 필요}" ;;
@@ -171,9 +172,13 @@ for spec in "${OVERRIDES[@]+"${OVERRIDES[@]}"}"; do
     echo "[ui-preview] 형식: --prefab-from-commit <작업공간>:<커밋>:<프로젝트 상대 경로> (받은 값: $spec)" >&2; exit 2
   fi
   git -C "$SRC_WS" rev-parse --verify -q "$SRC_SHA^{commit}" >/dev/null || { echo "[ui-preview] 커밋 없음: $SRC_SHA @ $SRC_WS" >&2; exit 2; }
-  for rel in "$SRC_REL" "$SRC_REL.meta"; do
-    if ! git -C "$SRC_WS" cat-file -e "$SRC_SHA:$rel" 2>/dev/null; then
-      [ "$rel" = "$SRC_REL" ] && { echo "[ui-preview] 커밋에 없는 파일: $SRC_SHA:$rel" >&2; exit 2; }
+  # <원본 경로>=<대상 경로>: 브랜치마다 파일 위치가 다를 때(예: Mockup4/ 로 옮긴 프리팹)
+  DST_REL="$SRC_REL"
+  case "$SRC_REL" in *=*) DST_REL="${SRC_REL#*=}"; SRC_REL="${SRC_REL%%=*}" ;; esac
+  for suffix in "" ".meta"; do
+    src="$SRC_REL$suffix"; rel="$DST_REL$suffix"
+    if ! git -C "$SRC_WS" cat-file -e "$SRC_SHA:$src" 2>/dev/null; then
+      [ -z "$suffix" ] && { echo "[ui-preview] 커밋에 없는 파일: $SRC_SHA:$src" >&2; exit 2; }
       continue
     fi
     if [ -e "$RUN_PROJ/$rel" ]; then
@@ -185,9 +190,23 @@ for spec in "${OVERRIDES[@]+"${OVERRIDES[@]}"}"; do
       mkdir -p "$RUN_PROJ/$(dirname "$rel")"
       CREATED+=("$rel")
     fi
-    git -C "$SRC_WS" cat-file blob "$SRC_SHA:$rel" > "$RUN_PROJ/$rel"
+    git -C "$SRC_WS" cat-file blob "$SRC_SHA:$src" > "$RUN_PROJ/$rel"
   done
-  echo "[ui-preview] 덮음: $SRC_REL @ $SRC_SHA"
+  echo "[ui-preview] 덮음: $DST_REL ← $SRC_REL @ $SRC_SHA"
+done
+
+# 기준이 다른 브랜치의 .cs 는 파일째 덮으면 컴파일이 깨짐 → 그 커밋의 변경분만 적용
+for spec in "${PATCHES[@]+"${PATCHES[@]}"}"; do
+  SRC_WS="${spec%%:*}"; rest="${spec#*:}"; SRC_SHA="${rest%%:*}"; SRC_REL="${rest#*:}"
+  SRC_WS="${SRC_WS/#\~/$HOME}"
+  [ -n "$SRC_WS" ] && [ -n "$SRC_SHA" ] && [ "$rest" != "$SRC_REL" ] || { echo "[ui-preview] 형식: --patch-from-commit <작업공간>:<커밋>:<경로> (받은 값: $spec)" >&2; exit 2; }
+  [ -e "$RUN_PROJ/$SRC_REL" ] || { echo "[ui-preview] 대상에 없음: $SRC_REL" >&2; exit 2; }
+  mkdir -p "$BACKUP/$(dirname "$SRC_REL")"
+  cp -p "$RUN_PROJ/$SRC_REL" "$BACKUP/$SRC_REL"
+  RESTORE+=("$SRC_REL")
+  git -C "$SRC_WS" diff "$SRC_SHA^" "$SRC_SHA" -- "$SRC_REL" | git -C "$RUN_PROJ" apply --unsafe-paths --directory=. - 2>&1 \
+    || { echo "[ui-preview] 변경분 적용 실패(대상 코드가 달라짐): $SRC_REL @ $SRC_SHA" >&2; exit 2; }
+  echo "[ui-preview] 변경분 적용: $SRC_REL @ $SRC_SHA"
 done
 
 # 묶음 브랜치 전용 화면은 dev 에 없는 타입을 써서 기본 목록 위에 덮어씀
