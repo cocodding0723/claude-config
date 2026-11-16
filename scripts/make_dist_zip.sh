@@ -15,7 +15,7 @@ zip 안 최상위 폴더: orca-main-install/
 
 만들기 전 검사(하나라도 걸리면 zip 을 만들지 않음. 출력은 파일:줄만, 값은 출력하지 않음):
   토큰       xox?-·xapp-숫자-·sk-·ghp_·AKIA·PEM 개인 키·인증서 머리줄(바이너리 파일도 검사)
-  이메일     example 도메인·github.com·anthropic.com 외 주소
+  이메일     example 도메인·github.com·anthropic.com·openai.com 외 주소
   홈 경로    macOS 사용자 홈 절대 경로, 이 맥 사용자명
   Slack ID   U0·D0·C0·W0·G0 로 시작하는 9~11자 대문자·숫자
   파일 이름  .env·.env.*(.example 제외)·키·인증서·.bak·__pycache__·.pyc·.DS_Store·허브 실행 상태·임시 로그
@@ -80,13 +80,15 @@ scan_binary() {
   done >> "$hits"
 }
 scan 토큰 "$TOKEN_RE"
-scan 홈경로 '/Use''rs/[A-Za-z0-9._-]+'  # 이 파일이 저장소 경로 검사에 걸리지 않게 쪼갬
+# 홈경로: 시험 고정값의 가짜 홈(me·a)은 실제 사용자가 아니라 제외. 패턴은 이 파일이 저장소 경로 검사에 걸리지 않게 쪼갬
+(cd "$TMP/tree" && grep -rnIoE '/Use''rs/[A-Za-z0-9._-]+/?' . 2>/dev/null | grep -vE ':/Use''rs/(me|a)(/|$)' \
+  | cut -d: -f1,2 | sort -u | sed 's#^\./#[홈경로] #') >> "$hits" || true
 scan 사용자명 "$(id -un)" F
 scan SlackID '\b[UDCWG]0[A-Z0-9]{8,10}\b'
 [ -z "${DIST_DENY_PATTERN:-}" ] || scan 금지어 "$DIST_DENY_PATTERN"
 scan_binary
 (cd "$TMP/tree" && grep -rnIoE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' . 2>/dev/null \
-  | grep -vE '@([A-Za-z0-9-]+\.)*(example(\.com|\.org)?|github\.com|anthropic\.com)$' \
+  | grep -vE '@([A-Za-z0-9-]+\.)*(example(\.com|\.org)?|github\.com|anthropic\.com|openai\.com)$' \
   | cut -d: -f1,2 | sed 's#^\./#[이메일] #') >> "$hits" || true
 (cd "$TMP/tree" && find . -type f | sed 's#^\./##' | grep -E '(\.env(\.|$)|\.pem$|\.p8$|\.p12$|\.key$|\.keystore$|\.jks$|id_rsa|id_ed25519|\.bak|__pycache__|\.pyc$|\.DS_Store$|slack-(inbox|sent|poll-state|pending-history)|/state/|HANDOFF\.md$|decisions\.tsv$|\.(log|tmp|swp)$)' \
   | grep -vE '\.env\.example$' | sed 's#^#[파일이름] #') >> "$hits" || true

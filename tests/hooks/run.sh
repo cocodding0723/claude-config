@@ -127,7 +127,7 @@ exp "ai-trace: gh pr create 깨끗한 본문 통과" $AT 'gh pr create --title t
 printf '요약\nCo-Authored-By: Claude <noreply@anthropic.com>\n' > "$SB/body.md"
 exp "ai-trace: --body-file 내용 검사" $AT "gh pr edit 3 --body-file $SB/body.md" "$SB/g" ask
 exp "ai-trace: git push 아닌 명령은 통과" $AT 'echo Co-Authored-By: Claude' "$SB/g"
-exp "ai-trace: 사람 공저자는 통과" $AT 'gh pr create --body "Co-Authored-By: Kim <kim@x.com>"' "$SB/g"
+exp "ai-trace: 사람 공저자는 통과" $AT 'gh pr create --body "Co-Authored-By: Kim <kim@example.com>"' "$SB/g"
 
 # 범위·대상 해석: 명령의 cd·-C·refspec 이 hook cwd 보다 우선, 낡은 origin/dev 무시, 문구 속 push 무시
 CC="$SB/claude-config"   # feat/a 에 흔적 커밋, main 은 깨끗
@@ -164,8 +164,8 @@ out=$(cm '기능 추가\n\n본문 한 줄\n\nCo-Authored-By: Claude Sonnet 5.5 <
 [ "$out" = $'기능 추가\n\n본문 한 줄' ] && ok "commit-msg: Co-Authored-By Claude 줄 제거, 끝 빈 줄 정리" || ko "commit-msg 제거" "$out"
 out=$(cm '제목\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Anthropic <noreply@anthropic.com>\n')
 [ "$out" = "제목" ] && ok "commit-msg: 생성 표시·Anthropic 공저자 줄 모두 제거" || ko "commit-msg 생성 표시" "$out"
-out=$(cm '제목\n\nCo-Authored-By: Kim <kim@x.com>\n')
-[ "$out" = $'제목\n\nCo-Authored-By: Kim <kim@x.com>' ] && ok "commit-msg: 사람 공저자는 유지" || ko "commit-msg 사람" "$out"
+out=$(cm '제목\n\nCo-Authored-By: Kim <kim@example.com>\n')
+[ "$out" = $'제목\n\nCo-Authored-By: Kim <kim@example.com>' ] && ok "commit-msg: 사람 공저자는 유지" || ko "commit-msg 사람" "$out"
 out=$(cm '제목만\n')
 [ "$out" = "제목만" ] && ok "commit-msg: 흔적 없으면 불변" || ko "commit-msg 불변" "$out"
 # 전역 훅 체인 경유: 실제 git commit 으로 확인
