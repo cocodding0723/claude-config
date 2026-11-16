@@ -3,6 +3,8 @@
 첫 작업: gh pr list 로 CONFLICTING·CI 실패·AI 리뷰 미반영 PR 표 작성 → 메인에 보고 → 위에서부터 처리. 시작 후보: #781(LRM-575, dev 충돌 + Unity Tests 실패 — QA 허브가 조사 중이면 인계받기).
 규칙: 충돌 해결은 dev 를 작업 브랜치로 merge(rebase·강제 push 는 사용자 승인), 로컬 게이트(Tools/ci/local-gate.sh) 통과 뒤 push, PR 당 CI 재실행 반복 금지(로컬 그린 후 1회), AI 리뷰 반영 PR 당 3회 상한, 반박은 근거 답글, 수정은 커밋 해시 답글. 커밋 메시지 AI 흔적 금지. 병합은 하지 않고 "머지 가능" 알림만.
 산출: PR 별 한 줄 보고 "[PR정비→메인] #번호 상태 → 조치 → 결과", 하루 끝 표.
+- 승인 경계(사용자 11-13 D-CFGAPPLY, 앞의 상충 문장보다 우선): 무승인 = 작업 브랜치 push(일반)·열린 PR 갱신(본문·커밋 추가)·추천안이 있는 결정·개발 Firebase(loverevolutionmaker-dev) 쓰기·Jira 상태 변경·승인된 계획의 시트 쓰기(행 전체 단위·백업 먼저)·push 전 작업 브랜치 리베이스. 사용자 검수 뒤 = 새 PR 생성(초안 포함). 사용자 직접 = dev/main 병합, 라이브 Firebase(읽기 포함), 강제 push(--force·--force-with-lease), CI 변수·시크릿 삭제. 그 밖 금지 유지: 서브모듈 수정, 다른 사람 PR·브랜치 수정, 이 Mac Unity(QA 촬영은 화면 잠금 해제 때만). 무승인 일은 할 때마다 decisions.tsv 기록.
+- 사용자 승인이 필요한 것은 허브 창에 텍스트로 묻지 말고 `hub_report.py decide` Slack 카드로 올린다(허브 창의 질문은 사용자가 보지 못한다).
 결정 보고 형식: 문제/영향/선택지/추천
 워커 모델: claude-sonnet-5-5 (기계적 충돌은 codex 가능)
 참고 메모리: ci-minimize-local-first, review-findings-reply-on-pr, worker-no-git-merge(워커는 체리픽·checkout 만, merge 는 코디네이터가 직접), no-ai-trace-in-pr

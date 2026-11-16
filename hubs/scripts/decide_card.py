@@ -26,8 +26,14 @@ QA_NONE = "해당 없음(도구·CI·문서)"
 QA_MEDIA = re.compile(r"(\S+\.(?:mp4|mov|webm|gif|png|jpe?g))\b", re.I)  # 녹화·캡처 경로
 QA_SHA = re.compile(r"\b([0-9a-f]{7,40})\b")
 QA_SEP = " — "
+QA_CODE_ONLY = "코드 전용(화면 파일 0개)"  # (c) 화면 파일이 하나도 없는 PR. 카드 문구가 아니라 PR 변경 파일로 검증함
+QA_REPO = os.environ.get("LRM_QA_REPO") or "Basakansoft/LoveRevolutionMaker"
+SCREEN_EXT = {".prefab", ".unity", ".uxml", ".uss", ".png", ".jpg", ".jpeg", ".psd", ".anim", ".controller", ".mat", ".spriteatlas"}
+SCREEN_DIRS = {"UI", "Resources"}  # Assets 아래 이 폴더의 비코드 파일은 화면 파일. .asset 은 여기서만 셈(그 밖 .asset 은 스크립터블 데이터라 제외)
+CODE_EXT = {".cs", ".asmdef", ".asmref", ".meta"}  # .meta 는 원본과 같이 움직이는 동반 파일이라 따로 세지 않음
 QA_EXAMPLE = ("'로컬 QA: EditMode 12 통과 — 장면 녹화 ~/qa/shop.mp4' (--file 로 녹화를 붙이면 경로 생략 가능) · "
-              f"도구·CI·문서 PR 은 '로컬 QA: {QA_NONE} — 게이트 통과 기록 커밋 1a2b3c4d'")
+              f"도구·CI·문서 PR 은 '로컬 QA: {QA_NONE} — 게이트 통과 기록 커밋 1a2b3c4d' · "
+              f"화면 파일이 없는 코드 PR 은 '로컬 QA: {QA_CODE_ONLY} — EditMode 12 통과'")
 
 OPT_SPLIT = re.compile(r",[ \t]*(?=[0-9]+[ \t]*=)")  # 문구 안 쉼표는 뒤에 '숫자=' 가 올 때만 구분자. 두 자리 번호도 구분자로 봐 범위 오류로 거부
 OPT_ITEM = re.compile(r"[ \t]*([0-9]+)[ \t]*=(.*)", re.S)
@@ -108,9 +114,42 @@ def pr_head(number: str) -> "str | None":
     return head if r.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", head) else None
 
 
+def pr_files(number: str) -> "list | None":
+    """PR 변경 파일 경로 목록. gh 실패(미설치·인증·네트워크·PR 없음)면 None"""
+    try:
+        r = subprocess.run(["gh", "pr", "diff", number, "--name-only", "-R", QA_REPO], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.split("\n") if r.returncode == 0 else None
+
+
+def is_screen_file(path: str) -> bool:
+    ext = os.path.splitext(path)[1].lower()
+    if ext in SCREEN_EXT:
+        return True
+    parts = path.split("/")
+    return parts[0] == "Assets" and ext not in CODE_EXT and bool(SCREEN_DIRS & set(parts[1:-1]))
+
+
+def code_only_problem(qa: str, number: str, tail: str) -> str:
+    """(c) 코드 전용 카드 검증. 통과면 빈 문자열. PR 변경 파일에 화면 파일이 있거나 조회 실패면 거부"""
+    if QA_SEP not in qa:
+        return f"'{QA}: {QA_CODE_ONLY}' 뒤에 '{QA_SEP.strip()} 명령 결과'(예: EditMode 12 통과)가 필요(전송 안 함). {tail}"
+    files = pr_files(number)
+    if files is None:
+        return (f"PR #{number} 변경 파일을 gh 로 조회하지 못해 '{QA_CODE_ONLY}' 를 확인 못 함(전송 안 함). "
+                f"조치: gh 로그인·네트워크 확인 뒤 재시도, 오프라인이면 녹화·캡처 첨부(a) 또는 '{QA_NONE}'(b) 형식 사용. {tail}")
+    screen = [f for f in files if f and is_screen_file(f)]
+    if screen:
+        return (f"'{QA_CODE_ONLY}' 인데 PR #{number} 에 화면 파일 {len(screen)}개 있음(전송 안 함) — 예: {', '.join(screen[:2])}. "
+                f"조치: 녹화·캡처를 첨부하고 (a) 형식으로 씀. {tail}")
+    return ""
+
+
 def local_qa_problem(body: str, decision_id: "str | None", attached=()) -> str:
     """D-RDY 카드의 '로컬 QA:' 줄 검사. 대상이 아니면 빈 문자열.
-    (a) '명령 — 결과' + 녹화·캡처 경로(파일 존재) 또는 --file 첨부, (b) '해당 없음(도구·CI·문서)' + 게이트 통과 기록이 있는 커밋 해시"""
+    (a) '명령 — 결과' + 녹화·캡처 경로(파일 존재) 또는 --file 첨부, (b) '해당 없음(도구·CI·문서)' + 게이트 통과 기록이 있는 커밋 해시,
+    (c) '코드 전용(화면 파일 0개) — 명령 결과': PR 변경 파일에 화면 파일이 없을 때만(gh 로 확인)"""
     if not RDY_ID.match(decision_id or ""):
         return ""
     qa = value_of(body, QA)
@@ -131,6 +170,8 @@ def local_qa_problem(body: str, decision_id: "str | None", attached=()) -> str:
         if any(gate_record_exists(h) for h in shas):
             return ""
         return f"'{QA}: {QA_NONE}' 은 게이트 통과 기록 커밋 해시가 필요(전송 안 함) — 해시 {'없음' if not shas else shas[0] + ' 의 기록 없음(' + gate_store() + ')'}. {tail}"
+    if qa.startswith(QA_CODE_ONLY):
+        return code_only_problem(qa[len(QA_CODE_ONLY):], RDY_ID.match(decision_id).group(0)[len("D-RDY"):], tail)
     if QA_SEP not in qa:
         return f"'{QA}' 줄에 '명령{QA_SEP}결과' 형식이 없음(전송 안 함). {tail}"
     media = [m for m in QA_MEDIA.findall(qa) if os.path.isfile(os.path.expanduser(m))]

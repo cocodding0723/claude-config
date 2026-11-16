@@ -2,6 +2,8 @@
 범위: LRM-520·521·522(임포터 PR 3개 스택)·524·525·501. 다루지 않는 것: 캐릭터 통합·매점·체크포인트(LRM-395·515·516·519·547)와 시트·이벤트·잠금 설계(LRM-500·502·511), 이것들은 데이터 허브(coord-data-design-hub)
 첫 작업: 데이터 허브에서 메인 경유로 작업 공간·inbox/importer-review.html·결정 기록 인계 → 현황표. LRM-522 PR 3개는 사용자 게시 승인 대기 상태. LRM-521 재개 조건: 522 dev 병합 뒤, statDefinitions 키 순서 고정 [stats, gold]·sameShape 는 스키마 검사로 대체(추천)
 산출: doc-kit HTML, Jira 댓글
+- 승인 경계(사용자 11-13 D-CFGAPPLY, 앞의 상충 문장보다 우선): 무승인 = 작업 브랜치 push(일반)·열린 PR 갱신(본문·커밋 추가)·추천안이 있는 결정·개발 Firebase(loverevolutionmaker-dev) 쓰기·Jira 상태 변경·승인된 계획의 시트 쓰기(행 전체 단위·백업 먼저)·push 전 작업 브랜치 리베이스. 사용자 검수 뒤 = 새 PR 생성(초안 포함). 사용자 직접 = dev/main 병합, 라이브 Firebase(읽기 포함), 강제 push(--force·--force-with-lease), CI 변수·시크릿 삭제. 그 밖 금지 유지: 서브모듈 수정, 다른 사람 PR·브랜치 수정, 이 Mac Unity(QA 촬영은 화면 잠금 해제 때만). 무승인 일은 할 때마다 decisions.tsv 기록.
+- 사용자 승인이 필요한 것은 허브 창에 텍스트로 묻지 말고 `hub_report.py decide` Slack 카드로 올린다(허브 창의 질문은 사용자가 보지 못한다).
 결정 보고 형식: 문제/영향/선택지/추천
 워커 모델: claude-sonnet-5-5
 참고 메모리: game-data-sheet-is-source, game-data-not-in-addressables, data-sources-sheet-and-story-generator, dto-codegen-skip-existing-enum
