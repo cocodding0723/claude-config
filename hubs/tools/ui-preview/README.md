@@ -67,3 +67,4 @@ yield return new UiPreviewScreen("화면-이름", root =>
 - `--patch-from-commit` 의 커밋 자리에 `<A>..<B>` 를 쓰면 범위 누적 변경분(기준이 다른 브랜치)
 - `--hud-place <장소> --hud-day <D-n> --hud-coin <코인>`: 고정본에 없는 상단 띠 값을 수동 입력(시안 견본). compare 머리글에 "수동 입력" 표기
 - `--loc-from-dev <text.*.json 폴더>`: 그 번역을 레인 복사본에만 넣음(저장소 번역 파일은 그대로). 머리글 표기 이름은 `UI_PREVIEW_LOC_LABEL`
+- `--token-add <토큰=번호,…>`: 묶음 생성 파일에 없는 토큰을 레인 복사본 토큰 사전에만 임시 추가(번호는 dev 등록표 값)

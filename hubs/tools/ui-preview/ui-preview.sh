@@ -34,7 +34,7 @@ usage() {
   echo "#   가능한 화면: all $(screen_names)"
 }
 
-HUD_ARGS=(); NOTES=(); LOC_DIR=""; LOC_LABEL=""; SCREENS=""; SIZES=(); STAGE=""; BUNDLE=0; OVERRIDES=(); PATCHES=(); FORCE=0; SUMMARY_AT=""; WHO="default"; COMPARE=""
+TOKEN_ADD=""; HUD_ARGS=(); NOTES=(); LOC_DIR=""; LOC_LABEL=""; SCREENS=""; SIZES=(); STAGE=""; BUNDLE=0; OVERRIDES=(); PATCHES=(); FORCE=0; SUMMARY_AT=""; WHO="default"; COMPARE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
@@ -47,6 +47,7 @@ while [ $# -gt 0 ]; do
     --hud-day) shift; HUD_ARGS+=(-uiPreviewHudDay "${1:?--hud-day 값 필요}"); NOTES+=("D") ;;
     --hud-coin) shift; HUD_ARGS+=(-uiPreviewHudCoin "${1:?--hud-coin 값 필요}"); NOTES+=("코인") ;;
     --loc-from-dev) shift; LOC_DIR="${1:?--loc-from-dev <text.*.json 폴더> 필요}"; LOC_LABEL="${UI_PREVIEW_LOC_LABEL:-dev}" ;;
+    --token-add) shift; TOKEN_ADD="${1:?--token-add <토큰=번호,…> 필요}" ;;
     --summary-at) shift; SUMMARY_AT="${1:?--summary-at day-end|mission-issued|mission-mid 필요}" ;;
     --who) shift; WHO="${1:?--who 이름 필요}" ;;
     --compare) shift; COMPARE="${1:?--compare <시안 PNG> 필요}" ;;
@@ -162,6 +163,20 @@ RUN_PROJ="$LANE"
 if [ -n "$LOC_DIR" ]; then
   cp "$LOC_DIR"/text.*.json "$LANE/Tools/localization/dev-preview/" || { echo "[ui-preview] 번역 복사 실패: $LOC_DIR" >&2; exit 2; }
   echo "[ui-preview] 번역: $LOC_DIR → 레인 한정 ($LOC_LABEL)"
+fi
+# 묶음 생성 파일에 아직 없는 토큰을 레인 복사본의 토큰 사전에만 임시 추가(번호는 dev 등록표 값)
+if [ -n "$TOKEN_ADD" ]; then
+  LM="$LANE/Assets/Game/Data/ExternalModule/LocalizationModule/Generated/LocalizationManager.cs"
+  python3 -I - "$LM" "$TOKEN_ADD" <<'PY' || { echo "[ui-preview] 토큰 임시 추가 실패" >&2; exit 2; }
+import sys
+path, spec = sys.argv[1], sys.argv[2]
+text = open(path, encoding="utf-8").read()
+anchor = "            [\""
+index = text.index(anchor)
+lines = "".join(f'            ["{k}"] = (TextKey){v},\n' for k, v in (pair.split("=") for pair in spec.split(",")) if f'["{k}"]' not in text)
+open(path, "w", encoding="utf-8").write(text[:index] + lines + text[index:])
+print("[ui-preview] 토큰 레인 임시 추가: " + spec)
+PY
 fi
 echo "[ui-preview] 실행 레인: $(basename "$LANE") (요청자 $WHO)"
 
@@ -293,6 +308,7 @@ if [ -n "$COMPARE" ] && [ "$CODE" = 0 ]; then
   HEAD_TAG="$TAG"
   [ ${#NOTES[@]} -eq 0 ] || HEAD_TAG="$HEAD_TAG ($(IFS=·; echo "${NOTES[*]}")=수동 입력(시안 견본))"
   [ -z "$LOC_DIR" ] || HEAD_TAG="$HEAD_TAG (번역=$LOC_LABEL 레인 한정)"
+  [ -z "$TOKEN_ADD" ] || HEAD_TAG="$HEAD_TAG (토큰 $(echo "$TOKEN_ADD" | tr ',' '\n' | wc -l | tr -d ' ')키 레인 임시 추가)"
   mkdir -p "$OUT/compare"
   for name in ${SCREENS//,/ }; do
     for png in "$OUT/${name}"_*_t2.png; do
