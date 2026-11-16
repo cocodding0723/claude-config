@@ -28,7 +28,8 @@ export HUB_PROC_TABLE="$SB/no-proc-table"  # 없는 파일 = 프로세스 확인
 mkdir -p "$FAKE_DIR" "$LRM_HUB_DIR"; : > "$FAKE_NOTIFY_LOG"
 printf 'alpha\t알파 허브\t-\t-\t-\nbeta\t베타 허브\t-\t-\t-\n' > "$HUBS_TSV"
 MAINH=term_0000aaaa-0000-4000-8000-000000000001
-printf 'MAIN_TERMINAL=%s\n' "$MAINH" > "$LRM_HUB_DIR/main.env"
+printf 'MAIN_TERMINAL=%s\n' "$MAINH" > "$LRM_HUB_DIR/main.env"  # 메인 핸들이 있어도 터미널 send 는 없어야 함(알림은 받은 편지함)
+INB="$LRM_HUB_DIR/hub-inbox/main.jsonl"
 
 # 픽스처 생성: python 으로 JSON 작성. now 기준 분 단위 관찰 시각
 mkfix() { # $1=w3 관찰 몇 분 전, $2=w6(새로 멈춘 워커) 포함 여부 0|1
@@ -110,7 +111,7 @@ sw --json > "$SB/o"; chk "재시도 성공(총 3장)" '[ "$(cards)" = 3 ]'
 
 # ---- 5. 버튼: 🅰️ 알림만 / 🅱️ 무동작 --------------------------------------------------------------
 DID=$(grep -Eo "D-ST[0-9a-f]{10}" "$FAKE_NOTIFY_LOG" | tail -1)
-: > "$FAKE_DIR/sends.log"; : > "$FAKE_DIR/calls.log"
+: > "$FAKE_DIR/sends.log"; rm -f "$INB"; : > "$FAKE_DIR/calls.log"
 python3 -I "$CA" handle --did "$DID" --pick 2 > "$SB/o"
 chk "무시(2번): 전송·orca 호출 없음" '[ ! -s "$FAKE_DIR/sends.log" ] && [ ! -s "$FAKE_DIR/calls.log" ]'
 python3 -I "$CA" handle --did "$DID" --pick 1 > "$SB/o"; chk "무시로 지워진 카드는 다시 눌러도 동작 없음" '[ ! -s "$FAKE_DIR/sends.log" ]'
@@ -122,9 +123,9 @@ c.register("D-STTEST000001", "notify", {"hubs": [{"slug": "alpha", "lines": ["�
 PY
 python3 -I "$CA" handle --did D-STTEST000001 --pick 1 > "$SB/o"
 chk "알리기(1번): 알파 코디네이터(1개)에만 한 줄 전송" 'grep -c "^term_a1	" "$FAKE_DIR/sends.log" | grep -qx 1 && grep -q "^term_a1	\[멈춘 워커 감시\] 응답 없는 워커: 알파 새 작업" "$FAKE_DIR/sends.log"'
-chk "코디네이터 2개인 베타: 마지막 출력이 최근인 term_b2 에만 전송 + 중복 사실은 메인에" 'grep -q "^term_b2	.*베타 구현" "$FAKE_DIR/sends.log" && ! grep -q "^term_b1" "$FAKE_DIR/sends.log" && grep -q "^$MAINH	.*중복 코디네이터: beta (서버 허브 이어받기 / 서버 허브 복원)" "$FAKE_DIR/sends.log"'
+chk "코디네이터 2개인 베타: 마지막 출력이 최근인 term_b2 에만 전송 + 중복 사실은 메인에" 'grep -q "^term_b2	.*베타 구현" "$FAKE_DIR/sends.log" && ! grep -q "^term_b1" "$FAKE_DIR/sends.log" && grep -q "중복 코디네이터: beta (서버 허브 이어받기 / 서버 허브 복원)" "$INB"'
 chk "선택 근거 한 줄이 결과 문구에 있음, 종료 0" 'grep -q "beta: 코디네이터 2개 중 마지막 출력이 가장 최근인 1개에 전송" "$SB/o"'
-chk "전송 총 3건뿐, 워커·터미널 종료·재시작 명령 없음" '[ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 3 ] && ! grep -Eq "worker-(stop|release|start)|terminal (close|stop|kill)" "$FAKE_DIR/calls.log"'
+chk "허브 전송 2건뿐(메인 터미널 전송 0), 워커·터미널 종료·재시작 명령 없음" '[ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 2 ] && ! grep -q "^$MAINH	" "$FAKE_DIR/sends.log" && ! grep -Eq "worker-(stop|release|start)|terminal (close|stop|kill)" "$FAKE_DIR/calls.log"'
 
 # ---- 6. 승인 대기(확인 창에서 5분 이상 멈춤) ----------------------------------------------------------
 # addappr 분 디스패치 작업 허브: 확인 창이 뜬 진행 워커·작업·터미널·화면 줄을 픽스처에 추가
@@ -159,7 +160,7 @@ chk "카드: 화면 요약에 질문·명령 포함, 구분선 제외" 'printf "
 chk "카드: 비밀 값 가림(토큰 원문 없음)" 'printf "%s" "$LAST" | grep -q "\[가림\]" && ! printf "%s" "$LAST" | grep -q "123456789012-abcdef"'
 chk "카드: 4분짜리(T8)는 포함되지 않음" '! printf "%s" "$LAST" | grep -q "T8"'
 DID=$(printf "%s" "$LAST" | grep -Eo "D-ST[0-9a-f]{10}" | head -1)
-: > "$FAKE_DIR/sends.log"; : > "$FAKE_DIR/calls.log"
+: > "$FAKE_DIR/sends.log"; rm -f "$INB"; : > "$FAKE_DIR/calls.log"
 python3 -I "$CA" handle --did "$DID" --pick 1 > "$SB/o"
 chk "승인 대기 알리기: 허브 코디네이터에 한 줄만, 확인 창에는 입력하지 않음" '[ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 1 ] && grep -q "^term_a1	.*승인 대기 6분째" "$FAKE_DIR/sends.log" && ! grep -q "term_ctx_w7" "$FAKE_DIR/sends.log"'
 
@@ -224,7 +225,7 @@ def t(h, out, **kw):
 json.dump([t("term_g1", 100), t("term_g2", 900, orphaned=True), t("term_g3", 800, writable=False), t("term_g4", 700, connected=False), t("term_g5", 300), t("term_g6", 500, agentIdentity="codex")],
           open(os.path.join(d, "terminals.json"), "w"))
 PY
-: > "$FAKE_DIR/sends.log"
+: > "$FAKE_DIR/sends.log"; rm -f "$INB"
 python3 - <<PY > "$SB/o"
 import sys; sys.path.insert(0, "$SCRIPTS")
 import card_actions as c
@@ -232,13 +233,13 @@ print(c.run_notify({"hubs": [{"slug": "gamma", "lines": ["x"]}]}))
 PY
 chk "다중 터미널: 고아·쓰기 불가·끊김·codex 제외 뒤 가장 최근 출력(term_g5)에 전송" '[ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 1 ] && grep -q "^term_g5	" "$FAKE_DIR/sends.log"'
 python3 -c 'import json,os;json.dump([],open(os.path.join(os.environ["FAKE_DIR"],"terminals.json"),"w"))'
-: > "$FAKE_DIR/sends.log"
+: > "$FAKE_DIR/sends.log"; rm -f "$INB"
 python3 - <<PY > "$SB/o"
 import sys; sys.path.insert(0, "$SCRIPTS")
 import card_actions as c
 print(c.run_notify({"hubs": [{"slug": "gamma", "lines": ["x"]}]}))
 PY
-chk "후보 0개: '코디네이터 터미널 없음' + 메인에 대리 전달(rc 0)" 'grep -q "gamma: 코디네이터 터미널 없음 · 메인에 대리 전달" "$SB/o" && [ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 1 ] && grep -q "^$MAINH	.*gamma 허브에 전달하지 못해 메인에 대리 전달" "$FAKE_DIR/sends.log"'
+chk "후보 0개: '코디네이터 터미널 없음' + 메인에 대리 전달(rc 0)" 'grep -q "gamma: 코디네이터 터미널 없음 · 메인에 대리 전달" "$SB/o" && [ ! -s "$FAKE_DIR/sends.log" ] && grep -q "gamma 허브에 전달하지 못해 메인에 대리 전달" "$INB"'
 # ---- 10b. 전송 실패 복구: 생존 판정·다음 후보·메인 대리 전달 ------------------------------------------------
 python3 - <<'PY'
 import json, os
@@ -255,20 +256,21 @@ rc, msg = c.run_notify({"hubs": [{"slug": "delta", "lines": ["x"]}]})
 print(rc, msg)
 PY
 }
-: > "$FAKE_DIR/sends.log"
+: > "$FAKE_DIR/sends.log"; rm -f "$INB"
 printf '1 term_new\n2 term_mid\n' > "$SB/proc"
 HUB_PROC_TABLE="$SB/proc" note > "$SB/o"
 chk "① 연결됨 플래그지만 프로세스 없는 옛 세션(term_old) 건너뛰고 살아 있는 최근 출력(term_mid)에 전송" '[ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 1 ] && grep -q "^term_mid	" "$FAKE_DIR/sends.log" && head -c1 "$SB/o" | grep -q 0'
-: > "$FAKE_DIR/sends.log"; : > "$FAKE_DIR/failed.log"
+: > "$FAKE_DIR/sends.log"; rm -f "$INB"; : > "$FAKE_DIR/failed.log"
 FAKE_SEND_FAIL="term_mid:terminal_handle_stale" HUB_PROC_TABLE="$SB/proc" note > "$SB/o"
 chk "② 첫 후보 stale 실패 → 다음 후보(term_new) 성공, rc 0" 'grep -qx term_mid "$FAKE_DIR/failed.log" && grep -q "^term_new	" "$FAKE_DIR/sends.log" && [ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 1 ] && head -c1 "$SB/o" | grep -q 0'
-: > "$FAKE_DIR/sends.log"; : > "$FAKE_DIR/failed.log"
+: > "$FAKE_DIR/sends.log"; rm -f "$INB"; : > "$FAKE_DIR/failed.log"
 FAKE_SEND_FAIL="term_mid:terminal_handle_stale,term_new:terminal_handle_stale" HUB_PROC_TABLE="$SB/proc" note > "$SB/o"
-chk "③ 전부 실패 → 메인에 대리 전달, rc 0, 오류 코드·대리 표시 기록, 같은 핸들 재전송 없음" 'grep -q "^$MAINH	.*delta 허브에 전달하지 못해" "$FAKE_DIR/sends.log" && head -c1 "$SB/o" | grep -q 0 && grep -q "전송 실패(terminal_handle_stale)" "$SB/o" && grep -q "메인에 대리 전달" "$SB/o" && [ "$(sort "$FAKE_DIR/failed.log" | uniq -d | wc -l | tr -d " ")" = 0 ]'
-: > "$FAKE_DIR/sends.log"
-FAKE_SEND_FAIL="term_mid:terminal_handle_stale,term_new:terminal_handle_stale,$MAINH:terminal_not_found" HUB_PROC_TABLE="$SB/proc" note > "$SB/o"
-chk "④ 메인까지 실패 → rc 1, 허브·메인 오류 코드 모두 기록" 'head -c1 "$SB/o" | grep -q 1 && grep -q "전송 실패(terminal_handle_stale)" "$SB/o" && grep -q "메인 대리 전달도 실패(terminal_not_found)" "$SB/o"'
-: > "$FAKE_DIR/sends.log"
+chk "③ 전부 실패 → 메인에 대리 전달, rc 0, 오류 코드·대리 표시 기록, 같은 핸들 재전송 없음" 'grep -q "delta 허브에 전달하지 못해" "$INB" && head -c1 "$SB/o" | grep -q 0 && grep -q "전송 실패(terminal_handle_stale)" "$SB/o" && grep -q "메인에 대리 전달" "$SB/o" && [ "$(sort "$FAKE_DIR/failed.log" | uniq -d | wc -l | tr -d " ")" = 0 ]'
+: > "$FAKE_DIR/sends.log"; rm -f "$INB"
+rm -rf "$LRM_HUB_DIR/hub-inbox"; : > "$LRM_HUB_DIR/hub-inbox"  # 편지함 쓰기 실패 재현
+FAKE_SEND_FAIL="term_mid:terminal_handle_stale,term_new:terminal_handle_stale" HUB_PROC_TABLE="$SB/proc" note > "$SB/o"; rm -f "$LRM_HUB_DIR/hub-inbox"
+chk "④ 메인까지 실패 → rc 1, 허브·메인 오류 코드 모두 기록" 'head -c1 "$SB/o" | grep -q 1 && grep -q "전송 실패(terminal_handle_stale)" "$SB/o" && grep -q "메인 대리 전달도 실패(inbox_write_failed)" "$SB/o"'
+: > "$FAKE_DIR/sends.log"; rm -f "$INB"
 HUB_PROC_TABLE="$SB/proc-nolive" note > "$SB/o"; : > "$SB/proc-nolive"
 HUB_PROC_TABLE="$SB/proc-nolive" note > "$SB/o"
 chk "생존 프로세스 0개(표는 읽힘): 플래그가 연결됨이어도 허브 후보 없음 → 메인 대리 전달" 'grep -q "코디네이터 터미널 없음 · 메인에 대리 전달" "$SB/o"'
@@ -296,19 +298,19 @@ print(*c.run_notify({"hubs": [{"slug": "delta", "lines": ["x"]}]}))
 PY
 }
 printf '1 term_a\n2 term_b\n3 term_c\n' > "$SB/proc3"
-: > "$FAKE_DIR/sends.log"; : > "$FAKE_DIR/failed.log"; : > "$FAKE_DIR/calls.log"; rm -f "$FAKE_DIR"/terminals_*.json
+: > "$FAKE_DIR/sends.log"; rm -f "$INB"; : > "$FAKE_DIR/failed.log"; : > "$FAKE_DIR/calls.log"; rm -f "$FAKE_DIR"/terminals_*.json
 tj terminals.json term_a:900:rw; tj terminals_2.json term_a:900:rw term_c:100:rw
 FAKE_SEND_FAIL="term_a:terminal_handle_stale" HUB_PROC_TABLE="$SB/proc3" rn > "$SB/o"
-chk "2라운드 재조회에서 새 핸들(term_c) 등장 → 성공, 실패한 term_a 재전송 없음, rc 0" 'head -c1 "$SB/o" | grep -q 0 && grep -q "^term_c	" "$FAKE_DIR/sends.log" && [ "$(grep -c "^term_a$" "$FAKE_DIR/failed.log")" = 1 ] && ! grep -q "^$MAINH	" "$FAKE_DIR/sends.log"'
+chk "2라운드 재조회에서 새 핸들(term_c) 등장 → 성공, 실패한 term_a 재전송 없음, rc 0" 'head -c1 "$SB/o" | grep -q 0 && grep -q "^term_c	" "$FAKE_DIR/sends.log" && [ "$(grep -c "^term_a$" "$FAKE_DIR/failed.log")" = 1 ] && [ ! -s "$INB" ]'
 rm -f "$FAKE_DIR"/terminals_*.json
-: > "$FAKE_DIR/sends.log"; : > "$FAKE_DIR/calls.log"
+: > "$FAKE_DIR/sends.log"; rm -f "$INB"; : > "$FAKE_DIR/calls.log"
 tj terminals.json term_a:900:rw term_b:500:rw
 FAKE_SEND_HANG="term_a" HUB_PROC_TABLE="$SB/proc3" rn ORCA_TIMEOUT_S=1 > "$SB/o"
-chk "시간 초과 → 다른 후보·메인에 원문 재전송 없음, 메인엔 확인 필요 한 줄, rc 1" 'head -c1 "$SB/o" | grep -q 1 && grep -q "확인 필요" "$SB/o" && [ "$(grep -c "^term_a	" "$FAKE_DIR/sends.log")" = 1 ] && ! grep -q "^term_b	" "$FAKE_DIR/sends.log" && [ "$(grep -c "^$MAINH	" "$FAKE_DIR/sends.log")" = 1 ] && grep "^$MAINH	" "$FAKE_DIR/sends.log" | grep -q "확인 필요" && ! grep "^$MAINH	" "$FAKE_DIR/sends.log" | grep -q "응답 없는 워커"'
-: > "$FAKE_DIR/sends.log"; : > "$FAKE_DIR/calls.log"
+chk "시간 초과 → 다른 후보·메인에 원문 재전송 없음, 메인엔 확인 필요 한 줄, rc 1" 'head -c1 "$SB/o" | grep -q 1 && grep -q "확인 필요" "$SB/o" && [ "$(grep -c "^term_a	" "$FAKE_DIR/sends.log")" = 1 ] && ! grep -q "^term_b	" "$FAKE_DIR/sends.log" && ! grep -q "^$MAINH	" "$FAKE_DIR/sends.log" && [ "$(wc -l < "$INB" | tr -d " ")" = 1 ] && grep -q "확인 필요" "$INB" && ! grep -q "응답 없는 워커" "$INB"'
+: > "$FAKE_DIR/sends.log"; rm -f "$INB"; : > "$FAKE_DIR/calls.log"
 HUB_PROC_TABLE="$SB/proc3" rn DELIVER_DEADLINE_S=0.5 ORCA_TIMEOUT_S=1 > "$SB/o"
-chk "마감 초과(남은 시간 < 호출 상한) → 허브 호출·전송 없이 메인 대리, rc 0" 'head -c1 "$SB/o" | grep -q 0 && grep -q "deadline" "$SB/o" && grep -q "메인에 대리 전달" "$SB/o" && [ "$(wc -l < "$FAKE_DIR/sends.log" | tr -d " ")" = 1 ] && grep -q "^$MAINH	" "$FAKE_DIR/sends.log" && ! grep -q "^terminal list" "$FAKE_DIR/calls.log"'
-: > "$FAKE_DIR/sends.log"
+chk "마감 초과(남은 시간 < 호출 상한) → 허브 호출·전송 없이 메인 대리, rc 0" 'head -c1 "$SB/o" | grep -q 0 && grep -q "deadline" "$SB/o" && grep -q "메인에 대리 전달" "$SB/o" && [ ! -s "$FAKE_DIR/sends.log" ] && [ -s "$INB" ] && ! grep -q "^terminal list" "$FAKE_DIR/calls.log"'
+: > "$FAKE_DIR/sends.log"; rm -f "$INB"
 python3 - <<'PY'
 import json, os
 p = os.path.join(os.environ["FAKE_DIR"], "workers_active.json")
@@ -323,7 +325,7 @@ p = os.path.join(os.environ["FAKE_DIR"], "workers_active.json")
 json.dump([w for w in json.load(open(p)) if w.get("dispatchId") != "ctx_wk"], open(p, "w"))
 PY
 tj terminals.json term_a:900:ro term_b:500:ro
-: > "$FAKE_DIR/sends.log"
+: > "$FAKE_DIR/sends.log"; rm -f "$INB"
 chk "쓰기 불가 코디네이터는 중복 판정(coordinators)엔 포함, 전송 후보에선 제외" '[ "$(HUB_PROC_TABLE="$SB/proc3" python3 -I -c "
 import sys; sys.path.insert(0, \"$SCRIPTS\")
 import stall_watch as s, card_actions as c
@@ -337,13 +339,15 @@ c.KINDS["notify"] = c.run_notify
 print(*c.execute({"kind": "notify", "args": {}}, 1))
 PY
 chk "execute: 비문자열 slug·lines·handle 방어, 예외 → rc 1 '후속 동작 예외(ZeroDivisionError)'" 'grep -q "^[01] " "$SB/o" && tail -1 "$SB/o" | grep -qx "1 후속 동작 예외(ZeroDivisionError)"'
-: > "$FAKE_DIR/sends.log"
-FAKE_SEND_FAIL="$MAINH:terminal_not_found" python3 - <<PY > "$SB/o"
+: > "$FAKE_DIR/sends.log"; rm -f "$INB"
+rm -rf "$LRM_HUB_DIR/hub-inbox"; : > "$LRM_HUB_DIR/hub-inbox"
+python3 - <<PY > "$SB/o"
 import sys; sys.path.insert(0, "$SCRIPTS")
 import card_actions as c
 print(*c.run_notify({"hubs": [], "dups": [{"slug": "delta", "titles": ["a", "b"]}]}))
 PY
-chk "중복 코디네이터 메인 알림 실패 → rc 1" 'head -c1 "$SB/o" | grep -q 1 && grep -q "중복 코디네이터 메인 알림 실패" "$SB/o"'
+rm -f "$LRM_HUB_DIR/hub-inbox"
+chk "중복 코디네이터 메인 알림 실패(편지함 쓰기 실패) → rc 1" 'head -c1 "$SB/o" | grep -q 1 && grep -q "중복 코디네이터 메인 알림 실패" "$SB/o"'
 rm -f "$FAKE_DIR"/terminals_*.json
 # 다음 시험(10 의 후반)을 위해 원래 픽스처 상태로
 python3 -c 'import json,os;json.dump([],open(os.path.join(os.environ["FAKE_DIR"],"terminals.json"),"w"))'

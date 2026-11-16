@@ -68,7 +68,13 @@ class DecideTest(ServerBase):
         return [t for h, t in self.sends() if h == HUBH]
 
     def main_sends(self):
-        return [t for h, t in self.sends() if h == MAINH]
+        """메인 받은 편지함(main.jsonl)의 본문 목록. 메인 터미널로는 아무것도 가지 않아야 함"""
+        self.assertEqual([t for h, t in self.sends() if h == MAINH], [], "메인 터미널 입력창으로 보냄")
+        p = os.path.join(self.env.hub, "hub-inbox", "main.jsonl")
+        if not os.path.exists(p):
+            return []
+        with open(p, encoding="utf-8") as f:
+            return [json.loads(ln)["text"] for ln in f if ln.strip()]
 
     def inbox(self):
         p = os.path.join(self.env.hub, "slack-inbox.jsonl")
@@ -186,7 +192,7 @@ class DecideTest(ServerBase):
         os.remove(os.path.join(self.env.hub, "hub-reports.jsonl"))
         self.env.jsonl("slack-sent.jsonl", [{"ts": "1.1", "title": "시험 결정", "form_kind": "decide", "decision_id": DID, "options": {"1": "A 안", "2": "B 안"}}])
         st, j = self.preview()
-        self.assertEqual(j["target"], "메인 터미널")
+        self.assertEqual(j["target"], "메인 받은 편지함")
         st, j = self.decide({"id": DID, "pick": 2, "intent": j["intent"]})
         self.assertEqual((st, j["via"]), (200, "main"))
         self.assertEqual(self.hub_sends(), [])

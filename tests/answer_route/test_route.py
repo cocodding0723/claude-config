@@ -52,6 +52,21 @@ class Base(unittest.TestCase):
     def jsonl(self, name, rows):
         self.write(name, "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
 
+    def terminal_sends(self):
+        """가짜 orca 의 terminal send 기록(핸들, 본문). 메인 핸들로는 절대 가지 않아야 함"""
+        with open(os.path.join(self.fake, "sends.log"), encoding="utf-8") as f:
+            rows = [ln.rstrip("\n").split("\t", 1) for ln in f if ln.strip()]
+        self.assertNotIn(MAINH, [r[0] for r in rows], "메인 터미널 입력창으로 보냄")
+        return rows
+
+    def inbox(self):
+        """메인 받은 편지함에 쌓인 줄의 본문. 허브 전송 기록과 같은 모양(MAINH, 본문)으로 돌려줘 기존 단언을 그대로 씀"""
+        try:
+            with open(os.path.join(self.hub, "hub-inbox", "main.jsonl"), encoding="utf-8") as f:
+                return [[MAINH, json.loads(ln)["text"]] for ln in f if ln.strip()]
+        except FileNotFoundError:
+            return []
+
     def map_decision(self, did="D-0001", hub="alpha"):
         self.jsonl("hub-reports.jsonl", [{"decision_id": did, "hub": hub}])
 
@@ -164,8 +179,7 @@ class FakeOrcaRoute(Base):
                                                   "connected": True, "writable": True, "orphaned": False, "lastOutputAt": out} for h, out in rows]), self.fake)
 
     def sends(self):
-        with open(os.path.join(self.fake, "sends.log"), encoding="utf-8") as f:
-            return [ln.rstrip("\n").split("\t", 1) for ln in f if ln.strip()]
+        return self.terminal_sends() + self.inbox()
 
     def router(self):
         return self.route_mod.Router(self.store, self.route_mod.main_line_sender())
@@ -178,6 +192,7 @@ class FakeOrcaRoute(Base):
         self.assertEqual(rows[1][0], MAINH)
         self.assertIn("참고", rows[1][1])
         self.assertEqual(len(rows), 2)
+        self.assertEqual(self.terminal_sends(), rows[:1])  # 메인 참고 한 줄은 터미널이 아니라 편지함
 
     def test_failed_on_all_candidates_goes_to_main_without_resending_failed_handles(self):
         os.environ["FAKE_SEND_FAIL"] = "term_a:terminal_handle_stale,term_b:terminal_handle_stale"
@@ -295,8 +310,7 @@ class NotifyBlocked(Base):
         self.actions.BLOCK_GAP_S = 0
 
     def sends(self):
-        with open(os.path.join(self.fake, "sends.log"), encoding="utf-8") as f:
-            return [ln.rstrip("\n").split("\t", 1) for ln in f if ln.strip()]
+        return self.terminal_sends() + self.inbox()
 
     def test_blocked_then_sent_no_proxy(self):
         os.environ["FAKE_SEND_BLOCK"] = "term_a:2"

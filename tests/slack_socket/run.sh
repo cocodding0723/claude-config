@@ -206,9 +206,9 @@ waitfor s20 out '결정 D-T1 버튼 답 기록 · 메인 전달 성공' 4 && sle
 [ "$(count s20 calls ' ack 1 i[1-4]')" = 4 ] && ok "버튼·모달 요청 모두 ack" || ko "버튼 ack" "$(count s20 calls ' ack 1 i')"
 grep -q 'web chat_update .*✅ 2. B 안 선택됨' "$SB/s20/calls" && ! grep -q 'web chat_update .*"type": "actions"' "$SB/s20/calls" && ok "선택 → 카드를 '✅ 선택됨'으로 갱신·버튼 제거" || ko "카드 갱신" "$(grep 'web chat_update' "$SB/s20/calls" | head -1 | cut -c1-200)"
 grep -q 'web views_open .*"callback_id": "lrm_custom"' "$SB/s20/calls" && ok "'직접 입력' → 모달 열기" || ko "모달" ""
-grep -q '결정 D-T1 = 선택 2(B 안) (버튼) (1794383274.541929)' "$SB/s20/orca.calls" && grep -q '결정 D-T2 답(자유 글): 둘 다 섞어서 (1794383274.999999)' "$SB/s20/orca.calls" && grep -q -- '--terminal term-main' "$SB/s20/orca.calls" && ok "선택·직접 입력 모두 메인 터미널로 전달(결정 번호 머리줄)" || ko "메인 전달" "$(cat "$SB/s20/orca.calls" 2>/dev/null | cut -c1-200)"
+grep -q '결정 D-T1 = 선택 2(B 안) (버튼) (1794383274.541929)' "$SB/s20/hub/hub-inbox/main.jsonl" && grep -q '결정 D-T2 답(자유 글): 둘 다 섞어서 (1794383274.999999)' "$SB/s20/hub/hub-inbox/main.jsonl" && ! grep -q 'terminal send' "$SB/s20/orca.calls" && ok "선택·직접 입력 모두 메인 받은 편지함에 기록(결정 번호 머리줄, 터미널 send 없음)" || ko "메인 전달" "$(cat "$SB/s20/hub/hub-inbox/main.jsonl" 2>/dev/null | cut -c1-200)"
 [ "$(grep -c '"type": "button"' "$SB/s20/hub/slack-inbox.jsonl")" = 2 ] && grep -q '"pick": 2' "$SB/s20/hub/slack-inbox.jsonl" && [ "$(grep -c 1794383274.541929 "$SB/s20/hub/slack-done.txt")" = 1 ] && [ "$(grep -c 1794383274.999999 "$SB/s20/hub/slack-done.txt")" = 1 ] && ok "inbox 기록 2건·done 처리" || ko "기록" "$(wc -l < "$SB/s20/hub/slack-inbox.jsonl" 2>/dev/null)"
-! grep -q '= 1. A' "$SB/s20/orca.calls" && ok "다른 사용자 클릭은 무시" || ko "남의 클릭" ""
+! grep -q '= 1. A' "$SB/s20/hub/hub-inbox/main.jsonl" && ok "다른 사용자 클릭은 무시" || ko "남의 클릭" ""
 stop s20
 
 # 같은 결정에 먼저 온 답만 인정: Slack 끼리 겹침, 문서 사이트가 먼저 답한 경우 모두 기록·전달 없이 카드에 사유만 남김
@@ -217,9 +217,9 @@ printf '%s\n' '{"type":"button","parent_ts":"1794383274.541929","decision_id":"D
 act3() { act "$1" "$2" "$3" "$4" "$5" "$6" | sed 's/D-T1/D-T3/g'; }
 start s22 "{\"events\":[$(act 0.4 i1 $ME pick_2 'D-T1|2' '2. B 안'),$(act 0.6 i2 $ME pick_1 'D-T1|1' '1. A 안'),$(act3 0.8 i3 $ME pick_1 'D-T3|1' '1. A 안')]}" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s22/orca.calls"
 waitfor s22 out '결정 D-T3 버튼 답 무시' 4 && sleep 0.5
-[ "$(grep -c '"decision_id": "D-T1"' "$SB/s22/hub/slack-inbox.jsonl")" = 1 ] && grep -q '"pick": 2' "$SB/s22/hub/slack-inbox.jsonl" && [ "$(grep -c 'D-T1 = ' "$SB/s22/orca.calls")" = 1 ] && ! grep -q 'D-T1 = 선택 1' "$SB/s22/orca.calls" && ok "Slack 끼리 겹치면 먼저 온 답만 기록·메인 전달" || ko "Slack 중복" "$(cat "$SB/s22/orca.calls" 2>/dev/null | cut -c1-160)"
+[ "$(grep -c '"decision_id": "D-T1"' "$SB/s22/hub/slack-inbox.jsonl")" = 1 ] && grep -q '"pick": 2' "$SB/s22/hub/slack-inbox.jsonl" && [ "$(grep -c 'D-T1 = ' "$SB/s22/hub/hub-inbox/main.jsonl")" = 1 ] && ! grep -q 'D-T1 = 선택 1' "$SB/s22/hub/hub-inbox/main.jsonl" && ok "Slack 끼리 겹치면 먼저 온 답만 기록·메인 전달" || ko "Slack 중복" "$(cat "$SB/s22/hub/hub-inbox/main.jsonl" 2>/dev/null | cut -c1-160)"
 grep -q '이미 Slack 에서 답함' "$SB/s22/calls" && grep -q '이미 문서 사이트에서 답함' "$SB/s22/calls" && ok "늦은 답은 카드에 '이미 Slack/문서 사이트에서 답함' 표시" || ko "늦은 답 표시" "$(grep 'chat_update' "$SB/s22/calls" | cut -c1-160)"
-! grep -q 'D-T3' "$SB/s22/orca.calls" && [ "$(grep -c '"decision_id": "D-T3"' "$SB/s22/hub/slack-inbox.jsonl")" = 0 ] && ok "문서 사이트가 먼저 답한 결정은 기록·전달 추가 없음" || ko "문서 사이트 선답" ""
+! grep -q 'D-T3' "$SB/s22/hub/hub-inbox/main.jsonl" && [ "$(grep -c '"decision_id": "D-T3"' "$SB/s22/hub/slack-inbox.jsonl")" = 0 ] && ok "문서 사이트가 먼저 답한 결정은 기록·전달 추가 없음" || ko "문서 사이트 선답" ""
 stop s22
 
 # 결정을 올린 허브가 기록(hub-reports)에 있으면 허브 코디네이터에 직접 전달 + 메인엔 참고 한 줄. 허브 전송이 실패하면 메인에 대리 전달
@@ -230,17 +230,17 @@ for n in s23 s24; do
 done
 start s23 "{\"events\":[$(act 0.4 i1 $ME pick_2 'D-T1|2' '2. B 안')]}" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s23/orca.calls" HUB_PROC_TABLE="$SB/none"
 waitfor s23 out '결정 D-T1 버튼 답 기록 · 허브 alpha hub 전달 성공' 6
-grep -q -- '--terminal term-hub1 --text 사용자 원문: 결정 D-T1 = 선택 2(B 안) (버튼) (출처: Slack)' "$SB/s23/orca.calls" && grep -q -- '--terminal term-main --text \[Slack→메인 참고\] alpha 허브에 직접 전달함' "$SB/s23/orca.calls" && ! grep -q -- '--text \[Slack→메인\] 결정' "$SB/s23/orca.calls" && ok "허브 기록 있음 → 허브에 '사용자 원문: … (출처: Slack)' 직접 전달·메인엔 참고 한 줄만" || ko "허브 직접 전달" "$(cut -c1-140 "$SB/s23/orca.calls" 2>/dev/null)"
+grep -q -- '--terminal term-hub1 --text 사용자 원문: 결정 D-T1 = 선택 2(B 안) (버튼) (출처: Slack)' "$SB/s23/orca.calls" && grep -q '"text":"\[Slack→메인 참고\] alpha 허브에 직접 전달함' "$SB/s23/hub/hub-inbox/main.jsonl" && ! grep -q -- '--terminal term-main' "$SB/s23/orca.calls" && ! grep -q '"text":"\[Slack→메인\] 결정' "$SB/s23/hub/hub-inbox/main.jsonl" && ok "허브 기록 있음 → 허브에 '사용자 원문: … (출처: Slack)' 직접 전달·메인엔 참고 한 줄만" || ko "허브 직접 전달" "$(cut -c1-140 "$SB/s23/orca.calls" 2>/dev/null)"
 stop s23
 start s24 "{\"events\":[$(act 0.4 i1 $ME pick_2 'D-T1|2' '2. B 안')]}" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s24/orca.calls" HUB_PROC_TABLE="$SB/none" FAKE_HUB_FAIL=1
 waitfor s24 out '결정 D-T1 버튼 답 기록 · 허브 alpha proxy 전달 성공' 6
-grep -q -- '--terminal term-main --text \[Slack→메인\] (alpha 허브에 전달하지 못해 대리 전달: terminal_handle_stale) 사용자 원문: 결정 D-T1 = 선택 2(B 안) (버튼) (출처: Slack)' "$SB/s24/orca.calls" && [ "$(grep -c -- '--terminal term-hub1 --text' "$SB/s24/orca.calls")" = 1 ] && ok "허브 전송 실패 → 메인에 원문 대리 전달(허브 재전송 없음)" || ko "대리 전달" "$(cut -c1-160 "$SB/s24/orca.calls" 2>/dev/null)"
+grep -q '"text":"\[Slack→메인\] (alpha 허브에 전달하지 못해 대리 전달: terminal_handle_stale) 사용자 원문: 결정 D-T1 = 선택 2(B 안) (버튼) (출처: Slack)' "$SB/s24/hub/hub-inbox/main.jsonl" && ! grep -q -- '--terminal term-main' "$SB/s24/orca.calls" && [ "$(grep -c -- '--terminal term-hub1 --text' "$SB/s24/orca.calls")" = 1 ] && ok "허브 전송 실패 → 메인에 원문 대리 전달(허브 재전송 없음)" || ko "대리 전달" "$(cut -c1-160 "$SB/s24/orca.calls" 2>/dev/null)"
 stop s24
 
-# 메인 전달 실패(orca 실패) → 카드 스레드에 warn 경고
+# 메인 전달 실패(받은 편지함 쓰기 실패) → 카드 스레드에 warn 경고
 printf '#!/bin/sh\nexit 1\n' > "$SB/bad_orca.sh"; chmod +x "$SB/bad_orca.sh"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$FAKE_NOTIFY_LOG"\n' > "$SB/fake_notify.sh"; chmod +x "$SB/fake_notify.sh"
-mkdir -p "$SB/s21/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/s21/hub/main.env"
+mkdir -p "$SB/s21/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/s21/hub/main.env"; : > "$SB/s21/hub/hub-inbox"  # 편지함 폴더 자리를 파일로 막음
 start s21 "{\"events\":[$(act 0.4 i1 $ME pick_2 'D-T1|2' '2. B 안')]}" LRM_ORCA="$SB/bad_orca.sh" LRM_NOTIFY="$SB/fake_notify.sh" FAKE_NOTIFY_LOG="$SB/s21/notify.calls"
 waitfor s21 out '메인 전달 실패' 4 && waitfor s21 notify.calls 'thread 1794383274.541929 메인 전달 실패' 4 && grep -q -- '--kind warn' "$SB/s21/notify.calls" && ok "메인 전달 실패 → 카드 스레드에 warn" || ko "전달 실패 경고" "$(cat "$SB/s21/notify.calls" 2>/dev/null)"
 stop s21
@@ -251,7 +251,7 @@ printf '%s\n' '{"type":"button","parent_ts":"1794383274.541929","decision_id":"D
 printf '%s\n' '{"decision_id":"D-T1","parent_ts":"1794383274.541929","state":"pending","ok":null,"at":1}' > "$SB/s26/hub/answer-delivery.jsonl"
 start s26 "{\"events\":[$(act 0.4 i1 $ME pick_1 'D-T1|1' '1. A 안'),$(act 0.8 i2 $ME pick_1 'D-T1|1' '1. A 안')]}" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s26/orca.calls"
 waitfor s26 out '원문 다시 전달' 4 && waitfor s26 out '결정 D-T1 버튼 답 기록 · 메인 전달 성공' 4 && sleep 0.5
-[ "$(grep -c 'D-T1 = 선택 2(B 안)' "$SB/s26/orca.calls")" = 1 ] && ! grep -q 'D-T1 = 선택 1' "$SB/s26/orca.calls" && grep -q '이전 답의 전달 기록이 없어 다시 전달함' "$SB/s26/calls" && ok "전달 기록 없는 이전 답 → 늦은 클릭이 원문을 1회만 다시 전달·안내" || ko "재전달" "$(cut -c1-160 "$SB/s26/orca.calls" 2>/dev/null)"
+[ "$(grep -c 'D-T1 = 선택 2(B 안)' "$SB/s26/hub/hub-inbox/main.jsonl")" = 1 ] && ! grep -q 'D-T1 = 선택 1' "$SB/s26/hub/hub-inbox/main.jsonl" && grep -q '이전 답의 전달 기록이 없어 다시 전달함' "$SB/s26/calls" && ok "전달 기록 없는 이전 답 → 늦은 클릭이 원문을 1회만 다시 전달·안내" || ko "재전달" "$(cut -c1-160 "$SB/s26/hub/hub-inbox/main.jsonl" 2>/dev/null)"
 stop s26
 
 # 전달 중 예외(허브 보고 기록이 깨짐) → 스레드가 조용히 죽지 않고 종류만 로그 + 카드 스레드 경고. 본문·traceback 은 남기지 않음

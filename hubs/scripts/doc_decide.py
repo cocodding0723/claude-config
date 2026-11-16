@@ -95,7 +95,7 @@ class Decider:
                 del self._intents[min(self._intents, key=lambda k: self._intents[k].exp)]
             self._intents[intent] = Intent(did, pick, card["ts"], who, now + INTENT_TTL_S)
         return {"ok": True, "phase": "preview", "intent": intent, "title": str(card.get("title") or did), "label": label,
-                "target": f"{hub} 허브" if hub else "메인 터미널",
+                "target": f"{hub} 허브" if hub else "메인 받은 편지함",
                 "text": answer_route.HUB_LINE.format(body=body, source=answer_store.SOURCE_NAME[answer_store.DOCSITE]), "ttl": INTENT_TTL_S}
 
     def commit(self, did: str, pick: int, intent: str, who: str, ts: str = "") -> dict:

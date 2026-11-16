@@ -100,7 +100,7 @@ bash "$SETMAIN" --help | grep -q -- '--auto' && ok "--help 에 --auto 안내" ||
 echo fail > "$FO/list.mode"; out=$(bash "$SETMAIN" --auto 2>&1); rc=$?
 [ "$rc" = 2 ] && ok "--auto: terminal list 실패 → 종료 2" || ko "--auto list 실패" "rc=$rc $out"
 
-# ---- slack_socket.send_main: 같은 재탐색 ------------------------------------------------------------
+# ---- slack_socket.send_main: 메인 받은 편지함(터미널 입력 없음) ----------------------------------------------
 sock() { # 이름: send_main 을 직접 호출(가짜 slack_sdk 모듈 주입). LRM_ORCA 는 PATH 의 가짜 orca
   python3 -I - "$SCRIPTS/slack_socket.py" <<'PY'
 import os, sys, types, runpy
@@ -116,34 +116,22 @@ PY
 }
 export LRM_ORCA="$FB/orca"
 S() { sock | tail -1; }  # 수신기 log() 는 stdout 에 쓰므로 마지막 줄(결과)만 취함
-newhub S1; { row "$NEW" "MAIN-HANDOFF 메인" "$MAIN"; } | setlist; echo fail > "$FO/send.mode.$OLD"
-r=$(S)
-[ "$r" = sent ] && [ "$(envval)" = "$NEW" ] && [ "$(nsend)" = 1 ] && [ "$(awk -F'\t' '{print $3}' "$FO/sends.log")" = "$NEW" ] && ok "slack_socket: 보내기 전 확인에서 옛 핸들 gone → 옛 대상엔 보내지 않고 재탐색 1개 → main.env 갱신·새 핸들로 전송" || ko "socket 후보 1" "r=$r env=$(envval) sends=$(nsend)"
-newhub S1b; { row "$NEW" "MAIN-HANDOFF 메인" "$MAIN"; } | setlist; echo other_wt > "$FO/show.mode.$OLD"
-r=$(S)
-[ "$r" = sent ] && [ "$(nsend)" = 1 ] && [ "$(awk -F'\t' '{print $3}' "$FO/sends.log")" = "$NEW" ] && [ "$(envval)" = "$NEW" ] && ok "slack_socket: 살아 있지만 메인 체크아웃이 아닌 옛 대상(wrong_worktree)엔 보내지 않고 새 대상에만 전송(두 대상 중복 없음)" || ko "socket 옛 대상 불일치" "r=$r sends=$(nsend) $(cat "$FO/sends.log" 2>/dev/null)"
-newhub S1c; { row "$NEW" "MAIN-HANDOFF 메인" "$MAIN"; } | setlist; echo seq > "$FO/show.mode.$OLD"; printf 'ok\ngone\n' > "$FO/show.seq"; echo gone > "$FO/send.mode.$OLD"  # 보내기 전엔 정상, 전송 뒤엔 핸들 무효
-r=$(S)
-[ "$r" = sent ] && [ "$(wc -l < "$FO/delivered" | tr -d ' ')" = 1 ] && [ "$(envval)" = "$NEW" ] && ok "slack_socket: 전송이 핸들 무효(terminal_gone)로 거절되면 입력 전이므로 재탐색 후 새 대상에 전송(실제 입력 1건)" || ko "socket 거절 뒤 재전송" "r=$r delivered=$(cat "$FO/delivered" 2>/dev/null | wc -l)"
-for m in fail ambig; do
-  newhub S1d$m; { row "$NEW" "MAIN-HANDOFF 메인" "$MAIN"; } | setlist; rm -f "$FO/show.mode.$OLD"; echo "$m" > "$FO/send.mode.$OLD"
+INBOX() { echo "$H/hub-inbox/main.jsonl"; }
+# 메인 핸들 상태(옛 핸들·다른 체크아웃·조회 실패·줄 없음)와 무관하게 편지함에 한 줄, 터미널 호출(send·list·show) 0, main.env 불변
+for m in gone other_wt unavail ro; do
+  newhub S1$m; { row "$NEW" "MAIN-HANDOFF 메인" "$MAIN"; } | setlist; echo "$m" > "$FO/show.mode.$OLD"; cp "$H/main.env" "$SB/S1$m.before"
   r=$(S)
-  [ "$r" = failed ] && [ "$(nsend)" = 1 ] && [ "$(nlist)" = 0 ] && [ "$(envval)" = "$OLD" ] && ok "slack_socket: 정상 옛 대상 전송이 $m(도착 불명) → 대상을 바꾸지 않고 실패 반환·재탐색 0·재전송 0" || ko "socket 불명 전송 $m" "r=$r sends=$(nsend) list=$(nlist)"
+  [ "$r" = sent ] && [ "$(wc -l < "$(INBOX)" | tr -d ' ')" = 1 ] && grep -q '"source":"slack_socket"' "$(INBOX)" && [ "$(nsend)" = 0 ] && [ "$(nlist)" = 0 ] && cmp -s "$H/main.env" "$SB/S1$m.before" \
+    && ok "slack_socket: 메인 핸들 상태 $m 와 무관하게 편지함에 기록·터미널 호출 0·main.env 불변" || ko "socket 편지함 $m" "r=$r sends=$(nsend) list=$(nlist)"
 done
-for m in unavail ro; do  # 재검토 지적: 메인 확인 실패(조회 실패·쓰기 불가)면 최초 전송도 하지 않음
-  newhub S1e$m; { row "$NEW" "MAIN-HANDOFF 메인" "$MAIN"; } | setlist; echo "$m" > "$FO/show.mode.$OLD"
-  r=$(S)
-  [ "$r" = failed ] && [ "$(nsend)" = 0 ] && [ "$(nlist)" = 0 ] && [ "$(envval)" = "$OLD" ] && ok "slack_socket: 메인 확인이 $m 이면 전송 0·재탐색 0·main.env 불변(실패 반환)" || ko "socket 확인 실패 $m" "r=$r sends=$(nsend) list=$(nlist)"
-done
-newhub S2; noise | setlist; echo fail > "$FO/send.mode.$OLD"; cp "$H/main.env" "$SB/S2.before"
+newhub S4; printf 'OTHER=1\n' > "$H/main.env"
 r=$(S)
-[ "$r" = failed ] && cmp -s "$H/main.env" "$SB/S2.before" && ok "slack_socket: 후보 0개 → 실패 반환·main.env 불변" || ko "socket 후보 0" "r=$r"
-newhub S3; { row "$NEW" "MAIN-HANDOFF 메인" "$MAIN"; } | setlist; echo unavail > "$FO/show.mode.$OLD"; echo fail > "$FO/send.mode.$OLD"
+[ "$r" = sent ] && [ "$(wc -l < "$(INBOX)" | tr -d ' ')" = 1 ] && [ "$(nsend)" = 0 ] && ok "slack_socket: MAIN_TERMINAL 줄이 없어도 편지함에 기록(재탐색 없음)" || ko "socket 핸들 없음" "r=$r"
+newhub S5; r1=$(S); r2=$(S)
+[ "$r1" = sent ] && [ "$r2" = sent ] && [ "$(wc -l < "$(INBOX)" | tr -d ' ')" = 1 ] && ok "slack_socket: 같은 알림 재전송은 한 줄만(멱등)" || ko "socket 멱등" "$r1 $r2"
+newhub S6; mkdir -p "$H" && rm -rf "$H/hub-inbox" && : > "$H/hub-inbox"
 r=$(S)
-[ "$r" = failed ] && [ "$(nlist)" = 0 ] && [ "$(envval)" = "$OLD" ] && ok "slack_socket: 조회 실패(일시 오류) → 재탐색 안 함" || ko "socket 조회 실패" "r=$r list=$(nlist)"
-newhub S4; { row "$NEW" "MAIN-HANDOFF 메인" "$MAIN"; } | setlist; printf 'OTHER=1\n' > "$H/main.env"
-r=$(S)
-[ "$r" = sent ] && [ "$(envval)" = "$NEW" ] && ok "slack_socket: MAIN_TERMINAL 줄 없음 → 재탐색해 추가 후 전송" || ko "socket 핸들 없음" "r=$r env=$(envval)"
+[ "$r" = failed ] && ok "slack_socket: 편지함 쓰기 실패 → 실패 반환(호출자가 pending·재시도 처리)" || ko "socket 쓰기 실패" "r=$r"
 
 # ---- 후보 제목 규약: MAIN-HANDOFF 로 시작해야 함(제목 중간에 낀 같은 체크아웃 워커는 후보 아님) ----------------------------------
 newhub T1; { row "$NEW" "MAIN-HANDOFF.md 메인 코디네이터" "$MAIN"; row "$NEW2" "워커: MAIN-HANDOFF 재탐색 구현" "$MAIN"; } | setlist
