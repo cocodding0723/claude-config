@@ -35,6 +35,11 @@ usage() {
   --no-doc     (--kind decide 전용) 근거 문서 없는 결정임을 명시. decide 는 파일 인자·--attached 가 없으면 이게 있어야 보냄
   --to-user    받는 사람 Slack ID. 그 사람과의 DM 에 보냄(기본은 사용자 본인). doc-recipients.json 에 등록된 ID 만 허용.
                카드·스레드·링크 옵션과 함께 못 씀. 보낸 기록에 to_user 로 남김. 문서 페이지(doc_browser.py)의 보내기가 씀
+  --from       보낸 곳(스크립트 이름). 주면 자동 알림 하루 1회 판정(alert_dedup.py)을 거침: 같은 (보낸 곳·--tag·--kind·제목·--subject)는 현지 날짜당 1회,
+               --state 가 바뀌면 다시 보냄. 막으면 'suppressed' 를 출력하고 종료 코드 0, alert-dedup.jsonl 에 기록. 안 주면 제한 없음.
+               --thread·파일 첨부·--to-user·--todo-id 호출은 --from 이 있어도 제한하지 않음(사용자가 요청한 전송)
+  --subject    (--from 전용) 같은 제목 안에서 대상을 가르는 값(예 pr-733). 기본은 제목
+  --state      (--from 전용) 상태 이름(예 fail|pass). 같은 키에서 상태가 바뀌면 하루 안에도 다시 보냄. 기본은 --kind 값
   --no-check   양식 검사 생략(slack-sent.jsonl 에 unchecked:true 기록)
 환경 변수: LRM_BTN_WARN=off 는 '버튼 없음' 경고를 끔(시험용). LRM_FORMAT=warn|strict|off (기본 warn). warn 은 위반해도 전송하고 stderr 경고, strict 는 위반 시 미전송·종료 코드 2
   --kind decide 는 본문 '배경:'·'용어:' 줄(낯선 말이 없으면 '용어: 없음')이 없거나 --options 에 선택지 결과가 없으면 --no-check·LRM_FORMAT 과 무관하게 미전송·종료 코드 2.
@@ -53,6 +58,7 @@ EOF
 }
 die() { echo "$1" >&2; exit 2; }
 ATTACHED=() LINK_TO="" QUOTE="" NO_DOC=0 TO_USER=""
+FROM="" SUBJECT="" STATE="" DEDUP_RID=""
 TAG="" TITLE="" THREAD="" KIND="" NOCHECK=0 ALIVE=0CHOICES="" CHOICES_SET=0 EMOJISET=custom
 # 번호 카드 인자. 값 검증은 FORM_PY opts 가 함. *_SET 은 빈 값으로 준 경우도 '준 것'으로 보기 위함
 OPTIONS="" OPT_SET=0 RECOMMEND="" REC_SET=0 REVERSIBLE="" REV_SET=0 DECISION_ID="" DID_SET=0 SEQ="" SEQ_SET=0 TODO_ID="" TID_SET=0
@@ -76,6 +82,9 @@ while [ $# -gt 0 ]; do
     --quote) QUOTE="${2:?--quote 값 필요}"; shift 2 ;;
     --no-doc) NO_DOC=1; shift ;;
     --no-check) NOCHECK=1; shift ;;
+    --from) [ $# -ge 2 ] || die "--from 값 필요 — 보낸 스크립트 이름"; FROM="$2"; shift 2 ;;
+    --subject) [ $# -ge 2 ] || die "--subject 값 필요 — 예 pr-733"; SUBJECT="$2"; shift 2 ;;
+    --state) [ $# -ge 2 ] || die "--state 값 필요 — 예 fail"; STATE="$2"; shift 2 ;;
     --alive) ALIVE=1; shift ;;
     --to-user) [ $# -ge 2 ] || die "--to-user 값 필요 — 받는 사람 Slack ID"; TO_USER="$2"; shift 2 ;;
     --) shift; break ;;
@@ -590,6 +599,19 @@ if [ -n "$CARD_JSON" ]; then
 fi
 
 [ -n "$TITLE" ] || TITLE="${MSG%%$'\n'*}"
+# 자동 알림 하루 1회 판정(--from 을 준 호출만). 사용자가 요청한 전송(스레드·파일·--to-user·할 일)은 거치지 않음.
+# 판정 도구가 실패하면 보냄(알림을 잃지 않는 쪽). 보낸 뒤 실패하면 종료 때 예약을 되돌림
+if [ -n "$FROM" ] && [ -z "$THREAD" ] && [ $# -lt 2 ] && [ -z "$TO_USER" ] && [ "$TID_SET" = 0 ]; then
+  AD="${LRM_ALERT_DEDUP:-$(dirname "$HR")/alert_dedup.py}"
+  if [ -f "$AD" ] && ADOUT="$("$PY" -I "$AD" check --dir "$DIR" --from "$FROM" --hub "$TAG" --kind "${KIND:-text}" --title "$TITLE" --subject "$SUBJECT" --state "$STATE" 2>/dev/null)"; then
+    case "$ADOUT" in
+      suppress) echo "suppressed"; exit 0 ;;
+      "send "*) DEDUP_RID="${ADOUT#send }"; [ "$DEDUP_RID" != "-" ] || DEDUP_RID="" ;;
+    esac
+  fi
+  dedup_undo() { rc=$?; if [ "$rc" -ne 0 ] && [ -n "$DEDUP_RID" ]; then "$PY" -I "$AD" rollback --dir "$DIR" --rid "$DEDUP_RID" >/dev/null 2>&1 || true; fi; }
+  trap dedup_undo EXIT
+fi
 CH=$(curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -d "users=${TO_USER:-$SLACK_USER_ID}" $API/conversations.open | "$PY" -c 'import sys,json;print(json.load(sys.stdin)["channel"]["id"])')
 # 다른 메시지로 가는 링크(--link-to)·원본 인용(--quote). 링크는 chat.getPermalink 정식 주소만 씀(손수 만든 주소 금지). 조회 실패는 링크만 생략(전송은 계속)
 UNFURL=""
