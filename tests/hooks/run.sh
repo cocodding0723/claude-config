@@ -304,5 +304,40 @@ rm "$SB/home/.config/lrm-hubs/main.env"
 exp "main-send: main.env 없음 리터럴 통과" $MS 'orca terminal send --terminal term_86b2e8ea --text hi' "$SB"
 exp "main-send: main.env 없어도 \$MAIN_TERMINAL 거부" $MS 'orca terminal send --terminal "$MAIN_TERMINAL" --text hi' "$SB" deny
 
+# ---- git-guard: 게임 저장소 보호 브랜치 직접 push 금지 ----
+PG="$SB/pg"; mk "$PG" main; git -C "$PG" config hooks.localGate on; git -C "$PG" checkout -q -b feat/w
+PD="$SB/pd"; mk "$PD" dev; git -C "$PD" config hooks.localGate on
+NG="$SB/ng"; mk "$NG" main   # 게임 아님
+exp "protected: origin dev 거부" $GG 'git push origin dev' "$PG" deny
+exp "protected: HEAD:release/v0.1.29 거부" $GG 'git push origin HEAD:release/v0.1.29' "$PG" deny
+exp "protected: feat/x:main 거부" $GG 'git push origin feat/x:main' "$PG" deny
+exp "protected: +HEAD:refs/heads/dev 거부" $GG 'git push origin +HEAD:refs/heads/dev' "$PG" deny
+exp "protected: 현재 브랜치 dev 의 git push 거부" $GG 'git push' "$PD" deny
+exp "protected: 현재 브랜치 dev 의 origin HEAD 거부" $GG 'git push origin HEAD' "$PD" deny
+exp "protected: -C 게임 asset-patch/a 거부" $GG "git -C $PG push origin asset-patch/a" "$NG" deny
+exp "protected: --all 거부" $GG 'git push --all origin' "$PG" deny
+exp "protected: --mirror 거부" $GG 'git push --mirror origin' "$PG" deny
+exp "protected: bash -c 안의 push 거부" $GG 'bash -c "git push origin dev"' "$PG" deny
+exp "protected: cd 게임 && push master 거부" $GG "cd $PG && git push origin master" "$NG" deny
+exp "protected: 여러 refspec 중 하나가 보호면 거부" $GG 'git push origin feat/x develop' "$PG" deny
+exp "protected: 거부 문구에 PR 안내" $GG 'git push origin dev' "$PG" deny
+[ "$(printf '%s' "$(jq -cn '{tool_input:{command:"git push origin dev"},cwd:"'"$PG"'"}')" | HOME="$SB/home" bash "$H/$GG" | jq -r .hookSpecificOutput.permissionDecisionReason)" = "보호 브랜치는 직접 push 하지 않음 — PR(gh pr create --base dev)로 올릴 것" ] && ok "protected: 문구·대상 브랜치" || ko "protected 문구" ""
+exp "protected: origin feat/x 통과" $GG 'git push origin feat/x' "$PG"
+exp "protected: origin HEAD(작업 브랜치) 통과" $GG 'git push -u origin HEAD' "$PG"
+exp "protected: 인자 없는 push(작업 브랜치) 통과" $GG 'git push' "$PG"
+exp "protected: --tags 단독 통과" $GG 'git push --tags origin' "$PG"
+exp "protected: 게임 아닌 저장소의 origin main 통과" $GG 'git push origin main' "$NG"
+exp "protected: 게임 아닌 저장소 현재 브랜치 main push 통과" $GG 'git push' "$NG"
+exp "protected: dry-run 은 원격을 안 바꿔 통과(판단)" $GG 'git push --dry-run origin dev' "$PG"
+exp "protected: 원격 브랜치 삭제는 기존 규칙(deny)" $GG 'git push origin --delete dev' "$PG" deny
+exp "protected: :dev 삭제도 기존 규칙(deny)" $GG 'git push origin :dev' "$PG" deny
+exp "protected: 변수 refspec 은 확인" $GG 'git push origin "$B"' "$PG" ask
+exp "protected: 변수 경로는 확인" $GG 'cd "$X" && git push origin feat/x' "$NG" ask
+git -C "$PG" checkout -q --detach
+exp "protected: detached HEAD 인자 없는 push 는 확인" $GG 'git push' "$PG" ask
+git -C "$PG" checkout -q feat/w; git -C "$PG" config branch.feat/w.merge refs/heads/dev
+exp "protected: upstream 이름이 dev 면 인자 없는 push 거부" $GG 'git push' "$PG" deny
+exp "protected: upstream 이름이 dev 면 origin HEAD 거부" $GG 'git push origin HEAD' "$PG" deny
+
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
