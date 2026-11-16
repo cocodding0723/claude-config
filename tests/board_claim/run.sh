@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# board-claim 시험: 임시 beads 작업판만 씀. 겹침·경로 정규화·'/' 경계·동시 집기·해제 후보 경고.
+set -uo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd -P)
+BIN="$HERE/../../board/bin/board-claim"
+PASS=0 FAIL=0
+ok() { PASS=$((PASS + 1)); printf 'PASS  %s\n' "$1"; }
+ko() { FAIL=$((FAIL + 1)); printf 'FAIL  %s — %s\n' "$1" "${2:-}"; }
+SB=$(mktemp -d "${TMPDIR:-/tmp}/bclaim-test.XXXXXX"); trap 'rm -rf "${SB:?}"' EXIT
+export BOARD_DIR="$SB/board" BD_LAST_TOUCHED_FALLBACK=0
+mkdir -p "$BOARD_DIR" && cd "$BOARD_DIR" && git init -q && bd init --quiet >/dev/null 2>&1 || { echo "bd init 실패"; exit 1; }
+new_card() { bd create "$1" --labels "$2" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'; }
+expect() { local name=$1 want=$2; shift 2; "$@" >"$SB/out" 2>&1; local got=$?; [ "$got" = "$want" ] && ok "$name" || ko "$name" "종료 $got(기대 $want): $(head -c 300 "$SB/out")"; }
+
+a=$(new_card a "file:src/a/,repo:$SB/r")
+expect "file: label 있으면 집음" 0 "$BIN" "$a" w1
+b=$(new_card b "file:$SB/r/src/a/x.cs")
+expect "절대 경로 표기도 겹침으로 거부" 3 "$BIN" "$b" w2 --repo "$SB/r"
+c=$(new_card c "file:./src/ab/,repo:$SB/r")
+expect "src/a/ 와 src/ab/ 는 안 겹침" 0 "$BIN" "$c" w3
+d=$(new_card d "file:~/no-such-x/")
+e=$(new_card e "file:$HOME/no-such-x/sub")
+expect "~ 표기 집음" 0 "$BIN" "$d" w4
+expect "~ 와 \$HOME 표기 겹침 거부" 3 "$BIN" "$e" w5
+STALE_HOURS=0 "$BIN" "$e" w5 >/dev/null 2>"$SB/err"; grep -q '해제 후보' "$SB/err" && ok "갱신 없는 겹침 카드는 해제 후보 경고" || ko "해제 후보 경고" "$(cat "$SB/err")"
+expect "이미 집힌 카드를 다른 작업자가 집으면 13" 13 "$BIN" "$a" w9
+n=$(new_card n "")
+expect "file: label 없으면 2" 2 "$BIN" "$n" w1
+expect "--help 0" 0 "$BIN" --help
+
+# 동시 집기: 같은 파일 카드 둘을 동시에 집으면 하나만 성공
+p=$(new_card p "file:/abs/race/"); q=$(new_card q "file:/abs/race/f.cs")
+"$BIN" "$p" r1 >/dev/null 2>&1 & p1=$!; "$BIN" "$q" r2 >/dev/null 2>&1 & p2=$!
+wait "$p1"; r1=$?; wait "$p2"; r2=$?
+[ $(( (r1 == 0) + (r2 == 0) )) = 1 ] && ok "동시 집기 중 하나만 성공" || ko "동시 집기" "rc $r1 $r2"
+
+printf '통과 %d · 실패 %d\n' "$PASS" "$FAIL"
+[ "$FAIL" = 0 ]

@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""작업판 카드 집기. 다른 진행 중 카드와 고칠 파일(label file:<경로>)이 겹치면 거부함.
+겹침 검사~집기는 작업판 잠금(fcntl.flock) 안에서 한 번에 함. 두 작업자가 동시에 같은 파일을 집는 경쟁 방지."""
+import argparse
+import fcntl
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
+import board_scope as bs  # noqa: E402
+
+EPILOG = """\
+file: 표기는 ~/·상대·./·끝 / 가 섞여도 같은 경로로 맞춘 뒤 '/' 경계로 비교함(file:src/a 는 src/ab 와 안 겹침).
+상대 경로는 --repo(기본: 카드 label repo:<경로>, 없으면 표기 그대로) 기준.
+겹친 카드가 STALE_HOURS(기본 2)시간 넘게 갱신이 없으면 '해제 후보' 경고를 함께 냄. 자동 해제는 하지 않음.
+
+종료 코드: 0 집음 · 2 사용법·file: label 없음 · 3 파일 겹침 · 4 환경(bd 실패) · 13 이미 다른 작업자가 집음
+예:
+  board-claim lrm-12 ui-worker
+  board-claim lrm-12 ui-worker --repo ~/orca/LoveRevolutionMaker
+환경: BOARD_DIR(기본 ~/orca/board) STALE_HOURS(2)
+"""
+
+
+def bd(*args, actor=None):
+    env = dict(os.environ)
+    if actor:
+        env["BD_ACTOR"] = actor
+    return subprocess.run(["bd", *args], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
+
+
+def bd_json(*args):
+    r = bd(*args, "--json")
+    if r.returncode != 0:
+        die(f"실패: bd {' '.join(args)}: {r.stderr.strip()[:200]}. 조치: BOARD_DIR·bd 설치 확인", 4)
+    try:
+        return json.loads(r.stdout or "[]")
+    except json.JSONDecodeError:
+        die(f"실패: bd {' '.join(args)} 출력이 JSON 아님. 조치: bd 버전 확인", 4)
+
+
+def die(msg, code):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def age_hours(card):
+    t = card.get("updated_at") or card.get("started_at") or card.get("created_at")
+    try:
+        return (datetime.now(timezone.utc) - datetime.fromisoformat(t.replace("Z", "+00:00"))).total_seconds() / 3600
+    except (AttributeError, ValueError):
+        return 0.0
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="board-claim", description="작업판 카드 집기(파일 겹침 검사 포함).",
+                                 epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("card", help="카드 id")
+    ap.add_argument("actor", help="작업자 이름(BD_ACTOR)")
+    ap.add_argument("--repo", default="", help="file: 상대 경로의 기준 저장소")
+    try:
+        a = ap.parse_args()
+    except SystemExit as e:
+        sys.exit(0 if e.code == 0 else 2)
+
+    board = os.environ.get("BOARD_DIR", os.path.expanduser("~/orca/board"))
+    if not os.path.isdir(board):
+        die(f"실패: 작업판 폴더 {board} 없음. 조치: BOARD_DIR=<경로> board-claim …", 4)
+    os.chdir(board)
+    stale = float(os.environ.get("STALE_HOURS", "2"))
+
+    with open(os.path.join(board, ".board-claim.lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        shown = bd_json("show", a.card)
+        card = shown[0] if isinstance(shown, list) and shown else shown
+        if not card:
+            die(f"거부: 카드 {a.card} 없음. 조치: bd list 로 id 확인", 2)
+        if card.get("status") == "in_progress" and card.get("assignee") not in ("", None, a.actor):
+            die(f"거부: {a.card} 는 이미 {card['assignee']} 가 집음", 13)
+        repo = os.path.expanduser(a.repo or bs.label(card, "repo"))
+        mine = [bs.norm(p, repo) for p in bs.labels(card, "file")]
+        if not mine:
+            die(f"거부: {a.card} 에 고칠 파일 label(file:<경로>)이 없음. 조치: bd label add {a.card} file:<경로> 뒤 다시 실행", 2)
+
+        for other in bd_json("list", "--status", "in_progress", "--limit", "0"):
+            if other.get("id") == a.card:
+                continue
+            orepo = os.path.expanduser(bs.label(other, "repo") or repo)
+            for op in (bs.norm(p, orepo) for p in bs.labels(other, "file")):
+                hit = next((p for p in mine if bs.overlap(p, op)), None)
+                if hit:
+                    msg = f"거부: {a.card} 의 {hit} 가 진행 중 카드 {other['id']} 의 {op} 와 겹침. 조치: {other['id']} 끝난 뒤 다시 집거나 파일을 나눔"
+                    h = age_hours(other)
+                    if h > stale:
+                        msg += f"\n경고: {other['id']} 는 {h:.1f}시간 갱신 없음 — 해제 후보. 담당({other.get('assignee') or '?'}) 확인 뒤 bd update {other['id']} --status open"
+                    die(msg, 3)
+
+        r = bd("update", a.card, "--claim", "--json", actor=a.actor)
+        if r.returncode != 0:
+            die(f"실패: 집기 {r.stderr.strip()[:200]}", 13 if "claim" in r.stderr.lower() else 4)
+    print(f"집음: {a.card} → {a.actor}")
+
+
+if __name__ == "__main__":
+    main()
