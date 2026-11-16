@@ -10,12 +10,18 @@ mkdir -p "$T/bin" "$T/board"
 cat > "$T/bin/bd" <<'BD'
 #!/bin/bash
 case "$1" in
-  show) echo '[{"id":"c1","status":"in_progress","labels":["file:src/a/"]}]' ;;
-  list) echo '[{"id":"c1","status":"in_progress","labels":["file:src/a/"]},{"id":"c2","status":"closed","labels":["file:src/a/shared"]}]' ;;
+  show) case "$2" in
+    c1) echo '[{"id":"c1","status":"in_progress","labels":["file:src/a/","base:dev"]}]' ;;
+    c3) echo '[{"id":"c3","status":"in_progress","parent":"e1","labels":["file:./src/a"]}]' ;;
+    c4) echo '[{"id":"c4","status":"in_progress","labels":["file:src/a"]}]' ;;
+    c5) echo "[{\"id\":\"c5\",\"status\":\"in_progress\",\"labels\":[\"file:$REPO_ABS/src/a/\",\"base:dev\"]}]" ;;
+    e1) echo '[{"id":"e1","issue_type":"epic","labels":["branch:dev"]}]' ;;
+  esac ;;
+  list) echo '[{"id":"c1","status":"in_progress","labels":["file:src/a/"]},{"id":"c2","status":"closed","labels":["file:src/a/shared.cs"]}]' ;;
 esac
 BD
 chmod +x "$T/bin/bd"
-export PATH="$T/bin:$PATH" BOARD_DIR="$T/board"
+export PATH="$T/bin:$PATH" BOARD_DIR="$T/board" REPO_ABS="$T/repo"
 
 R="$T/repo"; git init -q -b dev "$R"; cd "$R"
 git -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
@@ -47,6 +53,11 @@ expect "다른 카드 범위 strict 5" 5 "$CHK" c1 other --repo "$R" --strict
 "$CHK" c1 other --repo "$R" --json | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["warnings"][0]["card"]=="c2"' \
   && { PASS=$((PASS+1)); echo "ok  다른 카드 경고 내용"; } || { FAIL=$((FAIL+1)); echo "FAIL 다른 카드 경고 내용"; }
 
+expect "기준 생략: 상위 epic branch: label 사용" 0 "$CHK" c3 ok --repo "$R"
+expect "기준 생략: label 없으면 2" 2 "$CHK" c4 ok --repo "$R"
+expect "절대 경로 file: label 도 같은 범위" 0 "$CHK" c5 ok --repo "$R"
+git checkout -q -b ab dev; mkdir -p src/ab; echo 1 > src/ab/z.cs; git add .; c commit -m ab
+expect "file:src/a/ 는 src/ab 를 덮지 않음" 4 "$CHK" c1 ab --repo "$R"
 expect "인자 없음 2" 2 "$CHK"
 expect "--help 0" 0 "$CHK" --help
 

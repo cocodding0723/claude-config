@@ -6,8 +6,14 @@ import os
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
+import board_scope as bs  # noqa: E402
+
 HELP_EPILOG = """\
 종료 코드:
+기준(--base) 생략 시: 카드 label base:<ref> → 상위 epic label branch:<ref>(기능 통합 브랜치) 순. 둘 다 없으면 종료 2.
+file: 범위는 ~/·저장소 상대·./ 표기를 같은 절대 경로로 맞춘 뒤 '/' 경계로 비교함.
+
   0  범위 안 (경고가 있어도 --strict 가 아니면 0)
   2  사용법 오류·카드에 file: label 없음
   3  환경 문제 (git·bd 실행 실패)
@@ -15,7 +21,7 @@ HELP_EPILOG = """\
   5  --strict 에서 되돌림·다른 카드 범위 경고 있음
 
 예시:
-  board-merge-check lrm-12 feat/foo
+  board-merge-check lrm-12 feat/foo                       # 기준은 카드·epic label
   board-merge-check lrm-12 feat/foo --base origin/dev --json
   board-merge-check lrm-12 feat/foo --repo ~/orca/LoveRevolutionMaker --strict
 
@@ -45,19 +51,25 @@ def bd_json(args, board):
 
 
 def file_labels(card):
-    return [l[5:] for l in card.get("labels") or [] if l.startswith("file:")]
+    return bs.labels(card, "file")
 
 
-def in_scope(path, prefixes):
-    # 폴더 접두 "a/" 는 폴더 자체 "a" 도 포함 (폴더 .meta 용)
-    return any(path.startswith(p) or path == p.rstrip("/") for p in prefixes)
-
-
-def covered(path, prefixes):
-    # .meta 는 원본이 범위 안이면 같이 통과
-    if in_scope(path, prefixes):
+def covered(path, prefixes, repo):
+    # .meta 는 원본(폴더 .meta 는 폴더)이 범위 안이면 같이 통과
+    full = bs.norm(path, repo)
+    pre = [bs.norm(p, repo) for p in prefixes]
+    if any(bs.covers(p, full) for p in pre):
         return True
-    return path.endswith(".meta") and in_scope(path[:-5], prefixes)
+    return full.endswith(".meta") and any(bs.covers(p, full[:-5]) for p in pre)
+
+
+def resolve_base(card, board):
+    base = bs.label(card, "base")
+    if base or not card.get("parent"):
+        return base
+    shown = bd_json(["show", card["parent"]], board)
+    epic = shown[0] if isinstance(shown, list) and shown else shown or {}
+    return bs.label(epic, "branch")
 
 
 def main():
@@ -69,7 +81,7 @@ def main():
     )
     ap.add_argument("card", help="작업판 카드 id")
     ap.add_argument("branch", help="검사할 브랜치")
-    ap.add_argument("--base", default="dev", help="비교 기준 ref (기본 dev)")
+    ap.add_argument("--base", default="", help="비교 기준 ref (기본: 카드 base: → epic branch: label)")
     ap.add_argument("--repo", default=".", help="git 저장소 경로 (기본 현재 폴더)")
     ap.add_argument("--json", action="store_true", help="결과를 JSON 으로 출력")
     ap.add_argument("--strict", action="store_true", help="경고가 있으면 종료 5")
@@ -84,9 +96,12 @@ def main():
     if not mine:
         fail(f"거부: {a.card} 에 file: label 없음. 조치: bd label add {a.card} file:<경로> 뒤 다시 실행")
 
+    a.base = a.base or resolve_base(card, board)
+    if not a.base:
+        fail(f"거부: 비교 기준 없음. 조치: --base <기능 통합 브랜치> 를 주거나 bd label add {a.card} base:<ref>")
     rng = f"{a.base}...{a.branch}"
     files = [f for f in run(["git", "diff", "--name-only", rng], repo).splitlines() if f]
-    outside = [f for f in files if not covered(f, mine)]
+    outside = [f for f in files if not covered(f, mine, repo)]
 
     others = []
     for c in bd_json(["list", "--status", "in_progress,closed", "--limit", "0"], board):
@@ -96,7 +111,7 @@ def main():
     warnings = []
     for f in files:
         for cid, st, pre in others:
-            if covered(f, pre):
+            if covered(f, pre, repo):
                 warnings.append({"kind": "other_card", "file": f, "card": cid, "status": st})
     log = run(["git", "log", "--format=%H%x09%s", f"{a.base}..{a.branch}"], repo)
     for line in log.splitlines():
