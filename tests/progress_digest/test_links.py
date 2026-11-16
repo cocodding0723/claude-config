@@ -183,7 +183,7 @@ class ListAccess(unittest.TestCase):
         it = pd.Item("ledger:F1", pd.WAIT, "x")
         with mock.patch.object(pd, "load_items", lambda use_pr: ([it], [], {})), \
                 mock.patch.object(pd, "api", mock.Mock(side_effect=pd.Fail("slackLists.items.create 오류(list_not_found)", 1, "list_not_found"))), \
-                mock.patch.object(pd, "send_dm", lambda c, t: sent.append(t)), \
+                mock.patch.object(pd, "send_dm", lambda c, t, state="": sent.append(t)), \
                 mock.patch.object(pd, "api_get", FakeApi()):
             rc = pd.run(conf, args)
         self.assertEqual(rc, 1)
@@ -205,7 +205,7 @@ class Recovery(unittest.TestCase):
         argv = ["--force"] + (["--dry-run"] if dry else [])
         args = pd.parser().parse_args(argv + ["--no-pr"])
         with mock.patch.object(pd, "load_items", lambda use_pr: (it, [], {})), mock.patch.object(pd, "api", fake_api), \
-                mock.patch.object(pd, "send_dm", lambda c, t: sent.append(t)), mock.patch.object(pd, "api_get", api):
+                mock.patch.object(pd, "send_dm", lambda c, t, state="": sent.append(t)), mock.patch.object(pd, "api_get", api):
             pd.run(conf, args)
         return sent, updates
 
