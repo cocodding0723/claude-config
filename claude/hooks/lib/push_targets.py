@@ -1,7 +1,8 @@
 """명령 문자열에서 git push 대상(작업 디렉터리·원격·refspec)을 해석해 JSON 한 줄씩 출력.
 cfg = git -c·--config-env 로 준 설정('키=값'), env = 앞서 지정한 환경 변수('이름=값'). 따옴표를 푼 값이라 우회 검사에 씀.
 인자: 시작 cwd. stdin: 원본 명령. 따옴표 안 문구·heredoc 본문의 push 글자는 무시.
-cd <dir>·git -C <dir> 로 바뀐 디렉터리를 따라감. 해석 불가(변수·치환 포함 경로 등)는 {"err": 사유}."""
+cd <dir>·git -C <dir> 로 바뀐 디렉터리를 따라감. 같은 명령 안 'W=리터럴' 대입은 $W·${W} 로 풀어 씀.
+해석 불가(미정 변수·치환 포함 경로 등)는 {"err": 사유}. 리디렉션(2>&1·>/dev/null)과 그 대상은 인자가 아니므로 버림."""
 import json
 import os
 import re
@@ -55,6 +56,24 @@ def segments(cmd):
             if c == '"':
                 body = re.sub(r"\\(.)", r"\1", body)
             cur.append(body); has = True; i = j + 1; continue
+        if c in "<>" or (c == "&" and cmd[i + 1:i + 2] == ">"):
+            # 리디렉션: 앞 fd 숫자(2>)는 버리고 대상 단어까지 소비. 'foo>x' 의 foo 는 유지
+            if has and "".join(cur).isdigit():
+                cur, has = [], False
+            else:
+                flush_tok()
+            j = i
+            while j < n and cmd[j] in "&<>":
+                j += 1
+            while j < n and cmd[j] in " \t":
+                j += 1
+            while j < n and cmd[j] not in " \t\n;|&()<>":
+                if cmd[j] in "'\"":
+                    k = cmd.find(cmd[j], j + 1)
+                    j = n if k < 0 else k
+                j += 1
+            i = j
+            continue
         if c in SEP:
             flush_seg(); i += 1; continue
         if c in " \t":
@@ -68,17 +87,33 @@ def segments(cmd):
     return segs
 
 
-def expand(path):
+VAR_RE = re.compile(r"\$\{(\w+)\}|\$(\w+)")
+
+
+def expand(path, env=None):
+    """~·$HOME·같은 명령 안에서 리터럴로 대입한 변수를 풀어 씀. 미정 변수·치환($( )·백틱)은 None."""
     if path == "~" or path.startswith("~/"):
         path = HOME + path[1:]
-    path = path.replace("${HOME}", HOME).replace("$HOME", HOME)
-    if "$" in path or "`" in path:
+    known = dict(env or {}, HOME=HOME)
+    miss = []
+
+    def sub(m):
+        v = known.get(m.group(1) or m.group(2))
+        if v is None:
+            miss.append(1)
+            return ""
+        return v
+
+    path = VAR_RE.sub(sub, path)
+    if miss or "$" in path or "`" in path:
         return None
     return path
 
 
-def resolve(base, path):
-    p = expand(path)
+def resolve(base, path, env=None):
+    if base is None:
+        return None
+    p = expand(path, env)
     if p is None:
         return None
     return os.path.normpath(p if os.path.isabs(p) else os.path.join(base, p))
@@ -90,17 +125,26 @@ def emit(obj):
 
 def main():
     cwd = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] else os.getcwd()
-    here, envs = cwd, []
+    here, envs, svars = cwd, [], {}
     for toks in segments(drop_heredoc(sys.stdin.read())):
+        assigns = []
         while toks and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[0]) or toks[0] in ("export", "env")):
             if "=" in toks[0]:
                 envs.append(toks[0])
+                assigns.append(toks[0])
             toks = toks[1:]
         if not toks:
+            for a in assigns:   # 대입만 있는 조각은 이후 조각에 남는 셸 변수
+                k, v = a.split("=", 1)
+                v = expand(v, svars)
+                if v is None:
+                    svars.pop(k, None)
+                else:
+                    svars[k] = v
             continue
         if toks[0] == "cd":
             args = [t for t in toks[1:] if t not in ("-P", "-L", "--")]
-            r = resolve(here, args[0]) if args else HOME
+            r = resolve(here, args[0], svars) if args else HOME
             if r is None:
                 emit({"err": "cd 경로에 변수·치환: " + args[0]}); return
             here = r
@@ -111,7 +155,7 @@ def main():
         while k < len(toks) and toks[k].startswith("-"):
             t = toks[k]
             if t == "-C" and k + 1 < len(toks):
-                r = resolve(d, toks[k + 1])
+                r = resolve(d, toks[k + 1], svars)
                 if r is None:
                     emit({"err": "-C 경로에 변수·치환: " + toks[k + 1]}); return
                 d, k = r, k + 2

@@ -38,6 +38,27 @@ exp "git-guard: 연결 명령 안의 merge 는 확인" $GG 'git merge origin/dev
 exp "git-guard: --squash 는 확인" $GG 'git merge --squash origin/dev' "$R" ask
 git -C "$R" checkout -q -b sprint-20261113/b
 exp "git-guard: sprint 브랜치에서 merge origin/dev 허용" $GG 'git merge origin/dev' "$R" allow
+mk "$SB/sh" main
+# 변수 경로·연결 명령: cd·-C·같은 명령 안 리터럴 대입은 풀어 판정, 외부 변수는 대상만 봄
+W="$R"
+exp "git-guard: cd \"\$W\" && merge origin/dev (외부 변수) 허용" $GG 'cd "$W" && git merge origin/dev' "$SB" allow
+exp "git-guard: git -C \"\$W\" merge origin/dev (외부 변수) 허용" $GG 'git -C "$W" merge origin/dev' "$SB" allow
+exp "git-guard: W=리터럴; cd \$W && merge --no-edit 허용" $GG "W=$R; cd \$W && git merge --no-edit origin/dev" "$SB" allow
+exp "git-guard: \${W} 형태·리터럴 cd 허용" $GG "W=$R; git -C \"\${W}\" merge origin/main" "$SB" allow
+exp "git-guard: 리터럴 cd && merge 허용" $GG "cd $R && git merge origin/dev" "$SB" allow
+exp "git-guard: fetch 와 병합 연결 허용" $GG "cd $R && git fetch origin && git merge origin/dev" "$SB" allow
+exp "git-guard: 병합 출력 파이프·리디렉션 허용" $GG "cd $R && git merge origin/dev 2>&1 | tail -3" "$SB" allow
+exp "git-guard: 외부 변수라도 다른 브랜치 섞이면 확인" $GG 'cd "$W" && git merge origin/dev feat/other' "$SB" ask
+exp "git-guard: 외부 변수 로컬 브랜치 병합은 확인" $GG 'git -C "$W" merge feat/other' "$SB" ask
+exp "git-guard: 전략 옵션 -s ours 는 확인" $GG 'cd "$W" && git merge -s ours origin/dev' "$SB" ask
+exp "git-guard: -X theirs 는 확인" $GG 'cd "$W" && git merge -X theirs origin/dev' "$SB" ask
+exp "git-guard: \$( ) 안의 merge 는 확인" $GG 'echo $(git merge origin/dev)' "$R" ask
+exp "git-guard: 백틱 안의 merge 는 확인" $GG 'echo `git merge origin/dev`' "$R" ask
+exp "git-guard: 병합 뒤 다른 쓰기 명령이 붙으면 확인" $GG 'cd "$W" && git merge origin/dev && git commit -m x' "$SB" ask
+exp "git-guard: 병합과 같은 줄의 강제 push 는 차단 유지" $GG 'cd "$W" && git merge origin/dev && git push --force origin x' "$SB" deny
+exp "git-guard: 병합과 같은 줄의 reset --hard 는 차단 유지" $GG 'git merge origin/dev; git reset --hard' "$R" deny
+exp "git-guard: 병합 --abort 는 기존대로 확인(허용 아님)" $GG 'cd "$W" && git merge --abort' "$SB" ask
+exp "git-guard: 리터럴 경로가 공유 브랜치면 허용 안 함(--no-ff 규칙 적용)" $GG "cd $SB/sh && git merge origin/dev" "$SB" deny
 git -C "$R" checkout -q main
 exp "git-guard: 공유 브랜치로 merge origin/dev 는 허용 안 함(확인)" $GG 'git merge origin/dev' "$R" ask
 exp "git-guard: 공유 브랜치 --no-ff 병합도 확인" $GG 'git merge --no-ff feat/work' "$R" ask
@@ -127,6 +148,13 @@ git -C $CC push origin feat/a
 EOF" "$SB/oth"
 exp "ai-trace: 따옴표 속 push 글자 무시" $AT "echo 'git -C $CC push origin feat/a'" "$SB/oth"
 exp "ai-trace: 저장소 아닌 경로는 확인(ask)" $AT "cd /nonexistent-zz && git push origin main" "$SB/oth" ask
+exp "ai-trace: 2>&1 | tail 붙은 push 해석" $AT 'git push origin feat/x 2>&1 | tail -3' "$SB/oth" ask
+exp "ai-trace: 리디렉션 붙은 clean push 통과" $AT "git -C $SB/g push origin main >/dev/null 2>&1" "$SB/oth"
+exp "ai-trace: 리디렉션 붙은 흔적 push 는 거부" $AT "cd $CC && git push -u origin HEAD 2>&1" "$SB/oth" deny
+exp "ai-trace: 리디렉션 뒤 | tail 도 흔적 거부" $AT "git -C $CC push origin feat/a 2>&1 | tail -3" "$SB/oth" deny
+exp "ai-trace: W=리터럴; cd \$W 는 풀어 해석(거부)" $AT "W=$CC; cd \"\$W\" && git push -u origin HEAD 2>&1" "$SB/oth" deny
+exp "ai-trace: \${W} -C 형태 해석(clean 통과)" $AT "W=$CC; git -C \"\${W}\" push origin main >/dev/null 2>&1" "$SB/oth"
+exp "ai-trace: 외부 변수 -C 는 끝내 확인(ask)" $AT 'git -C "$W" push origin br >/dev/null 2>&1' "$SB/oth" ask
 exp "ai-trace: 변수 경로는 확인(ask)" $AT 'cd "$X" && git push origin main' "$SB/oth" ask
 
 # ---- 저장소 commit-msg 훅(claude-config) ----
