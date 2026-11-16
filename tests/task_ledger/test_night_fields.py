@@ -45,6 +45,12 @@ class NightFieldsTest(Base):
         night, day = self.rows()
         self.assertTrue(tl.is_night(night) and not tl.is_night(day))
 
+    def test_routes_table_has_night_header(self):
+        """intake-routes.tsv 의 머리말 행과 task_ledger.NIGHT_HEADER 가 같은 이름"""
+        with open(os.path.join(os.path.dirname(__file__), "..", "..", "hubs", "intake-routes.tsv"), encoding="utf-8") as f:
+            keys = [ln.split("\t")[0] for ln in f if ln.strip() and not ln.startswith("#")]
+        self.assertIn(tl.NIGHT_HEADER, keys)
+
     def test_approve_night_records_once(self):
         rid = self.add("야간 일", "--night")
         self.assertEqual(run("approve-night", rid, "--card", "D-NQ1")[0], 0)

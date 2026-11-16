@@ -183,7 +183,8 @@ class RouteTest(Base):
     def test_prefix_routes(self):
         cases = [("ui: 버튼", "ui", "버튼"), ("vfx: 이펙트", "vfx", "이펙트"), ("qa: 회귀", "test", "회귀"),
                  ("data: 시트", "data", "시트"), ("config: 훅", "config", "훅"),
-                 ("UI：전각 콜론", "ui", "전각 콜론"), ("그냥 명령", "main", "그냥 명령"), ("foo: 모르는 머리말", "main", "foo: 모르는 머리말")]
+                 ("UI：전각 콜론", "ui", "전각 콜론"), ("그냥 명령", "main", "그냥 명령"), ("foo: 모르는 머리말", "main", "foo: 모르는 머리말"),
+                 ("야간: 문서 정리", "main", "문서 정리"), ("야간：전각 콜론", "main", "전각 콜론"), ("한글: 모르는 머리말", "main", "한글: 모르는 머리말")]
         self.put(*[msg(t, i) for i, (t, _, _) in enumerate(cases)])
         self.run_intake()
         got = [(r["hub"], r["text"]) for r in self.routes()]

@@ -18,4 +18,6 @@ vfx	vfx
 qa	test
 data	data
 config	config
+# 야간 큐 머리말: 메인이 받고, 작업 장부(task_ledger import-inbox)가 night 칸을 만듦. 이름은 task_ledger.NIGHT_HEADER 와 같음
+야간	main
 *	main

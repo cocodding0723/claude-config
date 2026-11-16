@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.lrm.nightdraft</string>
+  <!-- 켜지 않은 보관본(install.sh 는 이 파일을 LaunchAgents 에 적재하지 않음). 켜는 법은 docs/night-queue-design.html 10장·night_draft.py 머리말.
+       매일 15:00 지시별 초안 카드(승인·보류)를 outbox 에 기록하고 답을 읽어 승인을 장부에 기록. Slack 전송은 기존 전송기가 함 -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PYTHON3__</string>
+    <string>-I</string>
+    <string>__HOME__/.config/lrm-hubs/night_draft.py</string>
+    <string>--send</string>
+  </array>
+  <!-- 잠자던 Mac 은 깨어난 뒤 한 번 실행됨. 같은 날 같은 항목은 night_draft.py 가 1번만 보냄 -->
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>15</integer><key>Minute</key><integer>0</integer></dict>
+  <!-- launchd 기본 PATH 는 /usr/bin:/bin 뿐이라 gh·orca 를 못 찾음 -->
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+  <key>Nice</key><integer>10</integer>
+  <key>StandardOutPath</key><string>__HOME__/.config/lrm-hubs/night-draft.launchd.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.config/lrm-hubs/night-draft.launchd.log</string>
+</dict>
+</plist>
