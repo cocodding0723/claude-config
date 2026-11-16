@@ -30,6 +30,7 @@ COMMON="$(cat "$(dirname "$0")/../references/common-rules.txt")"
 PROMPT="orca-coordinator 스킬로 이 허브의 ${NAME} 코디네이터를 맡아라.
 ${COMMON}
 ${RESUME:+이어받기: Orca 재시작 등으로 이전 세션이 끝났다. 먼저 다음을 읽고 이어서 진행: ${RESUME}
+인계를 다 읽으면 사용자에게 묻거나 계획만 말하고 멈추지 말고, 인계의 '다음 할 일'부터 바로 진행한다. 승인이 필요한 일만 결정 카드로 묻는다.
 }$(cat "$ROLE_FILE")"
 # 허브·워커는 기억 플러그인 끔(메모리 절약, 11-05). 메인 체크아웃만 켬
 mkdir -p "$HUB/.claude" && python3 -c "import json,os,sys;f=sys.argv[1];d=json.load(open(f)) if os.path.exists(f) else {};d.setdefault(\"enabledPlugins\",{})[\"openviking-memory@openviking\"]=False;dn=d.setdefault(\"permissions\",{}).setdefault(\"deny\",[]);[dn.append(r) for r in [\"Read(/$HOME/.config/lrm-hubs/slack-bot.env)\",\"Bash(*slack-bot.env*)\",\"Bash(*slack_notify.sh*)\"] if r not in dn];json.dump(d,open(f,\"w\"),indent=2)" "$HUB/.claude/settings.local.json"
