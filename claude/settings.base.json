@@ -135,6 +135,12 @@
           },
           {
             "type": "command",
+            "command": "~/.claude/hooks/main-send-guard.sh",
+            "timeout": 10,
+            "statusMessage": "main-send-guard 검사 중"
+          },
+          {
+            "type": "command",
             "command": "~/.claude/hooks/slack-format-guard.sh",
             "timeout": 10,
             "statusMessage": "slack-format-guard 검사 중"
