@@ -4,7 +4,7 @@
 #       patrol.sh --inbox [--json] [--peek]  받은 편지함(hub-inbox/main.jsonl)의 읽은 위치 이후 새 줄. 자동 알림은 터미널 입력 대신 여기로 옴.
 #         읽은 위치(inode+오프셋)는 main-inbox.offset 에 기록(--peek 은 기록 안 함). 회전·잘림이면 옛 파일 잔여분 또는 처음부터. 허브 조회(orca)는 하지 않음
 # 워커 소멸: 지난 순찰에 있던 허브 하위 워커 터미널이 사라지면 브랜치·마지막 커밋과 함께 1회 표시(상태 PATROL_STATE)
-# 병합 PR → 장부 자동 완료 연결: 순찰 끝에 `python3 -I $LRM_HUB_DIR/ledger_merged.py` 한 줄 추가(기본 dry-run, 후보만 보고). --apply 는 코디네이터가 dry-run 결과를 메인에 보고한 뒤 켬
+# 병합 PR → 장부 자동 완료: 표 순찰 끝에 ledger_merged.py --apply(확실한 연결만 완료, 애매하면 후보). 실패해도 순찰은 정상 종료(메인 승인 11-16 추천 A)
 # 종료 코드: 0 정상, 1 orca 조회 실패(--inbox 는 편지함 읽기·쓰기 실패), 2 설정 오류(--inbox 는 인자 오류)
 set -eu
 CONF="${ORCA_MAIN_CONFIG:-$HOME/.config/lrm-hubs/main.env}"
@@ -55,3 +55,10 @@ for g in gone:
   print("🫥 워커 사라짐 %s %s 브랜치 %s · 마지막 커밋 %s"%(g["ws"],g["term"],g["branch"],g["last"]))
 print("허브 터미널 %d개 · 워커 %d개 · 사라진 워커 %d개"%(len(rows),len(workers),len(gone)))
 '
+if [ "${1:-}" != "--json" ]; then
+  LM="${LRM_HUB_DIR:-$HOME/.config/lrm-hubs}/ledger_merged.py"
+  if [ -f "$LM" ]; then
+    if out=$(python3 -I "$LM" --apply 2>&1); then printf '%s\n' "$out" | grep -E '^(완료|후보|건너뜀)' | head -3 || true
+    else echo "장부 병합 반영 실패(순찰은 계속): $(printf '%s' "$out" | tail -1)"; fi
+  fi
+fi
