@@ -211,6 +211,18 @@ grep -q '결정 D-T1 = 선택 2(B 안) (버튼) (1794383274.541929)' "$SB/s20/hu
 ! grep -q '= 1. A' "$SB/s20/hub/hub-inbox/main.jsonl" && ok "다른 사용자 클릭은 무시" || ko "남의 클릭" ""
 stop s20
 
+# 직접 입력이 질문이면 답으로 기록하지 않음: 카드 버튼 유지·안내 한 줄·원문은 kind=question 으로 전달. 이어서 버튼을 누르면 정상 답
+qsub() { printf '{"at":%s,"type":"interactive","envelope_id":"%s","payload":{"type":"view_submission","user":{"id":"%s"},"view":{"callback_id":"lrm_custom","private_metadata":"{\\"did\\":\\"D-T1\\",\\"channel\\":\\"Dch1\\",\\"ts\\":\\"1794383274.541929\\"}","state":{"values":{"answer":{"text":{"value":"%s"}}}}}}}' "$1" "$2" "$ME" "$3"; }
+mkdir -p "$SB/s30/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/s30/hub/main.env"
+start s30 "{\"events\":[$(qsub 0.4 q1 '이건 왜 필요한가요?'),$(act 1.4 q2 $ME pick_2 'D-T1|2' '2. B 안')],\"history\":[$MSG]}" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s30/orca.calls"
+waitfor s30 out '결정 D-T1 질문 받음' 4 && waitfor s30 out '결정 D-T1 버튼 답 기록' 4 && sleep 0.5
+q=$(grep -m1 'web chat_update' "$SB/s30/calls")
+printf '%s' "$q" | grep -q '💬 질문 받음 ([0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]) — 답을 받은 뒤 버튼으로 고르세요' && printf '%s' "$q" | grep -q '"type": "actions"' && ok "질문 → 카드에 '💬 질문 받음' 한 줄, 버튼 유지" || ko "질문 카드" "$(printf '%s' "$q" | cut -c1-240)"
+grep -q '"kind":"question"' "$SB/s30/hub/hub-inbox/main.jsonl" && grep -q '결정 D-T1 질문(직접 입력, 답 아님·카드 버튼은 열려 있음): 이건 왜 필요한가요?' "$SB/s30/hub/hub-inbox/main.jsonl" && ok "질문 원문은 kind=question 으로 전달(답 머리 아님)" || ko "질문 전달" "$(cut -c1-200 "$SB/s30/hub/hub-inbox/main.jsonl" 2>/dev/null)"
+[ "$(grep -c '"type": "button"' "$SB/s30/hub/slack-inbox.jsonl")" = 1 ] && grep -q '"pick": 2' "$SB/s30/hub/slack-inbox.jsonl" && ! grep -q '"action": "custom"' "$SB/s30/hub/slack-inbox.jsonl" && [ "$(grep -c '"kind":"answer"' "$SB/s30/hub/hub-inbox/main.jsonl")" = 1 ] && ok "질문은 claim 없음 — 뒤이은 버튼 클릭이 첫 답으로 기록" || ko "질문 후 답" "$(cat "$SB/s30/hub/slack-inbox.jsonl" 2>/dev/null | cut -c1-200)"
+[ "$(grep -c '"state": "main"' "$SB/s30/hub/answer-delivery.jsonl")" = 1 ] && ok "질문은 전달 기록(answer-delivery)을 남기지 않음" || ko "질문 전달 기록" "$(cat "$SB/s30/hub/answer-delivery.jsonl")"
+stop s30
+
 # 같은 결정에 먼저 온 답만 인정: Slack 끼리 겹침, 문서 사이트가 먼저 답한 경우 모두 기록·전달 없이 카드에 사유만 남김
 mkdir -p "$SB/s22/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/s22/hub/main.env"
 printf '%s\n' '{"type":"button","parent_ts":"1794383274.541929","decision_id":"D-T3","kind":"decide","action":"pick","pick":1,"source":"docsite"}' > "$SB/s22/hub/slack-inbox.jsonl"

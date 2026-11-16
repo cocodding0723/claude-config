@@ -37,6 +37,20 @@ def said_text(did: str, extra: dict, label: str) -> str:
     return f"결정 {did} = " + (f"선택 {pick}({name})" if isinstance(pick, int) else name) + " (버튼)"
 
 
+# 직접 입력이 질문인지 판정하는 규칙(한 곳). 끝이 물음표, 또는 끝말이 아래 어미. 끝의 공백·마침표·느낌표·물결은 무시
+QUESTION_RE = re.compile(r"[?？]\s*$|(?:뭐야|뭔데|어떻게|왜|인가|나요|까)[\s.!~]*$")
+QUESTION_NOTE = "질문(직접 입력, 답 아님·카드 버튼은 열려 있음)"
+
+
+def is_question(text: str) -> bool:
+    return bool(QUESTION_RE.search((text or "").strip()))
+
+
+def asked_text(did: str, text: str) -> str:
+    """질문 한 문장. said_text 와 달리 '답' 이 아니라 '질문' 머리를 써서 받는 쪽이 결정으로 처리하지 않게 함"""
+    return f"결정 {did} {QUESTION_NOTE}: {text}"
+
+
 @dataclass(frozen=True)
 class Outcome:
     """전달 결과. ok 는 답이 허브나 메인 중 어딘가에 도착했다는 뜻. via: hub | proxy(메인 대리) | main(허브 기록 없음) | unknown(시간 초과) | lost | pending(막힘 재시도 중, 끝나면 on_done 으로 최종 결과)"""
@@ -87,6 +101,10 @@ class Router:
         else:
             self.store.record_delivery(did, ts, out.via, out.ok)  # 즉시 끝난 결과는 호출자가 반환값으로 처리(on_done 은 재시도 끝에만)
         return out
+
+    def ask(self, did: str, ts: str, source: str, body: str) -> Outcome:
+        """질문 한 건을 허브(없으면 메인)에 전달. 답이 아니므로 전달 기록(answer-delivery)을 남기지 않음 — 나중 답의 재전달 판정을 흐리지 않기 위함"""
+        return self.send_hub(self.hub_of(did), ts, source, " ".join(body.split()))
 
     def send(self, did: str, ts: str, source: str, body: str) -> Outcome:
         return self.send_hub(self.hub_of(did), ts, source, body)

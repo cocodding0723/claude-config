@@ -52,6 +52,8 @@ NOTIFY = os.environ.get("LRM_NOTIFY", os.path.join(DIR, "slack_notify.sh"))
 BLOCK_RE = re.compile(r"^lrm_decide:([A-Za-z0-9-]{1,32})$")
 MODAL_ID = "lrm_custom"
 CUSTOM_MAX = 500  # 직접 입력 글자 상한
+ASK_MARK = "💬 질문 받음"
+ASK_LINE = ASK_MARK + " ({at}) — 답을 받은 뒤 버튼으로 고르세요"
 
 
 def card_title(message: dict) -> str:
@@ -75,12 +77,29 @@ def answered(message: dict, line: str) -> list:
     return out
 
 
-def send_main(text: str) -> bool:
-    """메인 받은 편지함(main.jsonl)에 한 줄 남김. 터미널 입력창에는 쓰지 않음(사용자 입력과 섞임). 쓰기 실패는 False"""
-    ok = main_inbox.sender("slack_socket", "answer", hub=DIR)(text)
+def noted(message: dict, line: str) -> list:
+    """버튼은 두고 안내 한 줄만 끼운 attachments. 같은 머리('💬')의 앞선 안내는 갈아끼워 질문이 여러 번 와도 한 줄만 남김"""
+    out = []
+    for att in message.get("attachments") or []:
+        att = dict(att)
+        if att.get("blocks"):
+            keep = [b for b in att["blocks"] if not (b.get("type") == "context" and any(str(e.get("text", "")).startswith(ASK_MARK) for e in b.get("elements") or []))]
+            att["blocks"] = keep + [{"type": "context", "elements": [{"type": "mrkdwn", "text": line}]}]
+        out.append(att)
+    return out
+
+
+def send_main(text: str, kind: str = "answer") -> bool:
+    """메인 받은 편지함(main.jsonl)에 한 줄 남김. 터미널 입력창에는 쓰지 않음(사용자 입력과 섞임). 쓰기 실패는 False.
+    kind: answer(결정 답) | question(직접 입력 질문 — 답과 구분)"""
+    ok = main_inbox.sender("slack_socket", kind, hub=DIR)(text)
     if not ok:
         log("메인 받은 편지함 쓰기 실패 — hub-inbox 폴더 권한·디스크 확인")
     return ok
+
+
+def send_question(text: str) -> bool:
+    return send_main(text, "question")
 
 
 def note_thread(kind: str, thread: str, text: str) -> None:
@@ -103,6 +122,7 @@ class Decide:
     def __init__(self, web, me: str) -> None:
         self.web, self.me = web, me
         self.router = answer_route.Router(STORE, send_main)
+        self.asker = answer_route.Router(STORE, send_question)  # 질문 전용: 메인 기록 kind 가 question
 
     def handle(self, payload: dict) -> None:
         kind = payload.get("type")
@@ -141,7 +161,30 @@ class Decide:
             return
         hist = self.web.conversations_history(channel=meta["channel"], latest=meta["ts"], inclusive=True, limit=1)
         msg = next((x for x in hist.get("messages", []) if x.get("ts") == meta["ts"]), {"ts": meta["ts"]})
+        if answer_route.is_question(text) and not STORE.first_answer(meta["did"], meta["ts"]):
+            self.ask(meta["did"], meta["channel"], meta["ts"], msg, text)  # 질문은 답이 아님: 기록(claim)·카드 닫기 없이 버튼 유지
+            return
         self.finish(meta["did"], meta["channel"], meta["ts"], msg, "직접 입력: " + text, {"action": "custom", "text": text})
+
+    def ask(self, did: str, ch: str, ts: str, msg: dict, text: str) -> None:
+        """질문: 카드에 안내 한 줄만 달고 원문을 허브·메인에 전달(답 경로와 같은 라우터, kind=question)"""
+        title = card_title(msg)
+        try:
+            self.web.chat_update(channel=ch, ts=ts, text=title or did, attachments=noted(msg, ASK_LINE.format(at=time.strftime("%m-%d %H:%M"))))
+        except Exception as err:
+            log(f"카드 갱신 실패 {type(err).__name__} — 질문은 전달함")
+        self.start(self.send_ask, did, ts, title, text)
+
+    def send_ask(self, did: str, ts: str, title: str, text: str) -> None:
+        try:
+            out = self.asker.ask(did, ts, answer_store.SLACK, answer_route.asked_text(did, text))
+        except Exception as err:
+            log(f"결정 {did} 질문 전달 예외 {type(err).__name__}")
+            warn_slack(ts, f"질문 전달 예외: {title or did}\n\n• 무엇: 질문을 허브·메인에 못 보냄({type(err).__name__})\n• 결과: 메인에 직접 알려 주세요")
+            return
+        if not out.ok:
+            warn_slack(ts, f"질문 전달 실패: {title or did}\n\n• 무엇: {out.note}\n• 결과: 메인에 직접 알려 주세요")
+        log(f"결정 {did} 질문 받음(답 아님) · {'메인' if out.via == 'main' else f'허브 {out.hub} {out.via}'} 전달 {'성공' if out.ok else '실패'}")
 
     def finish(self, did: str, ch: str, ts: str, msg: dict, label: str, extra: dict) -> None:
         """답 기록(먼저 온 답만) → 카드 닫기 → 메인 전달. 늦은 답이면 카드에 사유만 남기고 아무것도 실행하지 않음"""
