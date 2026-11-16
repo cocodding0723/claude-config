@@ -55,3 +55,4 @@ yield return new UiPreviewScreen("화면-이름", root =>
 - 예고·결과 3상태·새 목표 소개·미션 배너는 PR 묶음 브랜치 전용이라 `Editor-bundle/` 에 둔다. `--bundle` 을 붙이면 기본 목록 위에 덮어써 실행한다. dev 에 올라오면 `Editor/Automa` 로 옮기고 `Editor-bundle/` 은 지운다.
 - 연출이 InitModal 안 첫 재생 때 시작 위치를 잡으므로, 프리팹을 띄우는 즉시 하위 캔버스를 카메라에 붙이고 레이아웃을 확정한다(결과 팝업이 왼쪽으로 몰리던 원인).
 - 수정 커밋을 체리픽 없이 확인: `--prefab-from-commit <작업 공간>:<커밋>:<프로젝트 상대 프리팹 경로>` (여러 번 가능). 실행 동안만 그 커밋의 프리팹·.meta 로 덮고 끝나면 원본 복구.
+- 하루 결산 시점: `--summary-at day-end|mission-issued`. 미지정이면 그날 끝에 진행 중 미션이 없을 때만 미션 발급 직후 시점.

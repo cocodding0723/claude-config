@@ -2,7 +2,7 @@
 #
 # UI 화면 단독 미리보기. 부팅·로그인·네트워크 없이 화면 프리팹 하나를 배치모드로 띄워 PNG 로 남긴다.
 #
-#   bash Tools/verify/ui-preview.sh <화면|all>[,<화면>…] [가로x세로 …] [--stage <오토마 스테이지 Id>] [--bundle] [--prefab-from-commit <작업공간>:<커밋>:<경로>] [--timeout <초>]
+#   bash Tools/verify/ui-preview.sh <화면|all>[,<화면>…] [가로x세로 …] [--stage <오토마 스테이지 Id>] [--bundle] [--summary-at day-end|mission-issued] [--prefab-from-commit <작업공간>:<커밋>:<경로>] [--timeout <초>]
 #   예) bash Tools/verify/ui-preview.sh automa-daily-summary
 #       bash Tools/verify/ui-preview.sh all 1080x1920 1440x3120
 #
@@ -34,13 +34,14 @@ usage() {
   echo "#   가능한 화면: all $(screen_names)"
 }
 
-SCREENS=""; SIZES=(); STAGE=""; BUNDLE=0; OVERRIDES=()
+SCREENS=""; SIZES=(); STAGE=""; BUNDLE=0; OVERRIDES=(); SUMMARY_AT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --bundle) BUNDLE=1 ;;
     --prefab-from-commit) shift; OVERRIDES+=("${1:?--prefab-from-commit <작업공간>:<커밋>:<프로젝트 상대 경로> 필요}") ;;
     --stage) shift; STAGE="${1:?--stage 값 필요}" ;;
+    --summary-at) shift; SUMMARY_AT="${1:?--summary-at day-end|mission-issued 필요}" ;;
     --timeout) shift; TIMEOUT="${1:?--timeout 값 필요}" ;;
     [0-9]*x[0-9]*) SIZES+=("$1") ;;
     -*) echo "[ui-preview] 알 수 없는 인자: $1 — -h 로 사용법 확인" >&2; exit 2 ;;
@@ -126,6 +127,7 @@ ARGS=(-batchmode -projectPath "$RUN_PROJ" -executeMethod Tests.Editor.UiPreview.
   -uiPreviewScreen "$SCREENS" -uiPreviewOut "$OUT" -logFile "$LOG")
 [ ${#SIZES[@]} -eq 0 ] || ARGS+=(-uiPreviewSizes "$(IFS=,; echo "${SIZES[*]}")")
 [ -z "$STAGE" ] || ARGS+=(-uiPreviewStage "$STAGE")
+[ -z "$SUMMARY_AT" ] || ARGS+=(-uiPreviewSummaryAt "$SUMMARY_AT")
 
 "$UNITY" "${ARGS[@]}" &
 UNITY_PID=$!

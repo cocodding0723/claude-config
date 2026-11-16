@@ -1,4 +1,5 @@
 #nullable enable
+using System;
 using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
@@ -72,13 +73,30 @@ namespace Tests.Editor.UiPreview.Automa
             var summary = builder.DailySummary(FirstDay, builder.PlayerStats(player.GetStat, dayStart), lastDay - FirstDay);
 
             // 첫날 미션이 하루 안에 끝나면 결산에 진행 중 미션 행이 비어 화면 확인 불가. 발급 직후 시점 결산으로 대체
-            if (summary.State.ActiveMission == null && issuedSummary != null)
+            var summaryAt = SummaryAt();
+            if (summaryAt == SummaryAtDayEnd)
+            {
+                Debug.Log("[UiPreview] 하루 결산: 그날 끝 시점(--summary-at day-end)");
+            }
+            else if (issuedSummary != null && (summaryAt == SummaryAtMissionIssued || summary.State.ActiveMission == null))
             {
                 Debug.Log("[UiPreview] 하루 결산: 그날 끝 진행 중 미션 없음 → 미션 발급 직후 시점 결산 사용");
                 summary = issuedSummary;
             }
             var result = builder.Result(run.Finish(player.GetStat));
             return new AutomaPreviewFixture(goalIntro, summary, result, card);
+        }
+
+        private const string SummaryAtArg = "-uiPreviewSummaryAt";
+        private const string SummaryAtDayEnd = "day-end";
+        private const string SummaryAtMissionIssued = "mission-issued";
+
+        // 미지정이면 null: 그날 끝에 진행 중 미션이 없을 때만 발급 직후 시점 사용
+        private static string? SummaryAt()
+        {
+            var args = Environment.GetCommandLineArgs();
+            var index = Array.IndexOf(args, SummaryAtArg);
+            return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
         }
 
         private static AutomaTables LoadTables()
