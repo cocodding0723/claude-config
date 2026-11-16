@@ -60,12 +60,21 @@ namespace Tests.Editor.UiPreview.Automa
             var lastDay = tables.Spawns.Rows.Where(row => row.StageId == stage.Id).Select(row => row.ToDay).DefaultIfEmpty(FirstDay).Max();
             AutomaMissionCardInput? card = null;
             AutomaDailySummaryDialogData? issuedSummary = null;
+            AutomaDailySummaryDialogData? midSummary = null;
             for (var tick = 1; tick <= ticksPerDay; tick++)
             {
                 if (run.OnTickStarted(FirstDay, tick) != null && card == null)
                 {
                     card = builder.ActiveCard();
                     issuedSummary = builder.DailySummary(FirstDay, builder.PlayerStats(player.GetStat, dayStart), lastDay - FirstDay);
+                }
+
+                // 진행이 쌓인 첫 틱(아직 판정 전). 발급 직후는 진행 0 이라 진행 바 확인 불가
+                var active = builder.ActiveCard();
+                if (midSummary == null && active != null && active.Progress > 0)
+                {
+                    midSummary = builder.DailySummary(FirstDay, builder.PlayerStats(player.GetStat, dayStart), lastDay - FirstDay);
+                    Debug.Log($"[UiPreview] 하루 결산 진행 중 시점: {tick}틱 진행 {active.Progress}/{active.Target}");
                 }
             }
 
@@ -77,6 +86,10 @@ namespace Tests.Editor.UiPreview.Automa
             if (summaryAt == SummaryAtDayEnd)
             {
                 Debug.Log("[UiPreview] 하루 결산: 그날 끝 시점(--summary-at day-end)");
+            }
+            else if (summaryAt == SummaryAtMissionMid)
+            {
+                summary = midSummary ?? throw new InvalidOperationException("첫날 진행이 쌓인 틱 없음(--summary-at mission-mid)");
             }
             else if (issuedSummary != null && (summaryAt == SummaryAtMissionIssued || summary.State.ActiveMission == null))
             {
@@ -90,6 +103,7 @@ namespace Tests.Editor.UiPreview.Automa
         private const string SummaryAtArg = "-uiPreviewSummaryAt";
         private const string SummaryAtDayEnd = "day-end";
         private const string SummaryAtMissionIssued = "mission-issued";
+        private const string SummaryAtMissionMid = "mission-mid";
 
         // 미지정이면 null: 그날 끝에 진행 중 미션이 없을 때만 발급 직후 시점 사용
         private static string? SummaryAt()

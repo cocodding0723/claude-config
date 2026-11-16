@@ -2,7 +2,7 @@
 #
 # UI 화면 단독 미리보기. 부팅·로그인·네트워크 없이 화면 프리팹 하나를 배치모드로 띄워 PNG 로 남긴다.
 #
-#   bash Tools/verify/ui-preview.sh <화면|all>[,<화면>…] [가로x세로 …] [--stage <오토마 스테이지 Id>] [--bundle] [--force] [--summary-at day-end|mission-issued] [--who <요청자>] [--compare <시안 PNG>] [--prefab-from-commit <작업공간>:<커밋>:<경로>] [--patch-from-commit <작업공간>:<커밋>:<경로>] [--timeout <초>]
+#   bash Tools/verify/ui-preview.sh <화면|all>[,<화면>…] [가로x세로 …] [--stage <오토마 스테이지 Id>] [--bundle] [--force] [--summary-at day-end|mission-issued|mission-mid] [--who <요청자>] [--compare <시안 PNG>] [--prefab-from-commit <작업공간>:<커밋>:<경로>] [--patch-from-commit <작업공간>:<커밋>:<경로>] [--timeout <초>]
 #   예) bash Tools/verify/ui-preview.sh automa-daily-summary
 #       bash Tools/verify/ui-preview.sh all 1080x1920 1440x3120
 #
@@ -47,7 +47,7 @@ while [ $# -gt 0 ]; do
     --hud-day) shift; HUD_ARGS+=(-uiPreviewHudDay "${1:?--hud-day 값 필요}"); NOTES+=("D") ;;
     --hud-coin) shift; HUD_ARGS+=(-uiPreviewHudCoin "${1:?--hud-coin 값 필요}"); NOTES+=("코인") ;;
     --loc-from-dev) shift; LOC_DIR="${1:?--loc-from-dev <text.*.json 폴더> 필요}"; LOC_LABEL="${UI_PREVIEW_LOC_LABEL:-dev}" ;;
-    --summary-at) shift; SUMMARY_AT="${1:?--summary-at day-end|mission-issued 필요}" ;;
+    --summary-at) shift; SUMMARY_AT="${1:?--summary-at day-end|mission-issued|mission-mid 필요}" ;;
     --who) shift; WHO="${1:?--who 이름 필요}" ;;
     --compare) shift; COMPARE="${1:?--compare <시안 PNG> 필요}" ;;
     --timeout) shift; TIMEOUT="${1:?--timeout 값 필요}" ;;
