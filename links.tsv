@@ -104,6 +104,7 @@ hubs/scripts/panel_collect.py	.config/lrm-hubs/panel_collect.py	link
 hubs/scripts/board_cards.py	.config/lrm-hubs/board_cards.py	link
 hubs/scripts/board-ask	.config/lrm-hubs/board-ask	link
 hubs/scripts/board-answer	.config/lrm-hubs/board-answer	link
+hubs/scripts/plan_check.py	.config/lrm-hubs/plan_check.py	link
 hubs/scripts/progress_collect.py	.config/lrm-hubs/progress_collect.py	link
 hubs/scripts/todo_items.py	.config/lrm-hubs/todo_items.py	link
 hubs/scripts/todo_sync.py	.config/lrm-hubs/todo_sync.py	link
@@ -209,6 +210,7 @@ board/bin/board-merge-check	orca/board/bin/board-merge-check	link
 board/bin/board-merge	orca/board/bin/board-merge	link
 board/templates/card-mockup.md	orca/board/templates/card-mockup.md	link
 board/templates/card-task.md	orca/board/templates/card-task.md	link
+board/templates/plan.md	orca/board/templates/plan.md	link
 hubs/tools/HudRenderer.cs	.config/lrm-hubs/tools/HudRenderer.cs	link
 hubs/tools/ModalRenderer.cs	.config/lrm-hubs/tools/ModalRenderer.cs	link
 hubs/tools/RenderShots.cs	.config/lrm-hubs/tools/RenderShots.cs	link
