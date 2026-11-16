@@ -11,7 +11,6 @@ using Game.Data.Module.ConfigModule;
 using Game.Data.Module.StatModule.Model;
 using Game.Data.Table;
 using Game.SceneView.Module.Modal.Module.AutomaDailySummaryDialog;
-using Game.SceneView.Module.Modal.Module.AutomaGoalIntroDialog;
 using Game.SceneView.Module.Modal.Module.AutomaInfoDialog;
 using Game.SceneView.Module.Modal.Module.AutomaResultDialog;
 using Game.SceneView.Scene.InGame.Component.Automa;

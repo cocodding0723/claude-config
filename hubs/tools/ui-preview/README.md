@@ -48,5 +48,8 @@ yield return new UiPreviewScreen("화면-이름", root =>
 
 ## 알려진 문제
 
-- 오토마 정보창·최종 결산: 연출이 InitModal 안에서 줄 위치를 잡는데 에디터 모드에선 그때 레이아웃이 안 돌아, InitModal 을 두 번 부른다. 대화창이 InitModal 마다 행 목록을 새로 만들어 첫 회 행 하나가 0 위치에 남는다. 첫 회 행을 지우면 연출이 지운 행을 참조해 실패한다. 실게임은 InitModal 을 한 번만 불러 이 문제가 없다.
+- 모달은 InitModal 을 한 번만 부르고, 레이아웃 갱신 뒤 private Render 를 리플렉션으로 다시 부른다(`UiPreviewDialogs.Init`). Render 인자 타입의 값을 Data 에서 못 찾으면 다시 그리기는 건너뛴다.
+- 초상: `-executeMethod` 는 메인 스레드를 막아 Addressables 비동기 로드가 끝나지 않는다. 그래서 같은 주소(`characterportrait/<캐릭터 Id>`)의 에셋을 에디터 Addressables 설정에서 찾아 바로 넣는다. 캐릭터 Id 가 비면 넣지 않는다.
+- 시트 고정본(pin) 오토마 상대 표에 CharacterId 값이 없어 지금은 초상이 비어 찍힌다. 고정본 갱신은 데이터 담당 몫이다.
 - 미션 카드는 연출이 없어 세 장이 같다.
+- 예고(AutomaNoticeDialog)·결과(AutomaMissionOutcomeDialog)·새 목표 소개(AutomaGoalIntroDialog)·미션 배너 화면은 프리팹·코드가 dev 에 올라오면 추가한다.
