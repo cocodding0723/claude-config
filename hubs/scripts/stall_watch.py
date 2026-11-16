@@ -276,6 +276,14 @@ def build(items: list, names: dict, dups: dict) -> tuple:
     return "\n".join(lines), notify
 
 
+def card_state(st: dict, notify: dict) -> str:
+    """하루 1회 판정용 상태: 대기 중인 허브 집합. 지난 카드가 이미 처리됐으면(card_actions 에서 사라짐) 처리 뒤 새 대기로 구분함"""
+    hubs = ",".join(sorted(notify))
+    last = st.get("lastDid", "")
+    answered = bool(last) and last not in card_actions.load()
+    return f"waiting:{hubs}" + (f":after-{last}" if answered else "")
+
+
 def check(limits: Limits, dry: bool, report_existing: bool, now: float | None = None):
     """조회·판정·전송·상태 저장 전체를 프로세스 간 잠금으로 직렬화. 겹친 실행은 기다리지 않고 건너뜀(status busy).
     잠금이 없으면 두 실행이 같은 dispatch 를 각각 새 결정 번호로 보내 6시간 중복 방지가 깨짐"""
@@ -314,9 +322,15 @@ def _check(limits: Limits, dry: bool, report_existing: bool, now: float | None =
         return 0, {"status": "would_card", **summary}
     card_actions.register(did, "notify", {"hubs": [{"slug": s, "lines": ls} for s, ls in notify.items()],
                                           "dups": [{"slug": s, "titles": [t for _h, t in c]} for s, c in dups.items()]})
-    if not rw.send_card(did, text, STALL_OPTIONS):
+    sent = rw.send_card(did, text, STALL_OPTIONS, ("--from", "stall_watch", "--state", card_state(st, notify)))
+    if not sent:
         card_actions.take(did)
         return 1, {"status": "send_failed", **summary}
+    if sent == "suppressed":  # 같은 날 같은 대기 상태라 카드를 안 보냄. 답할 카드가 없으니 등록도 거둠
+        card_actions.take(did)
+        summary["status_note"] = "suppressed"
+    else:
+        st["lastDid"] = did
     for i in fresh:
         st["seen"][i["dispatch"]] = {"at": now}
     st["seen"] = {k: v for k, v in st["seen"].items() if v.get("baseline") or now - v.get("at", 0) < 7 * 24 * 3600}

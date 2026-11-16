@@ -163,12 +163,16 @@ def card_text(ident: dict, hubs: list[dict]) -> str:
 RESUME_OPTIONS = "1=이어받기 => 아래 허브만 코디네이터를 다시 띄움,2=보류 => 아무것도 안 하고 카드를 닫음"
 
 
-def send_card(did: str, text: str, options: str = RESUME_OPTIONS) -> bool:
-    cmd = [NOTIFY, "--kind", "decide", "--no-doc", "--options", options, "--recommend", "1", "--decision-id", did, "--reversible", "쉬움", text]
+def send_card(did: str, text: str, options: str = RESUME_OPTIONS, extra: tuple = ()):
+    """전송 성공 여부. extra: slack_notify.sh 추가 인자(--from·--state 등 하루 1회 판정용).
+    하루 1회 판정이 막았으면 "suppressed"(참, 보낸 것은 아님)"""
+    cmd = [NOTIFY, "--kind", "decide", "--no-doc", "--options", options, "--recommend", "1", "--decision-id", did, "--reversible", "쉬움", *extra, text]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=NOTIFY_TIMEOUT_S, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired):
         return False
+    if p.returncode == 0 and p.stdout.strip() == "suppressed":
+        return "suppressed"
     return p.returncode == 0
 
 

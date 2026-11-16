@@ -212,6 +212,12 @@ def ws_lines(groups):
     return out + ([f"- 외 {extra}곳"] if extra > 0 else [])
 
 
+def act_state(items):
+    """하루 1회 판정용 상태: 사용자 조치가 필요한 항목(대기·막힘) 집합. 다른 칸 개수만 바뀐 갱신은 같은 상태로 봄"""
+    keys = sorted(f"{i.bucket}:{i.key}" for i in items if i.bucket in (WAIT, BLOCK))
+    return hashlib.sha1("|".join(keys).encode("utf-8")).hexdigest()[:12]
+
+
 def dm_text(items, list_url, groups=None):
     """첫 줄은 제목(양식 A), 개수·항목은 한 줄에 하나씩 '- ' 로 이음"""
     by = {b: [i for i in items if i.bucket == b] for b, _, _ in BUCKETS}
@@ -529,10 +535,10 @@ def apply_list(conf, ops, state, now=0.0):
     return errors
 
 
-def send_dm(conf, text):
+def send_dm(conf, text, state=""):
     if not os.path.exists(conf.notify):
         raise Fail(f"DM 전송 스크립트 없음({conf.notify}) — LRM_DIGEST_NOTIFY 확인", 2)
-    cmd = [conf.notify, "--kind", "progress", "--title", "진행 목록", text]
+    cmd = [conf.notify, "--kind", "progress", "--title", "진행 목록", "--from", "progress_digest", *(["--state", state] if state else []), text]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired) as e:
@@ -643,7 +649,7 @@ def run(conf, a):
             save_state(conf.state, state)  # 성공한 행은 실패가 있어도 기억해 중복 생성 방지
     if not a.no_dm and state["dm_hash"] != digest:
         try:
-            send_dm(conf, text)
+            send_dm(conf, text, act_state(items))
             state["dm_hash"] = digest
         except Fail as e:
             errors.append(str(e))

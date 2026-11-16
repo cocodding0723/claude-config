@@ -62,7 +62,7 @@ def main():
         return 3
     notify = os.environ.get("LRM_NOTIFY", str(DIR / "slack_notify.sh"))
     msg = f"Slack 봇 연결 끊김\n\n• 무엇: {line}\n• 왜: 생존 기록이 {STALE_MIN}분 넘게 없음\n• 결과: Slack 반응·답글이 허브에 안 들어옴\n\n👉 답: launchctl kickstart -k gui/$(id -u)/ai.lrm.slacksocket 로 재시작"
-    if subprocess.run([notify, "--kind", "warn", "--tag", "bot-alive", msg]).returncode == 0:
+    if subprocess.run([notify, "--kind", "warn", "--tag", "bot-alive", "--from", "bot_alive", "--state", "down", msg]).returncode == 0:
         FLAG.touch()
     return 3
 

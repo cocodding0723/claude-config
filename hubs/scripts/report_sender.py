@@ -116,6 +116,8 @@ def run_notify(conf: Conf, args: list, deadline: float, upload: bool = False) ->
     last = (p.stdout.strip().splitlines() or [""])[-1]
     if upload and p.returncode == 0 and (m := re.fullmatch(r"ok(?:\s+file_id=(\S*))?", last)):
         return m.group(1) or ""
+    if p.returncode == 0 and last == "suppressed":  # 하루 1회 판정이 막음(--from 호출만). 보낸 것은 아니지만 실패도 아님
+        return ""
     if p.returncode == 0 and last.startswith("ok ") and last[3:].strip():
         return last[3:].strip()
     why = " ".join((p.stderr.strip() or p.stdout.strip() or f"종료 코드 {p.returncode}").split())[:ERR_MAX]
@@ -500,7 +502,8 @@ def warn_stop(conf: Conf, rep: dict, st: dict, why: str, permanent: "bool | None
     cause = safe_text(cause)
     msg = (f"허브 보고 전송 중단\n\n- 무엇: {rep['hub']} {label} 보고 {rep['id']} 재시도 중단\n"
            f"- 원인: {cause}\n- 조치: 보고를 고쳐 hub_report.py add 로 다시 기록")
-    run_notify(conf, ["--tag", rep["hub"], "--kind", "warn"] + (["--thread", thread] if thread else []) + [msg], deadline)
+    run_notify(conf, ["--tag", rep["hub"], "--kind", "warn", "--from", "report_sender", "--subject", rep["id"], "--state", "stopped"]
+               + (["--thread", thread] if thread else []) + [msg], deadline)
 
 
 def stop_report(conf: Conf, rep: dict, st: dict, why: str, permanent: bool, deadline: float) -> None:
@@ -562,7 +565,7 @@ def halt(conf: Conf, err: StateCorrupt, out: dict, dry: bool, deadline: float) -
         return out
     msg = f"허브 보고 전송 중단\n\n- 원인: 상태 파일 {err}\n- 결과: 보고 전송 멈춤(같은 보고 재게시 방지)\n- 조치: {out['guide']}"
     try:
-        run_notify(conf, ["--kind", "warn", msg], deadline)  # 회차 공통 deadline 을 지킴
+        run_notify(conf, ["--kind", "warn", "--from", "report_sender", "--state", "halted", msg], deadline)  # 회차 공통 deadline 을 지킴
         with open(marker, "w", encoding="utf-8") as f:
             f.write(sig)
     except (NotifyError, OSError):
