@@ -13,7 +13,11 @@ pp_check() {
   printf '%s\n' "$flags" | grep -Eq '^(--all|--mirror)$' && { echo "deny 보호 브랜치 포함 가능(--all·--mirror)"; return 0; }
   remote=$(printf '%s' "$line" | jq -r '.remote // empty')
   cur=$(git -C "$d" symbolic-ref --short -q HEAD 2>/dev/null)
-  up=""; [ -n "$cur" ] && up=$(git -C "$d" config --get "branch.$cur.merge" 2>/dev/null)
+  # upstream 이름은 push.default 가 upstream·tracking 일 때만 목적지가 됨(기본 simple 은 이름이 다르면 git 이 거부). dev 에서 딴 작업 브랜치 오탐 방지
+  up=""
+  case "$(git -C "$d" config --get push.default 2>/dev/null)" in
+    upstream|tracking) [ -n "$cur" ] && up=$(git -C "$d" config --get "branch.$cur.merge" 2>/dev/null) ;;
+  esac
   up=${up#refs/heads/}
   n=0
   while IFS= read -r ref; do
@@ -29,9 +33,7 @@ pp_check() {
     case "$dst" in refs/heads/*) dst=${dst#refs/heads/};; refs/*) continue;; esac   # 태그 등은 대상 아님
     if [ "$dst" = HEAD ]; then
       [ -n "$cur" ] || { echo "ask"; return 0; }
-      dst=$cur
-      # 'HEAD' 단독: upstream 이름이 다르고 보호 브랜치면 그쪽도 대상으로 봄
-      case "$ref" in *:*) ;; *) [ -n "$up" ] && printf '%s' "$up" | grep -Eq "$PP_PROTECTED_RE" && { echo "deny $up"; return 0; };; esac
+      dst=$cur   # 'HEAD' refspec 은 push.default 와 무관하게 같은 이름으로 감(git push 문서)
     fi
     printf '%s' "$dst" | grep -Eq "$PP_PROTECTED_RE" && { echo "deny $dst"; return 0; }
   done < <(printf '%s' "$line" | jq -r '(.refs // [])[]')

@@ -336,8 +336,12 @@ exp "protected: 변수 경로는 확인" $GG 'cd "$X" && git push origin feat/x'
 git -C "$PG" checkout -q --detach
 exp "protected: detached HEAD 인자 없는 push 는 확인" $GG 'git push' "$PG" ask
 git -C "$PG" checkout -q feat/w; git -C "$PG" config branch.feat/w.merge refs/heads/dev
-exp "protected: upstream 이름이 dev 면 인자 없는 push 거부" $GG 'git push' "$PG" deny
-exp "protected: upstream 이름이 dev 면 origin HEAD 거부" $GG 'git push origin HEAD' "$PG" deny
+exp "protected: dev 에서 딴 작업 브랜치(push.default 기본) 인자 없는 push 통과" $GG 'git push' "$PG"
+exp "protected: dev 에서 딴 작업 브랜치(push.default 기본) origin HEAD 통과" $GG 'git push origin HEAD' "$PG"
+git -C "$PG" config push.default upstream
+exp "protected: push.default=upstream·upstream dev 면 인자 없는 push 거부" $GG 'git push' "$PG" deny
+exp "protected: origin HEAD 는 push.default 무관 같은 이름이라 통과" $GG 'git push origin HEAD' "$PG"
+git -C "$PG" config --unset push.default; git -C "$PG" config --unset branch.feat/w.merge
 
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
