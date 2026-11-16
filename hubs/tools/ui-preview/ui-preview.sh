@@ -2,7 +2,7 @@
 #
 # UI 화면 단독 미리보기. 부팅·로그인·네트워크 없이 화면 프리팹 하나를 배치모드로 띄워 PNG 로 남긴다.
 #
-#   bash Tools/verify/ui-preview.sh <화면|all>[,<화면>…] [가로x세로 …] [--stage <오토마 스테이지 Id>] [--timeout <초>]
+#   bash Tools/verify/ui-preview.sh <화면|all>[,<화면>…] [가로x세로 …] [--stage <오토마 스테이지 Id>] [--bundle] [--timeout <초>]
 #   예) bash Tools/verify/ui-preview.sh automa-daily-summary
 #       bash Tools/verify/ui-preview.sh all 1080x1920 1440x3120
 #
@@ -26,7 +26,7 @@ STORE="build/game-data-local"
 TIMEOUT=600
 
 screen_names() {
-  grep -rhoE 'PreviewScreen\("[a-z0-9-]+"' "$REGISTRY" 2>/dev/null | sed -E 's/.*\("([^"]+)"/\1/' | tr '\n' ' '
+  grep -rhoE 'PreviewScreen\("[a-z0-9-]+"' "$REGISTRY" "$TOOL_DIR/Editor-bundle" 2>/dev/null | sed -E 's/.*\("([^"]+)"/\1/' | tr '\n' ' '
 }
 
 usage() {
@@ -34,10 +34,11 @@ usage() {
   echo "#   가능한 화면: all $(screen_names)"
 }
 
-SCREENS=""; SIZES=(); STAGE=""
+SCREENS=""; SIZES=(); STAGE=""; BUNDLE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
+    --bundle) BUNDLE=1 ;;
     --stage) shift; STAGE="${1:?--stage 값 필요}" ;;
     --timeout) shift; TIMEOUT="${1:?--timeout 값 필요}" ;;
     [0-9]*x[0-9]*) SIZES+=("$1") ;;
@@ -90,6 +91,10 @@ INSTALL="$RUN_PROJ/$INSTALL_REL"
 cleanup() { rm -rf -- "${INSTALL:?}" "${INSTALL:?}.meta"; }
 trap cleanup EXIT
 cp -R "$REGISTRY" "$INSTALL" || { echo "[ui-preview] 도구 복사 실패: $INSTALL" >&2; exit 2; }
+# 묶음 브랜치 전용 화면은 dev 에 없는 타입을 써서 기본 목록 위에 덮어씀
+if [ "$BUNDLE" = 1 ]; then
+  cp -R "$TOOL_DIR/Editor-bundle/." "$INSTALL/" || { echo "[ui-preview] 묶음 화면 복사 실패" >&2; exit 2; }
+fi
 
 mkdir -p "$OUT"
 rm -f -- "$OUT"/*.png "$OUT/summary.json"

@@ -5,7 +5,7 @@
 ## 실행
 
 ```bash
-PROJ=<게임 작업 공간 경로> bash hubs/tools/ui-preview/ui-preview.sh <화면|all>[,<화면>…] [가로x세로 …] [--stage <오토마 스테이지 Id>]
+PROJ=<게임 작업 공간 경로> bash hubs/tools/ui-preview/ui-preview.sh <화면|all>[,<화면>…] [가로x세로 …] [--stage <오토마 스테이지 Id>] [--bundle]
 # 예
 PROJ=~/orca/workspaces/LoveRevolutionMaker/<작업 공간> bash hubs/tools/ui-preview/ui-preview.sh all 1080x1920 1080x2340
 ```
@@ -52,4 +52,5 @@ yield return new UiPreviewScreen("화면-이름", root =>
 - 초상: `-executeMethod` 는 메인 스레드를 막아 Addressables 비동기 로드가 끝나지 않는다. 그래서 같은 주소(`characterportrait/<캐릭터 Id>`)의 에셋을 에디터 Addressables 설정에서 찾아 바로 넣는다. 캐릭터 Id 가 비면 넣지 않는다.
 - 시트 고정본(pin) 오토마 상대 표에 CharacterId 값이 없어 지금은 초상이 비어 찍힌다. 고정본 갱신은 데이터 담당 몫이다.
 - 미션 카드는 연출이 없어 세 장이 같다.
-- 예고(AutomaNoticeDialog)·결과(AutomaMissionOutcomeDialog)·새 목표 소개(AutomaGoalIntroDialog)·미션 배너 화면은 프리팹·코드가 dev 에 올라오면 추가한다.
+- 예고·결과 3상태·새 목표 소개·미션 배너는 PR 묶음 브랜치 전용이라 `Editor-bundle/` 에 둔다. `--bundle` 을 붙이면 기본 목록 위에 덮어써 실행한다. dev 에 올라오면 `Editor/Automa` 로 옮기고 `Editor-bundle/` 은 지운다.
+- 결과 팝업(AutomaMissionOutcomeDialog)은 아직 왼쪽 아래로 몰려 찍힌다. 하위 캔버스 보정으로는 안 고쳐졌고, 대화창 연출이 위치를 옮기는 것으로 보인다(미확인).

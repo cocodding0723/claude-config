@@ -65,9 +65,27 @@ namespace Tests.Editor.UiPreview
 
         public void Refresh()
         {
+            AdoptNestedCanvases();
             Canvas.ForceUpdateCanvases();
             LayoutRebuilder.ForceRebuildLayoutImmediate((RectTransform)_canvas.transform);
             Canvas.ForceUpdateCanvases();
+        }
+
+        // 프리팹 안 하위 캔버스가 Overlay 로 저장돼 있거나 배율이 남아 있으면 배치모드 화면 크기에 맞춰 찌그러짐.
+        // UI 허브 ModalRenderer 와 같이 이 카메라에 붙이고 배율을 1 로 되돌림
+        private void AdoptNestedCanvases()
+        {
+            foreach (var nested in _canvas.GetComponentsInChildren<Canvas>(true))
+            {
+                if (nested == _canvas)
+                {
+                    continue;
+                }
+
+                nested.renderMode = RenderMode.ScreenSpaceCamera;
+                nested.worldCamera = _camera;
+                nested.transform.localScale = Vector3.one;
+            }
         }
 
         public void Save(string path)
