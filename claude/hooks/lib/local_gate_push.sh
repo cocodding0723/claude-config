@@ -36,7 +36,11 @@ while read -r lref lsha rref rsha; do
   record="$LG_STORE/$lsha.${base//\//__}.json"
   if [ -f "$record" ]; then echo "local-gate: $short 통과 기록 있음(기준 $base) — 다시 돌리지 않음" >&2; continue; fi
   [ "$(git rev-parse HEAD)" = "$lsha" ] || die "거부: $short 는 체크아웃된 커밋이 아님(체크아웃 안 된 ref·--all·여러 브랜치 push 포함)" "조치: 그 브랜치를 체크아웃해 한 브랜치씩 'git push $remote HEAD:<브랜치>' 형식으로 push"
-  git -C "$top" diff --quiet HEAD 2>/dev/null || die "거부: 커밋 안 된 변경이 있어 검사 결과가 push 할 커밋과 다를 수 있음" "조치: 커밋하거나 stash 뒤 다시(미추적 파일은 무시)"
+  # 줄 끝 CR 만 다른 변경(eol=lf 속성 + 색인 혼합 줄바꿈)은 검사 결과에 영향 없음
+  if ! git -C "$top" diff --quiet --ignore-cr-at-eol HEAD -- 2>/dev/null; then
+    files=$(git -C "$top" diff --name-only --ignore-cr-at-eol HEAD -- 2>/dev/null | head -n3 | paste -sd, -)
+    die "거부: 커밋 안 된 변경이 있어 검사 결과가 push 할 커밋과 다를 수 있음${files:+ ($files)}" "조치: 커밋하거나 stash 뒤 다시(미추적 파일·줄 끝 CR 만 다른 변경은 무시)"
+  fi
 
   args=(bash "$top/$LG_SCRIPT" --base "$base" --report "$report" --offline)
   [ "$(lg_cfg "$top" hooks.localGateUnity)" = on ] || args+=(--no-unity)   # 이 Mac 에서 Unity 는 기본 제외
@@ -61,7 +65,9 @@ while read -r lref lsha rref rsha; do
     1) die "실패: ${cause:-원인 출력 없음}" "$rpt";;
     *) die "환경 오류(종료 $rc): ${cause:-원인 출력 없음}" "$rpt" "조치: 환경 점검(도구 설치·git fetch origin dev) 후 재시도";;
   esac
-  if [ -f "$report" ] && [ "$(jq -r '.tree_dirty // false' "$report" 2>/dev/null)" = true ]; then
+  # 옛 게이트 스크립트는 tree_dirty 를 CR 포함으로 계산 → 훅이 CR 무시로 다시 확인해 내용 변경 없으면 통과
+  if [ -f "$report" ] && [ "$(jq -r '.tree_dirty // false' "$report" 2>/dev/null)" = true ] \
+    && ! git -C "$top" diff --quiet --ignore-cr-at-eol HEAD -- 2>/dev/null; then
     die "거부: 검사 중 작업 트리에 커밋 안 된 변경이 있었음(보고서 tree_dirty) — 통과 기록을 남기지 않음" "$rpt" "조치: 커밋하거나 stash 뒤 다시"
   fi
   if [ -f "$report" ]; then cp "$report" "$record.tmp"
