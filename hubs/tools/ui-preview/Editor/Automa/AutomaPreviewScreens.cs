@@ -65,9 +65,10 @@ namespace Tests.Editor.UiPreview.Automa
         // 대사·보상 줄은 아직 입력 데이터가 없어 시안 배치 확인용 견본 문구를 넣음
         private static void RenderNotice(Transform root, AutomaMissionKind kind, StatType stat)
         {
-            var presenter = new AutomaNoticePresenter(LocalizationManager.GetText, s => s.GetName());
+            var presenter = new AutomaNoticePresenter(LocalizationManager.GetText, type => type.GetName());
             var input = new AutomaMissionNoticeInput(kind, string.Empty, stat, NoticeTarget, NoticeTicksLeft);
             var amount = NoticeRewardAmount.ToString();
+
             var state = presenter.Build(input) with
             {
                 TalkLine = "(미리보기) 공주영, 넌 공부는 하고 있어?\n나중에 자립이 발목은 잡지 말아야지.",
@@ -78,6 +79,7 @@ namespace Tests.Editor.UiPreview.Automa
                     new AutomaNoticeRewardRowState("실패 시 나의", StatType.Study, StatType.Study.GetName(), amount, "감소"),
                 },
             };
+
             var dialog = UiPreviewPrefabs.Spawn<AutomaNoticeDialog>(nameof(AutomaNoticeDialog), root, true);
             InitLaidOut(dialog, () => dialog.InitModal(new AutomaNoticeDialogData(state), null));
             dialog.OnModalDisplay();
