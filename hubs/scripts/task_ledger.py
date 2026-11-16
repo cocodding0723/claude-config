@@ -408,6 +408,20 @@ def approve_night(path: str, rid: str, card: str, now: float, dry: bool = False)
     return row
 
 
+def record_night_send(path: str, rid: str, now: float) -> dict:
+    """야간 전달 직전 기록: night.tries +1, sent_at 갱신. 전송 중 죽어도 횟수가 남아 상한이 지켜짐(intake 의 '하달 최대 1회' 방식)"""
+    with locked(path):
+        rows, bad = load_for_write(path, False)
+        row = next((r for r in rows if r["id"] == rid), None)
+        if row is None or not is_night(row):
+            raise LedgerError(f"{rid} 는 장부의 야간 대상이 아님 — list --night 로 확인", EXIT_MISSING)
+        row["night"].update(tries=row["night"].get("tries", 0) + 1, sent_at=stamp(now))
+        row["updated_at"] = stamp(now)
+        check_rows(rows)
+        write_rows(path, rows, bad)
+    return row
+
+
 # ---------- 행 만들기·바꾸기 ----------
 
 def next_id(rows: list) -> str:
