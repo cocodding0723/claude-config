@@ -820,5 +820,32 @@ run_n --to-user UREC0001 "안내" "$SB/.env"
 [ "$RC" = 2 ] && ! grep -q 'files.getUploadURLExternal' "$LOG/calls.log" && ok "O 비밀 파일(.env) 첨부는 받는 사람이 있어도 거부" || ko "O 비밀 첨부" "rc=$RC"
 run_n "받는 사람 없는 기존 호출"
 grep -q 'users=Uuser1' "$LOG/calls.log" && [ "$(lastrec | jq -r '.to_user // "none"')" = none ] && ok "O --to-user 없는 기존 호출은 사용자 본인 DM·기록 불변" || ko "O 기존 동작" "$(cat "$LOG/calls.log")"
+# ---- Q. 본문의 결정 번호 언급: 열린 카드 링크 자동 첨부·닫힌 결정 '대기' 경고 ------------------------------------
+newhome mention
+: > "$LOG/fail.link"
+card() { printf '{"at":1,"channel":"Dfake","ts":"%s","kind":"text","title":"결정","form_kind":"decide","decision_id":"%s","options":{"1":"A"}}\n' "$1" "$2" >> "$CFG/slack-sent.jsonl"; }
+card 1700000001.000001 D-0Q01   # 열린 카드
+card 1700000002.000001 D-0Q02   # 답한 카드(버튼)
+printf '{"type":"button","parent_ts":"1700000002.000001","decision_id":"D-0Q02","kind":"decide","option_text":"2. B 안","action":"pick","pick":2,"received_at":1700000000,"source":"slack"}\n' > "$CFG/slack-inbox.jsonl"
+card 1700000003.000001 D-0Q03   # 열린 카드 둘째
+run_n --kind progress $'진행\n\n- 무엇: 결정 D-0Q01 선택 대기 중'
+c=$(text)
+[ "$RC" = 0 ] && printf '%s' "$c" | grep -qF '<https://example.slack.com/archives/Dfake/p1700000000000100|D-0Q01 결정 카드 열기>' && grep -q 'chat.getPermalink' "$LOG/calls.log" && ! grep -q '경고' "$SB/err" && ok "Q 열린 카드 언급 → 카드 정식 링크가 본문 끝에(경고 없음)" || ko "Q 링크 첨부" "rc=$RC $c $(cat "$SB/err")"
+run_n --kind progress $'진행\n\n- D-0Q01 선택 대기\n- D-0Q03 버튼 눌러 주세요\n참고: main abc1234'
+c=$(text)
+[ "$(printf '%s' "$c" | grep -c '결정 카드 열기')" = 2 ] && printf '%s' "$c" | grep -q 'D-0Q01 결정 카드 열기' && printf '%s' "$c" | grep -q 'D-0Q03 결정 카드 열기' && [ "$(printf '%s' "$c" | tail -n 1)" = '참고: main abc1234' ] && ok "Q 여러 번호 → 번호별 한 줄, 참고 줄 앞" || ko "Q 여러 개" "$c"
+run_n --kind progress $'진행\n\n- 결정 D-0Q02 선택 대기 중'
+c=$(text)
+[ "$RC" = 0 ] && grep -q "경고: D-0Q02 는 [0-9][0-9]-[0-9][0-9] 에 답함(2. B 안) — 대기로 쓰지 말 것" "$SB/err" && ! printf '%s' "$c" | grep -q '결정 카드 열기' && posted && ok "Q 답한 결정을 '대기'로 쓰면 경고(링크 없음, 전송은 함)" || ko "Q 닫힌 경고" "rc=$RC $c $(cat "$SB/err")"
+run_n --kind progress $'진행\n\n- 결정 D-0Q02 는 B 안으로 확정됨'
+[ "$RC" = 0 ] && ! grep -q '경고' "$SB/err" && ! text | grep -q '결정 카드 열기' && ok "Q 답한 결정을 대기 아닌 말로 쓰면 경고 없음" || ko "Q 닫힌 무경고" "$(cat "$SB/err")"
+run_n --kind progress $'진행\n\n- 결정 D-0Q99 선택 대기'
+c=$(text)
+[ "$RC" = 0 ] && ! grep -q '경고' "$SB/err" && ! printf '%s' "$c" | grep -q '결정 카드 열기' && ! grep -q 'chat.getPermalink' "$LOG/calls.log" && ok "Q 카드 없는 번호 → 본문·호출 무변경" || ko "Q 카드 없음" "$c $(cat "$SB/err")"
+printf 'x' > "$LOG/fail.link"
+run_n --kind progress $'진행\n\n- 결정 D-0Q01 선택 대기'
+[ "$RC" = 0 ] && ! text | grep -q 'slack.com' && grep -q 'D-0Q01 카드 링크 조회 실패' "$SB/err" && ok "Q 링크 조회 실패 → 링크 없이 전송(경고)" || ko "Q 조회 실패" "rc=$RC $(cat "$SB/err")"
+: > "$LOG/fail.link"
+
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

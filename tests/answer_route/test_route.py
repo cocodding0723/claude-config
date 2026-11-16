@@ -91,6 +91,20 @@ class UnitRoute(Base):
         self.assertEqual((out.ok, out.via, self.hub_calls), (True, "main", []))
         self.assertEqual(self.main_calls, [f"[Slack→메인] {BODY} (1.1)"])
 
+    def test_question_rule_positive_and_negative(self):
+        is_q = self.route_mod.is_question
+        for yes in ("이건 왜 필요한가요?", "왜 필요해？", "이게 뭐야", "그건 뭔데!", "이건 어떻게", "이유가 왜", "이게 맞는 방향인가", "이거 되나요", "지금 해도 될까", "  뭐야?  ", "이거 뭔데~"):
+            self.assertTrue(is_q(yes), yes)
+        for no in ("둘 다 섞어서", "A 로 진행", "왜냐하면 비용 때문에 A", "까지 하고 B", "뭐야 이건 안 됨 B 로", "", "   "):
+            self.assertFalse(is_q(no), no)
+
+    def test_ask_goes_to_hub_without_delivery_record(self):
+        self.map_decision()
+        out = self.router("sent").ask("D-0001", "1.1", "slack", self.route_mod.asked_text("D-0001", "왜 필요한가요?"))
+        self.assertEqual((out.ok, out.via, out.hub), (True, "hub", "alpha"))
+        self.assertEqual(self.hub_calls, [("alpha", "사용자 원문: 결정 D-0001 질문(직접 입력, 답 아님·카드 버튼은 열려 있음): 왜 필요한가요? (출처: Slack)")])
+        self.assertEqual(self.store.deliveries("D-0001", "1.1"), [])
+
     def test_mapped_hub_gets_original_text_with_source_and_main_gets_reference(self):
         self.map_decision()
         out = self.router("sent").route("D-0001", "1.1", "docsite", BODY)

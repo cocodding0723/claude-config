@@ -6,7 +6,7 @@
 허브 대상 전달은 이 모듈과 무관(터미널 send 그대로).
 
 한 줄: {at(ISO 초+시간대), source(보낸 스크립트), kind, text, ref?, id(멱등 키 source-해시), full?(4KiB 초과분 전문 파일)}
-kind: answer(사용자 답) stall(멈춘 워커) ci(CI·PR) restart(재기동) intake(접수) review(AI 리뷰) slack(Slack 수신) other
+kind: answer(사용자 답) question(결정 카드 직접 입력 질문, 답 아님) stall(멈춘 워커) ci(CI·PR) restart(재기동) intake(접수) review(AI 리뷰) slack(Slack 수신) other
 규칙: flock + O_APPEND, 권한 0600, 한 줄 4KiB 상한(넘으면 전문은 main-overflow/<id>.txt, 줄에는 앞부분+full 경로),
       같은 id 는 최근 500줄 안에서 한 번만(같은 알림 재전송 금지), 1MiB 넘으면 main.jsonl.1 로 회전(읽는 쪽이 옛 파일 잔여분을 이어 읽음).
 
@@ -24,7 +24,7 @@ import json
 import os
 import sys
 
-KINDS = ("answer", "stall", "ci", "restart", "intake", "review", "slack", "other")
+KINDS = ("answer", "question", "stall", "ci", "restart", "intake", "review", "slack", "other")
 INBOX_NAME, LOCK_NAME, OVERFLOW_DIR, OFFSET_NAME = "main.jsonl", ".main.jsonl.lock", "main-overflow", "main-inbox.offset"
 LINE_MAX = 4096        # 한 줄(개행 포함) 바이트 상한. PIPE_BUF 와 같아 O_APPEND 한 번 쓰기가 끊기지 않음
 DEDUP_LINES = 500

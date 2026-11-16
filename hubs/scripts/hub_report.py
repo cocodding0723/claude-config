@@ -154,6 +154,49 @@ def path_problem(text: str, files) -> str:
     return f"본문에 로컬 경로({', '.join(miss[:3])})가 있는데 같은 파일이 --file 첨부로 오지 않음 — 사용자는 경로를 열 수 없으니 --file 로 첨부하거나 본문에서 경로를 뺌"
 
 
+MENTION_RE = re.compile(r"(?<![0-9A-Za-z-])D-[0-9A-Za-z]{1,16}(?![0-9A-Za-z])", re.A)
+WAIT_RE = re.compile(r"대기|선택(?!됨|했|함|\s*완료)|눌러|누르|고르|답해")  # 같은 줄에 결정 번호와 함께 있으면 '아직 답을 기다림' 표기로 봄
+ANSWER_BRIEF = 30
+
+
+def mention_check(text: str, hub_dir: str = "") -> tuple:
+    """본문(참고 줄 포함)이 언급한 결정 번호의 카드 상태 판정. (links, warns) — 둘 다 문자열 목록, 전송기·slack_notify.sh 가 같이 씀(판정 한 곳).
+    links: 가장 최근 카드가 열려 있는 [(카드 ts, 번호)] — 호출자가 chat.getPermalink 로 링크를 붙임.
+    warns: 가장 최근 카드가 이미 답으로 닫혔는데 같은 줄에 대기 표현이 있는 경고 문장. 카드가 없으면 어느 쪽에도 없음.
+    기록을 못 읽으면 빈 결과(전송을 막지 않음)"""
+    seen = []
+    for m in MENTION_RE.finditer(text or ""):
+        if m.group(0) not in seen:
+            seen.append(m.group(0))
+    if not seen:
+        return [], []
+    import answer_store  # 늦은 import: 접수(add)는 이 모듈을 안 씀
+    try:
+        store = answer_store.AnswerStore(hub_dir or HUB_DIR)
+        cards = {}
+        for c in store.cards():
+            cards[c["decision_id"]] = c  # 오래된 순이라 마지막이 가장 최근 카드
+    except (OSError, ValueError, KeyError):
+        return [], []
+    links, warns = [], []
+    for did in seen:
+        c = cards.get(did)
+        if not c:
+            continue
+        if not c["by"]:
+            links.append((c["ts"], did))
+            continue
+        if not any(did in ln and WAIT_RE.search(ln) for ln in text.splitlines()):
+            continue
+        rec = store.find_answer(did, c["ts"])[1]
+        said = str(rec.get("option_text") or "카드 닫힘")
+        said = said if len(said) <= ANSWER_BRIEF else said[:ANSWER_BRIEF - 1] + "…"
+        at = rec.get("received_at")
+        day = time.strftime("%m-%d", time.localtime(at)) if isinstance(at, (int, float)) else "?"
+        warns.append(f"{did} 는 {day} 에 답함({said}) — 대기로 쓰지 말 것")
+    return links, warns
+
+
 def secret_file_problem(path: str) -> str:
     """비밀 파일 첨부 거부 사유(이름·확장자·민감 폴더). 심볼릭 링크 대상(realpath)도 검사. 경로는 되비추지 않음"""
     base = os.path.abspath(os.path.expanduser(path))
@@ -453,6 +496,8 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--json", action="store_true", help="결과를 JSON 한 줄로 출력")
     ck = sub.add_parser("check-text", help="본문(표준 입력)의 로컬 경로·첨부 파일 검사", description="알림 스크립트가 부르는 검사. 본문에 로컬 문서·이미지·영상 경로가 있는데 같은 파일이 첨부로 오지 않거나 첨부가 민감 파일이면 종료 코드 2.")
     ck.add_argument("--attached", action="append", default=[], help="이 메시지가 첨부하거나 같은 보고에서 따로 첨부하는 파일(반복 가능)")
+    ck.add_argument("--kind", help="알림 종류. decide 카드 자체에는 결정 번호 언급 판정을 하지 않음")
+    ck.add_argument("--hub-dir", help="보낸 카드 기록(slack-sent.jsonl)·답 기록이 있는 작업 폴더(기본 LRM_HUB_DIR)")
     dc = sub.add_parser("check-decide", help="결정 카드 필수 항목 검사(본문은 표준 입력)", description="알림 스크립트가 부르는 검사. 본문에 '배경:'·'용어:' 줄이 없거나 --options 에 선택지 결과가 없으면, D-RDY 카드에 '로컬 QA:' 줄이 없으면 종료 코드 2.")
     dc.add_argument("--decision-id", help="있으면 이미 다른 질문에 쓰인 번호인지도 검사")
     dc.add_argument("--options", help="있으면 선택지마다 결과 칸도 검사. 없으면 본문만(--choices 카드)")
@@ -497,8 +542,15 @@ def main(argv=None) -> int:
             for f in args.attached:
                 if why := secret_file_problem(f):
                     raise ReportError(f"첨부 거부 — {why}")
-            if why := path_problem(sys.stdin.read(), args.attached):
+            body = sys.stdin.read()
+            if why := path_problem(body, args.attached):
                 raise ReportError(why)
+            if args.kind != "decide":  # 표준 출력 규약: 'link<TAB>카드 ts<TAB>번호' 열린 카드 링크 요청, 'warn<TAB>문장' 닫힌 결정 경고
+                links, warns = mention_check(body, args.hub_dir or "")
+                for ts, did in links:
+                    print(f"link\t{ts}\t{did}")
+                for w in warns:
+                    print(f"warn\t{w}")
         else:
             rows = read_outbox(path)
             if args.json:
