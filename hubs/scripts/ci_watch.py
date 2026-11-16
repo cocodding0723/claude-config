@@ -355,14 +355,16 @@ def main():
         if dry:
             print(f"--- {kind}\n{msg}")
             continue
-        out = subprocess.run([NOTIFY, "--kind", kind, "--alive", "--tag", "ci-watch", msg], capture_output=True, text=True)
+        # 같은 PR 의 같은 결과(실패·통과)는 하루 1회. 실패→통과→실패처럼 결과가 바뀌면 다시 보냄
+        out = subprocess.run([NOTIFY, "--kind", kind, "--alive", "--tag", "ci-watch", "--from", "ci_watch", "--subject", f"pr-{n}",
+                              "--state", "fail" if fails else "pass", msg], capture_output=True, text=True)
         if fails:
             # warn 의 ts 를 실패 파일에 남겨 허브가 같은 스레드에 원인·고칠 방법을 답하게 함
             ts = out.stdout.split()[1] if out.returncode == 0 and out.stdout.startswith("ok ") and len(out.stdout.split()) > 1 else ""
             relay_fail(pr, fails, prev, state, ts)
         rc = out.returncode
         if rc == 0:
-            sent += 1
+            sent += out.stdout.strip() != "suppressed"
         else:  # 실패하면 다음 주기에 다시 보내도록 이번 결론을 기록하지 않음
             state[n] = before
     open_heads = {str(p["number"]): p.get("headRefOid") for p in prs if p.get("state", "OPEN") == "OPEN"}

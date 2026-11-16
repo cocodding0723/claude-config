@@ -658,7 +658,7 @@ def alert(reason, cands=None, text=None):
         log("alert", reason=reason, result="state_fail")
         return
     try:
-        p = subprocess.run(["/bin/bash", NOTIFY, "--kind", "warn", "--tag", "slack-push", "--title", "메인 연결 끊김", text or ALERT_TEXT.format(reason=reason, cands="미확인" if cands is None else f"{cands}개", todo=TODO_PICK if cands and cands > 1 else TODO_SET)],
+        p = subprocess.run(["/bin/bash", NOTIFY, "--kind", "warn", "--tag", "slack-push", "--from", "slack_push", "--state", reason, "--title", "메인 연결 끊김", text or ALERT_TEXT.format(reason=reason, cands="미확인" if cands is None else f"{cands}개", todo=TODO_PICK if cands and cands > 1 else TODO_SET)],
                            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
         result = "ok" if p.returncode == 0 else f"fail_rc{p.returncode}"
     except subprocess.TimeoutExpired:

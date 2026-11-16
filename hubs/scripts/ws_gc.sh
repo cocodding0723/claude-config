@@ -472,7 +472,7 @@ if [ "$SLACK" = 1 ] && [ "$SEND" = 1 ]; then
   [ "$N_KEEP_CODE" -gt 0 ] && MSG="$MSG"$'\n'"• 코드 변경이 있어 남긴 곳 ${N_KEEP_CODE}곳(허브가 커밋 또는 정리)"
   [ "$N_FAIL" -gt 0 ] && MSG="$MSG"$'\n'"• 삭제 못 한 곳 ${N_FAIL}곳(보관본은 남음)"
   if [ -x "$CFG_NOTIFY" ] || command -v "$CFG_NOTIFY" >/dev/null 2>&1; then
-    "$CFG_NOTIFY" --tag "$CFG_SLACK_TAG" --kind progress "$MSG" >/dev/null 2>&1 && log "SLACK sent" || log "SLACK_FAIL 전송 실패(토큰·네트워크 확인). 정리 결과는 유효"
+    "$CFG_NOTIFY" --tag "$CFG_SLACK_TAG" --kind progress --from ws_gc --state "${FAIL_SIG:-ok}" "$MSG" >/dev/null 2>&1 && log "SLACK sent" || log "SLACK_FAIL 전송 실패(토큰·네트워크 확인). 정리 결과는 유효"
   else log "SLACK_SKIP 전송 스크립트 없음: $CFG_NOTIFY"; fi
 fi
 [ "$N_FAIL" -eq 0 ] || exit 1
