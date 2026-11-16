@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using Game.Data.ExternalModule.LocalizationModule;
+using Game.Data.Module.AutomaModule.Domain.Mission;
 using Game.Data.Module.AutomaModule.Model;
 using Game.Data.Module.StatModule.Model;
 using Game.SceneView.Module.Modal.Module.AutomaDailySummaryDialog;
@@ -98,10 +99,22 @@ namespace Tests.Editor.UiPreview.Automa
             var line = Text(success ? mission.SuccessLineKey : mission.FailLineKey);
             var narration = Text(success ? mission.SuccessNarrationKey : mission.FailNarrationKey);
             var state = new AutomaMissionOutcomeViewState(kind, success, LocalizationManager.GetText(mission.NameKey), card.Stat,
-                card.Target, success ? card.Target : 0, line, narration, card.Rival.CharacterId);
+                card.Target, success ? card.Target : 0, line, narration, card.Rival.CharacterId, Effects(card));
             var dialog = UiPreviewPrefabs.Spawn<AutomaMissionOutcomeDialog>(nameof(AutomaMissionOutcomeDialog), root, true);
             UiPreviewDialogs.Init(dialog, () => dialog.InitModal(new AutomaMissionOutcomeDialogData(state), null), card.Rival.CharacterId);
             dialog.OnModalDisplay();
+        }
+
+        // 게임은 판정 결과(AutomaMissionResolution.Effects)를 넘김. 미리보기는 판정이 없어 미션 효과 표 행을 그대로 옮김
+        private static IReadOnlyList<AutomaEffect> Effects(AutomaMissionCardInput card)
+        {
+            var effects = new List<AutomaEffect>();
+            foreach (var row in card.Effects)
+            {
+                effects.Add(new AutomaEffect(row.Target, row.Kind, row.Stat, row.Amount, row.When));
+            }
+
+            return effects;
         }
 
         private static string? Text(string? key) => string.IsNullOrEmpty(key) ? null : LocalizationManager.GetText(key);
