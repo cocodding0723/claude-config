@@ -127,6 +127,13 @@ git -C $CC push origin feat/a
 EOF" "$SB/oth"
 exp "ai-trace: 따옴표 속 push 글자 무시" $AT "echo 'git -C $CC push origin feat/a'" "$SB/oth"
 exp "ai-trace: 저장소 아닌 경로는 확인(ask)" $AT "cd /nonexistent-zz && git push origin main" "$SB/oth" ask
+exp "ai-trace: 2>&1 | tail 붙은 push 해석" $AT 'git push origin feat/x 2>&1 | tail -3' "$SB/oth" ask
+exp "ai-trace: 리디렉션 붙은 clean push 통과" $AT "git -C $SB/g push origin main >/dev/null 2>&1" "$SB/oth"
+exp "ai-trace: 리디렉션 붙은 흔적 push 는 거부" $AT "cd $CC && git push -u origin HEAD 2>&1" "$SB/oth" deny
+exp "ai-trace: 리디렉션 뒤 | tail 도 흔적 거부" $AT "git -C $CC push origin feat/a 2>&1 | tail -3" "$SB/oth" deny
+exp "ai-trace: W=리터럴; cd \$W 는 풀어 해석(거부)" $AT "W=$CC; cd \"\$W\" && git push -u origin HEAD 2>&1" "$SB/oth" deny
+exp "ai-trace: \${W} -C 형태 해석(clean 통과)" $AT "W=$CC; git -C \"\${W}\" push origin main >/dev/null 2>&1" "$SB/oth"
+exp "ai-trace: 외부 변수 -C 는 끝내 확인(ask)" $AT 'git -C "$W" push origin br >/dev/null 2>&1' "$SB/oth" ask
 exp "ai-trace: 변수 경로는 확인(ask)" $AT 'cd "$X" && git push origin main' "$SB/oth" ask
 
 # ---- 저장소 commit-msg 훅(claude-config) ----

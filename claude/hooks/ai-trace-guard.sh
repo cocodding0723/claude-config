@@ -10,7 +10,7 @@ cwd=$(printf '%s' "$input" | jq -r '.cwd // ""' 2>/dev/null)
 GUARD_DIR=$(cd "$(dirname "$(perl -MCwd=realpath -e 'print realpath shift' "${BASH_SOURCE[0]}")")" && pwd -P)
 # heredoc 본문·따옴표 안 문구의 push 글자는 명령이 아님. 판정만 정리본으로, 본문 검사는 원문으로
 scmd=$(printf '%s' "$cmd" | python3 -I "$GUARD_DIR/lib/strip_text.py" 2>/dev/null) && [ -n "$scmd" ] || scmd="$cmd"
-G='(^|[[:space:];&|(])git[[:space:]]+((-C|-c)[[:space:]]+[^[:space:]]+[[:space:]]+|-[^[:space:]]+[[:space:]]+)*'   # -C <dir>·-c k=v 는 값 포함
+G='(^|[[:space:];&|(])git[[:space:]]+((-C|-c)[[:space:]]+("[^"]*"|'"'"'[^'"'"']*'"'"'|[^[:space:]]+)[[:space:]]+|-[^[:space:]]+[[:space:]]+)*'   # -C <dir>·-c k=v 는 값 포함(따옴표 값은 strip 뒤 빈 따옴표로 남음)
 GH='(^|[[:space:];&|(])gh[[:space:]]+pr[[:space:]]+(create|edit)\b'
 is_push=0; is_pr=0
 printf '%s' "$scmd" | grep -Eq "${G}push\b" && is_push=1
