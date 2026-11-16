@@ -18,6 +18,8 @@ public static class HudRenderer
         var sizes = Arg("-renderSizes", "1080x1920").Split(',');
         var extra = Arg("-renderPrefabs", "IngameView/IngameView.prefab,Automa/AutomaMissionBanner.prefab").Split(',');
         var tag = Arg("-renderTag", "shot");
+        // 게임 기본 투명도 유지. 팝업처럼 켜서 볼 그룹만 이름으로 지정(비네트 덮개가 붉게 나오던 문제)
+        var show = Arg("-renderShowGroups", "").Split(',', StringSplitOptions.RemoveEmptyEntries);
         Directory.CreateDirectory(outDir);
         foreach (var s in sizes)
         {
@@ -40,7 +42,7 @@ public static class HudRenderer
                 if (rtf != null && p.Contains("IngameView.prefab") && !p.Contains("Top"))
                 { rtf.anchorMin = Vector2.zero; rtf.anchorMax = Vector2.one; rtf.offsetMin = Vector2.zero; rtf.offsetMax = Vector2.zero; }
             }
-            foreach (var cg in cgo.GetComponentsInChildren<CanvasGroup>(true)) { Debug.Log($"CG {cg.name} a={cg.alpha} act={cg.gameObject.activeSelf}"); cg.alpha = 1; }
+            foreach (var cg in cgo.GetComponentsInChildren<CanvasGroup>(true)) { Debug.Log($"CG {cg.name} a={cg.alpha} act={cg.gameObject.activeSelf}"); if (Array.IndexOf(show, cg.name) >= 0) cg.alpha = 1; }
             if (Arg("-renderActivateAll", "0") == "1") foreach (var tr in cgo.GetComponentsInChildren<Transform>(true)) tr.gameObject.SetActive(true);
             foreach (var tr in cgo.GetComponentsInChildren<Transform>(true)) if (tr.parent == cgo.transform || (tr.parent != null && tr.parent.parent == cgo.transform)) Debug.Log($"TR {tr.name} act={tr.gameObject.activeSelf} kids={tr.childCount}");
             foreach (var cv in cgo.GetComponentsInChildren<Canvas>(true)) { Debug.Log($"CV {cv.name} mode={cv.renderMode} root={cv.isRootCanvas}"); if (cv.gameObject != cgo && cv.isRootCanvas == false) { } }
