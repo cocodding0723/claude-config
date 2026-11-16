@@ -11,7 +11,7 @@ CFG_REFUSE_REASONS="hub live children current protected"
 
 usage() {
   cat <<'USAGE'
-사용: release_ws.sh --dispatch <id> [--dry-run] [--json]
+사용: release_ws.sh --dispatch <id> [--dry-run] [--released] [--json]
 워커를 반납(orca orchestration worker-release)하고, 그 워커의 작업 공간이 깨끗하거나 결과물만 남았으면
 보관·허브 색인 뒤 orca worktree rm 으로 지움. 코드 변경이 있으면 남기고 이유를 출력함.
 판정은 ws_gc.sh 와 같음(--days 0: 최근 활동은 따지지 않음). 허브 폴더·다른 워커가 쓰는 곳은 지우지 않음.
@@ -19,6 +19,7 @@ usage() {
 옵션:
   --dispatch <id>  반납할 워커의 dispatch id(필수)
   --dry-run        worker-release·삭제 없이 판정만(이 워커 터미널은 쉬는 중으로 침)
+  --released       이미 worker-release 한 워커(session_gc 자동 호출용). worker-release 를 다시 부르지 않음
   --json           결과를 JSON 한 줄로 출력
 환경: LRM_WS_GC(ws_gc.sh 위치), WS_GC_* (ws_gc.sh 설정)
 종료 코드: 0 삭제함(--dry-run 은 삭제 가능), 1 삭제 단계 실패, 2 인자 오류·알 수 없는 dispatch,
@@ -31,13 +32,14 @@ USAGE
 }
 die() { echo "$1" >&2; exit "${2:-2}"; }
 
-DISPATCH="" DRY=0 JSON=0
+DISPATCH="" DRY=0 JSON=0 RELEASED=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --dispatch) [ $# -ge 2 ] || die "--dispatch 값 필요 — 예 --dispatch ctx_abc123"; DISPATCH="$2"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     --json) JSON=1; shift ;;
+    --released) RELEASED=1; shift ;;
     *) die "알 수 없는 인자: $1 — --help 참고" ;;
   esac
 done
@@ -63,7 +65,7 @@ result() { # 코드 상태 메시지 [종료코드]
   exit "$3"
 }
 
-if [ "$DRY" = 0 ]; then
+if [ "$DRY" = 0 ] && [ "$RELEASED" = 0 ]; then
   orca orchestration worker-release --dispatch "$DISPATCH" --json >/dev/null 2>&1 || echo "worker-release 실패 — 터미널이 열려 있으면 아래 판정이 '사용 중'으로 나옴. orca orchestration worker-show 로 상태 확인" >&2
 fi
 
