@@ -3,10 +3,10 @@
 window_start	23	야간 창 시작(시). 창 밖 회차는 아무것도 안 함
 window_end	7	야간 창 끝(시, 미포함)
 idle_output_min	10	허브 터미널 마지막 출력이 이 분 이상 전이면 입력 대기로 봄
-free_pct_min	30	memory_pressure 의 free percentage 하한(%)
-load_max	12	vm.loadavg 1분 평균 상한
+free_pct_min	15	memory_pressure 의 free percentage 하한(%)
+load_max	75	vm.loadavg 1분 평균 상한
 disk_free_gb_min	20	디스크 여유 하한(GB)
-workers_active_max	3	야간 동시 활성 워커 합계 상한
+workers_active_max	25	야간 동시 활성 워커 합계 상한
 night_total_max	12	하룻밤 전달 상한(건)
 item_tries_max	2	같은 항목 하룻밤 전달 상한(회)
 forbid	병합	본문에 있으면 아침 결재함으로(허브가 gate 를 잘못 적어도 밤에 새지 않게 하는 이중 검사)

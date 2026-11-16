@@ -1,9 +1,15 @@
 // v4 흐름 검사: 실제 좌표 입력(마우스/터치)으로 로비→문항→결과까지 진행하고 스크린샷.
 // 사용: node cdp-v4.mjs <url> <mouse|touch> <W> <H> <shot.png> [wrongCsv=1]
-import {spawn} from "node:child_process";import {mkdtempSync,writeFileSync} from "node:fs";import {tmpdir} from "node:os";import {join} from "node:path";
+import {spawn} from "node:child_process";import {mkdtempSync,writeFileSync,rmSync} from "node:fs";import {tmpdir} from "node:os";import {join} from "node:path";
 const [,,url,mode,W,H,shot,wrongCsv="1"]=process.argv;const wrong=wrongCsv.split(",").map(Number);
 const ud=mkdtempSync(join(tmpdir(),"cdp4-"));const port=9300+Math.floor(Math.random()*500);
 const ch=spawn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",["--headless=new",`--remote-debugging-port=${port}`,`--user-data-dir=${ud}`,"--autoplay-policy=no-user-gesture-required",`--window-size=${W},${H}`,"about:blank"],{stdio:"ignore"});
+// 어떤 이유로 끝나도 Chrome 종료·임시 프로필 삭제(예외로 죽으면 고아 Chrome 이 쌓여 시스템 부하가 올랐음, 11-09)
+const cleanup=()=>{try{ch.kill("SIGKILL")}catch{}try{rmSync(ud,{recursive:true,force:true})}catch{}};
+process.on("exit",cleanup);
+for(const s of ["SIGINT","SIGTERM","SIGHUP"])process.on(s,()=>process.exit(1));
+process.on("uncaughtException",e=>{console.error(e);process.exit(1)});
+process.on("unhandledRejection",e=>{console.error(e);process.exit(1)});
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 let ws;for(let i=0;i<50;i++){try{const l=await (await fetch(`http://127.0.0.1:${port}/json`)).json();const p=l.find(x=>x.type=="page");ws=new WebSocket(p.webSocketDebuggerUrl);break}catch{await sleep(200)}}
 await new Promise(r=>ws.onopen=r);let id=0;const pend={};const errs=[];
@@ -40,7 +46,7 @@ for(const k of ["before","problem","after"]){await tap(`document.querySelector('
 await tap(`document.querySelector('.tab[data-k="structure"]')`,"탭 structure");
 await tap(`document.getElementById("cp")`,"복사");ok("복사 반응",/복사됨/.test(await ev(`document.getElementById("cp").textContent`)));
 ok("가로 넘침 없음(결과)",await ev("document.documentElement.scrollWidth<=innerWidth"));
-log.push("복사 텍스트: "+(await ev(`document.getElementById("out").value`)).replace(/\n/g," / "));
+log.push("복사 텍스트: "+String(await ev(`document.getElementById("out").value`)).replace(/\n/g," / "));
 await ev("scrollTo(0,0)");await sleep(1500);
 const m=await send("Page.getLayoutMetrics");const h=Math.ceil(m.cssContentSize.height);
 const img=await send("Page.captureScreenshot",{format:"png",captureBeyondViewport:true,clip:{x:0,y:0,width:+W,height:h,scale:1}});

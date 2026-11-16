@@ -4,7 +4,7 @@
 
 ## 쉬운 말 3줄 요약
 
-- 무엇이 바뀌었나: 허브 상태·결정 대기·최근 기록·PR 수·쉬는 자원(터미널 없는 워크스페이스·디스크 여유)은 이제 90초마다 스크립트가 자동으로 채우고, 10분 넘게 안 채워지면 패널 맨 위에 ⚠️ 가 뜬다.
+- 무엇이 바뀌었나: 허브 상태·결정 대기·최근 기록·PR 수·쉬는 자원(터미널 없는 워크스페이스·디스크 여유)은 이제 60초마다 스크립트가 자동으로 채운다. 패널 맨 위에 데이터 나이가 늘 보이고, 3분 넘게 안 채워지면 ⚠️ 가 붙는다. 작업판(beads, `~/orca/board`) 카드 수와 진행 중 카드도 보인다.
 - 왜: 메인이 손으로 쓰던 패널이 하루 가까이 낡은 채 남은 일이 있었다. 기계가 셀 수 있는 칸은 기계가 채우고, 사람 판단이 필요한 칸(승인할 것·할 일)만 메인이 쓴다.
 - 사용자가 할 일: 병합 뒤 설치기를 한 번 돌리고 수집기를 켜는 명령 한 줄을 실행한 다음, 메인 세션을 새로 시작한다(아래 「라이브 적용 절차」).
 
@@ -85,7 +85,7 @@
 
 | 대상 | 기준 시각 | 경고 |
 |---|---|---|
-| 자동 칸 | 파일 안 `updatedAt`(epoch). 없거나 지금보다 2분 넘게 미래면 파일 수정 시각 | 10분 초과·파일 없음·못 읽음 → 맨 위 빨간 ⚠️ "자동 수집이 N분째 멈춤" |
+| 자동 칸 | 파일 안 `writtenAt`(쓴 순간, 없으면 `updatedAt`). 없거나 지금보다 2분 넘게 미래면 파일 수정 시각 | 맨 위에 늘 "데이터 N초 전". 3분 초과·파일 없음·못 읽음 → 빨간 ⚠️ |
 | 메인 칸 | 파일 수정 시각 | 30분 초과 → 노란 글씨 "메인 칸이 N분 전 갱신됨" |
 
 자동 칸에 파일 안 epoch 를 쓰는 이유: 수집기가 기록하는 순간의 시계라 데이터가 언제 모였는지를 그대로 말한다. 수정 시각은 복사·백업 복원·`touch` 로도 새로워져 낡은 데이터를 새것처럼 보이게 할 수 있다. 메인 칸에 수정 시각을 쓰는 이유: 메인이 글자로 적는 `updatedAt` 은 실제와 42분 어긋난 전례가 있다.
@@ -116,7 +116,7 @@
 | 켜기 | `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.lrm.panelcollect.plist` |
 | 상태 보기 | `launchctl print gui/$(id -u)/ai.lrm.panelcollect \| grep -E 'state\|last exit'` · `tail -3 ~/.config/lrm-hubs/panel-collect.log` |
 | 한 번 돌려 보기(파일 안 씀) | `bash ~/.config/lrm-hubs/panel_collect.sh --print` |
-| 끄기 | `launchctl bootout gui/$(id -u)/ai.lrm.panelcollect` (끄면 10분 뒤 패널에 ⚠️ 가 뜬다) |
+| 끄기 | `launchctl bootout gui/$(id -u)/ai.lrm.panelcollect` (끄면 3분 뒤 패널에 ⚠️ 가 뜬다) |
 | 로그인 때도 안 켜지게 | 끈 뒤 `~/Library/LaunchAgents/ai.lrm.panelcollect.plist` 를 다른 폴더로 옮긴다 |
 | PR 수 끄기 | `panel.env` 의 `PANEL_GH_REPOS=` 를 비운다 |
 | 전체 되돌리기 | 수집기를 끄고 `./install.sh --restore ~/.claude-config-backup/<시각>`. 그 설치가 새로 만든 mod·plist·링크가 빠진다. `panel-auto.json` 은 남아도 되며, 옛 mod 는 읽지 않는다 |
@@ -126,7 +126,7 @@
 1. 메인 체크아웃 `~/orca/claude-config` 에서 `./install.sh --dry-run` 으로 바뀔 항목을 본다. 새로 생기는 것: `~/.config/lrm-hubs/panel_collect.{sh,py}`·`panel.env.example`·`docs/panel.md` 링크, `~/Library/LaunchAgents/ai.lrm.panelcollect.plist`, `~/.claude/skills/lrm-board/` 5개 파일.
 2. `./install.sh` 를 돌린다. 끝에 `launchd 재적재 필요: … ai.lrm.panelcollect` 줄이 나온다(설치기는 적재하지 않는다).
 3. `bash ~/.config/lrm-hubs/panel_collect.sh --print | head -40` 으로 한 번 확인한다. `hubs`·`pending`·`push`·`workers` 의 `ok` 가 `true` 면 된다.
-4. 수집기를 켠다: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.lrm.panelcollect.plist`. 90초 안에 `~/.config/lrm-hubs/panel-auto.json` 이 생긴다.
+4. 수집기를 켠다: `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.lrm.panelcollect.plist`. 60초 안에 `~/.config/lrm-hubs/panel-auto.json` 이 생긴다.
 5. PR 수가 필요하면 `cp ~/.config/lrm-hubs/panel.env.example ~/.config/lrm-hubs/panel.env` 뒤 `PANEL_GH_REPOS=` 를 채운다. 다음 수집부터 반영된다.
 6. 메인 세션을 새로 시작한다. 지금 메인 세션은 세션 전용 mod 폴더(dev-mods)에서 옛 `lrm-board` 를 읽고 있어, 그대로 두면 같은 이름의 mod 가 둘이 된다. 새 세션은 `~/.claude/skills/lrm-board` 만 읽는다. 새 세션에서 `/lrm-board` 를 열어 맨 위에 ⚠️ 가 없는지 본다.
 7. 옛 사본 `~/.config/lrm-hubs/mods/lrm-board` 는 더 쓰지 않는다. 헷갈리면 다른 이름으로 옮겨 둔다(설치기는 지우지 않는다).
@@ -180,3 +180,10 @@
 ## 허브 창 질문 경고 (2026-11-13)
 
 허브 화면 끝에 '이 창에서 확인·답·승인' 류 문구가 보이면 수집기가 허브 행에 `askHere: true` 를 남기고 로그(`panel-collect.log`)에 `WARN ask-here=<허브>` 한 줄을 쓴다. 결정은 허브 창이 아니라 `hub_report.py decide` Slack 카드로 가야 사용자가 본다. 화면 내용은 저장하지 않고 허브별 참·거짓만 남긴다. 화면 끝 300자 안팎만 보므로 놓칠 수 있다.
+
+## 2026-11-16 갱신 지연 수정
+
+- 증상: 주기 90초인데 실측 간격 2분 4초~2분 10초, 한 회차 약 30초(`--print` 는 7초).
+- 원인: plist `ProcessType=Background` — macOS 가 CPU·I/O 를 낮추고 타이머를 묶어 늦춤.
+- 조치: `ProcessType=Standard`, `StartInterval=60`. 파일에 `writtenAt` 을 더해 나이를 쓴 순간 기준으로 잼.
+- 작업판 원료 `board`: `bd list --json --limit 0`(cwd `~/orca/board`, `PANEL_BOARD_DIR` 로 변경). 진행 중·열림·막힘 수와 진행 중 카드 8개까지(제목·담당).

@@ -6,7 +6,7 @@
 #       unity_slot.sh status
 set -u
 ROOT="${LRM_UNITY_SLOT_DIR:-/tmp/lrm-unity-slots}"
-MAX="${LRM_UNITY_SLOTS:-2}"
+MAX="${LRM_UNITY_SLOTS:-8}"
 mkdir -p "$ROOT/queue"
 
 alive() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }

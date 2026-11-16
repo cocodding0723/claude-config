@@ -2,7 +2,7 @@
 """옆 패널 자동 칸 수집기. 진입은 panel_collect.sh.
 
 읽기 전용 원료(orca terminal list·worker-list·task-list, Slack 기록 파일, slack-push.log, gh)를 모아
-panel-auto.json 을 원자 교체로 씀. 진행 스냅샷(progress.json, progress_collect.py)도 같은 회차에 갱신함(진행 칸 원료). 메인이 손으로 쓰는 panel.json 은 열지도 쓰지도 않음.
+panel-auto.json 을 원자 교체로 씀. 진행 스냅샷(progress.json, progress_collect.py)도 같은 회차에 갱신함(진행 칸 원료). 작업판(bd)이 결정·할 일·승인·헤드라인의 정본(11-16, 손 칸 panel.json 폐지).
 화면(preview)·메시지 본문·토큰은 파일·로그에 남기지 않음. slack-bot.env·main.env 는 읽지 않음(Slack API 호출 없음).
 """
 import sys
@@ -709,6 +709,103 @@ def run_source(fn, prev, now):
     return {"ok": False, "err": code, "at": old.get("at"), "tried": now, "stale": True, "value": old.get("value")}
 
 
+BOARD_DIR = os.environ.get("PANEL_BOARD_DIR") or os.path.expanduser("~/orca/board")
+BOARD_TIMEOUT, BOARD_DOING_MAX, BOARD_LIST_MAX, BOARD_RECENT = 10, 8, 10, 5
+BOARD_STATUSES = ("in_progress", "open", "blocked")
+# 사람 손이 필요한 카드 종류. 라벨 kind:<값>
+BOARD_KINDS = {"decision": "decisions", "user-todo": "todos", "approval": "approvals"}
+DESC_MAX = 600
+
+
+def board_time(v):
+    """bd 의 RFC3339(UTC, Z) → epoch 초. 모르는 모양은 None"""
+    if not isinstance(v, str):
+        return None
+    try:
+        return calendar.timegm(time.strptime(v[:19], "%Y-%m-%dT%H:%M:%S"))
+    except ValueError:
+        return None
+
+
+def board_kind(r):
+    for label in r.get("labels") or []:
+        if isinstance(label, str) and label.startswith("kind:") and label[5:] in BOARD_KINDS:
+            return label[5:]
+    return None
+
+
+def board_card(r, desc=False):
+    out = {"id": str(r.get("id", ""))[:20], "title": str(r.get("title", ""))[:TITLE_MAX * 2],
+           "p": r.get("priority") if isinstance(r.get("priority"), int) else 2,
+           "who": str(r.get("assignee") or "")[:40] or None,
+           "createdAt": board_time(r.get("created_at")), "beatAt": board_time(r.get("updated_at")),
+           "startedAt": board_time(r.get("started_at")), "comments": r.get("comment_count") or 0}
+    if desc:
+        out["desc"] = str(r.get("description") or "")[:DESC_MAX] or None
+    return out
+
+
+def board_headline(rows):
+    """열린 epic 중 최우선(우선순위 → 오래된 순) 1개와 하위 진척(닫힌/전체)"""
+    epics = [r for r in rows if r.get("issue_type") == "epic" and r.get("status") != "closed"]
+    if not epics:
+        return None
+    e = min(epics, key=lambda r: (r.get("priority") if isinstance(r.get("priority"), int) else 9, str(r.get("created_at", ""))))
+    kids = [r for r in rows if r.get("parent") == e.get("id")]
+    return {"id": str(e.get("id", ""))[:20], "title": str(e.get("title", ""))[:TITLE_MAX * 2],
+            "done": sum(1 for r in kids if r.get("status") == "closed"), "total": len(kids), "epics": len(epics)}
+
+
+def collect_board():
+    """작업판(beads) = 패널의 정본(11-16). 결정·할 일·승인은 kind 라벨, 진행·막힘은 상태, 헤드라인은 열린 epic"""
+    if not os.path.isdir(BOARD_DIR):
+        raise SourceError("missing")
+    try:
+        p = subprocess.run([os.environ.get("PANEL_BD", "bd"), "list", "--all", "--json", "--limit", "0"], cwd=BOARD_DIR,
+                           capture_output=True, text=True, timeout=BOARD_TIMEOUT, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        raise SourceError("timeout")
+    except OSError:
+        raise SourceError("missing")
+    if p.returncode != 0:
+        raise SourceError("exit")
+    try:
+        rows = json.loads(p.stdout or "[]")
+    except ValueError:
+        raise SourceError("parse")
+    if not isinstance(rows, list):
+        raise SourceError("parse")
+    rows = [r for r in rows if isinstance(r, dict)]
+    counts = {k: 0 for k in BOARD_STATUSES}
+    lists = {v: [] for v in BOARD_KINDS.values()}
+    doing, blocked, closed = [], [], []
+    for r in rows:
+        st = r.get("status")
+        if st in counts:
+            counts[st] += 1
+        if st == "closed":
+            closed.append(r)
+            continue
+        kind = board_kind(r)
+        if kind is not None:
+            lists[BOARD_KINDS[kind]].append(board_card(r, desc=True))
+        elif st == "in_progress":
+            doing.append(board_card(r))
+        elif st == "blocked":
+            blocked.append(board_card(r))
+    for v in lists.values():
+        v.sort(key=lambda c: (c["p"], c["createdAt"] or 0))
+    closed.sort(key=lambda r: str(r.get("closed_at") or ""), reverse=True)
+    recent = [{"id": str(r.get("id", ""))[:20], "title": str(r.get("title", ""))[:TITLE_MAX * 2],
+               "at": board_time(r.get("closed_at")), "reason": str(r.get("close_reason") or "")[:TITLE_MAX * 2] or None}
+              for r in closed[:BOARD_RECENT]]
+    out = {"counts": counts, "doing": doing[:BOARD_DOING_MAX], "more": max(0, len(doing) - BOARD_DOING_MAX),
+           "blocked": blocked[:BOARD_LIST_MAX], "headline": board_headline(rows), "recent": recent}
+    for k, v in lists.items():
+        out[k] = v[:BOARD_LIST_MAX]
+    return out
+
+
 def collect(conf, repos, interval, prev, now, mark_gh):
     """(결과, gh 처리 off|run|skip). mark_gh 가 거짓(--print)이면 gh·du 간격 표식을 쓰지 않고 du 도 재지 않음"""
     get = Fetch()
@@ -718,6 +815,7 @@ def collect(conf, repos, interval, prev, now, mark_gh):
         "push": run_source(collect_push, prev.get("push"), now),
         "workers": run_source(lambda: collect_workers(conf, get), prev.get("workers"), now),
         "idle": collect_idle(conf, get, prev.get("idle"), now, mark_gh),
+        "board": run_source(collect_board, prev.get("board"), now),
     }
     src["progress"] = run_source(lambda: collect_progress(src, repos, mark_gh, get), prev.get("progress"), now)
     src["confirm"] = run_source(lambda: collect_confirm(src, now), prev.get("confirm"), now)
@@ -790,7 +888,7 @@ def write_atomic(data):
             f.write("\n")
             f.flush()
             os.fsync(f.fileno())
-        os.chmod(tmp, 0o600)  # 작업 폴더 규칙(panel.json 과 같음). 읽는 mod 는 같은 사용자
+        os.chmod(tmp, 0o600)  # 작업 폴더 규칙. 읽는 mod 는 같은 사용자
         os.replace(tmp, OUT)
     except BaseException:
         try:
@@ -905,6 +1003,7 @@ def main(argv):
     try:
         prev, prev_state = load_prev()
         data, gh = collect(conf, repos, interval, prev, int(time.time()), True)
+        data["writtenAt"] = int(time.time())  # 회차가 길면 updatedAt(시작 시각)보다 늦음. 패널 나이는 이 값 기준
         try:
             write_atomic(data)
         except OSError:
