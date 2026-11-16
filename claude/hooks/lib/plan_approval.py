@@ -1,7 +1,9 @@
 """계획 승인 기록 조회(사용자 11-16 "전부 추천대로"). 계획서 컨펌 1회가 그 계획서에 적힌 티켓 발급·draft PR 생성·Jira 상태 전환을 함께 승인.
 기록: <허브 폴더>/plan-approvals/<plan_id>.json =
-  {plan_id, approved_at, approver_quote, tickets:[{summary}], prs:[{repo, branch}], jira_transitions:[{key, to}]}
-유효 조건: plan_id 가 파일 이름과 같음 + approved_at(ISO 8601, 시간대 포함)이 지금부터 7일 안 + approver_quote(사용자 원문 인용)가 비지 않음.
+  {plan_id, approved_at, approver_quote, source:{slack_ts}, tickets:[{summary}], prs:[{repo, branch}], jira_transitions:[{key, to}]}
+유효 조건: plan_id 가 파일 이름과 같음 + approved_at(ISO 8601, 시간대 포함)이 지금부터 7일 안 + approver_quote(사용자 원문 인용)가 비지 않음
++ source.slack_ts 가 Slack 수신기가 쓴 slack-inbox.jsonl 의 사용자 답(thread_reply·note·button) 한 줄을 가리키고 그 본문에 인용문이 들어 있음.
+인용 대조는 메인(모델)이 사용자 말 없이 기록을 지어내는 것을 막기 위함. slack-inbox.jsonl 쓰기는 모든 Claude 세션에서 훅이 막음(수신기는 launchd 프로세스).
 형식이 틀리거나 만료된 파일은 승인으로 치지 않음. 만료는 오래된 컨펌이 새 작업을 승인하지 않게 하려는 것. 기록 파일 쓰기는 메인만(plan-approval-write-guard.sh).
 ready 전환·병합·라이브 작업은 이 기록으로 허용하지 않음(호출하는 쪽이 조회하지 않음)."""
 import datetime
@@ -33,9 +35,38 @@ def fresh(approved_at, now=None):
     return datetime.timedelta(0) <= now - t <= TTL
 
 
-def valid(rec, name):
+INBOX = "slack-inbox.jsonl"
+ANSWER_TYPES = {"thread_reply", "note", "button"}
+
+
+def inbox_texts(hub):
+    """ts → 사용자 답 본문. 파일이 없으면 빈 사전, 못 읽으면 OSError"""
+    p = os.path.join(hub, INBOX)
+    if not os.path.exists(p):
+        return {}
+    out = {}
+    with open(p, encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(d, dict) and d.get("type") in ANSWER_TYPES and d.get("ts"):
+                out[str(d["ts"])] = norm(str(d.get("text") or ""))
+    return out
+
+
+def quoted(rec, texts):
+    src = rec.get("source")
+    ts = str(src.get("slack_ts") or "") if isinstance(src, dict) else ""
+    q = norm(rec.get("approver_quote"))
+    return bool(ts) and ts in texts and q in texts[ts]
+
+
+def valid(rec, name, texts):
     return (isinstance(rec, dict) and rec.get("plan_id") == name and fresh(rec.get("approved_at"))
-            and isinstance(rec.get("approver_quote"), str) and rec["approver_quote"].strip())
+            and isinstance(rec.get("approver_quote"), str) and rec["approver_quote"].strip()
+            and quoted(rec, texts))
 
 
 def records(hub):
@@ -44,6 +75,7 @@ def records(hub):
     if not os.path.isdir(d):
         return []
     out = []
+    texts = inbox_texts(hub)
     for f in sorted(os.listdir(d)):
         if not f.endswith(".json"):
             continue
@@ -52,7 +84,7 @@ def records(hub):
                 rec = json.load(fh)
             except ValueError:
                 continue
-        if valid(rec, f[:-5]):
+        if valid(rec, f[:-5], texts):
             out.append(rec)
     return out
 

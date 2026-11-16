@@ -288,7 +288,8 @@ PA="$HUB/plan-approvals"; mkdir -p "$PA"
 plan() { printf '%s' "${2//@NOW@/$NOW}" > "$PA/$1.json"; }
 NOW=$(python3 -c 'import datetime;print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(hours=1)).isoformat(timespec="seconds"))')
 OLD=$(python3 -c 'import datetime;print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(days=8)).isoformat(timespec="seconds"))')
-plan P1 '{"plan_id":"P1","approved_at":"@NOW@","approver_quote":"전부 추천대로","tickets":[{"summary":"계획 티켓 하나"}],"prs":[{"repo":"Org/RepoA","branch":"feat/plan"}],"jira_transitions":[{"key":"LRM-77","to":"진행 중"}]}'
+printf '%s\n' '{"type":"thread_reply","ts":"900.1","text":"네  전부 추천대로 진행해"}' '{"type":"reaction","ts":"900.2","text":"좋아"}' >> "$HUB/slack-inbox.jsonl"
+plan P1 '{"plan_id":"P1","source":{"slack_ts":"900.1"},"approved_at":"@NOW@","approver_quote":"전부 추천대로","tickets":[{"summary":"계획 티켓 하나"}],"prs":[{"repo":"Org/RepoA","branch":"feat/plan"}],"jira_transitions":[{"key":"LRM-77","to":"진행 중"}]}'
 exp "plan: 계획에 적힌 repo:branch 는 카드 없이 draft PR 생성 통과" $PD 'gh pr create --draft -R Org/RepoA --head feat/plan -t t' "$PR"
 exp "plan: 계획 승인이어도 --draft 없으면 거부" $PD 'gh pr create -R Org/RepoA --head feat/plan -t t' "$PR" deny
 exp "plan: 계획에 없는 브랜치는 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/other -t t' "$PR" deny
@@ -309,13 +310,21 @@ plan P2 '{"plan_id":"P2","approved_at":"@NOW@","approver_quote":"  ","tickets":[
 plan P3 '{"plan_id":"다른이름","approved_at":"x","approver_quote":"좋아","prs":[{"repo":"Org/RepoA","branch":"feat/badid"}]}'
 plan P4 '{"plan_id":"P4","approver_quote":"좋아","prs":[{"repo":"Org/RepoA","branch":"feat/notime"}]}'
 printf '{깨진' > "$PA/P5.json"
-plan P6 "{\"plan_id\":\"P6\",\"approved_at\":\"$OLD\",\"approver_quote\":\"좋아\",\"prs\":[{\"repo\":\"Org/RepoA\",\"branch\":\"feat/old\"}]}"
-plan P7 '{"plan_id":"P7","approved_at":"2026-11-16T10:00:00","approver_quote":"좋아","prs":[{"repo":"Org/RepoA","branch":"feat/notz"}]}'
-plan P8 '{"plan_id":"P8","approved_at":"2999-01-01T00:00:00+00:00","approver_quote":"좋아","prs":[{"repo":"Org/RepoA","branch":"feat/future"}]}'
+plan PS1 '{"plan_id":"PS1","approved_at":"@NOW@","approver_quote":"전부 추천대로","prs":[{"repo":"Org/RepoA","branch":"feat/nosrc"}]}'
+plan PS2 '{"plan_id":"PS2","approved_at":"@NOW@","approver_quote":"전부 다 해","source":{"slack_ts":"900.1"},"prs":[{"repo":"Org/RepoA","branch":"feat/badquote"}]}'
+plan PS3 '{"plan_id":"PS3","approved_at":"@NOW@","approver_quote":"좋아","source":{"slack_ts":"900.2"},"prs":[{"repo":"Org/RepoA","branch":"feat/reaction"}]}'
+plan PS4 '{"plan_id":"PS4","approved_at":"@NOW@","approver_quote":"전부 추천대로","source":{"slack_ts":"999.9"},"prs":[{"repo":"Org/RepoA","branch":"feat/nots"}]}'
+plan P6 "{\"plan_id\":\"P6\",\"approved_at\":\"$OLD\",\"approver_quote\":\"전부 추천대로\",\"source\":{\"slack_ts\":\"900.1\"},\"prs\":[{\"repo\":\"Org/RepoA\",\"branch\":\"feat/old\"}]}"
+plan P7 '{"plan_id":"P7","approved_at":"2026-11-16T10:00:00","approver_quote":"전부 추천대로","source":{"slack_ts":"900.1"},"prs":[{"repo":"Org/RepoA","branch":"feat/notz"}]}'
+plan P8 '{"plan_id":"P8","approved_at":"2999-01-01T00:00:00+00:00","approver_quote":"전부 추천대로","source":{"slack_ts":"900.1"},"prs":[{"repo":"Org/RepoA","branch":"feat/future"}]}'
 jexp "plan: 사용자 원문 인용 없는 기록은 무효" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"인용 없는 티켓"}}' deny
 exp "plan: 인용 없는 기록의 PR 은 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/noquote -t t' "$PR" deny
 exp "plan: plan_id 가 파일 이름과 다르면 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/badid -t t' "$PR" deny
 exp "plan: approved_at 없으면 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/notime -t t' "$PR" deny
+exp "plan: source 없는 기록은 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/nosrc -t t' "$PR" deny
+exp "plan: Slack 답 본문에 없는 인용은 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/badquote -t t' "$PR" deny
+exp "plan: 반응(이모지)은 답으로 치지 않음" $PD 'gh pr create --draft -R Org/RepoA --head feat/reaction -t t' "$PR" deny
+exp "plan: 원장에 없는 ts 는 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/nots -t t' "$PR" deny
 exp "plan: 7일 지난 기록은 만료" $PD 'gh pr create --draft -R Org/RepoA --head feat/old -t t' "$PR" deny
 exp "plan: 시간대 없는 approved_at 은 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/notz -t t' "$PR" deny
 exp "plan: 미래 approved_at 은 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/future -t t' "$PR" deny
@@ -339,6 +348,9 @@ wexp "plan-write: Bash sed -i 거부" '{"tool_name":"Bash","tool_input":{"comman
 wexp "plan-write: Bash 읽기는 통과" '{"tool_name":"Bash","tool_input":{"command":"cat ~/.config/lrm-hubs/plan-approvals/x.json 2>/dev/null | jq ."}}'
 wexp "plan-write: ORCA_ROLE=main 이면 Bash 쓰기 통과" '{"tool_name":"Bash","tool_input":{"command":"echo {} > ~/.config/lrm-hubs/plan-approvals/x.json"}}' pass main
 wexp "plan-write: 다른 경로 Write 는 통과" '{"tool_name":"Write","tool_input":{"file_path":"/tmp/plan-approvals-note.txt"}}'
+wexp "plan-write: 메인이어도 slack-inbox.jsonl Write 거부" '{"tool_name":"Write","tool_input":{"file_path":"/h/.config/lrm-hubs/slack-inbox.jsonl"}}' deny main
+wexp "plan-write: slack-inbox.jsonl Bash 추가 쓰기 거부" '{"tool_name":"Bash","tool_input":{"command":"echo {} >> ~/.config/lrm-hubs/slack-inbox.jsonl"}}' deny main
+wexp "plan-write: slack-inbox.jsonl 읽기는 통과" '{"tool_name":"Bash","tool_input":{"command":"tail -5 ~/.config/lrm-hubs/slack-inbox.jsonl"}}'
 wexp "plan-write: 깨진 입력은 통과" '{깨진'
 
 # ---- commit-msg 훅: 게임 저장소에서 AI 흔적 줄 삭제 ----
