@@ -95,8 +95,8 @@ namespace Tests.Editor.UiPreview.Automa
         {
             var card = Card(fixture);
             var mission = card.Mission;
-            var line = success ? null : Text(mission.FailLineKey);
-            var narration = success ? null : Text(mission.FailNarrationKey);
+            var line = Text(success ? mission.SuccessLineKey : mission.FailLineKey);
+            var narration = Text(success ? mission.SuccessNarrationKey : mission.FailNarrationKey);
             var state = new AutomaMissionOutcomeViewState(kind, success, LocalizationManager.GetText(mission.NameKey), card.Stat,
                 card.Target, success ? card.Target : 0, line, narration, card.Rival.CharacterId);
             var dialog = UiPreviewPrefabs.Spawn<AutomaMissionOutcomeDialog>(nameof(AutomaMissionOutcomeDialog), root, true);
