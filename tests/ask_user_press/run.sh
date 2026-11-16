@@ -16,13 +16,13 @@ case "$1 $2" in
   "terminal send") exit "${FAKE_SEND_RC:-0}" ;;
 esac
 O
-chmod +x "$SB/orca"; export FAKE_DIR="$SB" LRM_ORCA="$SB/orca" LRM_MAIN_ENV="$SB/main.env"
+chmod +x "$SB/orca"; export FAKE_DIR="$SB" LRM_ORCA="$SB/orca" LRM_MAIN_ENV="$SB/main.env" LRM_HUB_DIR="$SB/hub"; INB="$SB/hub/hub-inbox/main.jsonl"
 printf 'MAIN_TERMINAL=term-main\nHUB_ROOT=%s/ws\n' "$SB" > "$SB/main.env"
 screen() { python3 -c 'import json,sys;print(json.dumps({"ok":True,"result":{"terminal":{"tail":sys.argv[1:]}}}))' "$@" > "$SB/screen"; }
 
 screen "작업 중" "Do you want to proceed?" "❯ 1. Yes" "  2. No"
 out=$("$ASK" --terminal term_w1 --expect 'Do you want' "2 No 눌러 주세요" 2>&1); rc=$?
-[ $rc = 0 ] && grep -q -- '--terminal term-main' "$SB/calls" && grep -q 'Do you want to proceed' "$SB/calls" && ok "창 문구 있음 → 화면 인용과 함께 메인 전송" || ko "전송" "rc=$rc $out"
+[ $rc = 0 ] && ! grep -q 'terminal send' "$SB/calls" && grep -q 'Do you want to proceed' "$INB" && grep -q '"source":"ask_user_press"' "$INB" && ok "창 문구 있음 → 화면 인용과 함께 메인 받은 편지함에 기록(터미널 send 없음)" || ko "전송" "rc=$rc $out"
 : > "$SB/calls"; screen "❯" "커밋 완료 a1b2c3"
 out=$("$ASK" --terminal term_w1 --expect 'Do you want' "2 No 눌러 주세요" 2>&1); rc=$?
 [ $rc = 3 ] && ! grep -q 'terminal send' "$SB/calls" && grep -q '확인 창 안 보임' <<<"$out" && ok "창 문구 없음 → 종료 3·전송 안 함" || ko "거부" "rc=$rc $out"
@@ -30,7 +30,10 @@ echo '{"ok":false,"error":{"code":"terminal_handle_stale"}}' > "$SB/screen"
 "$ASK" --terminal term_x --expect 'Do' "요청" >/dev/null 2>&1; rc=$?
 [ $rc = 2 ] && ok "터미널 없음 → 종료 2" || ko "터미널 없음" "rc=$rc"
 "$ASK" --terminal term_x "요청" >/dev/null 2>&1; [ $? = 2 ] && ok "--expect 없으면 종료 2" || ko "인자 검사" ""
-screen "Do you want x"; FAKE_SEND_RC=1 "$ASK" --terminal t --expect Do "r" >/dev/null 2>&1; [ $? = 1 ] && ok "메인 전송 실패 → 종료 1" || ko "전송 실패" ""
+screen "Do you want x"; mv "$SB/hub" "$SB/hub.bak"; : > "$SB/hub"; "$ASK" --terminal t --expect Do "r" >/dev/null 2>&1; rc=$?; rm -f "$SB/hub"; mv "$SB/hub.bak" "$SB/hub"
+[ $rc = 1 ] && ok "편지함 쓰기 실패 → 종료 1" || ko "전송 실패" "rc=$rc"
+out=$("$ASK" --terminal t --expect Do --dry-run "r" 2>&1); n=$(wc -l < "$INB" | tr -d " ")
+"$ASK" --terminal t --expect Do --dry-run "r" >/dev/null 2>&1; [ "$(wc -l < "$INB" | tr -d " ")" = "$n" ] && grep -q '\[허브→메인\] 창 확인 요청' <<<"$out" && ok "--dry-run → 편지함 불변·보낼 글 출력" || ko "dry-run" "$out"
 
 # patrol: 워커 사라짐 감지(1회만)
 mkdir -p "$SB/ws/feat-a"; git -C "$SB/ws/feat-a" init -q -b feat/a && git -C "$SB/ws/feat-a" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "워커 결과 커밋"
@@ -42,4 +45,5 @@ lst "$W" "$H"; o1=$(bash "$PATROL" 2>&1)
 lst "$H"; o2=$(bash "$PATROL" 2>&1); o3=$(bash "$PATROL" 2>&1)
 grep -q '사라진 워커 0개' <<<"$o1" && grep -q '🫥 워커 사라짐 feat-a term_worker_a .*feat/a .*워커 결과 커밋' <<<"$o2" && ! grep -q '🫥' <<<"$o3" && ok "사라진 워커를 마지막 커밋과 함께 1회 표시" || ko "워커 소멸" "$o2 | $o3"
 lst "$H"; j=$(bash "$PATROL" --json); python3 -c 'import json,sys;d=json.loads(sys.argv[1]);assert "hubs" in d and d["gone"]==[]' "$j" && ok "--json 은 hubs·gone" || ko "json" "$j"
+
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"; [ "$FAIL" = 0 ]

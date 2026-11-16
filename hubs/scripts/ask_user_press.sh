@@ -1,14 +1,13 @@
 #!/bin/bash
 # 허브가 사용자에게 "워커 확인 창을 눌러 달라"고 요청할 때 쓰는 유일한 경로.
-# 워커 화면을 지금 다시 읽어 확인 창 문구가 실제로 보일 때만 메인에 요청을 보냄(낡은 보고로 인한 헛걸음 방지, 11-11 사고).
+# 워커 화면을 지금 다시 읽어 확인 창 문구가 실제로 보일 때만 메인 받은 편지함(main.jsonl)에 요청을 남김(낡은 보고로 인한 헛걸음 방지, 11-11 사고). 메인 터미널 입력창에는 쓰지 않음.
 # 사용: ask_user_press.sh --terminal <워커 핸들> --expect '<확인 창 문구 일부>' "요청 한 줄"
-#       --dry-run  메인에 보내지 않고 보낼 글만 출력
-# 종료 코드: 0 전송, 1 메인 전송 실패, 2 인자 오류·터미널 없음, 3 확인 창 문구가 화면에 없음(요청 거부)
-# 환경: LRM_ORCA(orca 경로) · LRM_MAIN_ENV(main.env, MAIN_TERMINAL 줄만 읽음)
+#       --dry-run  편지함에 쓰지 않고 쓸 글만 출력
+# 종료 코드: 0 전달(편지함 기록), 1 편지함 쓰기 실패, 2 인자 오류·터미널 없음, 3 확인 창 문구가 화면에 없음(요청 거부)
+# 환경: LRM_ORCA(orca 경로) · LRM_HUB_DIR(작업 폴더, 편지함 위치)
 set -u
 . "$(dirname "$0")/lib/py.sh"  # PY = 3.10 이상 python3 (launchd 짧은 PATH 의 3.9 방지)
 ORCA="${LRM_ORCA:-$(command -v orca || echo /usr/local/bin/orca)}"
-MAIN_ENV="${LRM_MAIN_ENV:-$HOME/.config/lrm-hubs/main.env}"
 TERM_H="" EXPECT="" DRY=0
 die() { echo "$1" >&2; exit "${2:-2}"; }
 while [ $# -gt 0 ]; do
@@ -44,7 +43,5 @@ case $? in
   *) die "워커 터미널 없음·읽기 실패 — 세션이 끝났는지 orca terminal list 로 확인" 2 ;;
 esac
 if [ "$DRY" = 1 ]; then printf '%s\n' "$TEXT"; exit 0; fi
-MAIN=$(sed -n 's/^MAIN_TERMINAL=//p' "$MAIN_ENV" 2>/dev/null | head -1)
-[ -n "$MAIN" ] || die "메인 터미널 없음 — $MAIN_ENV 의 MAIN_TERMINAL 확인" 1
-"$ORCA" terminal send --terminal "$MAIN" --text "$TEXT" --enter --wait-submit 20 --json >/dev/null 2>&1 || die "메인 전송 실패 — orca 상태 확인" 1
-echo "전송: 메인에 창 확인 요청"
+"$PY" -I "$(dirname "$0")/main_inbox.py" append --kind other --source ask_user_press --ref "$TERM_H" - <<<"$TEXT" >/dev/null || die "메인 받은 편지함 쓰기 실패 — hub-inbox 폴더 권한·디스크 확인" 1
+echo "전달: 메인 받은 편지함에 창 확인 요청 기록"

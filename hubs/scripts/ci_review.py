@@ -1,7 +1,7 @@
 """CI AI 리뷰 지적 수집·메인 전달. ci_watch.py 가 불러 씀.
 
 리뷰 코멘트: github-actions 봇의 이슈 코멘트 '<!-- lrm-ai-review:역할 -->'. 지적 = '아쉬운 점' 의 **무엇:** 항목 + '반드시 수정' 내용.
-처리한 지적은 해시로 상태에 남겨 다시 보내지 않음. 메인 경유 원칙: 허브에 직접 보내지 않고 메인 터미널에만 알림.
+처리한 지적은 해시로 상태에 남겨 다시 보내지 않음. 메인 경유 원칙: 허브에 직접 보내지 않고 메인 받은 편지함에만 알림.
 """
 import hashlib
 import json
@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import hub_status
+import main_inbox
 import main_terminal as mt
 
 MARK = re.compile(r"<!-- lrm-ai-review:(\w+) -->")
@@ -453,24 +454,9 @@ def write_fail(out_dir, pr, hub, sha, fails, slack_ts=""):
     return path
 
 
-def main_handle(env_path):
-    """main.env 의 MAIN_TERMINAL 값만 읽음(다른 줄은 보지 않음)"""
-    try:
-        for ln in Path(env_path).read_text(encoding="utf-8").splitlines():
-            if ln.startswith("MAIN_TERMINAL="):
-                return ln.split("=", 1)[1].strip() or None
-    except OSError:
-        pass
-    return None
-
-
-def send_main(orca, handle, text):
-    try:
-        p = subprocess.run([orca, "terminal", "send", "--terminal", handle, "--text", text, "--enter", "--wait-submit", "20", "--json"],
-                           capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
-        return p.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
+def send_main(text, source, kind="ci", hub_dir=None):
+    """메인 받은 편지함(main.jsonl)에 한 줄. 메인 터미널 입력창에는 쓰지 않음. 같은 알림은 최근 500줄 안에서 한 번만. 쓰기 실패는 False"""
+    return main_inbox.sender(source, kind, hub=hub_dir)(text)
 
 
 def error_text(pr, errs):

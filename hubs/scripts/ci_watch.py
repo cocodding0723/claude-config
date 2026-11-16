@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PR CI 결론을 Slack 봇 DM 으로 1회 알림 + AI 리뷰 새 지적을 메인 터미널에 전달. launchd(ai.lrm.cinotify) 5분 주기.
+"""PR CI 결론을 Slack 봇 DM 으로 1회 알림 + AI 리뷰 새 지적을 메인 받은 편지함(main.jsonl)에 전달. launchd(ai.lrm.cinotify) 5분 주기.
 실패는 warn + 검사별 원인 한 줄, 감시 검사가 전부 통과하면 done 한 줄. 진행 중은 보내지 않음.
 
 감시 PR: ci-watch.txt(한 줄에 PR 번호, # 주석) — 없거나 비면 열린 PR 중 내 것.
@@ -27,7 +27,6 @@ STATE = DIR / "ci-watch.state.json"
 GH = os.environ.get("LRM_GH", "gh")
 NOTIFY = os.environ.get("LRM_NOTIFY", str(DIR / "slack_notify.sh"))
 ORCA = mt.find_orca()  # launchd 의 짧은 PATH 에서도 찾음(LRM_ORCA 우선)
-MAIN_ENV = os.environ.get("LRM_MAIN_ENV", str(DIR / "main.env"))
 HUBS_TSV = DIR / "hubs.tsv"
 QA_SLUG = os.environ.get("LRM_QA_HUB_SLUG", "test-qa")  # 공통 원인 담당 허브
 WT_LIMIT = int(os.environ.get("LRM_WT_LIMIT", "1000"))  # worktree list 행 상한
@@ -153,8 +152,13 @@ def passed_message(pr):
     return "done", f"CI 통과\n\n참고: {ref}"
 
 
+def send_main(text, kind):
+    """메인 받은 편지함에 알림 한 줄(회차 안 같은 원인 재전송은 편지함이 id 로 거름)"""
+    return review.send_main(text, "ci_watch", kind, str(DIR))
+
+
 def relay_review(pr, checks, prev, baseline, dry, state):
-    """AI 리뷰가 끝났으면 새 지적을 메인 터미널에 전달. 첫 실행은 기존 지적을 본 것으로만 기록"""
+    """AI 리뷰가 끝났으면 새 지적을 메인 받은 편지함에 전달. 첫 실행은 기존 지적을 본 것으로만 기록"""
     if not review.review_finished(checks):
         return
     try:
@@ -169,10 +173,9 @@ def relay_review(pr, checks, prev, baseline, dry, state):
     errs = [f for f in new if f["kind"] == "오류"]
     if errs and not baseline:
         # 리뷰어 실패는 지적이 아니므로 허브에 배정하지 않고 재실행 대상으로만 알림
-        handle = review.main_handle(MAIN_ENV)
         if dry:
             print(f"--- review-error\n{review.error_text(pr, errs)}")
-        elif not (handle and review.send_main(ORCA, handle, review.error_text(pr, errs))):
+        elif not send_main(review.error_text(pr, errs), "review"):
             return
         new = [f for f in new if f["kind"] != "오류"]
         if not new:
@@ -189,10 +192,9 @@ def relay_review(pr, checks, prev, baseline, dry, state):
                 print(f"  [{f['kind']}·{f['role']}] {f['text'][:100]}")
             return
         path = review.write_summary(REVIEW_OUT, pr, hub, new)
-        handle = review.main_handle(MAIN_ENV)
-        if not (handle and review.send_main(ORCA, handle, review.relay_text(pr, hub, len(new), path))):
+        if not send_main(review.relay_text(pr, hub, len(new), path), "review"):
             # 메인 전달 실패: Slack 경고로 알리고 다음 주기에 다시 전달
-            subprocess.run([NOTIFY, "--kind", "warn", "--tag", "ci-review", f"AI 리뷰 지적 메인 전달 실패\n\n• 무엇: PR #{pr['number']} 지적 {len(new)}건\n• 왜: 메인 터미널 전송 실패\n• 결과: 다음 주기에 다시 보냄\n\n👉 답: 메인 세션에서 set_main_terminal.sh 로 핸들 확인\n\n참고: {path}"])
+            subprocess.run([NOTIFY, "--kind", "warn", "--tag", "ci-review", f"AI 리뷰 지적 메인 전달 실패\n\n• 무엇: PR #{pr['number']} 지적 {len(new)}건\n• 왜: 메인 받은 편지함 쓰기 실패\n• 결과: 다음 주기에 다시 보냄\n\n👉 답: hub-inbox 폴더 권한·디스크 확인\n\n참고: {path}"])
             return
     prev[SEEN] = sorted(seen | {f["id"] for f in new})
 
@@ -235,7 +237,7 @@ def pick_hub(pr, state, with_common=False):
 
 
 def relay_fail(pr, fails, prev, state, slack_ts=""):
-    """CI 실패를 메인 터미널에 전달(허브가 고치도록 메인이 배정). 같은 커밋은 1회. 전송 실패는 Slack warn 이 대신함
+    """CI 실패를 메인 받은 편지함에 전달(허브가 고치도록 메인이 배정). 같은 커밋은 1회. 전송 실패는 Slack warn 이 대신함
     리뷰어 오류로만 실패한 경우는 'AI 리뷰 오류' 알림이 이미 갔으므로 보내지 않음.
     같은 구체 원인이 다른 PR 에도 있으면 테스트·QA 허브로 지정하고, 이미 다른 허브로 전달한 PR 은 담당 변경을 알림"""
     fails = [c for c in fails if not c.get("reviewer_error")]
@@ -246,13 +248,12 @@ def relay_fail(pr, fails, prev, state, slack_ts=""):
     causes = state.setdefault(CAUSES, {})
     old = causes.get(n) if (causes.get(n) or {}).get("head") == sha else None
     causes[n] = {"head": sha, "fails": [{"key": c["key"], "cause": c.get("cause", ""), "msg": c.get("msg", "")} for c in fails], "hub": (old or {}).get("hub", "")}
-    handle = review.main_handle(MAIN_ENV)
     hub, why_hub = pick_hub(pr, state, with_common=True)
     for m in review.common_cause(causes, n):
         e = causes[m]
-        if e.get("hub") and e["hub"] != hub and hub != review.UNASSIGNED and handle:
+        if e.get("hub") and e["hub"] != hub and hub != review.UNASSIGNED:
             text = f"[CI→메인] 담당 변경 PR#{m} · {e['hub']} → {hub} · 근거: 같은 원인이 PR #{n} 에도 있음"
-            if review.send_main(ORCA, handle, text):
+            if send_main(text, "ci"):
                 e["hub"] = hub
     if prev.get(FAIL_SENT) == sha:
         return
@@ -260,7 +261,7 @@ def relay_fail(pr, fails, prev, state, slack_ts=""):
     first = fails[0]
     why = first.get("cause") or "원인 줄 못 찾음"
     text = f"[CI→메인] CI 실패 PR#{pr['number']} · 담당 허브 {hub} ({why_hub}) · 원인 {first['key']}: {why} · 파일 {path}"
-    if handle and review.send_main(ORCA, handle, text):
+    if send_main(text, "ci"):
         prev[FAIL_SENT] = sha
         causes[n]["hub"] = hub
 

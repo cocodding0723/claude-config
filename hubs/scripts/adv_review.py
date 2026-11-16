@@ -2,7 +2,7 @@
 """PR 적대적 리뷰 1회 실행. ci_watch.py 가 새 head 를 처음 볼 때 백그라운드로 띄움.
 
 흐름: gh pr diff → 파일 단위 덩어리 → 덩어리마다 1차 리뷰 → 지적 전체를 2차 검증 → 확인된 것만 남김
-     → PR-N-커밋-adv.md + 메인 터미널 전달 + Slack(지적 있으면 warn, 없으면 done). PR 에는 쓰지 않음(허브가 답글과 함께 처리).
+     → PR-N-커밋-adv.md + 메인 받은 편지함 전달 + Slack(지적 있으면 warn, 없으면 done). PR 에는 쓰지 않음(허브가 답글과 함께 처리).
 모델: ADV_MODEL(기본 Fable 5.2), 실패·한도 초과 시 ADV_FALLBACK(기본 Opus 5.5). 읽기 도구만 허용.
 비용 상한: ADV_DAILY_MAX(하루 실행), ADV_MAX_CHUNKS(덩어리 수 상한, 넘으면 건너뜀). 하루 상한 초과는 그날 Slack 1회.
 트리거: PR 이 ready 가 될 때 1회(ci_watch, LRM_ADV_SCOPE=bundle 이면 묶음 PR 만) + 수동 요청(이 스크립트 직접 실행).
@@ -28,7 +28,6 @@ GH = os.environ.get("LRM_GH", "gh")
 CLAUDE = os.environ.get("LRM_CLAUDE", "claude")
 NOTIFY = os.environ.get("LRM_NOTIFY", str(DIR / "slack_notify.sh"))
 ORCA = mt.find_orca()  # launchd 짧은 PATH 대응
-MAIN_ENV = os.environ.get("LRM_MAIN_ENV", str(DIR / "main.env"))
 STATE = DIR / "adv-review.state.json"
 LOCK = DIR / "adv-review.lock"
 OUT = DIR / "ci-review"
@@ -174,10 +173,8 @@ def run(n, head, dry):
         print(json.dumps({"path": str(path), "raw": len(raw), "confirmed": found, "model": model}, ensure_ascii=False, indent=1))
         return path
     if found:
-        handle = review.main_handle(MAIN_ENV)
         text = f"[CI→메인] 적대적 리뷰 지적 {len(found)}건(high {sev['high']}·medium {sev['medium']}) PR#{n} · 담당 허브 {hub} · 파일 {path}"
-        if handle:
-            review.send_main(ORCA, handle, text)
+        review.send_main(text, "adv_review", "review", str(DIR))
         slack("warn", f"PR #{n} 적대적 리뷰 지적 {len(found)}건\n\n• 무엇: high {sev['high']} · medium {sev['medium']} · low {sev['low']}\n• 왜: 검증을 통과한 지적만 남김\n• 결과: 메인이 담당 허브({hub})에 배정\n\n👉 답: 없음(허브가 처리)\n\n참고: {path}")
     else:
         slack("done", f"PR #{n} 적대적 리뷰 지적 없음\n\n참고: 1차 후보 {len(raw)}건 모두 검증에서 제외")

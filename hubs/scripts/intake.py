@@ -2,7 +2,7 @@
 """명령 접수기: slack-inbox.jsonl 의 새 사용자 명령에 번호를 매기고 장부에 '접수' 행을 남기며 머리말로 라우팅 대상을 기록.
 
 번호·장부·라우팅 뒤, 담당 허브가 main 이 아니면 그 허브 코디네이터 터미널에 '[접수 #번호] 원문' 한 줄을 하달함(deliver). 명령 해석·실행은 하지 않음.
-하달 실패(허브 행·터미널 없음·후보 여러 개·조회 실패·전송 실패)는 조용히 버리지 않음: 장부를 '보류'+'전달 실패' 로 바꾸고 메인 터미널로 알림.
+하달 실패(허브 행·터미널 없음·후보 여러 개·조회 실패·전송 실패)는 조용히 버리지 않음: 장부를 '보류'+'전달 실패' 로 바꾸고 메인 받은 편지함(main.jsonl)으로 알림.
 하달은 최대 한 번: 전송 직전 'sending' 을 저장하므로 전송 중 죽은 회차의 명령은 중복 전송 없이 '도착 불명'으로 메인에 알림.
 멱등: 메시지 ts 로 접수 여부를 판정하므로 같은 줄을 다시 읽어도 번호·장부 행이 늘지 않음.
 동시 실행(폴러·소켓): 상태 파일 옆 .lock 에 flock 을 잡고 한 번에 하나만 처리함.
@@ -10,7 +10,7 @@
 첫 설치(상태 파일 없음)에서만 접수 기한(기본 24시간)보다 묵은 줄을 접수 없이 '본 것'으로 표시함. 운영 중 쌓인 미처리 명령은 나이와 무관하게 접수함.
 
 환경: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs) · LRM_LEDGER 장부 · LRM_INTAKE_ROUTES 머리말 표 · LRM_INTAKE_BUDGET_S 시간 예산
-      LRM_HUBS_TABLE 허브 표(기본 작업 폴더 hubs.tsv) · LRM_MAIN_ENV 메인 핸들 파일 · LRM_ORCA orca 실행 파일 · LRM_INTAKE_DELIVER_S 하달 시간 예산
+      LRM_HUBS_TABLE 허브 표(기본 작업 폴더 hubs.tsv) · LRM_ORCA orca 실행 파일 · LRM_INTAKE_DELIVER_S 하달 시간 예산
 시간 예산: 접수 단계 전체(잠금 대기 포함)에 LRM_INTAKE_BUDGET_S(기본 10초) 상한. 넘기면 하던 일을 멈추고 종료 코드 3 — 폴러 뒤 메인 전달을 막지 않고 다음 회차가 이어받음.
 종료 코드: 0 성공(접수 0건 포함), 1 파일 읽기·쓰기 실패, 2 설정 오류(머리말 표 형식 등), 3 시간 예산 초과·잠금 대기 초과(다음 회차 재시도)
 """
@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # 복사·링크 설치에서도 같은 폴더의 ledger 를 찾음
 import ledger  # noqa: E402
+import main_inbox  # noqa: E402
 import main_terminal as mt  # noqa: E402
 import slack_push as sp  # noqa: E402  # turn_started 없는 영수증의 화면 보강 확인(confirm_screen·box_state·LRM_PUSH_CONFIRM 설정)을 그대로 씀
 
@@ -56,9 +57,8 @@ class Conf:
     deliver_s: float = 60.0  # 하달 단계 시간 상한. orca 호출 대기가 길어 접수 예산과 따로 둠
     sent: str = ""  # 하달 상태 파일 {번호: {st, hub, at, why}}
     hubs_table: str = ""
-    main_env: str = ""
+    hub_dir: str = ""  # 메인 받은 편지함이 있는 작업 폴더
     orca: str = ""
-    main_spec: object = None
     ws_root: str = ""  # hubs.tsv 의 ws_root 가 '-' 인 허브의 작업 폴더 기본 위치(create_hub.sh 의 WS_ROOT 기본값과 같음)
     deliver_max_age_s: int = 3600  # 이보다 묵은 접수는 하달하지 않음(재개 직후 옛 명령이 허브로 쏟아지는 것 방지). 장부·메인 알림으로 남김
 
@@ -74,10 +74,9 @@ class Conf:
             self.deliver_s = float(os.environ.get("LRM_INTAKE_DELIVER_S", self.deliver_s))
         self.table = self.table or os.environ.get("LRM_INTAKE_ROUTES") or join("intake-routes.tsv")
         self.sent = self.sent or join("intake-sent.json")
+        self.hub_dir = self.hub_dir or HUB_DIR
         self.hubs_table = self.hubs_table or os.environ.get("LRM_HUBS_TABLE") or join("hubs.tsv")
-        self.main_env = self.main_env or os.environ.get("LRM_MAIN_ENV") or join("main.env")
         self.orca = self.orca or mt.find_orca()  # launchd 최소 PATH 에서도 후보 설치 경로까지 찾음
-        self.main_spec = self.main_spec or mt.Spec.from_env()
         self.ws_root = self.ws_root or os.environ.get("LRM_HUB_WS_ROOT") or os.path.expanduser("~/orca/workspaces/LoveRevolutionMaker")
 
 
@@ -412,30 +411,14 @@ def send_confirmed(run, handle: str, text: str, ok_target) -> str:
     return "sent" if verdict == "sent" else "unconfirmed"
 
 
-def tell_main(conf: Conf, run, text: str) -> str:
-    """메인 터미널로 알림: 'sent' | 'unconfirmed'(도착 불명, 재전송 안 함) | 'failed'(보내지 못함, 다음 회차 재시도).
-    slack_socket.send_main 과 같은 원칙: 보내기 전에 check_link 로 메인(경로·claude·pane)임을 확인하고,
-    확인 실패가 사람이 고쳐야 풀리는 사유(REDISCOVER)일 때나 입력 전 거절일 때만 재탐색 1회. 조회 실패·쓰기 불가는 보내지 않음"""
-    handle = mt.read_handle(conf.main_env)
-    main_ok = lambda t: mt.target_why(t, conf.main_spec)  # noqa: E731
-    if handle:
-        _, why = mt.check_link(run, conf.main_spec, handle)
-        if why and why not in mt.REDISCOVER:
-            return "failed"
-        if not why:
-            res = send_confirmed(run, handle, text, main_ok)
-            if res in ("sent", "unconfirmed"):
-                return res
-            if res != "rejected":
-                return "failed"
-    found = mt.rediscover(run, conf.main_spec, conf.main_env)
-    new = found.handle if found.status in ("updated", "current_ok") else ""
-    if found.status == "current_ok":
-        new = mt.read_handle(conf.main_env) or ""
-    if not new or new == handle:
+def tell_main(conf: Conf, run, text: str, rid: str = "") -> str:
+    """메인 받은 편지함(main.jsonl)에 알림 한 줄: 'sent' | 'failed'(쓰기 실패, 다음 회차 재시도). 메인 터미널 입력창에는 쓰지 않음.
+    접수 번호(rid)가 멱등 키의 일부라 재시도해도 같은 알림이 두 줄 되지 않음"""
+    try:
+        main_inbox.append("intake", text, "intake", ref=f"#{rid}" if rid else None, hub=conf.hub_dir)
+    except (OSError, ValueError):
         return "failed"
-    res = send_confirmed(run, new, text, main_ok)
-    return res if res in ("sent", "unconfirmed") else "failed"
+    return "sent"
 
 
 def load_sent(path: str) -> dict:
@@ -545,7 +528,7 @@ def deliver(conf: Conf, now: float, run=None, dry: bool = False) -> dict:
                 ent["ledgered"] = True
             out["failed"].append(rid)
             text = f"[접수 #{rid} 하달 실패 → 메인이 처리] {hub} 허브: {ent['why']}\n{line_for(rid, e.get('text') or '')}"
-            res = "failed" if dry else tell_main(conf, run, text)
+            res = "failed" if dry else tell_main(conf, run, text, rid)
             if res != "failed":  # unconfirmed 도 재전송하지 않음(중복 방지). 장부 보류 기록은 남아 있음
                 ent["st"] = ST_NOTIFIED
                 out["notified"].append(rid)

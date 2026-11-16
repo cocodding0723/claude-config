@@ -16,7 +16,7 @@ mk 2 10; adv
 f="$D/ci-review/PR-700-1234567890ab-adv.md"
 [ "$RC" = 0 ] && grep -q "확인 지적 1건" "$f" && grep -q "널 참조" "$f" && ! grep -q "가짜" "$f" && ok "검증 통과 지적만 남김" || ko "검증 필터" "$(cat "$D/out")"
 grep -q "claude-fable-5-2" "$D/models.log" && ! grep -q opus "$D/models.log" && ok "기본 모델 Fable 5.2" || ko "모델" "$(cat "$D/models.log")"
-grep -q "적대적 리뷰 지적 1건(high 1·medium 0) PR#700 · 담당 허브 VFX" "$D/orca.log" && grep -q -- "--kind warn" "$D/sent.log" && ok "메인 전달 + Slack warn" || ko "전달" "$(cat "$D/orca.log")"
+grep -q "적대적 리뷰 지적 1건(high 1·medium 0) PR#700 · 담당 허브 VFX" "$D/hub-inbox/main.jsonl" && grep -q '"source":"adv_review"' "$D/hub-inbox/main.jsonl" && ! grep -q "^terminal send" "$D/orca.log" && grep -q -- "--kind warn" "$D/sent.log" && ok "메인 받은 편지함 기록(터미널 send 없음) + Slack warn" || ko "전달" "$(cat "$D/hub-inbox/main.jsonl")"
 ! grep -rq "gh pr comment\|issues/.*/comments" "$D/out" && ok "PR 에 직접 쓰지 않음" || ko "PR 쓰기"
 
 : > "$D/models.log"; FAKE_FAIL_MODEL=claude-fable-5-2 adv
