@@ -34,6 +34,7 @@ from slack_sdk.socket_mode.response import SocketModeResponse
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # 링크·-I 실행에서도 같은 폴더의 공용 모듈(card_actions·main_terminal·ledger_sync)을 찾음
 import answer_route  # noqa: E402
+import main_inbox  # noqa: E402
 import answer_store  # noqa: E402
 import card_actions as actions  # noqa: E402
 import ledger  # noqa: E402
@@ -45,14 +46,12 @@ POLL = os.path.join(DIR, "slack_poll.sh")
 MAX_FAILS = 5  # 재연결 연속 실패 상한. 넘으면 EXIT_RESTART 로 끝냄
 EXIT_RESTART = 3
 STORE = answer_store.AnswerStore(DIR)  # 결정 답 기록·중복 판정은 문서 사이트와 공용
-MAIN_ENV = os.environ.get("LRM_MAIN_ENV", os.path.join(DIR, "main.env"))
 # launchd 기본 PATH(/usr/bin:/bin)에는 orca 가 없어 전달이 실패했음 → PATH 밖 설치 위치도 찾음
 ORCA = mt.find_orca()
 NOTIFY = os.environ.get("LRM_NOTIFY", os.path.join(DIR, "slack_notify.sh"))
 BLOCK_RE = re.compile(r"^lrm_decide:([A-Za-z0-9-]{1,32})$")
 MODAL_ID = "lrm_custom"
 CUSTOM_MAX = 500  # 직접 입력 글자 상한
-SPEC = mt.Spec.from_env()  # 메인 판정 기준. slack_push 와 같은 환경 변수(LRM_PUSH_MAIN·LRM_PUSH_PANE)
 
 
 def card_title(message: dict) -> str:
@@ -76,57 +75,12 @@ def answered(message: dict, line: str) -> list:
     return out
 
 
-def main_handle(path: str):
-    """main.env 의 MAIN_TERMINAL 값만 읽음"""
-    try:
-        for ln in open(path, encoding="utf-8"):
-            if ln.startswith("MAIN_TERMINAL="):
-                return ln.split("=", 1)[1].strip() or None
-    except OSError:
-        pass
-    return None
-
-
-def orca_run(args: list, timeout: float):
-    return mt.run_orca(ORCA, args, timeout)
-
-
-def send_to(handle: str, text: str) -> str:
-    """전송 결과 분류. 'sent' | 'gone'(핸들 무효 오류 = 입력 전 거절, 아무 터미널에도 안 들어감) | 'unknown'(시간 초과·일반 오류. 입력됐을 수 있음)"""
-    rc, d = mt.run_orca(ORCA, ["terminal", "send", "--terminal", handle, "--text", text, "--enter", "--wait-submit", "20", "--json"], 60)
-    if rc == 0:
-        return "sent"
-    return "gone" if mt.error_code(d) in mt.HANDLE_GONE_CODES else "unknown"
-
-
 def send_main(text: str) -> bool:
-    """메인 터미널로 전달. 대상을 바꿔 다시 보내는 경우는 옛 대상에 입력되지 않았음이 확실할 때만:
-    ① 보내기 전 확인에서 옛 대상이 메인이 아님(보낸 적 없음) ② 전송이 핸들 무효 오류로 거절됨.
-    시간 초과·일반 오류는 입력됐을 수 있어 재탐색·재전송 없이 실패로 돌려줌(두 터미널에 중복 전달 방지)"""
-    handle = main_handle(MAIN_ENV)
-    if handle:
-        _, why = mt.check_link(orca_run, SPEC, handle)
-        if why and why not in mt.REDISCOVER:  # 조회 실패·쓰기 불가: 메인인지 확인 못 함. 보내지 않고 실패(재탐색도 안 함)
-            log(f"메인 확인 실패({why}) — 전달 보류")
-            return False
-        if not why:  # 메인임을 확인함. 설정된 대상으로 보냄
-            res = send_to(handle, text)
-            if res == "sent":
-                return True
-            if res != "gone":
-                log("메인 전달 실패 — 도착 여부 불명이라 대상을 바꾸지 않음")
-                return False
-    else:
-        why = "no_main_handle"
-    found = mt.rediscover(orca_run, SPEC, MAIN_ENV)
-    if found.status == "current_ok":  # 다른 쪽이 이미 고침
-        new = main_handle(MAIN_ENV)
-        return bool(new) and new != handle and send_to(new, text) == "sent"
-    if found.status != "updated":
-        log(f"메인 재탐색 {found.status} 후보={found.count} (사유={why}) — set_main_terminal.sh 확인" if handle else "메인 터미널 없음 — main.env 의 MAIN_TERMINAL 확인")
-        return False
-    log(f"재탐색으로 갱신 {found.handle[:8]}")
-    return send_to(found.handle, text) == "sent"
+    """메인 받은 편지함(main.jsonl)에 한 줄 남김. 터미널 입력창에는 쓰지 않음(사용자 입력과 섞임). 쓰기 실패는 False"""
+    ok = main_inbox.sender("slack_socket", "answer", hub=DIR)(text)
+    if not ok:
+        log("메인 받은 편지함 쓰기 실패 — hub-inbox 폴더 권한·디스크 확인")
+    return ok
 
 
 def note_thread(kind: str, thread: str, text: str) -> None:
@@ -253,7 +207,7 @@ class Decide:
 
     def report(self, did: str, ts: str, title: str, label: str, out) -> None:
         if not out.ok:
-            where = "메인 터미널" if out.via == "main" else f"{out.hub} 허브·메인 터미널"
+            where = "메인 받은 편지함" if out.via == "main" else f"{out.hub} 허브·메인 받은 편지함"
             warn_slack(ts, f"{'메인' if out.via == 'main' else '허브'} 전달 실패: {title or did} = {label}\n\n• 무엇: 버튼 답은 기록했지만 {where}로 못 보냄 ({out.note})\n• 결과: 메인에 직접 알려 주세요")
         log(f"결정 {did} 버튼 답 기록 · {'메인' if out.via == 'main' else f'허브 {out.hub} {out.via}'} 전달 {'성공' if out.ok else '실패'}")
 

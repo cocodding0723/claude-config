@@ -16,6 +16,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import hub_dups  # noqa: E402
+import main_inbox  # noqa: E402
 import main_terminal as mt  # noqa: E402
 
 DIR = os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
@@ -264,11 +265,11 @@ def str_list(v) -> list:
 def run_notify(args: dict) -> tuple[int, str]:
     """멈춘 워커 알림: 허브 코디네이터 터미널 한 곳에 한 줄만 전송. 워커·창은 건드리지 않음.
     입력 막힘(BLOCKED)은 막힌 핸들에만 BLOCK_GAP_S 간격 최대 BLOCK_RETRIES 회 재시도(허브 여러 곳은 한 라운드에 같이). 성공하면 즉시 중단.
-    끝내 실패하면 메인 터미널에 원문을 대리 전달(막힘이면 '창 확인 필요' 문구 포함). 시간 초과(전달 불명)는 재시도 없이
-    원문을 다시 보내지 않고 메인에 '확인 필요' 한 줄만. 메인 전달 실패·전달 불명·중복 알림 실패는 rc=1"""
+    끝내 실패하면 메인 받은 편지함(main.jsonl)에 원문을 대리 전달(막힘이면 '창 확인 필요' 문구 포함). 시간 초과(전달 불명)는 재시도 없이
+    원문을 다시 보내지 않고 메인에 '확인 필요' 한 줄만. 편지함 쓰기 실패·전달 불명·중복 알림 실패는 rc=1"""
     st = {"sent": 0, "lost": 0}
     notes = []
-    main_handle = mt.read_handle(os.environ.get("LRM_MAIN_ENV") or os.path.join(DIR, "main.env"))
+    tell_main = main_inbox.sender("card_actions", "stall")  # 메인 터미널 입력 대신 받은 편지함. 입력창에 글이 섞이지 않음
 
     def settle(label: str, slug: str, body: str, res) -> None:
         status, tries, codes, found = res
@@ -282,18 +283,17 @@ def run_notify(args: dict) -> tuple[int, str]:
         if status == UNKNOWN:
             st["lost"] += 1  # 확인 필요도 성공이 아님
             msg = f"[멈춘 워커 감시] {label} 허브 알림이 시간 초과로 전달 여부 불명 — 확인 필요(원문은 다시 보내지 않았음)"
-            err = send_line(main_handle, msg) if main_handle else "main_handle_missing"
-            notes.append(f"{label}: 전달 불명(시간 초과), 확인 필요 · " + ("메인에 확인 요청 전달" if err is None else f"메인 확인 요청도 실패({err})"))
+            ok = tell_main(msg)
+            notes.append(f"{label}: 전달 불명(시간 초과), 확인 필요 · " + ("메인에 확인 요청 전달" if ok else "메인 확인 요청도 실패(inbox_write_failed)"))
             return
         why = f"전송 실패({', '.join(dict.fromkeys(codes))})" if codes else "코디네이터 터미널 없음"
         extra = f" · {block_note(label)}" if status == BLOCKED else ""
         proxy = f"[멈춘 워커 감시] ({label} 허브에 전달하지 못해 메인에 대리 전달{extra}) " + body
-        err = send_line(main_handle, proxy) if main_handle else "main_handle_missing"
-        if err is None:
+        if tell_main(proxy):  # 본문 전체를 text 에 담음(4KiB 초과분은 전문 파일). 사용자 답·알림 원문 보존
             notes.append(f"{label}: {why} · 메인에 대리 전달" + extra)
         else:
             st["lost"] += 1
-            notes.append(f"{label}: {why} · 메인 대리 전달도 실패({err})" + (" — 전달 불명, 확인 필요" if err == "timeout" else "") + extra)
+            notes.append(f"{label}: {why} · 메인 대리 전달도 실패(inbox_write_failed)" + extra)
 
     waiting = []  # 입력이 막혀 재시도 중인 허브: [라벨, slug, 본문, 알림 문구, 결과]
     hubs = args.get("hubs")
@@ -327,7 +327,7 @@ def run_notify(args: dict) -> tuple[int, str]:
     dups = [d for d in args.get("dups", []) if isinstance(d, dict) and isinstance(d.get("slug"), str)] if isinstance(args.get("dups"), list) else []
     if dups:
         text = "[멈춘 워커 감시] 중복 코디네이터: " + "; ".join(f"{d['slug']} ({' / '.join(str_list(d.get('titles')))})" for d in dups) + " — 닫지 않았음, 정리 여부 판단 필요"
-        if main_handle and send_line(main_handle, text[:600]) is None:
+        if tell_main(text[:600]):
             notes.append("중복 코디네이터를 메인에 알림")
         else:
             st["lost"] += 1

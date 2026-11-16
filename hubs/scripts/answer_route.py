@@ -21,7 +21,7 @@ from typing import Callable
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import answer_store  # noqa: E402
 import card_actions as actions  # noqa: E402
-import main_terminal as mt  # noqa: E402
+import main_inbox  # noqa: E402
 
 HUB_LINE = "사용자 원문: {body} (출처: {source})"
 MAIN_LINE = "[{source}→메인] {body} ({ts})"
@@ -47,7 +47,7 @@ class Outcome:
 
 
 class Router:
-    """to_main: 메인 터미널 전송 함수(text) -> 성공 여부. deliver: 허브 전송 함수(slug, text) -> (상태, 시도 수, 실패 코드, 후보 수)"""
+    """to_main: 메인 받은 편지함 기록 함수(text) -> 성공 여부. deliver: 허브 전송 함수(slug, text) -> (상태, 시도 수, 실패 코드, 후보 수)"""
 
     def __init__(self, store: answer_store.AnswerStore, to_main: Callable[[str], bool], deliver: Callable = actions.deliver,
                  redeliver: Callable = actions.redeliver) -> None:
@@ -130,11 +130,6 @@ class Router:
         return Outcome(ok, "proxy" if ok else "lost", hub, f"{hub} 허브 전송 실패({why}{stuck})" + ("" if ok else " · 메인 대리 전달도 실패"))
 
 
-def main_line_sender(env_path: str | None = None) -> Callable[[str], bool]:
-    """main.env 의 메인 터미널에 한 줄 보내는 단순 전송(문서 사이트용). 핸들 재탐색은 하지 않음 — Slack 수신기의 send_main 이 그 일을 맡음"""
-    path = env_path or os.environ.get("LRM_MAIN_ENV") or os.path.join(os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs"), "main.env")
-
-    def send(text: str) -> bool:
-        handle = mt.read_handle(path)
-        return bool(handle) and actions.send_line(handle, text) is None
-    return send
+def main_line_sender(hub_dir: str | None = None) -> Callable[[str], bool]:
+    """메인 받은 편지함(main.jsonl)에 한 줄 남기는 전송(문서 사이트용). 메인 터미널 입력창에는 쓰지 않음. 쓰기 실패는 False"""
+    return main_inbox.sender("answer_route", "answer", hub=hub_dir)

@@ -128,11 +128,13 @@ class ApproveTest(ServerBase):
         self.assertEqual(len(self.approvals()), 1)
 
     def test_failed_delivery_keeps_approval_and_redelivers_once(self):
-        os.environ["FAKE_ORCA_FAIL"] = "1"
+        blocked = os.path.join(self.env.hub, "hub-inbox")
+        with open(blocked, "w", encoding="utf-8"):  # 메인 받은 편지함 쓰기 실패 재현
+            pass
         st, j = self.approve()
         self.assertEqual(st, 502)
         self.assertEqual(len(self.approvals()), 1)
-        os.environ.pop("FAKE_ORCA_FAIL")
+        os.remove(blocked)
         st, j = self.approve()
         self.assertEqual((st, j["ok"]), (200, True))
         self.assertEqual(self.audit()[-1]["result"], "redeliver:main:ok")
