@@ -27,6 +27,7 @@ case ${FAKE_MODE:-pass} in
   slow) sleep 20; exit 0;;
 esac
 head=$(git rev-parse HEAD)
+[ -n "${FAKE_TOUCH:-}" ] && echo z >> "$FAKE_TOUCH"
 printf '{"head":"%s","base":"%s","tree_dirty":%s,"steps":[{"name":"compile","status":"pass","seconds":1.5,"note":""}],"total_seconds":1.5}\n' "$head" "$base" "$([ -n "${FAKE_TREE_DIRTY:-}" ] && echo true || echo false)" > "$rep"
 GATE
 }
@@ -131,10 +132,30 @@ out=$(push "$G" feat/a); rc=$?
 [ $rc = 0 ] && ok "미추적 파일은 무시" || ko "미추적" "rc=$rc $out"
 rm -f "$G/untracked.txt"
 # 보고서 tree_dirty=true → 거부·기록 없음
-export FAKE_TREE_DIRTY=1; newc "$G" c6
+# (검사 중 실제 내용 변경이 있을 때만 거부: 가짜 게이트가 추적 파일을 고침)
+echo t > "$G/touch.txt"; git -C "$G" add touch.txt; git -C "$G" commit -q -n -m touch
+export FAKE_TREE_DIRTY=1 FAKE_TOUCH=touch.txt; newc "$G" c6
 out=$(push "$G" feat/a); rc=$?; head=$(git -C "$G" rev-parse HEAD)
-[ $rc != 0 ] && printf '%s' "$out" | grep -q 'tree_dirty' && ! ls "$SB/store/$head".*.json 2>/dev/null | grep -qv last && ok "보고서 tree_dirty: 거부·기록 없음" || ko "tree_dirty" "rc=$rc $out"
+[ $rc != 0 ] && printf '%s' "$out" | grep -q 'tree_dirty' && ! ls "$SB/store/$head".*.json 2>/dev/null | grep -qv last && ok "보고서 tree_dirty + 내용 변경: 거부·기록 없음" || ko "tree_dirty" "rc=$rc $(printf %s "$out" | tr "\n" /)"
+git -C "$G" checkout -q -- touch.txt; unset FAKE_TOUCH
+# 옛 스크립트의 tree_dirty=true 라도 작업 트리가 깨끗하면(CR 만 다름 포함) 통과
+newc "$G" c6b
+out=$(push "$G" feat/a); rc=$?; head=$(git -C "$G" rev-parse HEAD)
+[ $rc = 0 ] && ls "$SB/store/$head".*.json 2>/dev/null | grep -qv last && ok "보고서 tree_dirty 만, 내용 변경 없음: 통과" || ko "tree_dirty 오탐" "rc=$rc $out"
 unset FAKE_TREE_DIRTY
+# eol=lf 속성 + CRLF 로 저장된 파일(실측 상태): 변경으로 보이지만 push 통과, 내용 변경은 거부
+git -C "$G" -c core.autocrlf=false -c core.safecrlf=false commit -q -n --allow-empty -m e0
+printf 'a\r\nb\r\n' > "$G/crlf.txt"; git -C "$G" -c core.autocrlf=false add crlf.txt
+git -C "$G" commit -q -n -m crlf
+printf '* text=auto\ncrlf.txt text eol=lf\n' > "$G/.gitattributes"; git -C "$G" add .gitattributes; git -C "$G" commit -q -n -m attr
+printf 'a\r\nb\r\n' > "$G/crlf.txt"
+raw=$(git -C "$G" diff --quiet HEAD && echo clean || echo dirty)
+n=$(calls); out=$(push "$G" feat/a); rc=$?
+[ "$raw" = dirty ] && [ $rc = 0 ] && [ "$(calls)" = "$((n + 1))" ] && ok "eol=lf + CRLF 저장 파일: 줄 끝만 다르면 통과" || ko "eol 통과" "raw=$raw rc=$rc $out"
+newc "$G" c7; printf 'a\r\nX\r\n' > "$G/crlf.txt"; n=$(calls)
+out=$(push "$G" feat/a); rc=$?
+[ $rc != 0 ] && [ "$(calls)" = "$n" ] && printf '%s' "$out" | grep -q 'crlf.txt' && ok "eol 파일의 진짜 내용 변경: 거부·파일명 표시" || ko "eol 내용 변경" "rc=$rc $out"
+git -C "$G" checkout -q -- crlf.txt
 # base 가 다르면 같은 커밋도 다시 실행: origin/feat/a 가 생긴 뒤 같은 커밋을 새 브랜치로 push
 out=$(push "$G" feat/a); rc=$?; head=$(git -C "$G" rev-parse HEAD); n=$(calls)
 git -C "$G" update-ref refs/remotes/origin/feat/other "$(git -C "$G" rev-parse origin/dev)"
