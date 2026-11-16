@@ -199,8 +199,8 @@ exp "git-guard: 따옴표 안 \$( ) 로 실행되는 push --force 는 차단" $G
 PD=pr-draft-guard.sh; HUB="$SB/home/.config/lrm-hubs"
 PR="$SB/prrepo"; mk "$PR" feat/x; git -C "$PR" remote add origin git@github.com:Org/RepoA.git
 exp "pr-draft: create --draft 없음 거부" $PD 'gh pr create --title t --body-file b.md' "$PR" deny
-exp "pr-draft: create --draft 통과" $PD 'gh pr create --draft --title t --body-file b.md' "$PR"
-exp "pr-draft: create -d 통과" $PD 'gh pr create -d -t t' "$PR"
+exp "pr-draft: create --draft 도 기록 폴더 없으면 ask" $PD 'gh pr create --draft --title t --body-file b.md' "$PR" ask
+exp "pr-draft: create -d 도 기록 폴더 없으면 ask" $PD 'gh pr create -d -t t' "$PR" ask
 exp "pr-draft: create --draft=false 는 거부" $PD 'gh pr create --draft=false -t t' "$PR" deny
 exp "pr-draft: gh 아닌 명령 통과" $PD 'git status' "$PR"
 exp "pr-draft: 따옴표 안 gh pr create 글자 무시" $PD "echo 'gh pr create --title x'" "$PR"
@@ -209,7 +209,7 @@ exp "pr-draft: heredoc 뒤 실제 create 는 거부" $PD $'cat <<\'E\'\n문구\n
 exp "pr-draft: bash -c 안 create 는 거부" $PD 'bash -c "gh pr create -t x"' "$PR" deny
 exp "pr-draft: 연결 명령 뒤 create 는 거부" $PD 'git push -u origin HEAD && gh pr create --fill' "$PR" deny
 exp "pr-draft: gh api 로 PR 생성(draft 아님)은 거부" $PD 'gh api repos/Org/RepoA/pulls -f title=t -f head=x -f base=main' "$PR" deny
-exp "pr-draft: gh api 로 draft PR 생성은 통과" $PD 'gh api repos/Org/RepoA/pulls -f title=t -F draft=true' "$PR"
+exp "pr-draft: gh api 로 draft PR 생성은 승인 확인 불가라 ask" $PD 'gh api repos/Org/RepoA/pulls -f title=t -F draft=true' "$PR" ask
 exp "pr-draft: ready 는 기록 폴더 없으면 ask" $PD 'gh pr ready 12' "$PR" ask
 mkdir -p "$HUB"
 exp "pr-draft: ready 승인 기록 없음 거부" $PD 'gh pr ready 12' "$PR" deny
@@ -244,9 +244,78 @@ exp "pr-draft: cd 변수 뒤 worker-start 지시서의 gh 글자는 통과" $PD 
 exp "pr-draft: cd 변수 뒤 echo 인자의 gh 글자는 통과" $PD "cd \"\$W\" && echo 'gh pr create -t x'" "$PR"
 exp "pr-draft: cd 변수 뒤 heredoc 본문의 gh 글자는 통과" $PD $'cd "$W" && cat <<\'EOF\'\ngh pr create -t x\nEOF' "$PR"
 exp "pr-draft: cd 변수 뒤 실제 create(--draft 없음)는 거부 유지" $PD 'cd "$W" && gh pr create -t x' "$PR" deny
-exp "pr-draft: cd 변수 뒤 실제 create --draft 는 통과" $PD 'cd "$W" && gh pr create --draft -t x' "$PR"
+exp "pr-draft: cd 변수 뒤 create --draft 는 저장소 모르면 ask" $PD 'cd "$W" && gh pr create --draft -t x' "$PR" ask
 exp "pr-draft: cd 변수 뒤 ready 는 저장소 모르면 ask 유지" $PD 'cd "$W" && gh pr ready 12' "$PR" ask
 exp "pr-draft: cd 변수 뒤 ready -R 는 승인 기록 기준으로 판정" $PD 'cd "$W" && gh pr ready 12 -R Org/RepoB' "$PR" deny
+# 새 PR 생성 승인(사용자 11-16): D-PR + sha1("저장소:브랜치") 앞 8자
+PRID=$(printf 'Org/RepoA:feat/x' | shasum | cut -c1-8); PRID="D-PR$PRID"
+exp "pr-create: 승인 기록 없으면 --draft 여도 거부" $PD 'gh pr create --draft -t t' "$PR" deny
+msg=$(printf '%s' "$(jq -cn --arg c 'gh pr create --draft -t t' --arg d "$PR" '{tool_input:{command:$c},cwd:$d}')" | HOME="$SB/home" bash "$H/$PD" | jq -r '.hookSpecificOutput.permissionDecisionReason')
+case "$msg" in *"$PRID"*"slack_notify.sh --kind decide"*) ok "pr-create: 차단 메시지에 결정 번호·카드 예시";; *) ko "pr-create: 차단 메시지" "$msg";; esac
+cardrow 200.1 "Org/RepoA feat/x PR 생성 승인" "$PRID" 2 >> "$HUB/slack-inbox.jsonl"
+exp "pr-create: 2번(보류) 답이면 거부" $PD 'gh pr create --draft -t t' "$PR" deny
+cardrow 200.2 "Org/RepoA feat/x PR 생성 승인" "$PRID" 1 >> "$HUB/slack-inbox.jsonl"
+exp "pr-create: 1번 답이면 통과" $PD 'gh pr create --draft -t t' "$PR"
+exp "pr-create: 승인돼도 --draft 없으면 거부" $PD 'gh pr create -t t' "$PR" deny
+exp "pr-create: 다른 브랜치(--head)는 거부" $PD 'gh pr create --draft --head feat/y -t t' "$PR" deny
+exp "pr-create: -R·--head 지정이면 cd 변수 뒤도 판정(통과)" $PD 'cd "$W" && gh pr create --draft -R Org/RepoA --head feat/x -t t' "$PR"
+exp "pr-create: 다른 저장소는 거부" $PD 'gh pr create --draft -R Org/RepoB -t t' "$PR" deny
+
+# ---- jira-approval-guard: 이슈 생성·상태 변경은 승인 기록 뒤에만(사용자 11-16) ----
+jrun() { local out; out=$(printf '%s' "$1" | HOME="$SB/home" bash "$H/jira-approval-guard.sh" 2>/dev/null); [ -z "$out" ] && { echo pass; return; }; printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision'; }
+jexp() { local got; got=$(jrun "$2"); [ "$got" = "${3:-pass}" ] && ok "$1" || ko "$1" "기대 ${3:-pass}, 실제 ${got:-빈 출력}"; }
+JC='{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"projectKey":"LRM","summary":"  버튼  안 눌림 ","issueTypeName":"버그"}}'
+JID="D-JIRA$(printf '버튼 안 눌림' | shasum | cut -c1-8)"
+jexp "jira: 승인 없는 생성 거부" "$JC" deny
+jexp "jira: executeWrite 경유 생성도 거부" '{"tool_name":"mcp__atlassian__executeWrite","tool_input":{"name":"createJiraIssue","cloudId":"c","inputs":{"summary":"버튼 안 눌림"}}}' deny
+jexp "jira: 상태 변경 승인 없음 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","transition":{"id":"31"}}}' deny
+jexp "jira: edit 의 status 필드 거부" '{"tool_name":"mcp__atlassian__editJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","fields":{"status":{"name":"완료"}}}}' deny
+jexp "jira: edit 의 일반 필드는 통과" '{"tool_name":"mcp__atlassian__editJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","fields":{"summary":"x"}}}'
+jexp "jira: 읽기 도구는 통과" '{"tool_name":"mcp__atlassian__getJiraIssue","tool_input":{"issueIdOrKey":"LRM-12"}}'
+jexp "jira: 요약 없는 생성은 ask" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"projectKey":"LRM"}}' ask
+cardrow 300.1 "Jira 이슈 발급 승인" "$JID" 1 >> "$HUB/slack-inbox.jsonl"
+cardrow 300.2 "Jira LRM-12 상태 변경 승인" D-JSTLRM12 1 >> "$HUB/slack-inbox.jsonl"
+jexp "jira: D-JIRA 카드 1번 답이면 생성 통과(공백 정리 후 같은 번호)" "$JC"
+jexp "jira: 다른 요약은 거부" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"다른 버그"}}' deny
+jexp "jira: D-JST 카드 1번 답이면 상태 변경 통과" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","transition":{"id":"31"}}}'
+jexp "jira: 다른 이슈 상태 변경은 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-13","transition":{"id":"31"}}}' deny
+chmod 000 "$HUB/slack-inbox.jsonl"
+jexp "jira: 승인 기록을 못 읽으면 ask" "$JC" ask
+chmod 600 "$HUB/slack-inbox.jsonl"
+
+# ---- 계획 승인 기록(사용자 11-16 "전부 추천대로"): 계획서 컨펌 1회가 적힌 발급·draft PR·상태 전환을 함께 승인 ----
+PA="$HUB/plan-approvals"; mkdir -p "$PA"
+plan() { printf '%s' "$2" > "$PA/$1.json"; }
+plan P1 '{"plan_id":"P1","approved_at":"2026-11-16T10:00:00+09:00","approver_quote":"전부 추천대로","tickets":[{"summary":"계획 티켓 하나"}],"prs":[{"repo":"Org/RepoA","branch":"feat/plan"}],"jira_transitions":[{"key":"LRM-77","to":"진행 중"}]}'
+exp "plan: 계획에 적힌 repo:branch 는 카드 없이 draft PR 생성 통과" $PD 'gh pr create --draft -R Org/RepoA --head feat/plan -t t' "$PR"
+exp "plan: 계획 승인이어도 --draft 없으면 거부" $PD 'gh pr create -R Org/RepoA --head feat/plan -t t' "$PR" deny
+exp "plan: 계획에 없는 브랜치는 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/other -t t' "$PR" deny
+msg=$(printf '%s' "$(jq -cn --arg c 'gh pr create --draft -R Org/RepoA --head feat/other -t t' --arg d "$PR" '{tool_input:{command:$c},cwd:$d}')" | HOME="$SB/home" bash "$H/$PD" | jq -r '.hookSpecificOutput.permissionDecisionReason')
+case "$msg" in *"계획서에 이 PR 을 추가한 뒤 컨펌"*) ok "plan: PR 거부 메시지에 계획서 추가 조치";; *) ko "plan: PR 거부 메시지" "$msg";; esac
+exp "plan: 계획 승인은 ready 를 허용하지 않음" $PD 'gh pr ready 30 -R Org/RepoA' "$PR" deny
+exp "plan: 계획 승인은 gh api draft 해제를 허용하지 않음" $PD 'gh api -X PATCH repos/Org/RepoA/pulls/30 -F draft=false' "$PR" deny
+jq -e '.permissions.deny | index("Bash(gh pr merge:*)")' "$HERE/../../claude/settings.base.json" >/dev/null \
+  && ! grep -q 'merge' "$H/lib/plan_approval.py" && ok "plan: gh pr merge 는 권한 deny 고정·계획 승인 모듈이 병합을 다루지 않음" || ko "plan: 병합 고정" "settings deny 또는 plan_approval.py 확인"
+jexp "plan: 계획에 적힌 요약은 Jira 발급 통과(공백 정리)" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":" 계획  티켓 하나"}}'
+jexp "plan: 계획에 없는 요약은 거부" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 밖 티켓"}}' deny
+jexp "plan: 계획에 적힌 이슈 상태 전환 통과" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-77","transition":{"id":"21"}}}'
+jexp "plan: 대상 상태가 다르면 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-77","transition":{"id":"31","name":"완료"}}}' deny
+jexp "plan: 계획에 없는 이슈 전환은 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-78","transition":{"id":"21"}}}' deny
+jmsg=$(printf '%s' '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 밖 티켓"}}' | HOME="$SB/home" bash "$H/jira-approval-guard.sh" | jq -r '.hookSpecificOutput.permissionDecisionReason')
+case "$jmsg" in *"계획서에 추가한 뒤 컨펌"*) ok "plan: Jira 거부 메시지에 계획서 추가 조치";; *) ko "plan: Jira 거부 메시지" "$jmsg";; esac
+plan P2 '{"plan_id":"P2","approved_at":"2026-11-16T10:00:00+09:00","approver_quote":"  ","tickets":[{"summary":"인용 없는 티켓"}],"prs":[{"repo":"Org/RepoA","branch":"feat/noquote"}]}'
+plan P3 '{"plan_id":"다른이름","approved_at":"x","approver_quote":"좋아","prs":[{"repo":"Org/RepoA","branch":"feat/badid"}]}'
+plan P4 '{"plan_id":"P4","approver_quote":"좋아","prs":[{"repo":"Org/RepoA","branch":"feat/notime"}]}'
+printf '{깨진' > "$PA/P5.json"
+jexp "plan: 사용자 원문 인용 없는 기록은 무효" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"인용 없는 티켓"}}' deny
+exp "plan: 인용 없는 기록의 PR 은 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/noquote -t t' "$PR" deny
+exp "plan: plan_id 가 파일 이름과 다르면 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/badid -t t' "$PR" deny
+exp "plan: approved_at 없으면 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/notime -t t' "$PR" deny
+exp "plan: 깨진 파일이 있어도 다른 기록은 유효" $PD 'gh pr create --draft -R Org/RepoA --head feat/plan -t t' "$PR"
+chmod 000 "$PA/P1.json"
+exp "plan: 계획 기록을 못 읽으면 ask" $PD 'gh pr create --draft -R Org/RepoA --head feat/plan -t t' "$PR" ask
+jexp "plan: Jira 도 계획 기록을 못 읽으면 ask" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 티켓 하나"}}' ask
+chmod 600 "$PA/P1.json"
 
 # ---- commit-msg 훅: 게임 저장소에서 AI 흔적 줄 삭제 ----
 GH_HOOKS="$HERE/../../git/hooks"

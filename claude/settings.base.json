@@ -146,6 +146,17 @@
             "statusMessage": "slack-format-guard 검사 중"
           }
         ]
+      },
+      {
+        "matcher": "mcp__atlassian__createJiraIssue|mcp__atlassian__transitionJiraIssue|mcp__atlassian__editJiraIssue|mcp__atlassian__executeWrite|mcp__atlassian__executeDestructive",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/jira-approval-guard.sh",
+            "timeout": 10,
+            "statusMessage": "jira-approval-guard 검사 중"
+          }
+        ]
       }
     ],
     "PostToolUse": [
