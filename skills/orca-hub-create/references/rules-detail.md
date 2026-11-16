@@ -93,6 +93,6 @@
 - 계획 승인: 계획서 컨펌 1회가 그 계획서에 적힌 Jira 발급·상태 전환·draft PR 생성을 함께 승인한다. 컨펌 뒤 메인이 ~/.config/lrm-hubs/plan-approvals/<plan-id>.json 에 사용자 원문 인용(approver_quote)·그 답의 Slack ts(source.slack_ts)와 approved_at·tickets·prs·jira_transitions 를 기록. 인용이 slack-inbox.jsonl 의 그 답 본문에 없으면 무효. 계획서에 없는 항목은 추가 후 재컨펌. ready 전환·dev/main 병합·라이브는 따로 승인. 계획에 없는 단건은 기존 결정 카드(D-PR·D-JIRA·D-JST). 11-13 D-PRDRAFT2(draft PR 무승인)와 'Jira 선발급 묻지 않음'은 폐기.
 - 계획 승인 기록은 approved_at 부터 7일 지나면 무효(plan_approval.py). 기록 파일 쓰기는 메인(ORCA_ROLE=main)만, 다른 세션은 plan-approval-write-guard 훅이 거부.
 - 카드 병합·완료는 `board-merge <카드> <작업자>` 로만(범위 검사 → board-done 사전 검사 → 시험 병합·BOARD_MERGE_VERIFY → --no-ff 커밋 → board-done). git merge·bd close 직접 금지. 범위 검사 기준은 카드 base: → epic branch: label. dev 반영 전 `board-merge-check <카드> <브랜치> --base dev --repo <저장소>`, 종료 4면 머지 금지. 증거 줄은 commit=<브랜치 끝 해시> 필수, 기능 묶음 epic 은 evidence:review(검수 모델≠구현 모델) 필수. epic 완료 시 feature_close.sh 자동 실행. 화면 촬영·녹화는 기능 묶음(--epic)당 1회. 시안 카드는 board/templates/card-mockup.md 대응표가 첫 단계.
-- Unity 실행은 `~/.config/lrm-hubs/unity-run --name "<허브>:<작업>" -- <명령>` 으로만, unity_slot.sh 직접 acquire/release 금지. 동시 1개(LRM_UNITY_SLOTS 기본 1)·부하 기준 코어 수×1.5, 오래 기다릴 작업은 --keep-waiting).
+- Unity 실행은 `~/.config/lrm-hubs/unity-run --name "<허브>:<작업>" -- <명령>` 으로만, unity_slot.sh 직접 acquire/release 금지. 동시 1개(LRM_UNITY_SLOTS 기본 1), 부하 기준 코어 수×1.5, 오래 기다릴 작업은 --keep-waiting.
 - 하네스 지표 재측정: `tools/metrics/measure.sh --since <YYYY-MM-DD> --until <YYYY-MM-DD>`(설정 저장소, 읽기 전용).
 - 완료는 별도 검수자 통과 뒤: 기계 검사(컴파일·테스트·픽셀 비교) 먼저, 구현자와 다른 모델(비주얼=astra, 기능·논리=Fable)이 시안·완료 기준 대비 판정, 통과분만 사용자 보고.
