@@ -4,7 +4,9 @@ using System.Collections.Generic;
 using Game.Data.ExternalModule.LocalizationModule;
 using Game.Data.Module.StatModule.Model;
 using Game.SceneView.Module.Modal.Module.AutomaDailySummaryDialog;
+using Game.Data.Module.AutomaModule.Model;
 using Game.SceneView.Module.Modal.Module.AutomaInfoDialog;
+using Game.SceneView.Module.Modal.Module.AutomaNoticeDialog;
 using Game.SceneView.Module.Modal.Module.AutomaResultDialog;
 using Game.SceneView.Scene.InGame.Component.Automa;
 using UnityEngine;
@@ -19,7 +21,8 @@ namespace Tests.Editor.UiPreview.Automa
 
         public static IEnumerable<IUiPreviewScreen> Create(Func<AutomaPreviewFixture> fixture)
         {
-            yield return new MissingPreviewScreen("automa-notice", $"{MissingPrefab}(AutomaMissionNoticeDialog)");
+            yield return new UiPreviewScreen("automa-notice-rumor", root => RenderNotice(root, AutomaMissionKind.Rumor, StatType.Sense));
+            yield return new UiPreviewScreen("automa-notice-chance", root => RenderNotice(root, AutomaMissionKind.Chance, StatType.Study));
             yield return new MissingPreviewScreen("automa-outcome", $"{MissingPrefab}(AutomaMissionOutcomeDialog)");
             yield return new UiPreviewScreen("automa-goal-intro", root =>
             {
@@ -53,6 +56,31 @@ namespace Tests.Editor.UiPreview.Automa
                 var view = UiPreviewPrefabs.Spawn<AutomaMissionCardView>("AutomaMissionCard", root, false);
                 view.Render(presenter.Build(input));
             });
+        }
+
+        private const int NoticeTarget = 40;
+        private const int NoticeTicksLeft = 4;
+        private const int NoticeRewardAmount = 500;
+
+        // 대사·보상 줄은 아직 입력 데이터가 없어 시안 배치 확인용 견본 문구를 넣음
+        private static void RenderNotice(Transform root, AutomaMissionKind kind, StatType stat)
+        {
+            var presenter = new AutomaNoticePresenter(LocalizationManager.GetText, s => s.GetName());
+            var input = new AutomaMissionNoticeInput(kind, string.Empty, stat, NoticeTarget, NoticeTicksLeft);
+            var amount = NoticeRewardAmount.ToString();
+            var state = presenter.Build(input) with
+            {
+                TalkLine = "(미리보기) 공주영, 넌 공부는 하고 있어?\n나중에 자립이 발목은 잡지 말아야지.",
+                BannerLine = "(미리보기) 최한별이 승부를 걸어왔다...",
+                RewardRows = new[]
+                {
+                    new AutomaNoticeRewardRowState("상대", StatType.Study, StatType.Study.GetName(), amount, "감소"),
+                    new AutomaNoticeRewardRowState("실패 시 나의", StatType.Study, StatType.Study.GetName(), amount, "감소"),
+                },
+            };
+            var dialog = UiPreviewPrefabs.Spawn<AutomaNoticeDialog>(nameof(AutomaNoticeDialog), root, true);
+            InitLaidOut(dialog, () => dialog.InitModal(new AutomaNoticeDialogData(state), null));
+            dialog.OnModalDisplay();
         }
 
         // 연출 Prepare 가 InitModal 안에서 줄 위치를 잡는데, 에디터 모드에선 그 시점에 레이아웃이 안 돌아 0 위치가 잡힘.
