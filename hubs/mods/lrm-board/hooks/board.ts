@@ -1,8 +1,8 @@
 // 패널의 순수 함수: 파일 해석·오래됨 판정·표시 문자열. 엔진($) 없이 node 로 시험함(tests/panel/board.test.mjs)
 import type { AutoBoard, AutoConfirm, AutoHub, AutoIdle, AutoProgress, AutoSource, Board, BoardItem } from '../types'
 
-/** 자동 칸이 이만큼 갱신되지 않으면 맨 위 경고. 수집 주기 90초의 6배 이상 */
-export const AUTO_STALE_MIN = 10
+/** 자동 칸이 이만큼 넘게 갱신되지 않으면 맨 위 ⚠️. 수집 주기 60초 + 한 회차 시간의 여유 */
+export const AUTO_STALE_MIN = 3
 /** 확인 목록 원료가 이만큼 갱신되지 않으면 낡은 것으로 보고 손 칸을 앞세움 */
 export const CONFIRM_STALE_MIN = 10
 /** 메인 칸(panel.json)이 이만큼 지나면 연한 경고. 메인은 순찰·결정 때만 고침 */
@@ -39,13 +39,23 @@ export const parseMain = (text: string): Board => {
  * 없거나 미래면 파일 수정 시각. 사람이 쓰는 글자 시각은 실제와 어긋난 전례가 있어 쓰지 않음
  */
 export const autoStamp = (auto: AutoBoard | undefined, mtimeMs: number, nowMs: number): number | undefined => {
-  const epochMs = auto !== undefined && Number.isFinite(auto.updatedAt) ? auto.updatedAt * 1000 : undefined
+  // writtenAt(쓴 순간)이 있으면 그것, 옛 파일은 updatedAt(회차 시작)
+  const sec = auto?.writtenAt !== undefined && Number.isFinite(auto.writtenAt) ? auto.writtenAt : auto?.updatedAt
+  const epochMs = sec !== undefined && Number.isFinite(sec) ? sec * 1000 : undefined
   if (epochMs !== undefined && epochMs > 0 && epochMs <= nowMs + FUTURE_SLACK_MS) return epochMs
   return mtimeMs > 0 ? mtimeMs : undefined
 }
 
 export const ageMin = (stampMs: number | undefined, nowMs: number): number | undefined =>
   stampMs === undefined ? undefined : Math.max(0, Math.floor((nowMs - stampMs) / 60000))
+
+/** 맨 위 나이 표시용 초 단위 */
+export const fmtAgeSec = (stampMs: number | undefined, nowMs: number): string => {
+  if (stampMs === undefined) return '알 수 없음'
+  const s = Math.max(0, Math.floor((nowMs - stampMs) / 1000))
+  if (s < 60) return `${s}초 전`
+  return s < 3600 ? `${Math.floor(s / 60)}분 ${s % 60}초 전` : fmtAge(Math.floor(s / 60))
+}
 
 export const fmtAge = (min: number | undefined): string => {
   if (min === undefined) return '알 수 없음'
@@ -57,7 +67,7 @@ export const fmtAge = (min: number | undefined): string => {
 
 export type Banner = { level: 'ok' | 'stale' | 'missing' | 'broken'; text: string }
 
-/** 맨 위 경고. 파일 없음·깨짐·10분 초과 */
+/** 맨 위 데이터 나이. 파일 없음·깨짐·AUTO_STALE_MIN 초과는 ⚠️ */
 export const autoBanner = (
   auto: AutoBoard | undefined,
   autoMtimeMs: number,
@@ -66,9 +76,12 @@ export const autoBanner = (
 ): Banner => {
   if (autoMtimeMs === 0) return { level: 'missing', text: '⚠️ 자동 수집 파일 없음 — launchd ai.lrm.panelcollect 확인' }
   if (auto === undefined) return { level: 'broken', text: `⚠️ 자동 수집 파일을 못 읽음${autoError !== undefined ? ` (${autoError})` : ''}` }
-  const min = ageMin(autoStamp(auto, autoMtimeMs, nowMs), nowMs)
-  if (min !== undefined && min > AUTO_STALE_MIN) return { level: 'stale', text: `⚠️ 자동 수집이 ${min}분째 멈춤` }
-  return { level: 'ok', text: `자동 ${fmtAge(min)}` }
+  const stamp = autoStamp(auto, autoMtimeMs, nowMs)
+  const age = fmtAgeSec(stamp, nowMs)
+  if (stamp !== undefined && nowMs - stamp > AUTO_STALE_MIN * 60000) {
+    return { level: 'stale', text: `⚠️ 데이터 ${age} — 자동 수집 멈춤(launchd ai.lrm.panelcollect 확인)` }
+  }
+  return { level: 'ok', text: `데이터 ${age}` }
 }
 
 /** 메인 칸은 파일 수정 시각 기준(파일 안 updatedAt 글자는 손으로 써서 어긋남) */
@@ -246,4 +259,12 @@ export const mergeApprovals = (
     }
   })
   return { items: [...merged, ...handItems.filter(h => !auto.some(a => same(a, h)))], stale }
+}
+
+/** 작업판 칸 줄. 진행 중 카드는 제목·담당 */
+export const boardLines = (v: import('../types').AutoWorkBoard | null | undefined): string[] | undefined => {
+  if (v === null || v === undefined) return undefined
+  const out = v.doing.map(d => `${d.id} ${d.title}${d.who ? ` · ${d.who}` : ''}`)
+  if (v.more > 0) out.push(`외 ${v.more}개`)
+  return out
 }

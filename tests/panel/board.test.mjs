@@ -25,13 +25,13 @@ test('parseMain: 객체만 받음', () => {
   assert.throws(() => b.parseMain('[]'))
 })
 
-test('autoBanner: 파일 없음·깨짐·10분 초과는 경고, 10분 이하는 정상', () => {
+test('autoBanner: 파일 없음·깨짐·3분 초과는 경고, 3분 이하는 정상', () => {
   assert.equal(b.autoBanner(undefined, 0, undefined, NOW).level, 'missing')
   assert.equal(b.autoBanner(undefined, NOW, 'SyntaxError', NOW).level, 'broken')
-  assert.equal(b.autoBanner(auto(10), NOW, undefined, NOW).level, 'ok')
-  const stale = b.autoBanner(auto(11), NOW, undefined, NOW)
+  assert.equal(b.autoBanner(auto(3), NOW, undefined, NOW).level, 'ok')
+  const stale = b.autoBanner(auto(4), NOW, undefined, NOW)
   assert.equal(stale.level, 'stale')
-  assert.match(stale.text, /⚠️ 자동 수집이 11분째 멈춤/)
+  assert.match(stale.text, /⚠️ 데이터 4분 0초 전/)
 })
 
 test('autoStamp: 파일 안 epoch 우선(수정 시각이 최근이어도 epoch 가 오래되면 멈춤)', () => {
@@ -224,4 +224,13 @@ test('mergeApprovals: 원료가 낡으면 손 칸 우선·낡음 표시, 겹치�
   assert.deepEqual(r.items.map(i => i.title), ['창 승인 대기', '손 전용', '원료 전용'])
   assert.match(r.items[2].why, /⚠ 낡음/)
   assert.equal(b.mergeApprovals(conf([ci('k2', 'x')], null), hand, NOW).stale, true)  // 시각 모르면 낡음
+})
+
+test('autoStamp: writtenAt 이 있으면 updatedAt 보다 우선', () => {
+  assert.equal(b.autoStamp({ ...auto(5), writtenAt: sec(NOW - 60000) }, 0, NOW), NOW - 60000)
+})
+
+test('boardLines: 진행 중 카드 제목·담당, 넘친 수', () => {
+  assert.equal(b.boardLines(undefined), undefined)
+  assert.deepEqual(b.boardLines({ counts: { in_progress: 2, open: 0, blocked: 0 }, doing: [{ id: 'a-1', title: 'T', who: 'u' }], more: 1 }), ['a-1 T · u', '외 1개'])
 })
