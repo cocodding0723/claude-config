@@ -230,6 +230,14 @@ for spec in "${OVERRIDES[@]+"${OVERRIDES[@]}"}"; do
       CREATED+=("$rel")
     fi
     git -C "$SRC_WS" cat-file blob "$SRC_SHA:$src" > "$RUN_PROJ/$rel"
+    # LFS 대상은 블롭이 포인터 텍스트라 그대로 덮으면 임포트 실패(흰 네모) → smudge 로 실제 파일 복원
+    if head -c 40 "$RUN_PROJ/$rel" | grep -q '^version https://git-lfs'; then
+      git -C "$SRC_WS" cat-file blob "$SRC_SHA:$src" | git -C "$SRC_WS" lfs smudge -- "$src" > "$RUN_PROJ/$rel.lfs" 2>/dev/null && mv "$RUN_PROJ/$rel.lfs" "$RUN_PROJ/$rel"
+      if head -c 40 "$RUN_PROJ/$rel" | grep -q '^version https://git-lfs'; then
+        echo "[ui-preview] LFS 포인터 복원 실패: $src @ $SRC_SHA (git lfs fetch 필요)" >&2; exit 2
+      fi
+    fi
+    echo "[ui-preview] 덮은 파일: $rel $(wc -c < "$RUN_PROJ/$rel" | tr -d ' ')B $(file -b "$RUN_PROJ/$rel" | cut -d, -f1)"
   done
   echo "[ui-preview] 덮음: $DST_REL ← $SRC_REL @ $SRC_SHA"
 done
