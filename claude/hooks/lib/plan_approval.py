@@ -1,13 +1,16 @@
 """계획 승인 기록 조회(사용자 11-16 "전부 추천대로"). 계획서 컨펌 1회가 그 계획서에 적힌 티켓 발급·draft PR 생성·Jira 상태 전환을 함께 승인.
 기록: <허브 폴더>/plan-approvals/<plan_id>.json =
   {plan_id, approved_at, approver_quote, tickets:[{summary}], prs:[{repo, branch}], jira_transitions:[{key, to}]}
-유효 조건: plan_id 가 파일 이름과 같음 + approved_at 있음 + approver_quote(사용자 원문 인용)가 비지 않음. 형식이 틀린 파일은 승인으로 치지 않음.
+유효 조건: plan_id 가 파일 이름과 같음 + approved_at(ISO 8601, 시간대 포함)이 지금부터 7일 안 + approver_quote(사용자 원문 인용)가 비지 않음.
+형식이 틀리거나 만료된 파일은 승인으로 치지 않음. 만료는 오래된 컨펌이 새 작업을 승인하지 않게 하려는 것. 기록 파일 쓰기는 메인만(plan-approval-write-guard.sh).
 ready 전환·병합·라이브 작업은 이 기록으로 허용하지 않음(호출하는 쪽이 조회하지 않음)."""
+import datetime
 import json
 import os
 import re
 
 DIR = "plan-approvals"
+TTL = datetime.timedelta(days=7)
 
 
 def norm(s):
@@ -18,8 +21,20 @@ def key_norm(k):
     return re.sub(r"[^A-Za-z0-9]", "", k or "").upper()
 
 
+def fresh(approved_at, now=None):
+    """approved_at 이 미래가 아니고 TTL 안이면 참. 시간대 없는·해석 불가 값은 거짓"""
+    try:
+        t = datetime.datetime.fromisoformat(approved_at)
+    except (TypeError, ValueError):
+        return False
+    if t.tzinfo is None:
+        return False
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    return datetime.timedelta(0) <= now - t <= TTL
+
+
 def valid(rec, name):
-    return (isinstance(rec, dict) and rec.get("plan_id") == name and rec.get("approved_at")
+    return (isinstance(rec, dict) and rec.get("plan_id") == name and fresh(rec.get("approved_at"))
             and isinstance(rec.get("approver_quote"), str) and rec["approver_quote"].strip())
 
 

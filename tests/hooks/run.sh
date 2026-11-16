@@ -285,8 +285,10 @@ chmod 600 "$HUB/slack-inbox.jsonl"
 
 # ---- 계획 승인 기록(사용자 11-16 "전부 추천대로"): 계획서 컨펌 1회가 적힌 발급·draft PR·상태 전환을 함께 승인 ----
 PA="$HUB/plan-approvals"; mkdir -p "$PA"
-plan() { printf '%s' "$2" > "$PA/$1.json"; }
-plan P1 '{"plan_id":"P1","approved_at":"2026-11-16T10:00:00+09:00","approver_quote":"전부 추천대로","tickets":[{"summary":"계획 티켓 하나"}],"prs":[{"repo":"Org/RepoA","branch":"feat/plan"}],"jira_transitions":[{"key":"LRM-77","to":"진행 중"}]}'
+plan() { printf '%s' "${2//@NOW@/$NOW}" > "$PA/$1.json"; }
+NOW=$(python3 -c 'import datetime;print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(hours=1)).isoformat(timespec="seconds"))')
+OLD=$(python3 -c 'import datetime;print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(days=8)).isoformat(timespec="seconds"))')
+plan P1 '{"plan_id":"P1","approved_at":"@NOW@","approver_quote":"전부 추천대로","tickets":[{"summary":"계획 티켓 하나"}],"prs":[{"repo":"Org/RepoA","branch":"feat/plan"}],"jira_transitions":[{"key":"LRM-77","to":"진행 중"}]}'
 exp "plan: 계획에 적힌 repo:branch 는 카드 없이 draft PR 생성 통과" $PD 'gh pr create --draft -R Org/RepoA --head feat/plan -t t' "$PR"
 exp "plan: 계획 승인이어도 --draft 없으면 거부" $PD 'gh pr create -R Org/RepoA --head feat/plan -t t' "$PR" deny
 exp "plan: 계획에 없는 브랜치는 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/other -t t' "$PR" deny
@@ -303,19 +305,41 @@ jexp "plan: 대상 상태가 다르면 거부" '{"tool_name":"mcp__atlassian__tr
 jexp "plan: 계획에 없는 이슈 전환은 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-78","transition":{"id":"21"}}}' deny
 jmsg=$(printf '%s' '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 밖 티켓"}}' | HOME="$SB/home" bash "$H/jira-approval-guard.sh" | jq -r '.hookSpecificOutput.permissionDecisionReason')
 case "$jmsg" in *"계획서에 추가한 뒤 컨펌"*) ok "plan: Jira 거부 메시지에 계획서 추가 조치";; *) ko "plan: Jira 거부 메시지" "$jmsg";; esac
-plan P2 '{"plan_id":"P2","approved_at":"2026-11-16T10:00:00+09:00","approver_quote":"  ","tickets":[{"summary":"인용 없는 티켓"}],"prs":[{"repo":"Org/RepoA","branch":"feat/noquote"}]}'
+plan P2 '{"plan_id":"P2","approved_at":"@NOW@","approver_quote":"  ","tickets":[{"summary":"인용 없는 티켓"}],"prs":[{"repo":"Org/RepoA","branch":"feat/noquote"}]}'
 plan P3 '{"plan_id":"다른이름","approved_at":"x","approver_quote":"좋아","prs":[{"repo":"Org/RepoA","branch":"feat/badid"}]}'
 plan P4 '{"plan_id":"P4","approver_quote":"좋아","prs":[{"repo":"Org/RepoA","branch":"feat/notime"}]}'
 printf '{깨진' > "$PA/P5.json"
+plan P6 "{\"plan_id\":\"P6\",\"approved_at\":\"$OLD\",\"approver_quote\":\"좋아\",\"prs\":[{\"repo\":\"Org/RepoA\",\"branch\":\"feat/old\"}]}"
+plan P7 '{"plan_id":"P7","approved_at":"2026-11-16T10:00:00","approver_quote":"좋아","prs":[{"repo":"Org/RepoA","branch":"feat/notz"}]}'
+plan P8 '{"plan_id":"P8","approved_at":"2999-01-01T00:00:00+00:00","approver_quote":"좋아","prs":[{"repo":"Org/RepoA","branch":"feat/future"}]}'
 jexp "plan: 사용자 원문 인용 없는 기록은 무효" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"인용 없는 티켓"}}' deny
 exp "plan: 인용 없는 기록의 PR 은 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/noquote -t t' "$PR" deny
 exp "plan: plan_id 가 파일 이름과 다르면 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/badid -t t' "$PR" deny
 exp "plan: approved_at 없으면 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/notime -t t' "$PR" deny
+exp "plan: 7일 지난 기록은 만료" $PD 'gh pr create --draft -R Org/RepoA --head feat/old -t t' "$PR" deny
+exp "plan: 시간대 없는 approved_at 은 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/notz -t t' "$PR" deny
+exp "plan: 미래 approved_at 은 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/future -t t' "$PR" deny
 exp "plan: 깨진 파일이 있어도 다른 기록은 유효" $PD 'gh pr create --draft -R Org/RepoA --head feat/plan -t t' "$PR"
 chmod 000 "$PA/P1.json"
 exp "plan: 계획 기록을 못 읽으면 ask" $PD 'gh pr create --draft -R Org/RepoA --head feat/plan -t t' "$PR" ask
 jexp "plan: Jira 도 계획 기록을 못 읽으면 ask" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 티켓 하나"}}' ask
 chmod 600 "$PA/P1.json"
+
+# ---- 계획 승인 기록 쓰기는 메인만 ----
+wrun() { local out; out=$(printf '%s' "$1" | HOME="$SB/home" ORCA_ROLE="${2:-}" bash "$H/plan-approval-write-guard.sh" 2>/dev/null); [ -z "$out" ] && { echo pass; return; }; printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision'; }
+wexp() { local got; got=$(wrun "$2" "${4:-}"); [ "$got" = "${3:-pass}" ] && ok "$1" || ko "$1" "기대 ${3:-pass}, 실제 ${got:-빈 출력}"; }
+WP="$PA/P9.json"
+wexp "plan-write: 메인 아닌 세션의 Write 거부" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$WP\"}}" deny
+wexp "plan-write: 메인 아닌 세션의 Edit 거부" "{\"tool_name\":\"Edit\",\"tool_input\":{\"file_path\":\"$WP\"}}" deny
+wexp "plan-write: ORCA_ROLE=main 이면 Write 통과" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$WP\"}}" pass main
+wexp "plan-write: 다른 역할 값은 거부" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$WP\"}}" deny feature
+wexp "plan-write: Bash 리다이렉트 쓰기 거부" '{"tool_name":"Bash","tool_input":{"command":"echo {} > ~/.config/lrm-hubs/plan-approvals/x.json"}}' deny
+wexp "plan-write: Bash cp 거부" '{"tool_name":"Bash","tool_input":{"command":"cp a.json ~/.config/lrm-hubs/plan-approvals/"}}' deny
+wexp "plan-write: Bash sed -i 거부" '{"tool_name":"Bash","tool_input":{"command":"sed -i \"\" s/a/b/ ~/.config/lrm-hubs/plan-approvals/x.json"}}' deny
+wexp "plan-write: Bash 읽기는 통과" '{"tool_name":"Bash","tool_input":{"command":"cat ~/.config/lrm-hubs/plan-approvals/x.json 2>/dev/null | jq ."}}'
+wexp "plan-write: ORCA_ROLE=main 이면 Bash 쓰기 통과" '{"tool_name":"Bash","tool_input":{"command":"echo {} > ~/.config/lrm-hubs/plan-approvals/x.json"}}' pass main
+wexp "plan-write: 다른 경로 Write 는 통과" '{"tool_name":"Write","tool_input":{"file_path":"/tmp/plan-approvals-note.txt"}}'
+wexp "plan-write: 깨진 입력은 통과" '{깨진'
 
 # ---- commit-msg 훅: 게임 저장소에서 AI 흔적 줄 삭제 ----
 GH_HOOKS="$HERE/../../git/hooks"
