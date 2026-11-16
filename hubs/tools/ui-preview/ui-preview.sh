@@ -2,7 +2,7 @@
 #
 # UI 화면 단독 미리보기. 부팅·로그인·네트워크 없이 화면 프리팹 하나를 배치모드로 띄워 PNG 로 남긴다.
 #
-#   bash Tools/verify/ui-preview.sh <화면|all>[,<화면>…] [가로x세로 …] [--stage <오토마 스테이지 Id>] [--bundle] [--summary-at day-end|mission-issued] [--who <요청자>] [--compare <시안 PNG>] [--prefab-from-commit <작업공간>:<커밋>:<경로>] [--patch-from-commit <작업공간>:<커밋>:<경로>] [--timeout <초>]
+#   bash Tools/verify/ui-preview.sh <화면|all>[,<화면>…] [가로x세로 …] [--stage <오토마 스테이지 Id>] [--bundle] [--force] [--summary-at day-end|mission-issued] [--who <요청자>] [--compare <시안 PNG>] [--prefab-from-commit <작업공간>:<커밋>:<경로>] [--patch-from-commit <작업공간>:<커밋>:<경로>] [--timeout <초>]
 #   예) bash Tools/verify/ui-preview.sh automa-daily-summary
 #       bash Tools/verify/ui-preview.sh all 1080x1920 1440x3120
 #
@@ -34,11 +34,12 @@ usage() {
   echo "#   가능한 화면: all $(screen_names)"
 }
 
-SCREENS=""; SIZES=(); STAGE=""; BUNDLE=0; OVERRIDES=(); PATCHES=(); SUMMARY_AT=""; WHO="default"; COMPARE=""
+SCREENS=""; SIZES=(); STAGE=""; BUNDLE=0; OVERRIDES=(); PATCHES=(); FORCE=0; SUMMARY_AT=""; WHO="default"; COMPARE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --bundle) BUNDLE=1 ;;
+    --force) FORCE=1 ;;
     --patch-from-commit) shift; PATCHES+=("${1:?--patch-from-commit <작업공간>:<커밋>:<프로젝트 상대 경로> 필요}") ;;
     --prefab-from-commit) shift; OVERRIDES+=("${1:?--prefab-from-commit <작업공간>:<커밋>:<프로젝트 상대 경로> 필요}") ;;
     --stage) shift; STAGE="${1:?--stage 값 필요}" ;;
@@ -175,6 +176,20 @@ for spec in "${OVERRIDES[@]+"${OVERRIDES[@]}"}"; do
   # <원본 경로>=<대상 경로>: 브랜치마다 파일 위치가 다를 때(예: Mockup4/ 로 옮긴 프리팹)
   DST_REL="$SRC_REL"
   case "$SRC_REL" in *=*) DST_REL="${SRC_REL#*=}"; SRC_REL="${SRC_REL%%=*}" ;; esac
+  # 경로 확인: 대상이 있으면 일치. 없으면 그 파일 GUID 가 다른 경로에 이미 있는지 봄(있으면 위치가 옮겨진 것 → 덮어도 안 쓰임)
+  if [ -e "$RUN_PROJ/$DST_REL" ]; then
+    echo "[ui-preview] 대상 경로 일치: $DST_REL"
+  else
+    guid="$(git -C "$SRC_WS" cat-file blob "$SRC_SHA:$SRC_REL.meta" 2>/dev/null | sed -n 's/^guid: //p')"
+    other=""
+    [ -z "$guid" ] || other="$(grep -rl --include='*.meta' "^guid: $guid\$" "$RUN_PROJ/Assets" 2>/dev/null | head -1)"
+    if [ -n "$other" ]; then
+      echo "[ui-preview] 대상 경로 불일치: $DST_REL 없음, 같은 GUID 가 ${other#"$RUN_PROJ/"} 에 있음 → '<원본>=<대상>' 으로 지정" >&2
+      [ "$FORCE" = 1 ] || { echo "[ui-preview] 중단. 그대로 진행하려면 --force" >&2; exit 2; }
+    else
+      echo "[ui-preview] 대상 경로 새 파일: $DST_REL (같은 GUID 없음)"
+    fi
+  fi
   for suffix in "" ".meta"; do
     src="$SRC_REL$suffix"; rel="$DST_REL$suffix"
     if ! git -C "$SRC_WS" cat-file -e "$SRC_SHA:$src" 2>/dev/null; then

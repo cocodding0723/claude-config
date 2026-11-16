@@ -63,3 +63,4 @@ yield return new UiPreviewScreen("화면-이름", root =>
 - 하루 결산 시점: `--summary-at day-end|mission-issued`
 - 동시 실행: 요청마다 `build/ui-preview-lanes/lane-N`(APFS 복제, 기본 4개)에서 병렬, 다 차면 순번 대기(대기 순번·앞 실행·예상 시간 30초마다 출력). 원본 작업 공간은 읽기만
 - HUD: `ingame-top-band`(미션 있음, `--stage main.ch1.2`) / `ingame-top-band-nomission`. 장소·남은 시간·코인은 고정본에 없어 비움
+- 덮기마다 "대상 경로 일치/새 파일/불일치" 로그. 불일치(같은 GUID 가 다른 경로에 있음)면 중단, `--force` 로만 진행
