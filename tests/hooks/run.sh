@@ -281,5 +281,28 @@ while IFS= read -r l; do printf '%s\n' "$l" | grep -Eiq "$AI_STRIP_RE" && printf
 [ "$both" = 1 ] && ok "commit-msg: 삭제 규칙과 push 검사 규칙이 같은 출처에서 일치" || ko "규칙 불일치" ""
 unset CLAUDE_HOOKS_DIR
 
+# ---- main-send-guard: 메인 터미널 대상 orca terminal send 거부 ----
+MS=main-send-guard.sh; MH=term_86b2e8ea-1111-4222-8333-444455556666
+mkdir -p "$SB/home/.config/lrm-hubs"
+printf 'OTHER=keep\nMAIN_TERMINAL=%s\n' "$MH" > "$SB/home/.config/lrm-hubs/main.env"
+exp "main-send: 짧은 핸들 거부" $MS 'orca terminal send --terminal term_86b2e8ea --text hi --enter' "$SB" deny
+exp "main-send: 긴 핸들 거부" $MS "orca terminal send --terminal $MH --text hi" "$SB" deny
+exp "main-send: --terminal= 형태 거부" $MS 'orca terminal send --terminal=term_86b2e8ea --text hi' "$SB" deny
+exp "main-send: 다른 허브 통과" $MS 'orca terminal send --terminal term_aaaaaaaa-1111 --text hi' "$SB"
+exp "main-send: \$MAIN_TERMINAL 거부" $MS 'orca terminal send --terminal "$MAIN_TERMINAL" --text hi' "$SB" deny
+exp "main-send: \${MAIN_TERMINAL} 거부" $MS 'orca terminal send --terminal ${MAIN_TERMINAL} --text hi' "$SB" deny
+exp "main-send: \$T 통과" $MS 'orca terminal send --terminal "$T" --text hi' "$SB"
+exp "main-send: 따옴표 안 bash -c send 거부" $MS 'bash -c "orca terminal send --terminal term_86b2e8ea --text hi"' "$SB" deny
+exp "main-send: && 체인 안 send 거부" $MS 'echo a && orca terminal send --terminal term_86b2e8ea --text hi' "$SB" deny
+exp "main-send: 줄바꿈 뒤 send 거부" $MS $'echo a\norca terminal send --terminal term_86b2e8ea --text hi' "$SB" deny
+exp "main-send: 파이프 뒤 send 거부" $MS 'echo hi | /usr/local/bin/orca terminal send --terminal term_86b2e8ea' "$SB" deny
+exp "main-send: 체인에 다른 허브만이면 통과" $MS 'orca terminal send --terminal term_aaaaaaaa --text x; orca terminal send --terminal "$T" --text y' "$SB"
+exp "main-send: orca terminal list 통과" $MS 'orca terminal list --json' "$SB"
+exp "main-send: orchestration send 통과" $MS 'orca orchestration send --from term_86b2e8ea --type worker_done' "$SB"
+exp "main-send: 문구 안 언급은 통과" $MS 'echo "terminal send 금지"' "$SB"
+rm "$SB/home/.config/lrm-hubs/main.env"
+exp "main-send: main.env 없음 리터럴 통과" $MS 'orca terminal send --terminal term_86b2e8ea --text hi' "$SB"
+exp "main-send: main.env 없어도 \$MAIN_TERMINAL 거부" $MS 'orca terminal send --terminal "$MAIN_TERMINAL" --text hi' "$SB" deny
+
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
