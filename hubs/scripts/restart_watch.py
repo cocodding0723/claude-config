@@ -143,7 +143,7 @@ def targets() -> list[dict]:
         at = hub_status.parse_iso(data.get("updatedAt"))
         if at is None or datetime.now(timezone.utc) - at > limit:
             continue
-        tasks = [clean(t) for t in data["tasks"]]
+        tasks = [clean(hub_status.entry_text(t)) for t in data["tasks"]]
         out.append({"slug": slug, "name": clean(name), "tasks": tasks})
     return out
 

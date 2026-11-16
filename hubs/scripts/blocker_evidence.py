@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""허브 막힘 근거 판정: 막힘에 달린 근거(pr·decision)가 닫혔는지 확인함.
+"""허브 줄(막힘·진행 줄) 근거 판정: 줄에 달린 근거(pr·decision·task)가 닫혔는지 확인함.
 
 PR·결정 카드 판정은 todo_facts.Facts 를 그대로 씀(할 일 목록 자동 완료와 같은 규칙). 이 모듈은 근거 종류별 호출만 묶음.
 결과: closed(근거가 전부 닫힘) · open(하나라도 열림) · unmerged(PR 이 병합 없이 닫힘 → 막힘 유지) · unknown(조회 실패·기록 없음 → 막힘 유지) · None(확인할 수 있는 근거 없음).
 PR 은 MERGED 만 닫힘으로 봄. 병합 없이 CLOSED 면 막힌 일이 풀린 게 아니라 접힌 것이라 막힘에 남김.
+진행 줄은 unmerged_ends=True 로 물어 병합 없이 닫힌 PR 도 '끝남'으로 봄(접힌 일은 진행 목록에서 내림).
+task 는 작업 장부(task_ledger.py) 상태가 완료·버림이면 닫힘, 그 밖은 open, 장부에 번호가 없거나 못 읽으면 unknown.
 gh 결과는 cache 에 OPEN_TTL_S 동안 보관(병합·닫힘은 영구).
 """
 import os
@@ -11,11 +13,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import progress_collect as pc  # noqa: E402
+import task_ledger  # noqa: E402
 import todo_facts  # noqa: E402
 
 CLOSED, OPEN, UNKNOWN, UNMERGED = "closed", "open", "unknown", "unmerged"
 MERGED_STATE, CLOSED_STATE = "MERGED", "CLOSED"
-CHECKABLE = ("pr", "decision")  # ticket 은 닫힘을 판정하지 않음(표시만)
+CHECKABLE = ("pr", "decision", "task")  # ticket 은 닫힘을 판정하지 않음(표시만)
+TASK_ENDED = (task_ledger.DONE, task_ledger.DROPPED)
 OPEN_TTL_S = 600  # 열린 PR 을 다시 묻는 간격
 CACHE_KEEP_S = 86400
 
@@ -29,7 +33,19 @@ class Resolver:
         for k in [k for k, v in cache.items() if not isinstance(v, dict) or now - v.get("at", 0) > CACHE_KEEP_S]:
             del cache[k]
         self._facts = None
+        self._tasks = None
         self.errors = []
+
+    def task_states(self):
+        """작업 장부 {번호: 상태}. 한 회차에 한 번만 읽음. 못 읽으면 None(근거를 '모름'으로 둠)"""
+        if self._tasks is None:
+            try:
+                rows = task_ledger.read_rows(self.conf.get("tasks") or task_ledger.tasks_path())
+                self._tasks = {str(r["id"]): r.get("state") for r in rows}
+            except task_ledger.LedgerError:
+                self._tasks = False
+                self.errors.append("작업 장부 읽기 실패")
+        return self._tasks or None
 
     def facts(self):
         if self._facts is None:
@@ -60,10 +76,15 @@ class Resolver:
         if kind == "decision":
             done = f.cards.get(rid)
             return UNKNOWN if done is None else (CLOSED if done else OPEN)
+        if kind == "task":
+            state = (self.task_states() or {}).get(rid)
+            return UNKNOWN if state is None else (CLOSED if state in TASK_ENDED else OPEN)
         return None
 
-    def __call__(self, refs):
+    def __call__(self, refs, unmerged_ends=False):
         states = [s for s in (self.one(r) for r in refs if r["kind"] in CHECKABLE) if s]
+        if unmerged_ends:
+            states = [CLOSED if s == UNMERGED else s for s in states]
         if not states:
             return None
         for keep in (OPEN, UNMERGED, UNKNOWN):  # 하나라도 안 닫혔으면 막힘 유지. 앞쪽이 더 확정된 사실

@@ -137,7 +137,7 @@ def ticket_hubs(status_dir, routes_path, hubs_path, repo="", game_repo="", workt
         slug = str(d.get("slug") or f.stem)
         if not fresh_status(d) or not ok_repo(slug):
             continue
-        for t in TICKET.findall(" ".join(map(str, (d.get("tasks") or []) + (d.get("branches") or [])))):
+        for t in TICKET.findall(" ".join([hub_status.item_text("tasks", t) for t in d.get("tasks") or []] + list(map(str, d.get("branches") or [])))):
             out.setdefault(t, set()).add(slug)
     try:
         rows = Path(routes_path).read_text(encoding="utf-8").splitlines()

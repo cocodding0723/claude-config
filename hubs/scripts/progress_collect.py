@@ -6,7 +6,7 @@
 원료별로 ok·err·at·tried·stale·value 를 둠(panel-auto.json 형식). 원료 하나가 실패하면 그 원료만 이전 값 + stale:true 로 두고 나머지는 그대로.
 PR(gh)은 PR_INTERVAL_S 초에 한 번만 조회하고 그 사이는 직전 값을 씀.
 
-환경: LRM_HUB_DIR 작업 폴더 · LRM_PROGRESS 스냅샷 경로 · LRM_LEDGER 장부 · LRM_HUB_STATUS_DIR 허브 상태 폴더
+환경: LRM_HUB_DIR 작업 폴더 · LRM_PROGRESS 스냅샷 경로 · LRM_LEDGER 장부 · LRM_TASKS 작업 장부(진행 줄·막힘의 [task:T…] 근거) · LRM_HUB_STATUS_DIR 허브 상태 폴더
       LRM_DIGEST_GH gh 명령(없으면 PATH → /opt/homebrew/bin·/usr/local/bin) · LRM_DIGEST_REPOS PR 조회 저장소(쉼표, 없으면 PANEL_GH_REPOS 환경 변수 → 작업 폴더 panel.env → 현재 저장소) · LRM_HUB_STATUS_STALE_HOURS 낡음 기준(기본 24)
       LRM_ORCA orca 명령(없으면 PATH → 알려진 설치 위치) · LRM_PROGRESS_PR_INTERVAL PR 조회 간격 초(기본 300) · LRM_PROGRESS_PR_BUDGET PR 조회 전체 시간 상한 초(기본 30)
 종료 코드: 0 성공(원료 일부 실패 포함), 2 설정·입력 오류
@@ -178,7 +178,7 @@ def blocker_id(text):
 
 def collect_hubs(status_dir, old_items=(), refs=None, resolver=None, resolved=None, seen=None, now=None):
     """허브 상태 파일 전부 → (항목, 알림, 읽기 실패 허브). 낡은 허브는 제목에 '낡음'.
-    막힘에 근거(refs)가 있고 resolver 가 '닫힘'으로 판정하면 막힘에서 빼고 resolved 목록에만 기록. 근거 없는 막힘이 낡았으면 제목에 '근거 없음·오래됨'(삭제는 안 함).
+    줄(진행 줄·막힘)에 근거(refs)가 있고 resolver 가 '닫힘'으로 판정하면 목록에서 빼고 resolved 목록에만 기록. 진행 줄은 병합 없이 닫힌 PR 도 끝남(막힘은 유지). 근거 없는 막힘이 낡았으면 제목에 '근거 없음·오래됨'(삭제는 안 함).
     '오래됨' 기준은 막힘별 최초 관측 시각(seen: "슬러그:문구해시" → {first, last}, 수집기 소유). 상태 파일 updatedAt 은 허브가 다시 쓸 때마다 갱신돼 근거가 못 됨.
     사라진 막힘 기록은 SEEN_KEEP_S 뒤 정리. 손상 파일은 그 허브의 이전 항목(old_items)을 그대로 두어 목록에서 완료 처리되지 않게 함"""
     out, notes, failed = [], [], []
@@ -208,10 +208,15 @@ def collect_hubs(status_dir, old_items=(), refs=None, resolver=None, resolved=No
         tag = f"[{STALE_TAG}] " if stale else ""
         ref = refs.for_hub(slug) if refs else None
         since = at.timestamp() if at else 0.0
-        for task in data.get("tasks", []):
+        for entry in data.get("tasks", []):
+            task, trefs = hub_status.entry_text(entry), hub_status.entry_refs(entry)
+            if trefs and resolver and resolver(trefs, unmerged_ends=True) == EVIDENCE_CLOSED:  # 진행 줄은 PR 병합·병합 없이 닫힘 모두 끝남
+                if resolved is not None:
+                    resolved.append({"hub": slug, "line": "task", "text": one_line(task), "refs": trefs})
+                continue
             out.append(item(f"hub:{slug}:t:{short_hash(task)}", WAIT if needs_user(task) else DOING, f"{tag}{slug}: {task}", slug, ref=ref, since=since))
         for b in data.get("blockers", []):
-            blocker, brefs = hub_status.blocker_text(b), hub_status.blocker_refs(b)
+            blocker, brefs = hub_status.entry_text(b), hub_status.entry_refs(b)
             state = resolver(brefs) if resolver and brefs else None
             if state == EVIDENCE_CLOSED:
                 if resolved is not None:
@@ -414,6 +419,7 @@ def conf_from_env(read_panel=True):
     env = os.environ.get
     return {
         "ledger": env("LRM_LEDGER") or os.path.join(HUB_DIR, "feedback-ledger.tsv"),
+        "tasks": env("LRM_TASKS") or os.path.join(HUB_DIR, "tasks.jsonl"),
         "status_dir": os.path.expanduser(env("LRM_HUB_STATUS_DIR") or os.path.join(HUB_DIR, "hub-status")),  # 작업 폴더 밑이 기본(시험이 격리됨)
         "report_state": env("LRM_REPORT_STATE") or os.path.join(HUB_DIR, "report-sender.state.json"),
         "gh": gh_bin(),

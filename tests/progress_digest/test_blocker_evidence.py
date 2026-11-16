@@ -14,10 +14,10 @@ PR = "Basakansoft/LoveRevolutionMaker#746"
 
 
 class ParseTest(unittest.TestCase):
-    def write(self, *blockers, repos=PR.split("#")[0]):
+    def write(self, *blockers, repos=PR.split("#")[0], tasks=()):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
-            args = [a for b in blockers for a in ("--blocker", b)]
+            args = [a for b in blockers for a in ("--blocker", b)] + [a for t in tasks for a in ("--task", t)]
             env = {k: v for k, v in os.environ.items() if not k.startswith(("LRM_", "PANEL_"))}
             env.update(LRM_HUB_STATUS_DIR=d, LRM_HUB_DIR=d, LRM_DIGEST_REPOS=repos)  # 라이브 panel.env 를 읽지 않게 작업 폴더도 격리
             r = subprocess.run([sys.executable, "-I", HS, "write", "--slug", "ui", *args], env=env, capture_output=True, text=True)
@@ -33,6 +33,21 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(d["blockers"][0], {"text": "서버 병합 대기", "refs": [{"kind": "pr", "id": PR}, {"kind": "decision", "id": "D-CFGAPPLY"}]})
         self.assertEqual(d["blockers"][1]["refs"], [{"kind": "ticket", "id": "LRM-436"}])
         self.assertEqual(d["blockers"][2], {"text": "단축형", "refs": [{"kind": "pr", "id": "Basakansoft/LoveRevolutionMaker#12"}]})  # 저장소 하나면 전체 형식으로 저장
+
+    def test_task_refs_parsed(self):
+        r, d = self.write(tasks=[f"기능 구현 [pr:{PR}] [task:T0123]", "근거 없는 줄", "[ticket:LRM-9] 티켓만"], *["장부 대기 [task:T0007]"])
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(d["tasks"][0], {"text": "기능 구현", "refs": [{"kind": "pr", "id": PR}, {"kind": "task", "id": "T0123"}]})
+        self.assertEqual(d["tasks"][1], "근거 없는 줄")  # 근거 없으면 문자열 그대로
+        self.assertEqual(d["tasks"][2], {"text": "티켓만", "refs": [{"kind": "ticket", "id": "LRM-9"}]})
+        self.assertEqual(d["blockers"][0]["refs"], [{"kind": "task", "id": "T0007"}])  # 막힘에도 task 근거
+
+    def test_task_bad_format_rejected(self):
+        for bad in ("x [task:123]", "x [task:t0001]", "[task:T0001]", "x [foo:bar]"):
+            r, d = self.write(tasks=[bad])
+            self.assertEqual(r.returncode, 2, bad)
+            self.assertIsNone(d)
+            self.assertIn("--task", r.stderr)
 
     def test_short_form_rejected_when_many_repos(self):
         r, d = self.write("x [pr:#12]", repos="A/a,B/b")
@@ -67,10 +82,22 @@ class EvidenceTest(Base):
         with open(os.path.join(self.t.name, f"gh-pr-{num}.json"), "w") as f:
             json.dump({"state": state, "headRefName": "fix/x"}, f)
 
-    def put(self, blockers, hours_old=1):
+    def put(self, blockers, hours_old=1, tasks=()):
         at = (datetime.now(timezone.utc) - timedelta(hours=hours_old)).isoformat(timespec="seconds")
         with open(os.path.join(self.status, "ui.json"), "w", encoding="utf-8") as f:
-            json.dump({"slug": "ui", "updatedAt": at, "tasks": [], "blockers": blockers}, f)
+            json.dump({"slug": "ui", "updatedAt": at, "tasks": list(tasks), "blockers": blockers}, f)
+
+    def task_rows(self, **states):
+        """작업 장부(tasks.jsonl) 기록: 번호=상태"""
+        with open(os.path.join(self.t.name, "tasks.jsonl"), "w", encoding="utf-8") as f:
+            for tid, st in states.items():
+                f.write(json.dumps({"id": tid, "state": st, "text": "x"}, ensure_ascii=False) + "\n")
+
+    def collect_tasks(self):
+        r = self.run_once("--once", "--repo", "Basakansoft/LoveRevolutionMaker")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        d = self.load()
+        return d, [i["title"] for i in d["items"] if i["key"].startswith("hub:ui:t:")]
 
     def collect(self, **extra):
         r = self.run_once("--once", "--repo", "Basakansoft/LoveRevolutionMaker", **extra)
@@ -225,6 +252,59 @@ echo "[]"
         with open(self.snap, "w", encoding="utf-8") as f:
             json.dump(d, f)
         self.assertEqual(self.collect()[0]["blockerSeen"], {})  # 8일: 정리
+
+    # ---- 진행 줄(tasks) 근거 ----
+
+    def test_task_line_merged_pr_removed(self):
+        self.pr_state(746, "MERGED")
+        self.put([], tasks=[self.blocker("기능 구현", ("pr", PR)), "근거 없는 줄"])
+        d, titles = self.collect_tasks()
+        self.assertEqual(titles, ["ui: 근거 없는 줄"])
+        self.assertEqual(d["resolved"], [{"hub": "ui", "line": "task", "text": "기능 구현", "refs": [{"kind": "pr", "id": PR}]}])
+
+    def test_task_line_unmerged_close_ends_but_blocker_stays(self):
+        self.pr_state(746, "CLOSED")
+        self.put([self.blocker("병합 대기", ("pr", PR))], tasks=[self.blocker("기능 구현", ("pr", PR))])
+        d, titles = self.collect_tasks()
+        self.assertEqual(titles, [])  # 접힌 일은 진행 목록에서 내림
+        self.assertEqual(len([i for i in d["items"] if i["key"].startswith("hub:ui:b:")]), 1)  # 막힘은 기존 규칙대로 유지
+
+    def test_task_line_open_pr_and_unknown_kept(self):
+        self.pr_state(746, "OPEN")
+        self.put([], tasks=[self.blocker("열림", ("pr", PR)), self.blocker("조회 불가", ("pr", "Basakansoft/LoveRevolutionMaker#999"))])
+        d, titles = self.collect_tasks()
+        self.assertEqual(titles, ["ui: 열림", "ui: 조회 불가"])
+
+    def test_task_line_answered_decision_removed(self):
+        with open(os.path.join(self.t.name, "slack-sent.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": "1.1", "decision_id": "D-CFGAPPLY", "form_kind": "decide", "options": ["A", "B"], "tag": "ui"}) + "\n")
+        with open(os.path.join(self.t.name, "slack-inbox.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"type": "reaction", "parent_ts": "1.1", "kind": "decide", "decision_id": "D-CFGAPPLY", "action": "approve", "pick": 1}) + "\n")
+        self.put([], tasks=[self.blocker("답 반영", ("decision", "D-CFGAPPLY"))])
+        self.assertEqual(self.collect_tasks()[1], [])
+
+    def test_task_line_ledger_done_dropped_removed_open_kept(self):
+        self.task_rows(T0001="완료", T0002="버림", T0003="진행")
+        self.put([], tasks=[self.blocker("끝", ("task", "T0001")), self.blocker("버려짐", ("task", "T0002")), self.blocker("하는 중", ("task", "T0003")),
+                            self.blocker("번호 없음", ("task", "T0404"))])
+        d, titles = self.collect_tasks()
+        self.assertEqual(titles, ["ui: 하는 중", "ui: 번호 없음"])  # 장부에 없는 번호는 모름 → 유지
+        self.assertEqual([r["text"] for r in d["resolved"]], ["끝", "버려짐"])
+
+    def test_task_line_ledger_missing_keeps_line(self):
+        self.put([], tasks=[self.blocker("끝", ("task", "T0001"))])  # tasks.jsonl 없음
+        self.assertEqual(self.collect_tasks()[1], ["ui: 끝"])
+
+    def test_blocker_with_task_ref(self):
+        self.task_rows(T0001="완료")
+        self.put([self.blocker("장부 대기", ("task", "T0001"))])
+        d, items = self.collect()
+        self.assertEqual(items, [])
+        self.assertEqual(d["resolved"][0]["refs"], [{"kind": "task", "id": "T0001"}])
+
+    def test_string_tasks_still_read_and_ticket_only_kept(self):
+        self.put([], tasks=["옛 문자열 줄", self.blocker("티켓만", ("ticket", "LRM-1"))])
+        self.assertEqual(self.collect_tasks()[1], ["ui: 옛 문자열 줄", "ui: 티켓만"])
 
     def test_ticket_only_kept(self):
         self.put([self.blocker("티켓 대기", ("ticket", "LRM-436"))])
