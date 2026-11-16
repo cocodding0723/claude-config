@@ -17,6 +17,8 @@ public static class ModalRenderer
         var sizes = Arg("-renderSizes", "1080x1920,1080x2400,1440x3120,1536x2048,720x1280").Split(',');
         var prefabs = Arg("-renderPrefabs", "").Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
         var tag = Arg("-renderTag", "shot");
+        // 프리팹 루트(등장 트윈 시작값 0)와 지정 그룹만 켬. 나머지는 게임 기본 투명도 유지
+        var show = Arg("-renderShowGroups", "").Split(',', StringSplitOptions.RemoveEmptyEntries);
         var bg = Arg("-renderBg", "");
         var hide = Arg("-renderHide", "").Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
         Directory.CreateDirectory(outDir);
@@ -51,7 +53,7 @@ public static class ModalRenderer
                 if (rtf != null) { rtf.anchorMin = Vector2.zero; rtf.anchorMax = Vector2.one; rtf.offsetMin = Vector2.zero; rtf.offsetMax = Vector2.zero; }
             }
             foreach (var tr in cgo.GetComponentsInChildren<Transform>(true)) if (Array.IndexOf(hide, tr.name) >= 0) tr.gameObject.SetActive(false);
-            foreach (var cg in cgo.GetComponentsInChildren<CanvasGroup>(true)) cg.alpha = 1;
+            foreach (var cg in cgo.GetComponentsInChildren<CanvasGroup>(true)) if (cg.transform.parent == cgo.transform || Array.IndexOf(show, cg.name) >= 0) cg.alpha = 1;
             foreach (var cv in cgo.GetComponentsInChildren<Canvas>(true))
                 if (cv.gameObject != cgo) { cv.renderMode = RenderMode.ScreenSpaceCamera; cv.worldCamera = cam; cv.planeDistance = 10; }
             typeof(CanvasScaler).GetMethod("Handle", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).Invoke(sc, null);
