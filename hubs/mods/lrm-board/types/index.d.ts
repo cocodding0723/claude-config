@@ -125,13 +125,23 @@ export type AutoGh = {
   open: number; ciFail: number; capped?: boolean
 }
 
+/** 작업판(beads, ~/orca/board) 요약 */
+export type AutoWorkBoard = {
+  counts: { in_progress: number; open: number; blocked: number }
+  doing: Array<{ id: string; title: string; who: string | null }>
+  more: number
+}
+
 /** 수집기(panel_collect.sh)가 쓰는 panel-auto.json */
 export type AutoBoard = {
   version: number
   /** epoch 초. 수집기가 기록 순간에 씀 */
   updatedAt: number
   updatedAtText?: string
+  /** epoch 초. 파일을 쓴 순간(회차가 길면 updatedAt 보다 늦음) */
+  writtenAt?: number
   sources: {
+    board?: AutoSource<AutoWorkBoard>
     hubs?: AutoSource<AutoHubs>
     pending?: AutoSource<AutoPending>
     progress?: AutoSource<AutoProgress>

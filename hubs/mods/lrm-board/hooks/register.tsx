@@ -4,6 +4,7 @@ import type { Register } from 'claude-code'
 import type { AutoBoard, Board, BoardItem, BoardView, HistoryEntry } from '../types'
 import {
   autoBanner,
+  boardLines,
   fmtAge,
   ageMin,
   ghLine,
@@ -205,13 +206,15 @@ export const register: Register = on => {
     const workers = src?.workers?.value ?? undefined
     const gh = src?.gh
     const idle = idleLines(src?.idle?.value)
+    const workBoard = src?.board?.value ?? undefined
+    const boardRows = boardLines(workBoard)
 
     return (
       <Box flexDirection="column">
-        {banner.level !== 'ok' && <Text bold color={C.error} wrap="wrap">{banner.text}</Text>}
+        <Text bold={banner.level !== 'ok'} color={banner.level === 'ok' ? C.meta : C.error} wrap="wrap">{banner.text}</Text>
         <Text wrap="wrap">
           <Text color={main.old ? C.stale : C.meta}>{main.text}</Text>
-          <Text dimColor>{` · ${banner.level === 'ok' ? banner.text : '자동 멈춤'} · 작업 중 ${counts.busy} · 막힘 ${counts.blocked}`}</Text>
+          <Text dimColor>{` · 작업 중 ${counts.busy} · 막힘 ${counts.blocked}`}</Text>
         </Text>
         {main.old && mtimeMs > 0 && <Text color={C.stale}>{`메인 칸이 ${fmtAge(ageMin(mtimeMs, nowMs))} 갱신됨 — 승인·할 일은 낡았을 수 있음`}</Text>}
         {board?.headline !== undefined && <Text wrap="wrap">{board.headline}</Text>}
@@ -229,6 +232,14 @@ export const register: Register = on => {
             </Box>
           )
         })}
+
+        {section(
+          `🗂️ 작업판 (진행 중 ${workBoard?.counts.in_progress ?? '?'} · 열림 ${workBoard?.counts.open ?? '?'} · 막힘 ${workBoard?.counts.blocked ?? '?'})`,
+          C.todo,
+          sourceNote(src?.board, nowMs),
+        )}
+        {boardRows !== undefined && boardRows.length === 0 && <Text dimColor>진행 중 카드 없음</Text>}
+        {boardRows !== undefined && tree(boardRows.map(l => [l, C.detail] as [string, string]))}
 
         {section(`🙋 내가 승인할 것 (${approvals.length})`, C.approve, approvalMerge.stale ? '⚠ 확인 목록이 낡음 — 손 칸 우선' : undefined)}
         {approvals.length === 0 && <Text dimColor>없음</Text>}

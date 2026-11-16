@@ -709,6 +709,44 @@ def run_source(fn, prev, now):
     return {"ok": False, "err": code, "at": old.get("at"), "tried": now, "stale": True, "value": old.get("value")}
 
 
+BOARD_DIR = os.environ.get("PANEL_BOARD_DIR") or os.path.expanduser("~/orca/board")
+BOARD_TIMEOUT, BOARD_DOING_MAX = 10, 8
+BOARD_STATUSES = ("in_progress", "open", "blocked")
+
+
+def collect_board():
+    """작업판(beads) 카드 수와 진행 중 카드. 11-16부터 일의 정본. 닫힌 카드는 세지 않음"""
+    if not os.path.isdir(BOARD_DIR):
+        raise SourceError("missing")
+    try:
+        p = subprocess.run([os.environ.get("PANEL_BD", "bd"), "list", "--json", "--limit", "0"], cwd=BOARD_DIR,
+                           capture_output=True, text=True, timeout=BOARD_TIMEOUT, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        raise SourceError("timeout")
+    except OSError:
+        raise SourceError("missing")
+    if p.returncode != 0:
+        raise SourceError("exit")
+    try:
+        rows = json.loads(p.stdout or "[]")
+    except ValueError:
+        raise SourceError("parse")
+    if not isinstance(rows, list):
+        raise SourceError("parse")
+    counts = {k: 0 for k in BOARD_STATUSES}
+    doing = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        st = r.get("status")
+        if st in counts:
+            counts[st] += 1
+        if st == "in_progress":
+            doing.append({"id": str(r.get("id", ""))[:20], "title": str(r.get("title", ""))[:TITLE_MAX * 2],
+                          "who": str(r.get("assignee") or r.get("owner") or "")[:40] or None})
+    return {"counts": counts, "doing": doing[:BOARD_DOING_MAX], "more": max(0, len(doing) - BOARD_DOING_MAX)}
+
+
 def collect(conf, repos, interval, prev, now, mark_gh):
     """(결과, gh 처리 off|run|skip). mark_gh 가 거짓(--print)이면 gh·du 간격 표식을 쓰지 않고 du 도 재지 않음"""
     get = Fetch()
@@ -718,6 +756,7 @@ def collect(conf, repos, interval, prev, now, mark_gh):
         "push": run_source(collect_push, prev.get("push"), now),
         "workers": run_source(lambda: collect_workers(conf, get), prev.get("workers"), now),
         "idle": collect_idle(conf, get, prev.get("idle"), now, mark_gh),
+        "board": run_source(collect_board, prev.get("board"), now),
     }
     src["progress"] = run_source(lambda: collect_progress(src, repos, mark_gh, get), prev.get("progress"), now)
     src["confirm"] = run_source(lambda: collect_confirm(src, now), prev.get("confirm"), now)
@@ -905,6 +944,7 @@ def main(argv):
     try:
         prev, prev_state = load_prev()
         data, gh = collect(conf, repos, interval, prev, int(time.time()), True)
+        data["writtenAt"] = int(time.time())  # 회차가 길면 updatedAt(시작 시각)보다 늦음. 패널 나이는 이 값 기준
         try:
             write_atomic(data)
         except OSError:
