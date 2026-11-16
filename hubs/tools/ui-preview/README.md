@@ -53,4 +53,4 @@ yield return new UiPreviewScreen("화면-이름", root =>
 - 시트 고정본(pin) 오토마 상대 표에 CharacterId 값이 없어 지금은 초상이 비어 찍힌다. 고정본 갱신은 데이터 담당 몫이다.
 - 미션 카드는 연출이 없어 세 장이 같다.
 - 예고·결과 3상태·새 목표 소개·미션 배너는 PR 묶음 브랜치 전용이라 `Editor-bundle/` 에 둔다. `--bundle` 을 붙이면 기본 목록 위에 덮어써 실행한다. dev 에 올라오면 `Editor/Automa` 로 옮기고 `Editor-bundle/` 은 지운다.
-- 결과 팝업(AutomaMissionOutcomeDialog)은 아직 왼쪽 아래로 몰려 찍힌다. 하위 캔버스 보정으로는 안 고쳐졌고, 대화창 연출이 위치를 옮기는 것으로 보인다(미확인).
+- 연출이 InitModal 안 첫 재생 때 시작 위치를 잡으므로, 프리팹을 띄우는 즉시 하위 캔버스를 카메라에 붙이고 레이아웃을 확정한다(결과 팝업이 왼쪽으로 몰리던 원인).

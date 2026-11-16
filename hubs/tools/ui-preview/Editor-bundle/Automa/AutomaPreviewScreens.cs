@@ -34,8 +34,9 @@ namespace Tests.Editor.UiPreview.Automa
             {
                 var presenter = new AutomaGoalIntroPresenter(LocalizationManager.GetText, stat => stat.GetName());
                 var dialog = UiPreviewPrefabs.Spawn<AutomaGoalIntroDialog>(nameof(AutomaGoalIntroDialog), root, true);
-                var data = new AutomaGoalIntroDialogData(presenter.Build(fixture().GoalIntro, fixture().Result.Parts));
-                UiPreviewDialogs.Init(dialog, () => dialog.InitModal(data, null));
+                var goal = fixture().GoalIntro;
+                var data = new AutomaGoalIntroDialogData(presenter.Build(goal, fixture().Result.Parts));
+                UiPreviewDialogs.Init(dialog, () => dialog.InitModal(data, null), goal.Rival.CharacterId);
                 dialog.OnModalDisplay();
             });
             yield return new UiPreviewScreen("automa-daily-summary", root =>

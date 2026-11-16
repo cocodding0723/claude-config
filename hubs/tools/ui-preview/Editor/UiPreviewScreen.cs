@@ -2,6 +2,7 @@
 using System;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace Tests.Editor.UiPreview
 {
@@ -68,10 +69,27 @@ namespace Tests.Editor.UiPreview
                     Place(rect, fill);
                 }
 
+                Settle(instance, root);
+
                 return instance.GetComponent<T>();
             }
 
             throw new InvalidOperationException($"프리팹 {prefabName}({typeof(T).Name}) 없음");
+        }
+
+        // 연출이 InitModal 안에서 시작 위치를 한 번 잡아 두므로, 그 전에 하위 캔버스를 미리보기 카메라에 붙이고 레이아웃을 확정
+        private static void Settle(GameObject instance, Transform root)
+        {
+            var rootCanvas = root.GetComponentInParent<Canvas>();
+            foreach (var nested in instance.GetComponentsInChildren<Canvas>(true))
+            {
+                nested.renderMode = RenderMode.ScreenSpaceCamera;
+                nested.worldCamera = rootCanvas != null ? rootCanvas.worldCamera : null;
+                nested.transform.localScale = Vector3.one;
+            }
+
+            Canvas.ForceUpdateCanvases();
+            LayoutRebuilder.ForceRebuildLayoutImmediate((RectTransform)root);
         }
 
         private static void Place(RectTransform rect, bool fill)

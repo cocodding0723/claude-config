@@ -18,7 +18,8 @@ namespace Tests.Editor.UiPreview
         private const BindingFlags Instance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         private const string RenderMethod = "Render";
         private const string DataProperty = "Data";
-        private const string PortraitField = "rivalPortrait";
+        // 대화창마다 초상 Image 필드 이름이 다름(하루·최종 결산 rivalPortrait, 미션 결과 portraitImage, 목표 소개 portrait)
+        private static readonly string[] PortraitFields = { "rivalPortrait", "portraitImage", "portrait" };
 
         // 게임 CharacterPortraitSource 의 주소 규칙과 같음
         private const string PortraitAddressPrefix = "characterportrait/";
@@ -64,10 +65,12 @@ namespace Tests.Editor.UiPreview
         // -executeMethod 는 메인 스레드를 막아 Addressables 비동기 로드가 끝나지 않음. 같은 주소의 에셋을 에디터에서 바로 읽음
         private static void ApplyPortrait(Component dialog, string key)
         {
-            var image = dialog.GetType().GetField(PortraitField, Instance)?.GetValue(dialog) as Image;
+            var image = PortraitFields
+                .Select(name => dialog.GetType().GetField(name, Instance)?.GetValue(dialog) as Image)
+                .FirstOrDefault(found => found != null);
             if (image == null)
             {
-                Debug.LogWarning($"[UiPreview] {dialog.GetType().Name} 에 {PortraitField} 없음");
+                Debug.LogWarning($"[UiPreview] {dialog.GetType().Name} 에 초상 Image 필드 없음({string.Join(", ", PortraitFields)})");
                 return;
             }
 
