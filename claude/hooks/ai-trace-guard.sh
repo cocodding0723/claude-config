@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PreToolUse(Bash): push 전 AI 흔적 검사. 대상 = git push 로 나갈 커밋 메시지, gh pr create/edit 의 본문.
-# 흔적 = 'Co-Authored-By: Claude/Anthropic', 'Generated with Claude Code', 🤖 줄.
+# 흔적 = 'Co-Authored-By: Claude/Anthropic/OpenAI/Codex', 'Generated with Claude Code', 🤖 줄.
 # 기준(저장소별 git config hooks.aiTraceMode): deny(거부) | ask(경고 후 확인) | off. 기본은 claude-config 저장소 deny, 그 밖(게임 저장소 등) ask.
 # 범위 = 실제로 나갈 커밋: <원격>/<대상 브랜치>..<로컬 ref>. 저장소·ref 는 명령의 cd·git -C·refspec 에서 해석(hook cwd 아님).
 # 해석 실패는 거부가 아니라 ask. stdin: hook JSON.
@@ -17,7 +17,7 @@ printf '%s' "$scmd" | grep -Eq "${G}push\b" && is_push=1
 printf '%s' "$scmd" | grep -Eq "$GH" && is_pr=1
 [ $((is_push + is_pr)) -gt 0 ] || exit 0
 
-TRACE_RE='co-authored-by:[[:space:]]*.*(claude|anthropic)|generated with[[:space:]]*(\[?claude|claude code)|claude\.com/claude-code|🤖'
+. "$GUARD_DIR/lib/ai_trace.sh"; TRACE_RE=$AI_TRACE_RE   # 규칙은 lib/ai_trace.sh 한 곳(commit-msg 훅의 줄 삭제와 공유)
 CONFIG_REPO="${LRM_CONFIG_REPO_NAME:-claude-config}"
 found=""; mode=""; ask_only=""
 

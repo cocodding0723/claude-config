@@ -240,5 +240,38 @@ chmod 000 "$HUB/slack-inbox.jsonl"
 exp "pr-draft: 승인 기록을 못 읽으면 ask" $PD 'gh pr ready 12' "$PR" ask
 chmod 600 "$HUB/slack-inbox.jsonl"
 
+# ---- commit-msg 훅: 게임 저장소에서 AI 흔적 줄 삭제 ----
+GH_HOOKS="$HERE/../../git/hooks"
+cm() { # cm <저장소> <메시지> → 커밋 뒤 메시지 본문, stderr 는 $SB/cm.err
+  git -C "$1" -c core.hooksPath="$GH_HOOKS" commit -q --allow-empty -m "$2" 2> "$SB/cm.err" <<< "" || return 1
+  git -C "$1" log -1 --format=%B | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}'
+}
+export CLAUDE_HOOKS_DIR="$H"
+mk "$SB/game" main; git -C "$SB/game" config hooks.localGate on
+MSG=$'기능 추가\n\n본문 한 줄\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>\n🤖 Generated with [Claude Code](https://claude.com/claude-code)'
+got=$(cm "$SB/game" "$MSG")
+[ "$got" = $'기능 추가\n\n본문 한 줄' ] && ok "commit-msg: 게임 저장소는 AI 흔적 줄 삭제·끝 빈 줄 정리" || ko "commit-msg 삭제" "$got"
+grep -q 'commit-msg: AI 흔적 줄 2개 삭제' "$SB/cm.err" && ok "commit-msg: 삭제 개수 stderr 한 줄" || ko "commit-msg 로그" "$(cat "$SB/cm.err")"
+got=$(cm "$SB/game" $'x\n\nCo-Authored-By: Kim Claude Lee <kim@example.com>\nCo-authored-by: OpenAI Codex <codex@openai.com>\nCo-Authored-By: GPT <noreply@openai.com>\nGenerated with [Claude Code]')
+[ "$got" = x ] && grep -q '4개 삭제' "$SB/cm.err" && ok "commit-msg: openai·codex·대소문자·Generated with 줄 삭제" || ko "commit-msg 이름 범위" "$got / $(cat "$SB/cm.err")"
+got=$(cm "$SB/game" $'y\n\nCo-Authored-By: Hong Gildong <hong@example.com>')
+[ "$got" = $'y\n\nCo-Authored-By: Hong Gildong <hong@example.com>' ] && ! grep -q "commit-msg:" "$SB/cm.err" && ok "commit-msg: 사람 공동 작성자는 유지·로그 없음" || ko "commit-msg 사람 유지" "$got"
+got=$(cm "$SB/game" $'z\n\n본문에 Claude 와 Generated with 단어가 있어도 줄 시작이 아니면 유지')
+[ "$got" = $'z\n\n본문에 Claude 와 Generated with 단어가 있어도 줄 시작이 아니면 유지' ] && ok "commit-msg: 줄 중간 언급은 유지" || ko "commit-msg 줄 중간" "$got"
+mk "$SB/other" main
+got=$(cm "$SB/other" "$MSG")
+[ "$got" = "$MSG" ] && ! grep -q "commit-msg:" "$SB/cm.err" && ok "commit-msg: 게임 저장소 밖은 무변경" || ko "commit-msg 다른 저장소" "$got"
+mkdir -p "$SB/LoveRevolutionMaker"; mk "$SB/LoveRevolutionMaker" main
+got=$(cm "$SB/LoveRevolutionMaker" "$MSG")
+[ "$got" = $'기능 추가\n\n본문 한 줄' ] && ok "commit-msg: 저장소 이름 LoveRevolutionMaker 로도 판정" || ko "commit-msg 이름 판정" "$got"
+cp -R "$H" "$SB/nolib"; rm -f "$SB/nolib/lib/ai_trace.sh"
+got=$(CLAUDE_HOOKS_DIR="$SB/nolib" cm "$SB/game" "$MSG")
+[ "$got" = "$MSG" ] && ok "commit-msg: 공용 규칙 파일이 없으면 그대로 통과" || ko "commit-msg 규칙 없음" "$got"
+# 삭제 규칙은 push 검사(TRACE_RE)와 같은 출처: 삭제 대상 줄은 push 검사에도 걸림
+. "$H/lib/ai_trace.sh"; both=1
+while IFS= read -r l; do printf '%s\n' "$l" | grep -Eiq "$AI_STRIP_RE" && printf '%s\n' "$l" | grep -Eiq "$AI_TRACE_RE" || both=0; done <<< $'Co-Authored-By: Claude <noreply@anthropic.com>\nCo-Authored-By: Codex <codex@openai.com>\n🤖 Generated with [Claude Code]\nGenerated with [Claude Code]'
+[ "$both" = 1 ] && ok "commit-msg: 삭제 규칙과 push 검사 규칙이 같은 출처에서 일치" || ko "규칙 불일치" ""
+unset CLAUDE_HOOKS_DIR
+
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
