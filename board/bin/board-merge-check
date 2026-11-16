@@ -100,7 +100,7 @@ def main():
     if not a.base:
         fail(f"거부: 비교 기준 없음. 조치: --base <기능 통합 브랜치> 를 주거나 bd label add {a.card} base:<ref>")
     rng = f"{a.base}...{a.branch}"
-    files = [f for f in run(["git", "diff", "--name-only", rng], repo).splitlines() if f]
+    files = [f for f in run(["git", "diff", "--name-only", "--no-renames", rng], repo).splitlines() if f]
     outside = [f for f in files if not covered(f, mine, repo)]
 
     others = []

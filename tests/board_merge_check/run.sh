@@ -58,6 +58,9 @@ expect "기준 생략: label 없으면 2" 2 "$CHK" c4 ok --repo "$R"
 expect "절대 경로 file: label 도 같은 범위" 0 "$CHK" c5 ok --repo "$R"
 git checkout -q -b ab dev; mkdir -p src/ab; echo 1 > src/ab/z.cs; git add .; c commit -m ab
 expect "file:src/a/ 는 src/ab 를 덮지 않음" 4 "$CHK" c1 ab --repo "$R"
+git checkout -q -b mvbase dev; mkdir -p src/b; echo keep > src/b/keep.cs; git add .; c commit -m mvbase
+git checkout -q -b mv mvbase; mkdir -p src/a; git mv src/b/keep.cs src/a/keep.cs; c commit -m mv
+expect "이름 바꾸기로 범위 밖 파일 삭제도 거부" 4 "$CHK" c1 mv --base mvbase --repo "$R"
 expect "인자 없음 2" 2 "$CHK"
 expect "--help 0" 0 "$CHK" --help
 
