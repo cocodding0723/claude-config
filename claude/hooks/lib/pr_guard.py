@@ -14,6 +14,7 @@ import sys
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import push_targets as pt  # noqa: E402  따옴표·heredoc·cd 해석 재사용
+import plan_approval as pa  # noqa: E402
 
 HOME = os.path.expanduser("~")
 WRAPPERS = {"env", "command", "nohup", "time", "exec", "builtin"}
@@ -31,7 +32,8 @@ PR_PREFIX = "D-PR"
 API_CREATE_REASON = "gh api 로 새 PR 생성 — 승인 기록을 확인할 수 없음. gh pr create --draft 로 다시 실행(D-PR 승인 검사)하거나 사용자 승인 확인"
 CREATE_APPROVAL_REASON = ("새 PR 생성은 사용자 승인 뒤에만(사용자 11-16) — [{repo} {branch}] 결정 카드 {did} 의 1번 답 필요. 예: "
                           "slack_notify.sh --kind decide --decision-id {did} --options '1=PR 올리기 => draft PR 생성,2=보류 => 로컬 유지' "
-                          "--recommend 1 --no-doc $'{repo} {branch} PR 생성 승인\\n배경: …\\n용어: 없음'")
+                          "--recommend 1 --no-doc $'{repo} {branch} PR 생성 승인\\n배경: …\\n용어: 없음'. 또는 계획서에 이 PR 을 추가한 뒤 컨펌 "
+                          "→ plan-approvals/<plan-id>.json 의 prs 에 {{repo, branch}} 기록")
 
 
 class Unknown(Exception):
@@ -90,6 +92,14 @@ def card_ok(store, did, repo=""):
             continue  # 다른 저장소의 같은 번호 카드
         last = rec
     return bool(last) and (last.get("action") == "approve" or str(last.get("pick")) == "1")
+
+
+def plan_ok(find, *args):
+    """계획 승인 기록 조회(새 PR·Jira 발급·상태 전환 전용). 읽기 실패는 Unknown"""
+    try:
+        return bool(find(hub_dir(), *args))
+    except OSError as e:
+        raise Unknown(f"계획 승인 기록을 읽지 못함: {e}")
 
 
 def decided(did, repo=""):
@@ -185,6 +195,8 @@ def check_create(toks, flags, repo, here):
     head = head or current_branch(here)
     if not REPO_RE.fullmatch(repo or "") or not head:
         raise Unknown("새 PR 의 저장소·브랜치를 알 수 없음(-R·--head 로 지정)")
+    if plan_ok(pa.find_pr, repo, head):
+        return None
     did = pr_create_id(repo, head)
     if not decided(did, repo):
         return "deny", CREATE_APPROVAL_REASON.format(repo=repo, branch=head, did=did)

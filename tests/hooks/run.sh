@@ -283,6 +283,40 @@ chmod 000 "$HUB/slack-inbox.jsonl"
 jexp "jira: 승인 기록을 못 읽으면 ask" "$JC" ask
 chmod 600 "$HUB/slack-inbox.jsonl"
 
+# ---- 계획 승인 기록(사용자 11-16 "전부 추천대로"): 계획서 컨펌 1회가 적힌 발급·draft PR·상태 전환을 함께 승인 ----
+PA="$HUB/plan-approvals"; mkdir -p "$PA"
+plan() { printf '%s' "$2" > "$PA/$1.json"; }
+plan P1 '{"plan_id":"P1","approved_at":"2026-11-16T10:00:00+09:00","approver_quote":"전부 추천대로","tickets":[{"summary":"계획 티켓 하나"}],"prs":[{"repo":"Org/RepoA","branch":"feat/plan"}],"jira_transitions":[{"key":"LRM-77","to":"진행 중"}]}'
+exp "plan: 계획에 적힌 repo:branch 는 카드 없이 draft PR 생성 통과" $PD 'gh pr create --draft -R Org/RepoA --head feat/plan -t t' "$PR"
+exp "plan: 계획 승인이어도 --draft 없으면 거부" $PD 'gh pr create -R Org/RepoA --head feat/plan -t t' "$PR" deny
+exp "plan: 계획에 없는 브랜치는 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/other -t t' "$PR" deny
+msg=$(printf '%s' "$(jq -cn --arg c 'gh pr create --draft -R Org/RepoA --head feat/other -t t' --arg d "$PR" '{tool_input:{command:$c},cwd:$d}')" | HOME="$SB/home" bash "$H/$PD" | jq -r '.hookSpecificOutput.permissionDecisionReason')
+case "$msg" in *"계획서에 이 PR 을 추가한 뒤 컨펌"*) ok "plan: PR 거부 메시지에 계획서 추가 조치";; *) ko "plan: PR 거부 메시지" "$msg";; esac
+exp "plan: 계획 승인은 ready 를 허용하지 않음" $PD 'gh pr ready 30 -R Org/RepoA' "$PR" deny
+exp "plan: 계획 승인은 gh api draft 해제를 허용하지 않음" $PD 'gh api -X PATCH repos/Org/RepoA/pulls/30 -F draft=false' "$PR" deny
+jq -e '.permissions.deny | index("Bash(gh pr merge:*)")' "$HERE/../../claude/settings.base.json" >/dev/null \
+  && ! grep -q 'merge' "$H/lib/plan_approval.py" && ok "plan: gh pr merge 는 권한 deny 고정·계획 승인 모듈이 병합을 다루지 않음" || ko "plan: 병합 고정" "settings deny 또는 plan_approval.py 확인"
+jexp "plan: 계획에 적힌 요약은 Jira 발급 통과(공백 정리)" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":" 계획  티켓 하나"}}'
+jexp "plan: 계획에 없는 요약은 거부" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 밖 티켓"}}' deny
+jexp "plan: 계획에 적힌 이슈 상태 전환 통과" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-77","transition":{"id":"21"}}}'
+jexp "plan: 대상 상태가 다르면 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-77","transition":{"id":"31","name":"완료"}}}' deny
+jexp "plan: 계획에 없는 이슈 전환은 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-78","transition":{"id":"21"}}}' deny
+jmsg=$(printf '%s' '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 밖 티켓"}}' | HOME="$SB/home" bash "$H/jira-approval-guard.sh" | jq -r '.hookSpecificOutput.permissionDecisionReason')
+case "$jmsg" in *"계획서에 추가한 뒤 컨펌"*) ok "plan: Jira 거부 메시지에 계획서 추가 조치";; *) ko "plan: Jira 거부 메시지" "$jmsg";; esac
+plan P2 '{"plan_id":"P2","approved_at":"2026-11-16T10:00:00+09:00","approver_quote":"  ","tickets":[{"summary":"인용 없는 티켓"}],"prs":[{"repo":"Org/RepoA","branch":"feat/noquote"}]}'
+plan P3 '{"plan_id":"다른이름","approved_at":"x","approver_quote":"좋아","prs":[{"repo":"Org/RepoA","branch":"feat/badid"}]}'
+plan P4 '{"plan_id":"P4","approver_quote":"좋아","prs":[{"repo":"Org/RepoA","branch":"feat/notime"}]}'
+printf '{깨진' > "$PA/P5.json"
+jexp "plan: 사용자 원문 인용 없는 기록은 무효" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"인용 없는 티켓"}}' deny
+exp "plan: 인용 없는 기록의 PR 은 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/noquote -t t' "$PR" deny
+exp "plan: plan_id 가 파일 이름과 다르면 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/badid -t t' "$PR" deny
+exp "plan: approved_at 없으면 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/notime -t t' "$PR" deny
+exp "plan: 깨진 파일이 있어도 다른 기록은 유효" $PD 'gh pr create --draft -R Org/RepoA --head feat/plan -t t' "$PR"
+chmod 000 "$PA/P1.json"
+exp "plan: 계획 기록을 못 읽으면 ask" $PD 'gh pr create --draft -R Org/RepoA --head feat/plan -t t' "$PR" ask
+jexp "plan: Jira 도 계획 기록을 못 읽으면 ask" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 티켓 하나"}}' ask
+chmod 600 "$PA/P1.json"
+
 # ---- commit-msg 훅: 게임 저장소에서 AI 흔적 줄 삭제 ----
 GH_HOOKS="$HERE/../../git/hooks"
 cm() { # cm <저장소> <메시지> → 커밋 뒤 메시지 본문, stderr 는 $SB/cm.err

@@ -10,6 +10,7 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import pr_guard as pg  # noqa: E402  승인 기록 조회 재사용
+import plan_approval as pa  # noqa: E402
 
 TOOL = "mcp__atlassian__"
 CARD = ("slack_notify.sh --kind decide --decision-id {did} --options '1=승인 => {what},2=보류 => 하지 않음' "
@@ -28,17 +29,18 @@ def status_id(key):
 
 
 def target(name, inp):
-    """(결정 번호, 하는 일, 카드 제목) 또는 None(검사 대상 아님)"""
+    """(결정 번호, 하는 일, 카드 제목, 계획 조회) 또는 None(검사 대상 아님)"""
     if name == "createJiraIssue":
         s = inp.get("summary", "")
         if not s:
             raise pg.Unknown("이슈 요약(summary)이 비어 있음")
-        return create_id(s), "이슈 발급", f"Jira 이슈 발급 승인: {s}"
+        return create_id(s), "이슈 발급", f"Jira 이슈 발급 승인: {s}", (pa.find_ticket, s), "tickets 에 {summary}"
     key = inp.get("issueIdOrKey") or inp.get("issueKey") or ""
     if name == "transitionJiraIssue" or (name == "editJiraIssue" and STATUS_FIELDS & set((inp.get("fields") or {}).keys())):
         if not key:
             raise pg.Unknown("이슈 키를 알 수 없음")
-        return status_id(key), "상태 변경", f"Jira {key} 상태 변경 승인"
+        to = ((inp.get("transition") or {}).get("name") or "") if name == "transitionJiraIssue" else ""
+        return status_id(key), "상태 변경", f"Jira {key} 상태 변경 승인", (pa.find_transition, key, to), "jira_transitions 에 {key, to}"
     return None
 
 
@@ -58,10 +60,11 @@ def main():
         t = target(name, inp)
         if not t:
             return
-        did, what, title = t
-        if pg.decided(did):
+        did, what, title, (find, *args), field = t
+        if pg.plan_ok(find, *args) or pg.decided(did):
             return
-        res = ("deny", f"Jira {what}는 사용자 승인 뒤에만(사용자 11-16) — 결정 카드 {did} 의 1번 답 필요. 예: " + CARD.format(did=did, what=what, title=title))
+        res = ("deny", f"Jira {what}는 사용자 승인 뒤에만(사용자 11-16) — 계획서에 추가한 뒤 컨펌(plan-approvals/<plan-id>.json 의 {field} 기록) "
+               f"또는 결정 카드 {did} 의 1번 답 필요. 예: " + CARD.format(did=did, what=what, title=title))
     except pg.Unknown as e:
         res = ("ask", f"Jira 승인 판정 불가: {e}. 사용자 승인된 작업인지 확인 필요")
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": res[0], "permissionDecisionReason": res[1]}}, ensure_ascii=False))
