@@ -101,6 +101,9 @@ hubs/scripts/slack_push.py	.config/lrm-hubs/slack_push.py	link
 hubs/scripts/lib/py.sh	.config/lrm-hubs/lib/py.sh	link
 hubs/scripts/panel_collect.sh	.config/lrm-hubs/panel_collect.sh	link
 hubs/scripts/panel_collect.py	.config/lrm-hubs/panel_collect.py	link
+hubs/scripts/board_cards.py	.config/lrm-hubs/board_cards.py	link
+hubs/scripts/board-ask	.config/lrm-hubs/board-ask	link
+hubs/scripts/board-answer	.config/lrm-hubs/board-answer	link
 hubs/scripts/progress_collect.py	.config/lrm-hubs/progress_collect.py	link
 hubs/scripts/todo_items.py	.config/lrm-hubs/todo_items.py	link
 hubs/scripts/todo_sync.py	.config/lrm-hubs/todo_sync.py	link

@@ -1,7 +1,7 @@
 export type BoardLink = { label: string; href: string }
 
 export type BoardItem = {
-  /** 확인 목록 원료 항목의 키. 손 칸과 겹침 판정에 씀 */
+  /** 확인 목록 원료 항목의 키. 작업판 승인 카드와 겹침 판정에 씀 */
   key?: string
   /** 1 이 가장 급함 */
   p: number
@@ -14,47 +14,6 @@ export type BoardItem = {
   detail?: string[]
   /** Jira·PR·Slack 링크 */
   links?: BoardLink[]
-}
-
-export type HubRow = {
-  name: string
-  /** busy · waiting · idle · blocked */
-  state: string
-  note?: string
-}
-
-export type HistoryEntry = {
-  /** HH:MM */
-  at: string
-  /** 허브 이름 또는 '사용자'·'메인' */
-  hub: string
-  text: string
-  /** PR·티켓 같은 짧은 꼬리표 */
-  ref?: string
-}
-
-/** 메인이 손으로 쓰는 panel.json. 수집기는 이 파일을 쓰지 않음 */
-export type Board = {
-  updatedAt?: string
-  headline?: string
-  approvals?: BoardItem[]
-  todos?: BoardItem[]
-  /** 자동 칸(panel-auto.json)이 없을 때만 표시하는 옛 허브 칸 */
-  hubs?: HubRow[]
-  /** 오늘 진행 기록, 최신이 앞 */
-  history?: HistoryEntry[]
-  /** 진행 게이지(메인이 씀). 맨 위 고정 표시 */
-  progress?: ProgressItem[]
-}
-
-/** state: on 진행 · blocked 막힘(빨강) · done 끝 */
-export type ProgressItem = {
-  title: string
-  done: number
-  total: number
-  eta?: string
-  state?: 'on' | 'blocked' | 'done'
-  steps?: string
 }
 
 /** 원료 하나. at 은 마지막 성공 시각(epoch 초), tried 는 마지막 시도 시각 */
@@ -125,11 +84,31 @@ export type AutoGh = {
   open: number; ciFail: number; capped?: boolean
 }
 
-/** 작업판(beads, ~/orca/board) 요약 */
+/** 작업판 카드 한 장. 시각은 epoch 초, beatAt 은 마지막 갱신(heartbeat) */
+export type AutoCard = {
+  id: string
+  title: string
+  p: number
+  who: string | null
+  createdAt: number | null
+  beatAt: number | null
+  startedAt: number | null
+  comments: number
+  /** 결정·할 일·승인 카드만. 선택지·추천 */
+  desc?: string | null
+}
+
+/** 작업판(beads, ~/orca/board) 요약. 패널의 정본. 옛 파일은 doing·counts 만 있음 */
 export type AutoWorkBoard = {
   counts: { in_progress: number; open: number; blocked: number }
-  doing: Array<{ id: string; title: string; who: string | null }>
+  doing: AutoCard[]
   more: number
+  blocked?: AutoCard[]
+  decisions?: AutoCard[]
+  todos?: AutoCard[]
+  approvals?: AutoCard[]
+  headline?: { id: string; title: string; done: number; total: number; epics: number } | null
+  recent?: Array<{ id: string; title: string; at: number | null; reason: string | null }>
 }
 
 /** 수집기(panel_collect.sh)가 쓰는 panel-auto.json */
@@ -154,14 +133,10 @@ export type AutoBoard = {
 }
 
 export type BoardView = {
-  board?: Board
   auto?: AutoBoard
-  /** 파일 수정 시각(ms). 0 은 없음 */
-  mtimeMs: number
   autoMtimeMs: number
   /** 마지막 폴링 시각(ms). 오래됨 판정용 */
   nowMs: number
-  error?: string
   autoError?: string
 }
 

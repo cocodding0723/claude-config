@@ -1,12 +1,10 @@
 // 패널의 순수 함수: 파일 해석·오래됨 판정·표시 문자열. 엔진($) 없이 node 로 시험함(tests/panel/board.test.mjs)
-import type { AutoBoard, AutoConfirm, AutoHub, AutoIdle, AutoProgress, AutoSource, Board, BoardItem } from '../types'
+import type { AutoBoard, AutoCard, AutoConfirm, AutoHub, AutoIdle, AutoProgress, AutoSource, AutoWorkBoard, BoardItem } from '../types'
 
 /** 자동 칸이 이만큼 넘게 갱신되지 않으면 맨 위 ⚠️. 수집 주기 60초 + 한 회차 시간의 여유 */
 export const AUTO_STALE_MIN = 3
-/** 확인 목록 원료가 이만큼 갱신되지 않으면 낡은 것으로 보고 손 칸을 앞세움 */
+/** 확인 목록 원료가 이만큼 갱신되지 않으면 낡은 것으로 보고 작업판 승인 카드를 앞세움 */
 export const CONFIRM_STALE_MIN = 10
-/** 메인 칸(panel.json)이 이만큼 지나면 연한 경고. 메인은 순찰·결정 때만 고침 */
-export const MAIN_STALE_MIN = 30
 /** 파일 안 시각이 지금보다 이만큼 앞서면 시계가 틀린 것으로 보고 수정 시각을 씀 */
 const FUTURE_SLACK_MS = 2 * 60 * 1000
 
@@ -17,19 +15,11 @@ export const STATE_LABEL: Record<string, string> = {
   unknown: '확인불가',
 }
 
-/** panel-auto.json 해석. 모양이 다르면 예외(메인 칸은 그대로 그림) */
+/** panel-auto.json 해석. 모양이 다르면 예외 */
 export const parseAuto = (text: string): AutoBoard => {
   const d = JSON.parse(text) as AutoBoard
   if (d === null || typeof d !== 'object' || typeof d.updatedAt !== 'number' || d.sources === null || typeof d.sources !== 'object') {
     throw new Error('자동 칸 형식 아님')
-  }
-  return d
-}
-
-export const parseMain = (text: string): Board => {
-  const d = JSON.parse(text) as Board
-  if (d === null || typeof d !== 'object' || Array.isArray(d)) {
-    throw new Error('메인 칸 형식 아님')
   }
   return d
 }
@@ -84,13 +74,6 @@ export const autoBanner = (
   return { level: 'ok', text: `데이터 ${age}` }
 }
 
-/** 메인 칸은 파일 수정 시각 기준(파일 안 updatedAt 글자는 손으로 써서 어긋남) */
-export const mainAge = (mtimeMs: number, nowMs: number): { old: boolean; text: string } => {
-  if (mtimeMs === 0) return { old: true, text: '메인 칸 없음' }
-  const min = ageMin(mtimeMs, nowMs) ?? 0
-  return { old: min > MAIN_STALE_MIN, text: `메인 ${fmtAge(min)}` }
-}
-
 /** 원료 꼬리표: 실패면 오류 종류와 남아 있는 값의 나이 */
 export const sourceNote = <T>(src: AutoSource<T> | undefined, nowMs: number): string => {
   if (src === undefined) return '자동 · 없음'
@@ -122,18 +105,10 @@ export const pendingLine = (p: import('../types').AutoPendingItem): string => {
 export const ghLine = (g: { open: number; ciFail: number; capped?: boolean }): string =>
   `열린 PR ${g.open}${g.capped === true ? '+' : ''} · CI 실패 ${g.ciFail}`
 
-/** 맨 위 숫자. 자동 허브 값이 있으면 그것, 없으면 메인 칸의 옛 hubs */
-export const headCounts = (board: Board | undefined, auto: AutoBoard | undefined): { busy: number; blocked: number; source: 'auto' | 'main' } => {
+/** 맨 위 숫자: 허브 작업 중·승인창 수. 자동 허브 값이 없으면 undefined */
+export const headCounts = (auto: AutoBoard | undefined): { busy: number; blocked: number } | undefined => {
   const hubs = auto?.sources.hubs?.value
-  if (hubs !== undefined && hubs !== null) {
-    return { busy: hubs.counts.busy, blocked: hubs.counts.approval, source: 'auto' }
-  }
-  const rows = board?.hubs ?? []
-  return {
-    busy: rows.filter(r => r.state === 'busy').length,
-    blocked: rows.filter(r => r.state === 'waiting' || r.state === 'blocked').length,
-    source: 'main',
-  }
+  return hubs === undefined || hubs === null ? undefined : { busy: hubs.counts.busy, blocked: hubs.counts.approval }
 }
 
 /** 쉬는 자원 칸에서 이름을 보여 줄 오래 쉰 워크스페이스 수 */
@@ -190,7 +165,7 @@ export type ProgressGroup = { group: string; lines: string[] }
 
 /**
  * 진행 칸: 허브(그룹)별로 묶고 줄 앞에 묶음 표시. 그룹 순서는 처음 나온 순.
- * 값이 없으면 undefined → 호출한 쪽이 옛 손 칸으로 돌아감
+ * 값이 없으면 undefined → 호출한 쪽이 칸을 숨김
  */
 export const progressGroups = (v: AutoProgress | null | undefined): ProgressGroup[] | undefined => {
   if (v === null || v === undefined || !Array.isArray(v.items)) return undefined
@@ -210,7 +185,7 @@ export const progressGroups = (v: AutoProgress | null | undefined): ProgressGrou
 
 /**
  * '내가 승인할 것' 칸: 확인 목록(수집기의 confirm 원료) 안 함 항목. 급함 3 → p 1.
- * 원료가 없으면 undefined. 손 칸과의 합치기는 mergeApprovals
+ * 원료가 없으면 undefined. 작업판 승인 카드와의 합치기는 mergeApprovals
  */
 export const confirmApprovals = (v: AutoConfirm | null | undefined): BoardItem[] | undefined => {
   if (v === null || v === undefined || !Array.isArray(v.items)) return undefined
@@ -226,12 +201,12 @@ export const confirmApprovals = (v: AutoConfirm | null | undefined): BoardItem[]
 /** 제목 비교용: 공백 정리, 끝의 ' (허브)' 꼬리표 제거 */
 const titleKey = (t: string) => t.replace(/\s+/g, ' ').trim().replace(/ \([^()]*\)$/, '')
 
-export type ApprovalMerge = { items: BoardItem[]; /** 확인 목록 원료가 낡음 → 손 칸을 앞세웠음 */ stale: boolean }
+export type ApprovalMerge = { items: BoardItem[]; /** 확인 목록 원료가 낡음 → 작업판 카드를 앞세웠음 */ stale: boolean }
 
 /**
- * '내가 승인할 것' 칸 합치기: 확인 목록 원료 항목 + 제목·키가 겹치지 않는 손 칸 항목.
- * 겹치면 원료 항목에 손 칸의 why·detail 을 붙임. 원료가 없거나 빈 배열이면 손 칸만.
- * 원료가 낡았으면(CONFIRM_STALE_MIN 초과·시각 없음) 손 칸을 앞세우고 겹치는 건 손 칸 것을 씀. 낡은 원료 항목에는 ⚠ 표시
+ * '내가 승인할 것' 칸 합치기: 확인 목록 원료 항목 + 제목·키가 겹치지 않는 작업판 승인 카드(hand).
+ * 겹치면 원료 항목에 카드의 why·detail 을 붙임. 원료가 없거나 빈 배열이면 카드만.
+ * 원료가 낡았으면(CONFIRM_STALE_MIN 초과·시각 없음) 카드를 앞세우고 겹치는 건 카드 것을 씀. 낡은 원료 항목에는 ⚠ 표시
  */
 export const mergeApprovals = (
   src: AutoSource<AutoConfirm> | undefined,
@@ -261,10 +236,66 @@ export const mergeApprovals = (
   return { items: [...merged, ...handItems.filter(h => !auto.some(a => same(a, h)))], stale }
 }
 
-/** 작업판 칸 줄. 진행 중 카드는 제목·담당 */
-export const boardLines = (v: import('../types').AutoWorkBoard | null | undefined): string[] | undefined => {
+const ageOf = (sec: number | null | undefined, nowMs: number) =>
+  sec === null || sec === undefined ? undefined : ageMin(sec * 1000, nowMs)
+
+/** 진행 중 카드가 이만큼 갱신(heartbeat) 없으면 ⚠ */
+export const BEAT_STALE_MIN = 30
+
+/** 🔄 진행 줄: id 제목 · 담당 · 경과 · 마지막 신호. 신호가 BEAT_STALE_MIN 넘으면 warn */
+export const boardLines = (v: AutoWorkBoard | null | undefined, nowMs = 0): Array<{ text: string; warn: boolean }> | undefined => {
   if (v === null || v === undefined) return undefined
-  const out = v.doing.map(d => `${d.id} ${d.title}${d.who ? ` · ${d.who}` : ''}`)
-  if (v.more > 0) out.push(`외 ${v.more}개`)
+  const out = v.doing.map(d => {
+    const parts = [`${d.id} ${d.title}`]
+    if (d.who) parts.push(d.who)
+    const run = ageOf(d.startedAt, nowMs)
+    if (run !== undefined) parts.push(`경과 ${fmtAge(run).replace(/ 전$/, '')}`)
+    const beat = ageOf(d.beatAt, nowMs)
+    if (beat !== undefined) parts.push(`신호 ${fmtAge(beat)}`)
+    const warn = beat !== undefined && beat > BEAT_STALE_MIN
+    return { text: `${parts.join(' · ')}${warn ? ' ⚠' : ''}`, warn }
+  })
+  if (v.more > 0) out.push({ text: `외 ${v.more}개`, warn: false })
   return out
 }
+
+/** 🚧 막힘 줄 */
+export const blockedLines = (v: AutoWorkBoard | null | undefined): string[] =>
+  (v?.blocked ?? []).map(d => `${d.id} ${d.title}${d.who ? ` · ${d.who}` : ''}`)
+
+export const ANSWER_HOW: Record<string, string> = {
+  decision: 'board-answer <id> "<답 원문>"',
+  todo: '끝나면 bd close <id>',
+  approval: 'board-answer <id> "<승인·거절 원문>"',
+}
+
+/** 결정·할 일·승인 카드 → 카드 칸 항목. p 는 bd 우선순위(0 최우선)+1, 설명은 줄마다 detail */
+export const cardItems = (cards: AutoCard[] | undefined, kind: keyof typeof ANSWER_HOW, nowMs: number): BoardItem[] =>
+  (cards ?? []).map(c => {
+    const age = ageOf(c.createdAt, nowMs)
+    const why = [c.id, c.who ?? undefined, age !== undefined ? fmtAge(age) : undefined, c.comments > 0 ? `코멘트 ${c.comments}` : undefined]
+      .filter((x): x is string => x !== undefined).join(' · ')
+    return {
+      key: `board:${c.id}`,
+      p: (Number.isFinite(c.p) ? c.p : 2) + 1,
+      title: c.title,
+      why,
+      detail: (c.desc ?? '').split(/\n+/).map(l => l.trim()).filter(l => l !== ''),
+      how: (ANSWER_HOW[kind] ?? '').replace('<id>', c.id),
+    }
+  })
+
+/** 맨 위 헤드라인: 최우선 열린 epic 제목과 진척 */
+export const headlineText = (v: AutoWorkBoard | null | undefined): string | undefined => {
+  const h = v?.headline
+  if (h === null || h === undefined) return undefined
+  const more = h.epics > 1 ? ` · 열린 epic ${h.epics}` : ''
+  return `🎯 ${h.title} (${h.done}/${h.total})${more}`
+}
+
+/** 🧾 최근 닫힌 카드 줄 */
+export const recentLines = (v: AutoWorkBoard | null | undefined, nowMs: number): string[] =>
+  (v?.recent ?? []).map(r => {
+    const age = ageOf(r.at, nowMs)
+    return `✅ ${r.title}${age !== undefined ? `  · ${fmtAge(age)}` : ''}`
+  })

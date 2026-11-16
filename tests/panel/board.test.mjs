@@ -20,11 +20,6 @@ test('parseAuto: 형식 확인, 깨진 JSON·모양 다름은 예외', () => {
   assert.throws(() => b.parseAuto('null'))
 })
 
-test('parseMain: 객체만 받음', () => {
-  assert.deepEqual(b.parseMain('{"approvals":[]}'), { approvals: [] })
-  assert.throws(() => b.parseMain('[]'))
-})
-
 test('autoBanner: 파일 없음·깨짐·3분 초과는 경고, 3분 이하는 정상', () => {
   assert.equal(b.autoBanner(undefined, 0, undefined, NOW).level, 'missing')
   assert.equal(b.autoBanner(undefined, NOW, 'SyntaxError', NOW).level, 'broken')
@@ -46,12 +41,6 @@ test('autoStamp: epoch 가 없거나 미래(시계 이상)면 수정 시각', ()
   assert.equal(b.autoStamp(auto(-60), mtime, NOW), mtime)
   assert.equal(b.autoStamp(auto(-1), mtime, NOW), NOW + 60000)
   assert.equal(b.autoStamp(undefined, 0, NOW), undefined)
-})
-
-test('mainAge: 수정 시각 기준 30분 초과면 old', () => {
-  assert.equal(b.mainAge(NOW - 30 * 60000, NOW).old, false)
-  assert.equal(b.mainAge(NOW - 31 * 60000, NOW).old, true)
-  assert.equal(b.mainAge(0, NOW).old, true)
 })
 
 test('fmtAge: 방금·분·시간·일', () => {
@@ -86,12 +75,10 @@ test('ghLine: --limit 만큼 꽉 차면 숫자 뒤에 +', () => {
   assert.equal(b.ghLine({ repos: [], open: 100, ciFail: 0, capped: true }), '열린 PR 100+ · CI 실패 0')
 })
 
-test('headCounts: 자동 허브 값 우선, 없으면 메인 칸 hubs', () => {
+test('headCounts: 자동 허브 값, 없으면 undefined', () => {
   const a = auto(1, { sources: { hubs: { ok: true, err: null, at: 1, stale: false, value: { rows: [], counts: { busy: 2, approval: 1, idle: 3, unknown: 0 } } } } })
-  const main = { hubs: [{ name: 'x', state: 'busy' }, { name: 'y', state: 'blocked' }, { name: 'z', state: 'waiting' }] }
-  assert.deepEqual(b.headCounts(main, a), { busy: 2, blocked: 1, source: 'auto' })
-  assert.deepEqual(b.headCounts(main, undefined), { busy: 1, blocked: 2, source: 'main' })
-  assert.deepEqual(b.headCounts(undefined, undefined), { busy: 0, blocked: 0, source: 'main' })
+  assert.deepEqual(b.headCounts(a), { busy: 2, blocked: 1 })
+  assert.equal(b.headCounts(undefined), undefined)
 })
 
 test('idleLines: 값 없음·부분 null 이어도 깨지지 않음, 디스크 경고 표시', () => {
@@ -149,7 +136,7 @@ test('progressBar: 퍼센트·막대·상태 꼬리, 깨진 값은 0~100% 로 �
   assert.equal(b.progressBar({ done: NaN, total: 3 }, 4).bar, '░░░░')
 })
 
-test('progressGroups: 허브별로 묶고 묶음 표시, 값이 없으면 undefined(옛 손 칸으로 복귀)', () => {
+test('progressGroups: 허브별로 묶고 묶음 표시, 값이 없으면 undefined(옛 작업판 카드으로 복귀)', () => {
   assert.equal(b.progressGroups(undefined), undefined)
   assert.equal(b.progressGroups(null), undefined)
   const g = b.progressGroups({
@@ -173,7 +160,7 @@ test('hubLine: 하위 작업 공간 수, 10개 넘으면 경고', () => {
   assert.equal(b.hubLine(h), '작업 중')
 })
 
-test('confirmApprovals: 확인 목록 항목을 승인 칸 모양으로, 원료가 없으면 undefined(손 칸으로 복귀)', () => {
+test('confirmApprovals: 확인 목록 항목을 승인 칸 모양으로, 원료가 없으면 undefined(작업판 카드으로 복귀)', () => {
   assert.equal(b.confirmApprovals(undefined), undefined)
   assert.equal(b.confirmApprovals(null), undefined)
   const v = b.confirmApprovals({ todo: 2, done: 0, items: [
@@ -190,21 +177,21 @@ test('confirmApprovals: 확인 목록 항목을 승인 칸 모양으로, 원료�
 const conf = (items, at = NOW / 1000 - 60) => ({ ok: true, err: null, at, stale: false, value: { todo: items.length, done: 0, items } })
 const ci = (key, title, hub = '미상') => ({ key, kind: 'window', kind_label: '🪟 창 승인', title, hub, urgency: 2, how: '창에서 승인' })
 
-test('mergeApprovals: 원료가 없거나 빈 배열이면 손 칸만', () => {
+test('mergeApprovals: 원료가 없거나 빈 배열이면 작업판 카드만', () => {
   const hand = [{ p: 2, title: '손 항목' }]
   assert.deepEqual(b.mergeApprovals(undefined, hand, NOW), { items: hand, stale: false })
   assert.deepEqual(b.mergeApprovals(conf([]), hand, NOW), { items: hand, stale: false })
   assert.deepEqual(b.mergeApprovals(undefined, undefined, NOW), { items: [], stale: false })
 })
 
-test('mergeApprovals: 원료 항목 + 겹치지 않는 손 칸 항목', () => {
+test('mergeApprovals: 원료 항목 + 겹치지 않는 작업판 카드 항목', () => {
   const hand = [{ p: 1, title: '손으로 적은 승인', why: '메인 메모' }]
   const r = b.mergeApprovals(conf([ci('k1', '창 승인 대기', 'alpha')]), hand, NOW)
   assert.equal(r.stale, false)
   assert.deepEqual(r.items.map(i => i.title), ['창 승인 대기 (alpha)', '손으로 적은 승인'])
 })
 
-test('mergeApprovals: 제목이 겹치면 원료 항목에 손 칸 why·detail 을 붙이고 중복은 하나', () => {
+test('mergeApprovals: 제목이 겹치면 원료 항목에 작업판 카드 why·detail 을 붙이고 중복은 하나', () => {
   const hand = [{ p: 1, title: '창 승인 대기', why: '배포 막힘', detail: ['3번째 요청'] }]
   const r = b.mergeApprovals(conf([ci('k1', '창 승인 대기', 'alpha')]), hand, NOW)
   assert.equal(r.items.length, 1)
@@ -216,7 +203,7 @@ test('mergeApprovals: 키가 같으면 제목이 달라도 겹침', () => {
   assert.equal(b.mergeApprovals(conf([ci('k1', '창 승인 대기')]), hand, NOW).items.length, 1)
 })
 
-test('mergeApprovals: 원료가 낡으면 손 칸 우선·낡음 표시, 겹치는 건 손 칸 것', () => {
+test('mergeApprovals: 원료가 낡으면 작업판 카드 우선·낡음 표시, 겹치는 건 작업판 카드 것', () => {
   const hand = [{ p: 1, title: '창 승인 대기', why: '손 메모' }, { p: 3, title: '손 전용' }]
   const old = conf([ci('k1', '창 승인 대기'), ci('k2', '원료 전용')], NOW / 1000 - (b.CONFIRM_STALE_MIN + 5) * 60)
   const r = b.mergeApprovals(old, hand, NOW)
@@ -230,7 +217,39 @@ test('autoStamp: writtenAt 이 있으면 updatedAt 보다 우선', () => {
   assert.equal(b.autoStamp({ ...auto(5), writtenAt: sec(NOW - 60000) }, 0, NOW), NOW - 60000)
 })
 
-test('boardLines: 진행 중 카드 제목·담당, 넘친 수', () => {
+const card = (o = {}) => ({ id: 'a-1', title: 'T', p: 1, who: 'u', createdAt: sec(NOW - 5 * 60000), beatAt: sec(NOW - 2 * 60000), startedAt: sec(NOW - 90 * 60000), comments: 0, ...o })
+const wb = (o = {}) => ({ counts: { in_progress: 1, open: 0, blocked: 0 }, doing: [], more: 0, ...o })
+
+test('boardLines: 담당·경과·마지막 신호, 넘친 수, 옛 모양도 읽음', () => {
   assert.equal(b.boardLines(undefined), undefined)
-  assert.deepEqual(b.boardLines({ counts: { in_progress: 2, open: 0, blocked: 0 }, doing: [{ id: 'a-1', title: 'T', who: 'u' }], more: 1 }), ['a-1 T · u', '외 1개'])
+  assert.deepEqual(b.boardLines(wb({ doing: [card()], more: 1 }), NOW), [
+    { text: 'a-1 T · u · 경과 1시간 30분 · 신호 2분 전', warn: false },
+    { text: '외 1개', warn: false },
+  ])
+  assert.deepEqual(b.boardLines(wb({ doing: [{ id: 'a-1', title: 'T', who: null }] }), NOW), [{ text: 'a-1 T', warn: false }])
+})
+
+test('boardLines: 신호가 30분 넘으면 ⚠', () => {
+  const r = b.boardLines(wb({ doing: [card({ beatAt: sec(NOW - 31 * 60000) })] }), NOW)
+  assert.equal(r[0].warn, true)
+  assert.match(r[0].text, /⚠$/)
+})
+
+test('cardItems: 결정 카드 → 항목(우선순위+1·설명 줄·답법)', () => {
+  const [it] = b.cardItems([card({ p: 0, desc: 'A: 이렇게\nB: 저렇게\n\n추천: A', comments: 2 })], 'decision', NOW)
+  assert.equal(it.p, 1)
+  assert.equal(it.key, 'board:a-1')
+  assert.deepEqual(it.detail, ['A: 이렇게', 'B: 저렇게', '추천: A'])
+  assert.equal(it.how, 'board-answer a-1 "<답 원문>"')
+  assert.equal(it.why, 'a-1 · u · 5분 전 · 코멘트 2')
+  assert.deepEqual(b.cardItems(undefined, 'todo', NOW), [])
+})
+
+test('headlineText·recentLines·blockedLines', () => {
+  assert.equal(b.headlineText(wb({ headline: { id: 'e', title: '에픽', done: 2, total: 5, epics: 1 } })), '🎯 에픽 (2/5)')
+  assert.equal(b.headlineText(wb({ headline: { id: 'e', title: '에픽', done: 0, total: 0, epics: 3 } })), '🎯 에픽 (0/0) · 열린 epic 3')
+  assert.equal(b.headlineText(wb({ headline: null })), undefined)
+  assert.deepEqual(b.recentLines(wb({ recent: [{ id: 'x', title: '끝', at: sec(NOW - 120000), reason: null }] }), NOW), ['✅ 끝  · 2분 전'])
+  assert.deepEqual(b.blockedLines(wb({ blocked: [card()] })), ['a-1 T · u'])
+  assert.deepEqual(b.blockedLines(undefined), [])
 })

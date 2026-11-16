@@ -11,6 +11,12 @@
   </array>
   <key>StartInterval</key><integer>60</integer>
   <key>RunAtLoad</key><true/>
+  <!-- 작업판(bd) 쓰기 때 바로 다시 수집. bd 가 쓰기·show 때 last-touched 를, 내보내기 때 issues.jsonl 을 고침. launchd 기본 10초 간격 제한 -->
+  <key>WatchPaths</key>
+  <array>
+    <string>__HOME__/orca/board/.beads/last-touched</string>
+    <string>__HOME__/orca/board/.beads/issues.jsonl</string>
+  </array>
   <!-- 셸 진입점이 쓸 python3: install.sh 가 3.10 이상으로 검증한 경로(lib/py.sh 가 읽음) -->
   <key>EnvironmentVariables</key>
   <dict><key>LRM_PYTHON3</key><string>__PYTHON3__</string></dict>
