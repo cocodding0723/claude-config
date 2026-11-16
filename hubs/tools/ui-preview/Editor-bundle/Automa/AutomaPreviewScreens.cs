@@ -182,10 +182,16 @@ namespace Tests.Editor.UiPreview.Automa
         private static void RenderNotice(Transform root, Func<AutomaPreviewFixture> fixture, AutomaMissionKind kind)
         {
             var card = Card(fixture);
-            var presenter = new AutomaNoticePresenter(LocalizationManager.GetText, type => type.GetName());
+            // 게임 ModalController_Automa 와 같은 칩 이름(GetTitle)
+            var presenter = new AutomaNoticePresenter(LocalizationManager.GetText, type => type.GetTitle());
             var input = NoticeInput(kind, card);
+            // 상대 초상 Id 는 브랜치에 따라 init 속성이 있거나 없음. 있을 때만 채움
+            typeof(AutomaMissionNoticeInput).GetProperty("RivalCharacterId")?.SetValue(input, card.Rival.CharacterId);
             var dialog = UiPreviewPrefabs.Spawn<AutomaNoticeDialog>(nameof(AutomaNoticeDialog), root, true);
-            UiPreviewDialogs.Init(dialog, () => dialog.InitModal(new AutomaNoticeDialogData(presenter.Build(input)), null));
+            var chanceKey = typeof(AutomaNoticeDialog).GetField("chancePortraitKey",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(dialog) as string;
+            var portraitKey = kind == AutomaMissionKind.Rumor ? card.Rival.CharacterId : chanceKey;
+            UiPreviewDialogs.Init(dialog, () => dialog.InitModal(new AutomaNoticeDialogData(presenter.Build(input)), null), portraitKey);
             dialog.OnModalDisplay();
         }
 
