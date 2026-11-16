@@ -291,6 +291,15 @@ else
   printf 'SKIP  mod 순수 함수 시험 — node 23 이상(타입 제거 내장) 없음\n'
 fi
 
+# ---- 13. 작업판(bd) 원료·카드 도우미 — 임시 작업판에서만 ------------------------------------------
+if command -v bd >/dev/null; then
+  out=$(bash "$HERE/board_beads.sh" 2>&1); rc=$?
+  echo "$out" | grep -E '^(PASS|FAIL) ' | sed 's/^/  /'
+  [ "$rc" = 0 ] && ok "작업판 원료·board-ask·board-answer 시험 통과" || ko "작업판 시험" "$(echo "$out" | grep -m2 '^FAIL' | tr '\n' ' ')"
+else
+  printf 'SKIP  작업판 시험 — bd 없음\n'
+fi
+
 # ---- 허브가 '이 창에서 확인/답' 이라고 쓰는 말버릇 경고 -----------------------------------------------
 askres=$(python3 -I - "$HERE/../../hubs/scripts" <<'PY'
 import sys

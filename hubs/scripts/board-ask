@@ -1,0 +1,6 @@
+#!/bin/bash
+# 작업판 카드 도우미 진입점. 본체는 같은 폴더의 board_cards.py. --help 로 사용법
+set -eu
+. "$(dirname "$0")/lib/py.sh"
+HERE=$(cd "$(dirname "$0")" && pwd)
+exec "$PY" -I "$HERE/board_cards.py" ask "$@"

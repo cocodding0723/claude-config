@@ -43,7 +43,19 @@ description: Orca 메인 코디네이터를 운영한다 — 허브 순찰, 허�
 | 허브 간 요청·겹침 | 메인이 담당·순서 결정 후 양쪽에 통보 |
 | 출력 60분 이상 정지 | 허브에 상태 질의 1회 → 응답 없으면 사용자에게 재시작 제안 |
 
-옆 패널의 허브 상태·결정 대기·최근 기록·PR 수는 수집기(launchd `ai.lrm.panelcollect`)가 90초마다 `panel-auto.json` 에 쓴다. 메인은 `PANEL_JSON` 의 손 칸(`headline`·`approvals`·`todos`·`history`)만, 결정 카드를 보내거나 답을 받을 때 고친다. `panel-auto.json` 은 쓰지 않는다. 패널 맨 위 ⚠️ 는 수집기가 멈췄다는 뜻이다(`$HUB_SCRIPTS/docs/panel.md`).
+옆 패널의 정본은 작업판(beads, `~/orca/board`)이다. 손으로 쓰는 `panel.json` 은 11-16 폐지했다. 수집기(launchd `ai.lrm.panelcollect`)가 60초마다·작업판이 바뀔 때 `bd` 를 읽어 `panel-auto.json` 에 쓰고, 패널이 5초마다 다시 그린다. 메인은 패널 파일을 쓰지 않고 카드만 다룬다.
+
+| 패널 칸 | 작업판 카드 | 메인이 하는 일 |
+|---|---|---|
+| 🙋 결정 대기 | 라벨 `kind:decision` 열린 카드(제목=질문, 설명=선택지·추천) | `$HUB_SCRIPTS/board-ask "<질문>" --options "A\|B" --recommend A [--parent <epic>]` |
+| ✋ 승인 대기 | `kind:approval` | `board-ask "<무엇>" --kind approval` |
+| 🛠️ 내가 할 일 | `kind:user-todo` | `board-ask "<할 일>" --kind user-todo --why "<이유>"`, 끝나면 `bd close <id>` |
+| 사용자 답 | 카드 코멘트 + 닫기 | `$HUB_SCRIPTS/board-answer <id> "<사용자 원문>"` (보류면 `--keep-open`) |
+| 🔄 진행·🚧 막힘 | `in_progress`·`blocked` 카드(담당·경과·마지막 갱신) | 워커가 집기(`board-claim`)·갱신 |
+| 🎯 헤드라인 | 열린 epic 중 최우선 1개, 진척 = 닫힌 하위/전체 | epic 우선순위로 조정 |
+| 🧾 최근 기록 | 최근 닫힌 카드 5개 | `bd close <id> --reason "<커밋·결과>"` |
+
+두 도우미는 같은 제목의 열린 카드·이미 닫힌 카드를 다시 만들거나 닫지 않아 반복해도 안전하다. `--json`·`--dry-run`·`--help` 를 지원한다. 패널 맨 위 ⚠️ 는 수집기가 멈췄다는 뜻이다(`$HUB_SCRIPTS/docs/panel.md`).
 
 ## 3. 허브 관리
 

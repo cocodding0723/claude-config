@@ -1,40 +1,39 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { AutoBoard, Board, BoardItem, BoardView, HistoryEntry } from '../types'
+import type { AutoBoard, BoardItem, BoardView } from '../types'
 import {
   autoBanner,
+  blockedLines,
   boardLines,
+  cardItems,
   fmtAge,
   ageMin,
   ghLine,
   headCounts,
+  headlineText,
   hubLine,
   idleLines,
-  mainAge,
   mergeApprovals,
   parseAuto,
-  parseMain,
-  pendingLine,
-  progressBar,
   progressGroups,
+  recentLines,
   sourceNote,
 } from './board'
 
+// Slack 원료(결정 카드 전송·Slack→메인 전달)는 봇이 꺼져 숨김. 수집기는 그대로 모음
 const PANE = 'lrm-board'
 const TITLE = 'LRM 현황'
-// 메인 코디네이터가 손으로 쓰는 칸(승인·할 일·headline·기록)
-const SOURCE = '__HOME__/.config/lrm-hubs/panel.json'
-// 수집기(launchd ai.lrm.panelcollect)가 90초마다 쓰는 자동 칸. 메인 파일과 쓰는 사람이 달라 파일을 나눔
+// 수집기(launchd ai.lrm.panelcollect)가 60초마다·작업판 변경 때 쓰는 자동 칸. 결정·할 일·승인·헤드라인의 정본은 작업판(bd)
 const AUTO_SOURCE = '__HOME__/.config/lrm-hubs/panel-auto.json'
-const POLL_MS = 15000
+const POLL_MS = 5000
 const MAIN_CWD = '__HOME__/orca/LoveRevolutionMaker'
 
-// 모양이 바뀌어 view-2. 옛 값은 초기값으로 읽힘
+// 손 칸(panel.json)을 없애 모양이 바뀜: view-3. 옛 값은 초기값으로 읽힘
 const view = atom(
   { plugin: 'lrm-board', key: 'view' } as const,
-  { mtimeMs: 0, autoMtimeMs: 0, nowMs: 0 } as BoardView,
-  { shape: 'view-2' },
+  { autoMtimeMs: 0, nowMs: 0 } as BoardView,
+  { shape: 'view-3' },
 )
 
 const byPriority = (items: BoardItem[] | undefined) =>
@@ -48,7 +47,6 @@ const C = {
   recent: '#90A4AE',
   pr: '#A5D6A7',
   idle: '#80CBC4',
-  history: '#FFB74D',
   title: '#FFFFFF',
   detail: '#C8C8C8',
   how: '#81C784',
@@ -75,28 +73,12 @@ export const register: Register = on => {
       description: 'LRM 오케스트레이션 현황 패널 열기',
     })
 
-    // 파일마다 수정 시각이 바뀌었을 때만 다시 읽음. 한쪽이 없거나 깨져도 다른 쪽은 그대로 그림
+    // 수정 시각이 바뀌었을 때만 다시 읽음
     const refresh = async () => {
       const nowMs = await $.clock.now()
       const current = await read($, view)
-      const stat = await $.fs.stat(SOURCE).catch(() => undefined)
       const autoStat = await $.fs.stat(AUTO_SOURCE).catch(() => undefined)
-      const mtimeMs = stat?.mtimeMs ?? 0
       const autoMtimeMs = autoStat?.mtimeMs ?? 0
-
-      let board = current.board
-      let error = current.error
-      if (stat === undefined) {
-        board = undefined
-        error = `파일 없음: ${SOURCE}`
-      } else if (mtimeMs !== current.mtimeMs || current.error !== undefined) {
-        try {
-          board = parseMain(await $.fs.read(SOURCE))
-          error = undefined
-        } catch (err) {
-          error = `읽기 실패: ${String(err)}`
-        }
-      }
 
       let auto: AutoBoard | undefined = current.auto
       let autoError = current.autoError
@@ -114,7 +96,7 @@ export const register: Register = on => {
       }
 
       // nowMs 도 매번 갱신해 '멈춤 N분' 이 파일 변화 없이도 늘어나게 함
-      await update($, view, () => ({ board, error, mtimeMs, auto, autoError, autoMtimeMs, nowMs }))
+      await update($, view, () => ({ auto, autoError, autoMtimeMs, nowMs }))
     }
 
     await refresh()
@@ -135,27 +117,17 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const { board, error, auto, autoError, mtimeMs, autoMtimeMs, nowMs } = await read($, view)
+    const { auto, autoError, autoMtimeMs, nowMs } = await read($, view)
 
     const banner = autoBanner(auto, autoMtimeMs, autoError, nowMs)
-    const main = mainAge(mtimeMs, nowMs)
-    const counts = headCounts(board, auto)
+    const counts = headCounts(auto)
     const src = auto?.sources
+    const workBoard = src?.board?.value ?? undefined
 
-    const approvalMerge = mergeApprovals(src?.confirm, board?.approvals, nowMs)
+    const approvalMerge = mergeApprovals(src?.confirm, cardItems(workBoard?.approvals, 'approval', nowMs), nowMs)
     const approvals = byPriority(approvalMerge.items)
-    const todos = byPriority(board?.todos)
-    const history: HistoryEntry[] = board?.history ?? []
-    // 허브별 가지로 묶고, 허브 순서는 가장 최근 기록 순
-    const historyGroups: Array<[string, HistoryEntry[]]> = []
-    for (const entry of history) {
-      const group = historyGroups.find(([name]) => name === entry.hub)
-      if (group === undefined) {
-        historyGroups.push([entry.hub, [entry]])
-      } else {
-        group[1].push(entry)
-      }
-    }
+    const decisions = byPriority(cardItems(workBoard?.decisions, 'decision', nowMs))
+    const todos = byPriority(cardItems(workBoard?.todos, 'todo', nowMs))
 
     // 줄바꿈돼도 둘째 줄이 글머리표 뒤에 맞춰지도록 머리·본문을 따로 둠
     const hang = (mark: string, text: string, color: string, key?: string) => (
@@ -200,69 +172,55 @@ export const register: Register = on => {
       })
 
     const autoHubs = src?.hubs?.value ?? undefined
-    const pending = src?.pending?.value ?? undefined
     const progress = progressGroups(src?.progress?.value)
-    const push = src?.push?.value ?? undefined
     const workers = src?.workers?.value ?? undefined
     const gh = src?.gh
     const idle = idleLines(src?.idle?.value)
-    const workBoard = src?.board?.value ?? undefined
-    const boardRows = boardLines(workBoard)
+    const doing = boardLines(workBoard, nowMs)
+    const blocked = blockedLines(workBoard)
+    const headline = headlineText(workBoard)
+    const recent = recentLines(workBoard, nowMs)
+    const boardNote = sourceNote(src?.board, nowMs)
 
     return (
       <Box flexDirection="column">
         <Text bold={banner.level !== 'ok'} color={banner.level === 'ok' ? C.meta : C.error} wrap="wrap">{banner.text}</Text>
-        <Text wrap="wrap">
-          <Text color={main.old ? C.stale : C.meta}>{main.text}</Text>
-          <Text dimColor>{` · 작업 중 ${counts.busy} · 막힘 ${counts.blocked}`}</Text>
-        </Text>
-        {main.old && mtimeMs > 0 && <Text color={C.stale}>{`메인 칸이 ${fmtAge(ageMin(mtimeMs, nowMs))} 갱신됨 — 승인·할 일은 낡았을 수 있음`}</Text>}
-        {board?.headline !== undefined && <Text wrap="wrap">{board.headline}</Text>}
-        {error !== undefined && <Text color={C.error}>{error}</Text>}
+        {counts !== undefined && <Text dimColor>{`허브 작업 중 ${counts.busy} · 승인창 ${counts.blocked}`}</Text>}
+        {headline !== undefined && <Text bold wrap="wrap">{headline}</Text>}
 
-        {(board?.progress?.length ?? 0) > 0 && section('📊 진행', C.gauge)}
-        {(board?.progress ?? []).map(p => {
-          const g = progressBar(p)
-          const color = p.state === 'blocked' ? C.error : p.state === 'done' ? C.meta : C.gauge
-          return (
-            <Box flexDirection="column">
-              <Text bold color={C.title} wrap="wrap">{p.title}</Text>
-              <Text color={color}>{g.text}</Text>
-              {p.steps !== undefined && <Text color={C.detail} wrap="wrap">{`└ ${p.steps}`}</Text>}
-            </Box>
-          )
-        })}
+        {section(`🙋 결정 대기 (${decisions.length})`, C.pending, boardNote)}
+        {decisions.length === 0 && <Text dimColor>없음</Text>}
+        {itemRows(decisions, C.pending)}
 
-        {section(
-          `🗂️ 작업판 (진행 중 ${workBoard?.counts.in_progress ?? '?'} · 열림 ${workBoard?.counts.open ?? '?'} · 막힘 ${workBoard?.counts.blocked ?? '?'})`,
-          C.todo,
-          sourceNote(src?.board, nowMs),
-        )}
-        {boardRows !== undefined && boardRows.length === 0 && <Text dimColor>진행 중 카드 없음</Text>}
-        {boardRows !== undefined && tree(boardRows.map(l => [l, C.detail] as [string, string]))}
-
-        {section(`🙋 내가 승인할 것 (${approvals.length})`, C.approve, approvalMerge.stale ? '⚠ 확인 목록이 낡음 — 손 칸 우선' : undefined)}
+        {section(`✋ 승인 대기 (${approvals.length})`, C.approve, approvalMerge.stale ? '⚠ 확인 목록이 낡음 — 작업판 카드 우선' : undefined)}
         {approvals.length === 0 && <Text dimColor>없음</Text>}
         {itemRows(approvals, C.approve)}
 
-        {progress !== undefined && section(`📋 진행 (진행 중 ${src?.progress?.value?.counts.doing ?? 0} · 답 대기 ${src?.progress?.value?.counts.wait ?? 0} · 막힘 ${src?.progress?.value?.counts.block ?? 0})`, C.hub, sourceNote(src?.progress, nowMs))}
+        {section(`🛠️ 내가 할 일 (${todos.length})`, C.todo, boardNote)}
+        {todos.length === 0 && <Text dimColor>없음</Text>}
+        {itemRows(todos, C.todo)}
+
+        {section(
+          `🔄 진행 (진행 중 ${workBoard?.counts.in_progress ?? '?'} · 열림 ${workBoard?.counts.open ?? '?'} · 막힘 ${workBoard?.counts.blocked ?? '?'})`,
+          C.gauge,
+          boardNote,
+        )}
+        {doing !== undefined && doing.length === 0 && <Text dimColor>진행 중 카드 없음</Text>}
+        {doing !== undefined && doing.map((l, i) => hang(i === doing.length - 1 ? '└' : '├', l.text, l.warn ? C.stale : C.detail))}
+        {blocked.length > 0 && section(`🚧 막힘 (${blocked.length})`, C.error)}
+        {blocked.length > 0 && tree(blocked.map(l => [l, C.detail] as [string, string]))}
+
+        {progress !== undefined && section(`📋 허브 진행 (진행 중 ${src?.progress?.value?.counts.doing ?? 0} · 답 대기 ${src?.progress?.value?.counts.wait ?? 0} · 막힘 ${src?.progress?.value?.counts.block ?? 0})`, C.hub, sourceNote(src?.progress, nowMs))}
         {progress !== undefined && progress.map(g => (
           <Box flexDirection="column">
             <Text bold color={C.title}>{g.group}</Text>
             {tree(g.lines.map(l => [l, C.detail] as [string, string]))}
           </Box>
         ))}
-        {section(`🛠️ 내가 할 일 (${todos.length})`, C.todo)}
-        {todos.length === 0 && <Text dimColor>없음</Text>}
-        {itemRows(todos, C.todo)}
-
-        {section(`⏳ 결정 대기 (${pending?.count ?? '?'})`, C.pending, sourceNote(src?.pending, nowMs))}
-        {pending !== undefined && pending.items.length === 0 && <Text dimColor>없음</Text>}
-        {pending !== undefined && tree(pending.items.map(p => [pendingLine(p), C.detail]))}
 
         {autoHubs !== undefined ? (
           <Box flexDirection="column">
-            {section(`🔄 허브 (${autoHubs.rows.length})`, C.hub, `${sourceNote(src?.hubs, nowMs)}${autoHubs.truncated === true ? ' · 터미널 목록 잘림' : ''}`)}
+            {section(`🖥️ 허브 (${autoHubs.rows.length})`, C.hub, `${sourceNote(src?.hubs, nowMs)}${autoHubs.truncated === true ? ' · 터미널 목록 잘림' : ''}`)}
             {autoHubs.rows.map(hub => (
               <Text wrap="wrap">
                 <Text color={STATE_COLOR[hub.state] ?? C.meta}>{'● '}</Text>
@@ -272,16 +230,7 @@ export const register: Register = on => {
             ))}
           </Box>
         ) : (
-          <Box flexDirection="column">
-            {section(`🔄 허브 (${board?.hubs?.length ?? 0})`, C.hub, '메인 기록')}
-            {(board?.hubs ?? []).map(hub => (
-              <Text wrap="wrap">
-                <Text color={STATE_COLOR[hub.state] ?? C.meta}>{'● '}</Text>
-                <Text bold>{hub.name}</Text>
-                <Text dimColor>{hub.note !== undefined ? ` ${hub.note}` : ''}</Text>
-              </Text>
-            ))}
-          </Box>
+          <Text dimColor>허브 값 없음</Text>
         )}
 
         {section('🔀 PR', C.pr, sourceNote(gh, nowMs))}
@@ -295,35 +244,10 @@ export const register: Register = on => {
         {idle.length === 0 && <Text dimColor>값 없음</Text>}
         {idle.map(l => <Text color={l.warn ? C.error : C.detail} wrap="wrap">{l.text}</Text>)}
 
-        {section('🧾 최근 기록', C.recent, sourceNote(src?.workers, nowMs))}
-        {workers !== undefined &&
-          tree([
-            [`살아 있는 워커 ${workers.live}`, C.meta],
-            ...workers.recent.map(w => [
-              `${w.status === 'succeeded' ? '✅' : w.status === 'failed' ? '❌' : '⏹️'} ${w.title ?? '(제목 없음)'}${w.at !== null ? `  · ${fmtAge(ageMin(w.at * 1000, nowMs))}` : ''}`,
-              C.detail,
-            ] as [string, string]),
-          ])}
-        {push !== undefined && push.lines.length > 0 && (
-          <Box flexDirection="column">
-            <Text dimColor>{`Slack→메인 전달  ${sourceNote(src?.push, nowMs)}`}</Text>
-            {tree(push.lines.map(l => [`${l.at}  ${l.event}${l.reason !== null ? `(${l.reason})` : ''}`, C.detail]))}
-          </Box>
-        )}
-
-        {section(`📜 진행 기록 (${history.length})`, C.history, '메인 기록')}
-        {historyGroups.map(([hub, entries]) => (
-          <Box flexDirection="column" marginBottom={1}>
-            <Text bold color={C.title}>{hub}</Text>
-            {entries.map((entry, i) =>
-              hang(
-                i === entries.length - 1 ? '└' : '├',
-                `${entry.at !== "" ? `${entry.at}  ` : ""}${entry.text}${entry.ref !== undefined ? `  (${entry.ref})` : ''}`,
-                C.detail,
-              ),
-            )}
-          </Box>
-        ))}
+        {section('🧾 최근 기록', C.recent, boardNote)}
+        {recent.length === 0 && <Text dimColor>닫힌 카드 없음</Text>}
+        {recent.length > 0 && tree(recent.map(l => [l, C.detail] as [string, string]))}
+        {workers !== undefined && <Text dimColor>{`살아 있는 워커 ${workers.live}  ${sourceNote(src?.workers, nowMs)}`}</Text>}
       </Box>
     )
   })

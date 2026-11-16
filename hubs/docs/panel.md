@@ -4,6 +4,7 @@
 
 ## 쉬운 말 3줄 요약
 
+- 11-16 개정: 손으로 쓰던 `panel.json` 을 없앴다. 결정·승인·할 일·헤드라인·최근 기록은 작업판(beads, `~/orca/board`) 카드에서 나온다. 메인은 `board-ask`·`board-answer` 로 카드만 만들고 닫는다(6절). Slack 칸은 봇이 꺼져 숨겼다.
 - 무엇이 바뀌었나: 허브 상태·결정 대기·최근 기록·PR 수·쉬는 자원(터미널 없는 워크스페이스·디스크 여유)은 이제 60초마다 스크립트가 자동으로 채운다. 패널 맨 위에 데이터 나이가 늘 보이고, 3분 넘게 안 채워지면 ⚠️ 가 붙는다. 작업판(beads, `~/orca/board`) 카드 수와 진행 중 카드도 보인다.
 - 왜: 메인이 손으로 쓰던 패널이 하루 가까이 낡은 채 남은 일이 있었다. 기계가 셀 수 있는 칸은 기계가 채우고, 사람 판단이 필요한 칸(승인할 것·할 일)만 메인이 쓴다.
 - 사용자가 할 일: 병합 뒤 설치기를 한 번 돌리고 수집기를 켜는 명령 한 줄을 실행한 다음, 메인 세션을 새로 시작한다(아래 「라이브 적용 절차」).
@@ -18,9 +19,9 @@
  slack-push.log(결과 코드) ─────┼────────▶ (launchd 90초, 잠금,  ──────▶ (수집기만 씀,     ──┐      (15초 폴링,
  orca worker-list·task-list ────┤           원자 교체)                    원료별 ok·stale)    ├────▶  두 파일 합쳐
  gh pr list(5분마다, 선택) ─────┤
- orca worktree list·df·du ───────┘                                                             │       그림, ⚠️ 판정)
-                                                                         panel.json         ──┘
- 메인 코디네이터(손으로) ──────────────────────────────────────────────▶ (메인만 씀)
+ orca worktree list·df·du ───────┤                                                             │       그림, ⚠️ 판정)
+ bd list --all (작업판) ──────────┘   + launchd WatchPaths: .beads/last-touched·issues.jsonl 바뀌면 즉시 회차
+ 메인·워커 ──board-ask·board-answer·bd──▶ ~/orca/board (작업판 = 결정·승인·할 일·진행의 정본)
 ```
 
 파일을 둘로 나눈 이유: 쓰는 사람이 둘(수집기·메인)인 파일을 각자 읽고-고치고-쓰면, 늦게 쓴 쪽이 먼저 쓴 쪽의 갱신을 지운다. 한 파일 안에서 키만 나누면 이 유실을 막을 수 없다(잠금을 공유하지 않는 한). 파일을 나누면 각 파일의 쓰는 사람이 하나뿐이라 유실이 구조적으로 없고, 한쪽이 깨져도 다른 쪽 표시는 그대로다.
@@ -29,15 +30,11 @@
 
 | 파일 | 키 | 쓰는 사람 | 비고 |
 |---|---|---|---|
-| `~/.config/lrm-hubs/panel.json` | `headline` | 메인 | 한 줄 요약(선택) |
-| 〃 | `approvals[]` (`p`·`title`·`why`·`how`·`detail`·`links`) | 메인 | 🙋 내가 승인할 것. `why` 가 결정 추천 이유 |
-| 〃 | `todos[]` (같은 모양) | 메인 | 🛠️ 내가 할 일 |
-| 〃 | `history[]` (`at`·`hub`·`text`·`ref`) | 메인 | 📜 진행 기록 |
-| 〃 | `hubs[]` | 메인(옛 방식) | 자동 칸이 없을 때만 표시. 새로 쓰지 않아도 된다 |
-| 〃 | `updatedAt` | 메인(옛 방식) | 더는 화면에 쓰지 않는다. 나이는 파일 수정 시각으로 계산 |
+| `~/.config/lrm-hubs/panel.json` | — | (폐지) | 11-16 부터 mod 가 읽지 않는다. 남아 있어도 무해 |
 | `~/.config/lrm-hubs/panel-auto.json` | `version`·`updatedAt`(epoch 초)·`updatedAtText` | 수집기 | 메인은 쓰지 않는다 |
 | 〃 | `sources.hubs` → `rows[]`(`hub`·`name`·`agent`·`state`·`quietMin`·`connected`·`dup`)·`counts`·`truncated` | 수집기 | `state`: busy 작업 중 · approval 승인창 · idle 대기 · unknown 확인불가. `truncated` 는 Orca 가 터미널 목록을 잘랐다는 뜻 |
 | 〃 | `sources.pending` → `count`·`items[]`(`title` 40자·`ageMin`·`id`·`state`) | 수집기 | 제목은 우리가 보낸 결정 카드 제목(사용자 원문 아님). `id`(결정 번호)·`state`(`hold` 보류·`conflict` 충돌)는 번호 카드만, 옛 카드는 null |
+| 〃 | `sources.board` → `counts`·`doing[]`·`more`·`blocked[]`·`decisions[]`·`todos[]`·`approvals[]`·`headline`(`id`·`title`·`done`·`total`·`epics`)·`recent[]`(`title`·`at`·`reason`) | 수집기 | `bd list --all --json`. 카드는 `id`·`title`·`p`·`who`·`createdAt`·`beatAt`(마지막 갱신)·`startedAt`·`comments`, 사람 손 카드만 `desc`(600자). 라벨 `kind:decision`·`kind:user-todo`·`kind:approval` 카드는 진행 줄에 넣지 않음 |
 | 〃 | `sources.push` → `lines[]`(`at`·`event`·`reason`) | 수집기 | `slack-push.log` 끝 5줄의 결과·사유 코드만 |
 | 〃 | `sources.workers` → `live`·`recent[]`(`title` 40자·`status`·`at`) | 수집기 | 최근 종료 워커(완료 보고) |
 | 〃 | `sources.gh` → `repos[]`·`open`·`ciFail` 또는 `off:true` | 수집기 | `PANEL_GH_REPOS` 가 있을 때만 |
@@ -143,9 +140,11 @@
 
 ## 6. 메인 코디네이터가 할 일
 
-- `panel.json` 에는 손 칸만 쓴다: `headline`·`approvals`·`todos`·`history`. 결정 카드를 보내거나 답을 받았을 때 고친다.
-- `hubs`·`updatedAt` 은 더 쓰지 않아도 된다. 허브 상태는 수집기가 채운다.
-- `panel-auto.json` 은 쓰지 않는다. 자동 칸이 틀리면 수집기 규칙을 고친다.
+- 패널 파일(`panel.json`·`panel-auto.json`)은 쓰지 않는다. 카드만 다룬다.
+- 결정 올리기: `~/.config/lrm-hubs/board-ask "<질문>" --options "A|B" --recommend A [--why "<이유>"] [--parent <epic>]` → `kind:decision` 카드. 승인은 `--kind approval`, 사용자 할 일은 `--kind user-todo`.
+- 사용자 답 받기: `~/.config/lrm-hubs/board-answer <id> "<사용자 원문>"` → 원문 코멘트 + 닫기(보류면 `--keep-open`). 같은 답을 두 번 넣어도 이미 닫힌 카드는 그대로다.
+- 헤드라인은 열린 epic 중 우선순위가 가장 높은(같으면 오래된) 것이다. 바꾸려면 epic 우선순위를 고친다.
+- 진행 줄의 "신호"는 카드의 마지막 갱신 시각이다. 30분 넘으면 ⚠ 가 붙는다. 워커는 진행 중 카드를 `bd update`(메모·상태)로 갱신한다.
 - 패널 맨 위 ⚠️ 는 수집기가 멈췄다는 뜻이다. `tail ~/.config/lrm-hubs/panel-collect.log` 와 `launchctl print gui/$(id -u)/ai.lrm.panelcollect` 를 본다.
 
 ## 7. 알려진 한계
@@ -160,7 +159,9 @@
 - worker-list 는 회차마다 전 쪽을 받는다. 2026-11-10 실측 2054건 = 21쪽, `--print` 1회 4.2~4.7초(90초 주기의 약 5%). 잠금이 겹침을 막고 쪽 60·40초 상한이 있어 간격을 두지 않았다. 1회가 10초를 넘기면 gh 처럼 간격(예 5분)을 두고, 사이 회차는 첫 쪽 `counts` 와 직전 값을 쓰는 안을 본다.
 - 원료 하나에서 예상 밖 오류(JSON 모양이 다름 등)가 나면 그 원료만 `err: internal:<예외 이름>` 으로 실패하고 다른 원료는 그대로 갱신된다.
 - 실제 launchd 적재와 패널 화면 렌더는 이 브랜치에서 확인하지 않았다(라이브 적용 금지). 검증은 샌드박스 시험과 `claude plugin validate` 까지다.
-- mod 의 타입 검사(`tsc`)는 이 맥에 `tsc` 가 없어 하지 못했다. 판정 함수는 node 시험으로, 화면 코드는 `claude plugin validate` 로만 확인했다.
+- mod 타입 검사는 `npx -p typescript tsc -p <배포 사본>` 으로 한다(전역 `tsc` 없음).
+- `bd comments add` 는 `last-touched` 를 고치지 않는다. 코멘트만 단 변화는 다음 60초 회차에 반영된다. `bd show` 도 `last-touched` 를 고쳐 회차가 더 돌 수 있으나 launchd 10초 간격 제한이 있다.
+- 결정 대기에서 Slack 번호 카드(`sources.pending`)·Slack→메인 전달(`sources.push`)은 수집만 하고 화면에 그리지 않는다(봇 꺼짐).
 
 ## 8. 후속 제안
 
