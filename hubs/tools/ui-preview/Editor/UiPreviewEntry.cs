@@ -4,7 +4,9 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using Cysharp.Threading.Tasks;
 using Game.Data.ExternalModule.LocalizationModule;
+using Game.Data.Module.StatModule.Model;
 using Newtonsoft.Json;
 using Tests.Editor.UiPreview.Automa;
 using UnityEditor;
@@ -76,6 +78,7 @@ namespace Tests.Editor.UiPreview
             }
 
             EditorLocalizationTable.Load(Locale);
+            LoadStatDefinitions();
             var report = new List<ShotReport>();
             using (var stage = UiPreviewStage.Open())
             {
@@ -134,6 +137,23 @@ namespace Tests.Editor.UiPreview
             var path = Path.Combine(outDir, $"{name}_{width}x{height}_{phase}.png");
             stage.Save(path);
             return path;
+        }
+
+        // 스탯 칩 색은 StatDefinitionsLoader 표에서 읽음. 부팅이 없어 직접 불러야 하고, 로컬 저장소면 동기로 끝남
+        private static void LoadStatDefinitions()
+        {
+            try
+            {
+                var task = StatDefinitionsLoader.LoadAsync();
+                if (task.Status != UniTaskStatus.Succeeded)
+                {
+                    Debug.LogWarning($"[UiPreview] 스탯 정의 로드 미완료({task.Status}). 스탯 칩이 프리팹 기본색으로 찍힘");
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[UiPreview] 스탯 정의 로드 실패. 스탯 칩이 프리팹 기본색으로 찍힘: {e.Message}");
+            }
         }
 
         private static bool TryParseSizes(string text, out List<(int, int)> sizes)

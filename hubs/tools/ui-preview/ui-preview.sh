@@ -2,7 +2,7 @@
 #
 # UI 화면 단독 미리보기. 부팅·로그인·네트워크 없이 화면 프리팹 하나를 배치모드로 띄워 PNG 로 남긴다.
 #
-#   bash Tools/verify/ui-preview.sh <화면|all>[,<화면>…] [가로x세로 …] [--stage <오토마 스테이지 Id>] [--bundle] [--timeout <초>]
+#   bash Tools/verify/ui-preview.sh <화면|all>[,<화면>…] [가로x세로 …] [--stage <오토마 스테이지 Id>] [--bundle] [--prefab-from-commit <작업공간>:<커밋>:<경로>] [--timeout <초>]
 #   예) bash Tools/verify/ui-preview.sh automa-daily-summary
 #       bash Tools/verify/ui-preview.sh all 1080x1920 1440x3120
 #
@@ -34,11 +34,12 @@ usage() {
   echo "#   가능한 화면: all $(screen_names)"
 }
 
-SCREENS=""; SIZES=(); STAGE=""; BUNDLE=0
+SCREENS=""; SIZES=(); STAGE=""; BUNDLE=0; OVERRIDES=()
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --bundle) BUNDLE=1 ;;
+    --prefab-from-commit) shift; OVERRIDES+=("${1:?--prefab-from-commit <작업공간>:<커밋>:<프로젝트 상대 경로> 필요}") ;;
     --stage) shift; STAGE="${1:?--stage 값 필요}" ;;
     --timeout) shift; TIMEOUT="${1:?--timeout 값 필요}" ;;
     [0-9]*x[0-9]*) SIZES+=("$1") ;;
@@ -88,9 +89,31 @@ fi
 # 도구 코드를 실행 동안만 대상 프로젝트에 넣고 끝나면 지움(게임 저장소 커밋 0)
 INSTALL="$RUN_PROJ/$INSTALL_REL"
 [ ! -e "$INSTALL" ] || { echo "[ui-preview] 이미 있음: $INSTALL — 이전 실행 잔여물이면 지우고 재시도" >&2; exit 2; }
-cleanup() { rm -rf -- "${INSTALL:?}" "${INSTALL:?}.meta"; }
+BACKUP="$(mktemp -d)"
+RESTORE=()
+cleanup() {
+  rm -rf -- "${INSTALL:?}" "${INSTALL:?}.meta"
+  for rel in "${RESTORE[@]+"${RESTORE[@]}"}"; do
+    cp -p "$BACKUP/$rel" "$RUN_PROJ/$rel" 2>/dev/null
+  done
+  rm -rf -- "${BACKUP:?}"
+}
 trap cleanup EXIT
 cp -R "$REGISTRY" "$INSTALL" || { echo "[ui-preview] 도구 복사 실패: $INSTALL" >&2; exit 2; }
+# 다른 작업 공간의 커밋에 있는 프리팹(+.meta)을 실행 동안만 덮고 끝나면 원본 복구(체리픽 없이 수정 확인)
+for spec in "${OVERRIDES[@]+"${OVERRIDES[@]}"}"; do
+  IFS=: read -r SRC_WS SRC_SHA SRC_REL <<<"$spec"
+  [ -n "$SRC_WS" ] && [ -n "$SRC_SHA" ] && [ -n "$SRC_REL" ] || { echo "[ui-preview] 형식: --prefab-from-commit <작업공간>:<커밋>:<경로>" >&2; exit 2; }
+  for rel in "$SRC_REL" "$SRC_REL.meta"; do
+    git -C "$SRC_WS" cat-file -e "$SRC_SHA:$rel" 2>/dev/null || { [ "$rel" = "$SRC_REL" ] && { echo "[ui-preview] 커밋에 없음: $SRC_SHA:$rel" >&2; exit 2; }; continue; }
+    mkdir -p "$BACKUP/$(dirname "$rel")"
+    cp -p "$RUN_PROJ/$rel" "$BACKUP/$rel" || { echo "[ui-preview] 대상에 없음: $rel" >&2; exit 2; }
+    RESTORE+=("$rel")
+    git -C "$SRC_WS" show "$SRC_SHA:$rel" > "$RUN_PROJ/$rel"
+  done
+  echo "[ui-preview] 프리팹 덮음: $SRC_REL @ $SRC_SHA"
+done
+
 # 묶음 브랜치 전용 화면은 dev 에 없는 타입을 써서 기본 목록 위에 덮어씀
 if [ "$BUNDLE" = 1 ]; then
   cp -R "$TOOL_DIR/Editor-bundle/." "$INSTALL/" || { echo "[ui-preview] 묶음 화면 복사 실패" >&2; exit 2; }
