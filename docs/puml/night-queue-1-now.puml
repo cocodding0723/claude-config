@@ -1,0 +1,21 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontSize 13
+skinparam RectangleRoundCorner 10
+title 지금: 지시는 장부에 쌓이지만 처리는 낮에 사람이 허브를 깨워야 시작
+rectangle "사용자\nSlack 지시" as U
+rectangle "intake.py\n접수·머리말 라우팅" as I
+rectangle "작업 장부\ntasks.jsonl (T-번호)" as L
+rectangle "허브 코디네이터\n(상주 세션)" as H
+rectangle "워커\n(허브 하위)" as W
+rectangle "progress_digest\n평일 9~20시 매시" as D
+rectangle "야간 처리 주체 없음\n허브가 놀면 큐도 멈춤" as X #FFEBE9
+U --> I : 글
+I --> L : 접수 행
+I --> H : 하달 1회(터미널 send)
+H --> W : 배정
+W --> H : worker_done
+H --> L : 상태·증거
+L ..> D : 읽기
+L ..> X : 장부에 대기 항목이 있어도 아무도 꺼내 가지 않음
+@enduml
