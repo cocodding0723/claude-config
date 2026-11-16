@@ -57,12 +57,7 @@ public static class ModalRenderer
             typeof(CanvasScaler).GetMethod("Handle", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).Invoke(sc, null);
             foreach (var cv in cgo.GetComponentsInChildren<Canvas>(true)) if (cv.gameObject != cgo) cv.transform.localScale = Vector3.one;
             Canvas.ForceUpdateCanvases();
-            cam.Render();
-            RenderTexture.active = rt;
-            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
-            tex.ReadPixels(new Rect(0, 0, w, h), 0, 0); tex.Apply();
-            File.WriteAllBytes($"{outDir}/{tag}_{w}x{h}.png", tex.EncodeToPNG());
-            RenderTexture.active = null;
+            RenderShots.Capture(cam, rt, w, h, outDir, $"{tag}_{w}x{h}");
         }
         EditorApplication.Exit(0);
     }

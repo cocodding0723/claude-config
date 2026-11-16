@@ -51,12 +51,7 @@ public static class HudRenderer
             foreach (var cv in cgo.GetComponentsInChildren<Canvas>(true)) { if (cv.gameObject != cgo && cv.renderMode != RenderMode.WorldSpace) cv.transform.localScale = Vector3.one; }
             Canvas.ForceUpdateCanvases();
             foreach (var r in cgo.GetComponentsInChildren<RectTransform>(true)) { if (r.parent != null && r.parent.parent != null && r.parent.parent.parent != null && r.parent.parent.parent.parent == null || r.parent == cgo.transform) Debug.Log($"RT {r.name} child={r.childCount} act={r.gameObject.activeInHierarchy} rect={r.rect} wpos={r.position}"); }
-            cam.Render();
-            RenderTexture.active = rt;
-            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
-            tex.ReadPixels(new Rect(0, 0, w, h), 0, 0); tex.Apply();
-            File.WriteAllBytes($"{outDir}/{tag}_{w}x{h}.png", tex.EncodeToPNG());
-            RenderTexture.active = null;
+            RenderShots.Capture(cam, rt, w, h, outDir, $"{tag}_{w}x{h}");
         }
         EditorApplication.Exit(0);
     }
