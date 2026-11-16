@@ -1,6 +1,7 @@
 #nullable enable
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Game.Data.ExternalModule.LocalizationModule;
 using Game.Data.Module.AutomaModule.Domain.Mission;
 using Game.Data.Module.AutomaModule.Model;
@@ -143,12 +144,32 @@ namespace Tests.Editor.UiPreview.Automa
             view.MissionBand.Render(presenter.Build(Card(fixture)));
         }
 
+        // 보상 줄 인자가 있는 브랜치(예고 보상 칸)와 없는 묶음 둘 다 컴파일되게 생성자 인자 수로 고름.
+        // 보상은 AutomaDialogInputBuilder.MissionNotice 와 같은 조합: 성공 효과 뒤에 실패 효과
+        private static AutomaMissionNoticeInput NoticeInput(AutomaMissionKind kind, AutomaMissionCardInput card)
+        {
+            var rewards = AutomaMissionJudge.EffectsFor(card.Effects, AutomaMissionOutcome.Success, true, card.Stat)
+                .Concat(AutomaMissionJudge.EffectsFor(card.Effects, AutomaMissionOutcome.Fail, true, card.Stat))
+                .ToList();
+            var args = new List<object> { kind, card.Mission.NameKey, card.Stat, card.Target, card.TicksLeft, rewards };
+            foreach (var ctor in typeof(AutomaMissionNoticeInput).GetConstructors())
+            {
+                var count = ctor.GetParameters().Length;
+                if (count <= args.Count)
+                {
+                    return (AutomaMissionNoticeInput)ctor.Invoke(args.GetRange(0, count).ToArray());
+                }
+            }
+
+            throw new InvalidOperationException("AutomaMissionNoticeInput 생성자 형식이 바뀜");
+        }
+
         // 종류만 바꾸고 이름·스탯·목표·상대는 픽스처 첫 미션 값
         private static void RenderNotice(Transform root, Func<AutomaPreviewFixture> fixture, AutomaMissionKind kind)
         {
             var card = Card(fixture);
             var presenter = new AutomaNoticePresenter(LocalizationManager.GetText, type => type.GetName());
-            var input = new AutomaMissionNoticeInput(kind, card.Mission.NameKey, card.Stat, card.Target, card.TicksLeft);
+            var input = NoticeInput(kind, card);
             var dialog = UiPreviewPrefabs.Spawn<AutomaNoticeDialog>(nameof(AutomaNoticeDialog), root, true);
             UiPreviewDialogs.Init(dialog, () => dialog.InitModal(new AutomaNoticeDialogData(presenter.Build(input)), null));
             dialog.OnModalDisplay();

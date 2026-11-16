@@ -216,13 +216,17 @@ for spec in "${PATCHES[@]+"${PATCHES[@]}"}"; do
   SRC_WS="${SRC_WS/#\~/$HOME}"
   [ -n "$SRC_WS" ] && [ -n "$SRC_SHA" ] && [ "$rest" != "$SRC_REL" ] || { echo "[ui-preview] 형식: --patch-from-commit <작업공간>:<커밋>:<경로> (받은 값: $spec)" >&2; exit 2; }
   [ -e "$RUN_PROJ/$SRC_REL" ] || { echo "[ui-preview] 대상에 없음: $SRC_REL" >&2; exit 2; }
-  mkdir -p "$BACKUP/$(dirname "$SRC_REL")"
-  cp -p "$RUN_PROJ/$SRC_REL" "$BACKUP/$SRC_REL"
-  RESTORE+=("$SRC_REL")
+  # 같은 파일에 여러 커밋을 차례로 적용할 수 있음. 원본 백업은 처음 한 번만
+  if [ ! -e "$BACKUP/$SRC_REL" ]; then
+    mkdir -p "$BACKUP/$(dirname "$SRC_REL")"
+    cp -p "$RUN_PROJ/$SRC_REL" "$BACKUP/$SRC_REL"
+    RESTORE+=("$SRC_REL")
+  fi
+  before="$(shasum "$RUN_PROJ/$SRC_REL")"
   # 레인은 원본 저장소 안 하위 폴더라 git apply 가 경로를 조용히 건너뜀 → patch 로 적용하고 실제 변경 확인
   git -C "$SRC_WS" diff "$SRC_SHA^" "$SRC_SHA" -- "$SRC_REL" | patch -s -p1 --forward --no-backup-if-mismatch -r - -d "$RUN_PROJ" \
     || { echo "[ui-preview] 변경분 적용 실패(대상 코드가 달라짐): $SRC_REL @ $SRC_SHA" >&2; exit 2; }
-  ! cmp -s "$BACKUP/$SRC_REL" "$RUN_PROJ/$SRC_REL" || { echo "[ui-preview] 변경분 적용 뒤에도 파일이 같음: $SRC_REL @ $SRC_SHA" >&2; exit 2; }
+  [ "$before" != "$(shasum "$RUN_PROJ/$SRC_REL")" ] || { echo "[ui-preview] 변경분 적용 뒤에도 파일이 같음: $SRC_REL @ $SRC_SHA" >&2; exit 2; }
   echo "[ui-preview] 변경분 적용: $SRC_REL @ $SRC_SHA"
 done
 
