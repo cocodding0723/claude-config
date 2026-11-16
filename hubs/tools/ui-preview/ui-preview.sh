@@ -34,7 +34,7 @@ usage() {
   echo "#   가능한 화면: all $(screen_names)"
 }
 
-SCREENS=""; SIZES=(); STAGE=""; BUNDLE=0; OVERRIDES=(); PATCHES=(); FORCE=0; SUMMARY_AT=""; WHO="default"; COMPARE=""
+HUD_ARGS=(); NOTES=(); LOC_DIR=""; LOC_LABEL=""; SCREENS=""; SIZES=(); STAGE=""; BUNDLE=0; OVERRIDES=(); PATCHES=(); FORCE=0; SUMMARY_AT=""; WHO="default"; COMPARE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
@@ -43,6 +43,10 @@ while [ $# -gt 0 ]; do
     --patch-from-commit) shift; PATCHES+=("${1:?--patch-from-commit <작업공간>:<커밋>:<프로젝트 상대 경로> 필요}") ;;
     --prefab-from-commit) shift; OVERRIDES+=("${1:?--prefab-from-commit <작업공간>:<커밋>:<프로젝트 상대 경로> 필요}") ;;
     --stage) shift; STAGE="${1:?--stage 값 필요}" ;;
+    --hud-place) shift; HUD_ARGS+=(-uiPreviewHudPlace "${1:?--hud-place 값 필요}"); NOTES+=("장소") ;;
+    --hud-day) shift; HUD_ARGS+=(-uiPreviewHudDay "${1:?--hud-day 값 필요}"); NOTES+=("D") ;;
+    --hud-coin) shift; HUD_ARGS+=(-uiPreviewHudCoin "${1:?--hud-coin 값 필요}"); NOTES+=("코인") ;;
+    --loc-from-dev) shift; LOC_DIR="${1:?--loc-from-dev <text.*.json 폴더> 필요}"; LOC_LABEL="${UI_PREVIEW_LOC_LABEL:-dev}" ;;
     --summary-at) shift; SUMMARY_AT="${1:?--summary-at day-end|mission-issued 필요}" ;;
     --who) shift; WHO="${1:?--who 이름 필요}" ;;
     --compare) shift; COMPARE="${1:?--compare <시안 PNG> 필요}" ;;
@@ -154,6 +158,11 @@ rsync -a --delete --exclude '/Library/' --exclude '/Temp/' --exclude '/Logs/' --
   --exclude '/TestResults/' --exclude '/build/ui-preview-lanes/' --exclude '/build/ui-preview-project/' --exclude '/.git' \
   "$PROJ/" "$LANE/" || { echo "[ui-preview] 레인 동기화 실패" >&2; exit 2; }
 RUN_PROJ="$LANE"
+# 번역은 레인 복사본에만 넣음(레인은 매 실행 rsync --delete 로 원본에 맞춰짐)
+if [ -n "$LOC_DIR" ]; then
+  cp "$LOC_DIR"/text.*.json "$LANE/Tools/localization/dev-preview/" || { echo "[ui-preview] 번역 복사 실패: $LOC_DIR" >&2; exit 2; }
+  echo "[ui-preview] 번역: $LOC_DIR → 레인 한정 ($LOC_LABEL)"
+fi
 echo "[ui-preview] 실행 레인: $(basename "$LANE") (요청자 $WHO)"
 
 # Unity 동시 실행 상한은 공용 슬롯 도구가 정함(있을 때만)
@@ -224,7 +233,9 @@ for spec in "${PATCHES[@]+"${PATCHES[@]}"}"; do
   fi
   before="$(shasum "$RUN_PROJ/$SRC_REL")"
   # 레인은 원본 저장소 안 하위 폴더라 git apply 가 경로를 조용히 건너뜀 → patch 로 적용하고 실제 변경 확인
-  git -C "$SRC_WS" diff "$SRC_SHA^" "$SRC_SHA" -- "$SRC_REL" | patch -s -p1 --forward --no-backup-if-mismatch -r - -d "$RUN_PROJ" \
+  # <커밋> 은 그 커밋 하나의 변경분, <A>..<B> 는 범위 누적 변경분(기준이 다른 브랜치에서 여러 커밋을 한 번에)
+  case "$SRC_SHA" in *..*) RANGE=("${SRC_SHA%%..*}" "${SRC_SHA##*..}") ;; *) RANGE=("$SRC_SHA^" "$SRC_SHA") ;; esac
+  git -C "$SRC_WS" diff "${RANGE[@]}" -- "$SRC_REL" | patch -s -p1 --forward --no-backup-if-mismatch -r - -d "$RUN_PROJ" \
     || { echo "[ui-preview] 변경분 적용 실패(대상 코드가 달라짐): $SRC_REL @ $SRC_SHA" >&2; exit 2; }
   [ "$before" != "$(shasum "$RUN_PROJ/$SRC_REL")" ] || { echo "[ui-preview] 변경분 적용 뒤에도 파일이 같음: $SRC_REL @ $SRC_SHA" >&2; exit 2; }
   echo "[ui-preview] 변경분 적용: $SRC_REL @ $SRC_SHA"
@@ -243,6 +254,7 @@ ARGS=(-batchmode -projectPath "$RUN_PROJ" -executeMethod Tests.Editor.UiPreview.
 [ ${#SIZES[@]} -eq 0 ] || ARGS+=(-uiPreviewSizes "$(IFS=,; echo "${SIZES[*]}")")
 [ -z "$STAGE" ] || ARGS+=(-uiPreviewStage "$STAGE")
 [ -z "$SUMMARY_AT" ] || ARGS+=(-uiPreviewSummaryAt "$SUMMARY_AT")
+ARGS+=("${HUD_ARGS[@]+"${HUD_ARGS[@]}"}")
 
 "$UNITY" "${ARGS[@]}" &
 UNITY_PID=$!
@@ -278,10 +290,13 @@ if [ -n "$COMPARE" ] && [ "$CODE" = 0 ]; then
   done
   [ -z "$STAGE" ] || TAG="$TAG+$STAGE"
   [ -z "$SUMMARY_AT" ] || TAG="$TAG+$SUMMARY_AT"
+  HEAD_TAG="$TAG"
+  [ ${#NOTES[@]} -eq 0 ] || HEAD_TAG="$HEAD_TAG ($(IFS=·; echo "${NOTES[*]}")=수동 입력(시안 견본))"
+  [ -z "$LOC_DIR" ] || HEAD_TAG="$HEAD_TAG (번역=$LOC_LABEL 레인 한정)"
   mkdir -p "$OUT/compare"
   for name in ${SCREENS//,/ }; do
     for png in "$OUT/${name}"_*_t2.png; do
-      [ -f "$png" ] && python3 -I "$TOOL_DIR/compare.py" "$COMPARE" "$png" "$OUT/compare/$(basename "$png" _t2.png)_$TAG.png" "$TAG"
+      [ -f "$png" ] && python3 -I "$TOOL_DIR/compare.py" "$COMPARE" "$png" "$OUT/compare/$(basename "$png" _t2.png)_$TAG.png" "$HEAD_TAG"
     done
   done
 fi

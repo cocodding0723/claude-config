@@ -64,3 +64,6 @@ yield return new UiPreviewScreen("화면-이름", root =>
 - 동시 실행: 요청마다 `build/ui-preview-lanes/lane-N`(APFS 복제, 기본 4개)에서 병렬, 다 차면 순번 대기(대기 순번·앞 실행·예상 시간 30초마다 출력). 원본 작업 공간은 읽기만
 - HUD: `ingame-top-band`(미션 있음, `--stage main.ch1.2`) / `ingame-top-band-nomission`. 장소·남은 시간·코인은 고정본에 없어 비움
 - 덮기마다 "대상 경로 일치/새 파일/불일치" 로그. 불일치(같은 GUID 가 다른 경로에 있음)면 중단, `--force` 로만 진행
+- `--patch-from-commit` 의 커밋 자리에 `<A>..<B>` 를 쓰면 범위 누적 변경분(기준이 다른 브랜치)
+- `--hud-place <장소> --hud-day <D-n> --hud-coin <코인>`: 고정본에 없는 상단 띠 값을 수동 입력(시안 견본). compare 머리글에 "수동 입력" 표기
+- `--loc-from-dev <text.*.json 폴더>`: 그 번역을 레인 복사본에만 넣음(저장소 번역 파일은 그대로). 머리글 표기 이름은 `UI_PREVIEW_LOC_LABEL`

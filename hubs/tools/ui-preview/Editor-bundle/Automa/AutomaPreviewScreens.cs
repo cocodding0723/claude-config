@@ -105,6 +105,25 @@ namespace Tests.Editor.UiPreview.Automa
         }
 
         // 미션 띠는 게임 Presenter + 고정본 미션. 장소·남은 시간·코인은 고정본에 없어 비움(시안 견본 문구가 남지 않게)
+        private const string HudPlaceArg = "-uiPreviewHudPlace";
+        private const string HudDayArg = "-uiPreviewHudDay";
+        private const string HudCoinArg = "-uiPreviewHudCoin";
+
+        private static string? Arg(string name)
+        {
+            var args = Environment.GetCommandLineArgs();
+            var index = Array.IndexOf(args, name);
+            return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
+        }
+
+        private static void SetText(TMPro.TMP_Text? label, string? value)
+        {
+            if (label != null)
+            {
+                label.text = value ?? string.Empty;
+            }
+        }
+
         private static void RenderTopBand(Transform root, Func<AutomaPreviewFixture> fixture, bool withMission)
         {
             var view = UiPreviewPrefabs.Spawn<IngameTopUIElementView>(nameof(IngameTopUIElementView).Replace("View", string.Empty), root, false);
@@ -118,21 +137,16 @@ namespace Tests.Editor.UiPreview.Automa
                 band.sizeDelta = new Vector2(0f, band.sizeDelta.y);
             }
 
-            foreach (var label in new[] { view.GoldValue, view.LeftTimeValue })
-            {
-                if (label != null)
-                {
-                    label.text = string.Empty;
-                }
-            }
-
+            // 고정본에 없는 값. --hud-* 로 받은 수동 입력(시안 견본)만 채우고 없으면 비움
+            SetText(view.GoldValue, Arg(HudCoinArg));
+            SetText(view.LeftTimeValue, Arg(HudDayArg));
             var location = view.transform.FindDeep(LocationLabelName);
             if (location != null && location.TryGetComponent<TMPro.TMP_Text>(out var locationText))
             {
-                locationText.text = string.Empty;
+                SetText(locationText, Arg(HudPlaceArg));
             }
 
-            Debug.Log("[UiPreview] 상단 띠: 장소·남은 시간·코인 데이터 없음(비움)");
+            Debug.Log($"[UiPreview] 상단 띠: 장소={Arg(HudPlaceArg) ?? "(비움)"} 남은 시간={Arg(HudDayArg) ?? "(비움)"} 코인={Arg(HudCoinArg) ?? "(비움)"} (수동 입력)");
             if (!withMission)
             {
                 view.MissionBand.Render(MissionBandState.Hidden);
