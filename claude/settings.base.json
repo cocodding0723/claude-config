@@ -157,6 +157,17 @@
             "statusMessage": "jira-approval-guard 검사 중"
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/plan-approval-write-guard.sh",
+            "timeout": 10,
+            "statusMessage": "plan-approval-write-guard 검사 중"
+          }
+        ]
       }
     ],
     "PostToolUse": [
