@@ -126,7 +126,8 @@ HR="${LRM_HUB_REPORT:-$(dirname "$(readlink "$0" || echo "$0")")/hub_report.py}"
 [ -f "$HR" ] || die "경로·첨부 검사 도구 없음: hub_report.py — 알림 스크립트와 같은 폴더에 설치 필요"
 ATT=(); [ $# -lt 2 ] || ATT=(--attached "$2")
 for a in ${ATTACHED[@]+"${ATTACHED[@]}"}; do ATT+=(--attached "$a"); done
-if ! CHK="$(printf '%s' "$1" | "$PY" -I "$HR" check-text ${ATT[@]+"${ATT[@]}"} 2>&1)"; then die "${CHK#오류: }"; fi
+if ! CHK="$(printf '%s' "$1" | "$PY" -I "$HR" check-text --kind "$KIND" --hub-dir "$HOME/.config/lrm-hubs" ${ATT[@]+"${ATT[@]}"} 2>&1)"; then die "${CHK#오류: }"; fi
+MENTIONS="$CHK"  # 결정 번호 언급 판정(link·warn 줄). 아래 전송 직전에 처리
 # 결정 카드 필수 항목(배경·용어·선택지 결과). 경로 검사처럼 우회 불가. 규칙은 decide_card.py 한 곳
 if [ "$KIND" = decide ]; then
   DC=(); [ "$OPT_SET" = 0 ] || DC=(--options "$OPTIONS"); [ "$DID_SET" = 0 ] || DC+=(--decision-id "$DECISION_ID")  # 번호 재사용(다른 질문)도 같은 검사에서 거부
@@ -653,6 +654,19 @@ if [ -n "$LINK_TO" ]; then
   if [ -n "$LINK" ]; then add_ref_line "<$LINK|결정 카드 열기>"; UNFURL=1
   else echo "경고: 링크 조회 실패 — 링크 없이 전송" >&2; fi
 fi
+# 본문이 언급한 결정 번호: 열린 카드는 정식 링크를 끝에 붙이고, 이미 답한 결정을 '대기'로 쓰면 경고(전송은 계속)
+REFS=""
+while IFS=$'\t' read -r MK MA MB; do
+  case "$MK" in
+    link)
+      [ "$MA" != "$LINK_TO" ] || continue
+      LINK="$(permalink_of "$MA")"
+      if [ -n "$LINK" ]; then REFS="${REFS:+$REFS$'\n'}<$LINK|$MB 결정 카드 열기>"; UNFURL=1
+      else echo "경고: $MB 카드 링크 조회 실패 — 링크 없이 전송" >&2; fi ;;
+    warn) echo "경고: $MA" >&2 ;;
+  esac
+done <<< "$MENTIONS"
+[ -z "$REFS" ] || add_ref_line "$REFS"
 if [ -n "$QUOTE" ]; then
   LINK="$(permalink_of "$QUOTE")"
   if [ -n "$LINK" ]; then
