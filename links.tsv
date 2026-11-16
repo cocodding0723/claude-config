@@ -187,3 +187,8 @@ hubs/scripts/doc_browser_ui.html	.config/lrm-hubs/doc_browser_ui.html	link
 hubs/doc-recipients.example.json	.config/lrm-hubs/doc-recipients.example.json	link
 hubs/launchd/ai.lrm.docbrowser.plist	Library/LaunchAgents/ai.lrm.docbrowser.plist	copy
 hubs/docs/doc-browser.md	.config/lrm-hubs/docs/doc-browser.md	link
+hubs/scripts/night_draft.py	.config/lrm-hubs/night_draft.py	link
+hubs/scripts/night_dispatch.py	.config/lrm-hubs/night_dispatch.py	link
+hubs/night_policy.tsv	.config/lrm-hubs/night_policy.tsv	link
+hubs/launchd/ai.lrm.nightdraft.plist	.config/lrm-hubs/ai.lrm.nightdraft.plist	copy
+hubs/launchd/ai.lrm.nightdispatch.plist	.config/lrm-hubs/ai.lrm.nightdispatch.plist	copy

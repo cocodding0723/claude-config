@@ -5,6 +5,9 @@
       · sources([{kind, ref, context?}]) · updated_at · history(상태 변경 기록, 최근 20건)
       · assigned_at · started_at · done_at(상태에 처음 들어간 시각, 없으면 "") · blocked_reason({kind, note, since}, 막힘일 때만)
       · dropped_reason(버림일 때만) · order(수동 순서, 선택) · outbox_id(Slack 전송 대기열 연결, 선택) · hint(미분류 보조 표시, 선택).
+야간 큐 칸(전부 선택, docs/night-queue-design.html): night({tries, sent_at, approved_at, approved_by_card} — 있으면 야간 대상, 머리말 '야간:' 접수에서 만들어짐)
+      · gate(auto|morning|user) · after([{kind: pr|decision|task, ref}] 풀려야 시작) · questions([{q, rec, revert, answer}]) · goal(한 줄 목표) · uses(자원 표시 목록, 예 unity).
+      야간 진행은 night.approved_at(사용자가 15시 초안 카드에서 승인한 시각)이 있어야 함. 값 검사는 row_problem 한 곳.
 시각: ISO 8601 초 단위+시간대(예 2026-11-16T10:02:06+09:00). history 도 같음.
 상태: 미분류 → 배정 → 진행 ↔ 막힘 → 완료 | 버림. 완료는 증거(PR #n·owner/repo#n·커밋 해시 7자 이상·URL), 버림은 사유(--reason) 없이 못 바꿈.
 needs 는 장부에 있는 id 만, 순환 금지. 같은 source(kind+ref)는 한 번만 반입(멱등). 완료 PR 은 pr:<번호> 전역 키로 중복 제거.
@@ -37,6 +40,16 @@ EMOJI = {UNSORTED: "📥", ASSIGNED: "📌", DOING: "🔄", BLOCKED: "⛔", DONE
 SRC_KINDS = ("inbox", "feedback", "todo-html", "manual")
 RESERVED_HUBS = ("사용자", "main")  # hubs.tsv 에 없는 담당. 사용자 직접 일·메인 코디네이터
 BLOCK_KINDS = ("확인창", "전제조건", "사용자답", "기타")
+# ---------- 야간 큐 칸(값은 이 블록 한 곳) ----------
+NIGHT_HEADER = "야간"  # 접수 머리말. hubs/intake-routes.tsv 의 같은 이름 행과 짝
+NIGHT_HEADER_RE = re.compile(r"^\s*" + NIGHT_HEADER + r"\s*[:：]")
+GATES = ("auto", "morning", "user")
+AFTER_KINDS = ("pr", "decision", "task")
+AFTER_REF = {"pr": re.compile(r"^(?:[\w.-]+/[\w.-]+)?#\d+$"), "decision": re.compile(r"^D-[A-Za-z0-9][A-Za-z0-9-]*$"), "task": re.compile(r"^T\d{4,}$")}  # hub_status.REF_ID 와 같은 형식
+REVERT_LABELS = ("쉬움", "보통", "어려움")
+NIGHT_TEXT_KEYS = ("sent_at", "approved_at", "approved_by_card")
+GOAL_MAX = 200
+USES_VALUES = ("unity",)  # 디스패처가 자원 조건을 따로 보는 표시. 늘리면 night_policy 도 같이
 ID_PREFIX, ID_WIDTH = "T", 4
 HISTORY_MAX = 20
 # 피드백 장부 상태 → 작업 장부 상태
@@ -249,6 +262,33 @@ def row_problem(r: dict, ids: set) -> str:
         return f"blocked_reason 은 막힘 상태에서 kind({'|'.join(BLOCK_KINDS)})와 함께만"
     if "order" in r and (isinstance(r["order"], bool) or not isinstance(r["order"], int)):
         return "order 는 정수"
+    return night_problem(r)
+
+
+def night_problem(r: dict) -> str:
+    """야간 큐 칸 검사. 칸이 없으면 통과(옛 행 호환)"""
+    if "gate" in r and r["gate"] not in GATES:
+        return f"gate 는 {'|'.join(GATES)} 중 하나"
+    if "goal" in r and (not isinstance(r["goal"], str) or len(r["goal"]) > GOAL_MAX):
+        return f"goal 은 {GOAL_MAX}자 이내 문자열"
+    if "uses" in r and (not isinstance(r["uses"], list) or any(u not in USES_VALUES for u in r["uses"])):
+        return f"uses 는 {'|'.join(USES_VALUES)} 목록"
+    if "after" in r:
+        a = r["after"]
+        if not isinstance(a, list) or any(not isinstance(x, dict) or x.get("kind") not in AFTER_KINDS or not AFTER_REF[x["kind"]].match(str(x.get("ref", ""))) for x in a):
+            return "after 는 [{kind: pr|decision|task, ref}] — ref 형식은 pr:Owner/Repo#N·decision:D-ID·task:T0123"
+    if "questions" in r:
+        q = r["questions"]
+        if not isinstance(q, list) or any(not isinstance(x, dict) or not str(x.get("q", "")).strip() or x.get("revert") not in REVERT_LABELS
+                                          or not isinstance(x.get("answer"), (str, type(None))) for x in q):
+            return f"questions 는 [{{q, rec, revert({'|'.join(REVERT_LABELS)}), answer(문자열|null)}}]"
+    if "night" in r:
+        n = r["night"]
+        if not isinstance(n, dict) or set(n) - {"tries", *NIGHT_TEXT_KEYS} or isinstance(n.get("tries", 0), bool) or not isinstance(n.get("tries", 0), int) \
+                or n.get("tries", 0) < 0 or any(not isinstance(n.get(k, ""), str) for k in NIGHT_TEXT_KEYS):
+            return "night 는 {tries(0 이상 정수), sent_at, approved_at, approved_by_card(문자열)}"
+        if bool(n.get("approved_at")) != bool(n.get("approved_by_card")):
+            return "night.approved_at 과 approved_by_card 는 같이 있어야 함"
     return ""
 
 
@@ -317,6 +357,71 @@ def with_derived(rows: list, universe: list) -> list:
     return [{**r, "blocks_count": d[r["id"]][0], "blocked_by": d[r["id"]][1]} for r in rows]
 
 
+# ---------- 야간 큐 칸 다루기 ----------
+
+def new_night() -> dict:
+    return {"tries": 0, "sent_at": "", "approved_at": "", "approved_by_card": ""}
+
+
+def is_night(row: dict) -> bool:
+    return isinstance(row.get("night"), dict)
+
+
+def night_approved(row: dict) -> bool:
+    return is_night(row) and bool(row["night"].get("approved_at"))
+
+
+def parse_after(value) -> list:
+    """'pr:#12,decision:D-X,task:T0001' → [{kind, ref}]. 형식 오류는 check_rows 가 거부"""
+    out = []
+    for item in split_ids(value):
+        kind, _, ref = item.partition(":")
+        out.append({"kind": kind, "ref": ref})
+    return out
+
+
+def parse_questions(values) -> list:
+    """'질문|추천안|쉬움' 반복 → questions. 추천안·되돌리기 칸은 비울 수 있으나 되돌리기는 기본 보통"""
+    out = []
+    for raw in values or []:
+        q, rec, revert = (ledger.clean(c) for c in (raw.split("|") + ["", ""])[:3])
+        out.append({"q": q, "rec": rec, "revert": revert or "보통", "answer": None})
+    return out
+
+
+def approve_night(path: str, rid: str, card: str, now: float, dry: bool = False) -> dict:
+    """사용자 승인 기록. 이미 승인된 행은 그대로(먼저 온 승인만 인정). 야간 대상이 아닌 행은 거부"""
+    with locked(path):
+        rows, bad = load_for_write(path, dry)
+        row = next((r for r in rows if r["id"] == rid), None)
+        if row is None:
+            raise LedgerError(f"id 없음: {rid} — list 로 id 확인", EXIT_MISSING)
+        if not is_night(row):
+            raise LedgerError(f"{rid} 는 야간 대상이 아님 — 머리말 '{NIGHT_HEADER}:' 접수 또는 set --night", EXIT_USAGE)
+        if not row["night"].get("approved_at"):
+            row["night"].update(approved_at=stamp(now), approved_by_card=ledger.clean(card))
+            row["updated_at"] = stamp(now)
+            push_history(row, row["updated_at"], row["state"], f"야간 승인 {ledger.clean(card)}")
+            check_rows(rows)
+            if not dry:
+                write_rows(path, rows, bad)
+    return row
+
+
+def record_night_send(path: str, rid: str, now: float) -> dict:
+    """야간 전달 직전 기록: night.tries +1, sent_at 갱신. 전송 중 죽어도 횟수가 남아 상한이 지켜짐(intake 의 '하달 최대 1회' 방식)"""
+    with locked(path):
+        rows, bad = load_for_write(path, False)
+        row = next((r for r in rows if r["id"] == rid), None)
+        if row is None or not is_night(row):
+            raise LedgerError(f"{rid} 는 장부의 야간 대상이 아님 — list --night 로 확인", EXIT_MISSING)
+        row["night"].update(tries=row["night"].get("tries", 0) + 1, sent_at=stamp(now))
+        row["updated_at"] = stamp(now)
+        check_rows(rows)
+        write_rows(path, rows, bad)
+    return row
+
+
 # ---------- 행 만들기·바꾸기 ----------
 
 def next_id(rows: list) -> str:
@@ -377,9 +482,14 @@ def new_row(rows: list, text: str, now: float, **kw) -> dict:
            "evidence": evidence, "sources": [src], "updated_at": kw.get("updated_at") or stamp(now), "history": [],
            "assigned_at": "", "started_at": "", "done_at": ""}
     enter_state(row, kw.get("state") or UNSORTED, at, kw.get("blocked_kind", ""), kw.get("blocked_note", ""), kw.get("reason", ""))
-    for key in ("order", "outbox_id", "hint"):
+    for key in ("order", "outbox_id", "hint", "gate", "goal"):
         if kw.get(key) not in (None, ""):
             row[key] = kw[key]
+    for key in ("after", "questions", "uses"):
+        if kw.get(key):
+            row[key] = kw[key]
+    if kw.get("night") or NIGHT_HEADER_RE.match(text):
+        row["night"] = new_night()
     push_history(row, at, row["state"], kw.get("note", ""))
     return row
 
@@ -440,7 +550,8 @@ def add_source(row: dict, kind: str, ref: str, context, at: str) -> None:
 
 
 def set_row(path: str, rid: str, now: float, dry: bool, state=None, hub=None, needs=None, done_when=None, evidence=None, note=None,
-            blocked_kind=None, blocked_note=None, reason=None, order=None, outbox_id=None) -> dict:
+            blocked_kind=None, blocked_note=None, reason=None, order=None, outbox_id=None,
+            gate=None, goal=None, after=None, questions=None, uses=None, night=None) -> dict:
     if state is not None and state not in STATES:
         raise LedgerError(f"상태 값 오류: {state} — {'|'.join(STATES)} 중 하나", EXIT_USAGE)
     new_order = parse_order(order)
@@ -476,6 +587,14 @@ def set_row(path: str, rid: str, now: float, dry: bool, state=None, hub=None, ne
             row.pop("order", None) if new_order is None else row.update(order=new_order)
         if outbox_id is not None:
             row.pop("outbox_id", None) if not outbox_id.strip() else row.update(outbox_id=ledger.clean(outbox_id))
+        for key, val in (("gate", gate), ("goal", goal and ledger.clean(goal)), ("after", after), ("questions", questions), ("uses", uses)):
+            if val is not None:  # 빈 값(빈 문자열·빈 목록)이면 칸을 지움
+                row.pop(key, None) if not val else row.update({key: val})
+        if night is not None:
+            if night and not is_night(row):
+                row["night"] = new_night()
+            elif not night:
+                row.pop("night", None)
         row["updated_at"] = at
         if row["state"] == DONE and not row["evidence"]:
             raise LedgerError(f"증거 없는 완료 불가 — set {rid} --state 완료 --evidence <{EVIDENCE_HELP}> 로 지정", EXIT_USAGE)
@@ -737,7 +856,15 @@ def view(row: dict) -> str:
         out.append(f"  막힘: {br['kind']} · {br.get('note') or '-'} (since {br['since']})")
     if row.get("dropped_reason"):
         out.append(f"  버림 사유: {row['dropped_reason']}")
-    out += [f"  {k}: {row[k]}" for k in ("order", "outbox_id", "hint") if k in row]
+    out += [f"  {k}: {row[k]}" for k in ("order", "outbox_id", "hint", "gate", "goal") if k in row]
+    if row.get("after"):
+        out.append("  after: " + " · ".join(f"{a['kind']}:{a['ref']}" for a in row["after"]))
+    if row.get("uses"):
+        out.append("  uses: " + ", ".join(row["uses"]))
+    out += [f"  질문: {q['q']} (추천 {q.get('rec') or '-'} · 되돌리기 {q['revert']} · 답 {q['answer'] if q['answer'] is not None else '없음'})" for q in row.get("questions", [])]
+    if is_night(row):
+        n = row["night"]
+        out.append(f"  야간: 시도 {n.get('tries', 0)} · 전달 {n.get('sent_at') or '-'} · 승인 {n.get('approved_at') or '미승인'}" + (f" ({n['approved_by_card']})" if n.get("approved_by_card") else ""))
     out += ["  기록:"] + [f"    {h['at']} {h['state']} {h.get('note', '')}".rstrip() for h in row.get("history", [])]
     return "\n".join(out)
 
@@ -768,6 +895,9 @@ def build_parser() -> argparse.ArgumentParser:
                       "  task_ledger.py set T0003 --state 완료 --evidence 'PR #780'\n"
                       "  task_ledger.py set T0004 --state 버림 --reason '기획 변경으로 불필요'\n"
                       "  task_ledger.py list --state 막힘 --json\n"
+                      "  task_ledger.py add --text '야간: 문서 정리' --hub docs --state 배정 --gate auto --goal '문서 이름 규칙 반영' --question '파일 이름?|A|쉬움' --uses unity\n"
+                      "  task_ledger.py list --night-unapproved --json   # 15시 초안 후보\n"
+                      "  task_ledger.py approve-night T0003 --card D-NQ0003-1116\n"
                       "  task_ledger.py import-inbox --dry-run --json\n"
                       "상태: " + "|".join(STATES) + "\n"
                       "증거 형식: " + EVIDENCE_HELP + "\n"
@@ -780,6 +910,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     def js(sp):
         sp.add_argument("--json", action="store_true", help="JSON 으로 출력(오류도 JSON)")
+
+    def night_args(sp):
+        sp.add_argument("--gate", help=f"야간 진행 구분 {'|'.join(GATES)}(set 에서 빈 문자열이면 지움)")
+        sp.add_argument("--goal", help=f"한 줄 목표 {GOAL_MAX}자 이내(빈 문자열이면 지움)")
+        sp.add_argument("--after", help="시작 전에 풀려야 할 것. 'pr:Owner/Repo#N,decision:D-ID,task:T0123' 쉼표 구분(set 에서 빈 문자열이면 지움)")
+        sp.add_argument("--question", action="append", help="사전 질문 '질문|추천안|쉬움·보통·어려움' 반복 지정. set 에서는 목록 전체 교체, 빈 문자열 하나면 지움")
+        sp.add_argument("--uses", help=f"자원 표시 {'|'.join(USES_VALUES)} 쉼표 구분(set 에서 빈 문자열이면 지움)")
+        sp.add_argument("--night", action="store_true", help="야간 대상으로 표시(머리말 '" + NIGHT_HEADER + ":' 접수와 같음)")
 
     def extras(sp):
         sp.add_argument("--blocked-kind", choices=BLOCK_KINDS, metavar="|".join(BLOCK_KINDS), help="막힘 종류(막힘 상태에서만, 기본 기타)")
@@ -799,6 +937,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--source-kind", choices=SRC_KINDS, default="manual", help="출처 종류")
     a.add_argument("--source-ref", default="", help="출처 식별값(ts·C0004 등). 같은 값은 한 번만 반입")
     extras(a)
+    night_args(a)
     dry(a)
     js(a)
     s = sub.add_parser("set", help="상태·담당·전제조건·완료 기준·증거 변경", description="주어진 칸만 바꿈. 완료는 증거 필수(없으면 exit 2), 버림은 사유 필수, needs 는 있는 id 만·순환 금지.")
@@ -810,14 +949,24 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--evidence", action="append", help=f"증거 추가({EVIDENCE_HELP}). 여러 번 지정 가능")
     s.add_argument("--note", help="상태 기록에 남길 짧은 말")
     extras(s)
+    night_args(s)
+    s.add_argument("--night-off", action="store_true", help="야간 대상 표시와 승인 기록을 지움")
     dry(s)
     js(s)
+    an = sub.add_parser("approve-night", help="야간 진행 승인 기록", description="사용자가 결정 카드에서 승인한 야간 항목에 night.approved_at·approved_by_card 를 씀. 이미 승인된 행은 그대로(멱등). 야간 대상이 아니면 exit 2.")
+    an.add_argument("id")
+    an.add_argument("--card", required=True, help="승인한 결정 카드 번호(D-…)")
+    dry(an)
+    js(an)
     sh = sub.add_parser("show", help="한 건 자세히", description="한 건의 모든 칸과 상태 기록 출력. --json 은 객체(blocks_count·blocked_by 포함).")
     sh.add_argument("id")
     js(sh)
     ls = sub.add_parser("list", help="목록", description="목록. 필터는 AND. order 가 있는 행이 먼저, 나머지는 장부 순서. --json 은 배열.")
     ls.add_argument("--state", choices=STATES, metavar="|".join(STATES))
     ls.add_argument("--hub", help="담당 허브 slug(별칭도 slug 로 정규화)")
+    ls.add_argument("--night", action="store_true", help="야간 대상만")
+    ls.add_argument("--night-unapproved", action="store_true", help="야간 대상 중 미승인만(15시 초안 후보)")
+    ls.add_argument("--gate", choices=GATES, metavar="|".join(GATES))
     js(ls)
     i = sub.add_parser("import-inbox", help="Slack inbox 사용자 글을 미분류로 반입",
                        description="slack-inbox.jsonl 의 note·thread_reply(결정 카드 답 포함, 문맥에 kind=decide 표시)를 미분류 행으로. 봇 즉답 명령·봇 중계 글·버튼·반응 제외. 스레드 답글은 부모 제목을 문맥으로 붙임. ts 로 멱등. 비슷한 문장은 dup_candidates 로 표시.")
@@ -863,13 +1012,20 @@ def main(argv=None) -> int:
             row = add_row(path, args.text or "", now, args.dry_run, hub=args.hub, link=args.link or "", state=args.state, needs=args.needs,
                           done_when=args.done_when, evidence=args.evidence, source_kind=args.source_kind, source_ref=args.source_ref,
                           blocked_kind=args.blocked_kind or "", blocked_note=args.blocked_note or "", reason=args.reason or "",
-                          order=args.order, outbox_id=args.outbox_id)
+                          order=args.order, outbox_id=args.outbox_id, gate=args.gate, goal=args.goal and ledger.clean(args.goal),
+                          after=parse_after(args.after), questions=parse_questions(args.question), uses=split_ids(args.uses), night=args.night)
             emit(args, row, ("[dry-run] " if args.dry_run else "") + (f"출처 추가: {row['id']} ← {args.source_kind}/{args.source_ref}" if args.link else f"추가: {row['id']} {row['state']} · {row['text']}"))
         elif args.cmd == "set":
             row = set_row(path, args.id, now, args.dry_run, state=args.state, hub=args.hub, needs=args.needs, done_when=args.done_when,
                           evidence=args.evidence, note=args.note, blocked_kind=args.blocked_kind, blocked_note=args.blocked_note,
-                          reason=args.reason, order=args.order, outbox_id=args.outbox_id)
+                          reason=args.reason, order=args.order, outbox_id=args.outbox_id, gate=args.gate, goal=args.goal,
+                          after=None if args.after is None else parse_after(args.after),
+                          questions=None if args.question is None else parse_questions([q for q in args.question if q.strip()]),
+                          uses=None if args.uses is None else split_ids(args.uses), night=False if args.night_off else (True if args.night else None))
             emit(args, row, ("[dry-run] " if args.dry_run else "") + f"변경: {row['id']} → {row['state']} ({row['updated_at']})")
+        elif args.cmd == "approve-night":
+            row = approve_night(path, args.id, args.card, now, args.dry_run)
+            emit(args, row, ("[dry-run] " if args.dry_run else "") + f"야간 승인: {row['id']} ({row['night']['approved_at']})")
         elif args.cmd == "show":
             rows = read_rows(path)
             row = next((r for r in rows if r["id"] == args.id), None)
@@ -879,7 +1035,9 @@ def main(argv=None) -> int:
         elif args.cmd == "list":
             rows = read_rows(path)
             hub = norm_hub(args.hub, load_slugs()) if args.hub else ""
-            picked = [r for r in rows if (not args.state or r["state"] == args.state) and (not hub or r.get("hub") == hub)]
+            picked = [r for r in rows if (not args.state or r["state"] == args.state) and (not hub or r.get("hub") == hub)
+                      and (not (args.night or args.night_unapproved) or is_night(r)) and (not args.night_unapproved or not night_approved(r))
+                      and (not args.gate or r.get("gate") == args.gate)]
             picked = [r for _, r in sorted(enumerate(picked), key=lambda p: (p[1].get("order", float("inf")), p[0]))]
             emit(args, with_derived(picked, rows), "\n".join(f"{EMOJI.get(r['state'], '·')} {r['id']}\t{r['state']}\t{r.get('hub') or '-'}\t{r['text'][:70]}" for r in picked))
         else:

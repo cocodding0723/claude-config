@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.lrm.nightdispatch</string>
+  <!-- 켜지 않은 보관본. 23:00~06:30 30분마다 승인된 야간 항목을 판정. 동작은 ~/.config/lrm-hubs/night.mode(off·dry·on)가 정함:
+       dry 는 전달 없이 기록만(1단계), on 은 2단계 전까지 거부. 잠자기 방지(caffeinate -i) 아래에서 실행 -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/caffeinate</string>
+    <string>-i</string>
+    <string>__PYTHON3__</string>
+    <string>-I</string>
+    <string>__HOME__/.config/lrm-hubs/night_dispatch.py</string>
+    <string>--once</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Hour</key><integer>0</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>0</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Hour</key><integer>1</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>1</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
+  </array>
+  <!-- launchd 기본 PATH 는 /usr/bin:/bin 뿐이라 gh·orca 를 못 찾음 -->
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>__HOME__/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+  <key>Nice</key><integer>10</integer>
+  <key>StandardOutPath</key><string>__HOME__/.config/lrm-hubs/night-dispatch.launchd.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.config/lrm-hubs/night-dispatch.launchd.log</string>
+</dict>
+</plist>

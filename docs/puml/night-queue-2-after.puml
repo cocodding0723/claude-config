@@ -1,0 +1,25 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontSize 13
+skinparam RectangleRoundCorner 10
+title 변경 후: 장부가 야간 큐, 디스패처가 30분마다 한가한 허브에 전달, 아침에 한 장 보고
+rectangle "사용자\nSlack 지시·질문 답" as U
+rectangle "intake.py\n접수·머리말 라우팅" as I
+rectangle "작업 장부 + 새 칸 6개\nafter·gate·questions\nplan·night·uses" as L #DAFBE1
+rectangle "night_dispatch.py\n30분 회차: 판정·전달·상한" as N #DAFBE1
+rectangle "night_policy.tsv\n허용·금지 종류·상한값" as P #DAFBE1
+rectangle "night.mode\noff·dry·on 스위치" as S #DAFBE1
+rectangle "허브 코디네이터\n(허브당 워커 1명)" as H
+rectangle "unity_slot.sh\nmemory_pressure·loadavg" as R
+rectangle "hub_report.py\n질문 카드·아침 보고·결재 카드" as HR
+U --> I : 글(머리말 '야간')
+I --> L : 접수 행
+L --> N : 대기 항목 읽기
+P --> N
+S --> N
+N --> R : 읽기(자원 여유)
+N --> H : terminal send(허브만)
+H --> L : 상태·증거·질문 기록
+N --> HR : 07:30 한 장 + 결재 카드
+HR --> U : Slack DM
+@enduml

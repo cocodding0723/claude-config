@@ -98,7 +98,7 @@ class Routes:
 
     def pick(self, text: str) -> tuple:
         """(허브, 머리말 뗀 본문). 머리말이 없거나 표에 없으면 기본 대상과 원문"""
-        m = re.match(r"\s*([A-Za-z0-9_-]+)\s*[:：]\s*(.*)", text, re.S)
+        m = re.match(r"\s*([\w-]+)\s*[:：]\s*(.*)", text, re.S)  # 한글 머리말(야간) 포함
         if m and m.group(1).lower() in self.hubs:
             return self.hubs[m.group(1).lower()], m.group(2)
         return self.default, text

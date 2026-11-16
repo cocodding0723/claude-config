@@ -1,0 +1,32 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontSize 13
+title 항목 하나의 판정 순서(30분 회차마다)
+start
+if (night.mode 가 on?) then (아니오)
+  :dry 면 기록만, off 면 종료;
+  stop
+endif
+if (전체 정지 신호?\n한도 의심·밤 전달 상한) then (예)
+  :이번 회차 종료;
+  stop
+endif
+if (gate = auto 이고\n사용자 승인 기록 있음?) then (아니오)
+  :승인 대기(다음 15시 초안);
+  stop
+endif
+if (선행 조건 풀림?\nneeds·after) then (아니오)
+  :대기 유지;
+  stop
+endif
+if (허브 한가?\n워커 0·화면 입력 대기·확인 창 없음) then (아니오)
+  :다음 회차;
+  stop
+endif
+if (자원 여유?\n메모리·부하·Unity 슬롯) then (아니오)
+  :다음 회차;
+  stop
+endif
+:허브에 전달(night_tries +1);
+stop
+@enduml
