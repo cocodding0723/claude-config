@@ -59,6 +59,7 @@ skills/xml-doc-readable	.claude/skills/xml-doc-readable	link
 skills/orca-hub-create/SKILL.md	.claude/skills/orca-hub-create/SKILL.md	link
 skills/orca-hub-create/references/common-rules.txt.tmpl	.claude/skills/orca-hub-create/references/common-rules.txt	render
 skills/orca-hub-create/references/role-prompt.md	.claude/skills/orca-hub-create/references/role-prompt.md	link
+skills/orca-hub-create/references/rules-detail.md	.claude/skills/orca-hub-create/references/rules-detail.md	link
 skills/orca-hub-create/scripts/create_hub.sh	.claude/skills/orca-hub-create/scripts/create_hub.sh	link
 skills/orca-hub-create/scripts/create_worker_ws.sh	.claude/skills/orca-hub-create/scripts/create_worker_ws.sh	link
 skills/orca-hub-create/scripts/pick_host.sh.tmpl	.claude/skills/orca-hub-create/scripts/pick_host.sh	render
@@ -126,6 +127,8 @@ hubs/scrum-share.example.md	.config/lrm-hubs/scrum-share.example.md	link
 hubs/scripts/set_main_terminal.sh	.config/lrm-hubs/set_main_terminal.sh	link
 hubs/scripts/unity_slot.sh	.config/lrm-hubs/unity_slot.sh	link
 hubs/scripts/unity-run	.config/lrm-hubs/unity-run	link
+hubs/scripts/feature_open.sh	.config/lrm-hubs/feature_open.sh	link
+hubs/scripts/feature_close.sh	.config/lrm-hubs/feature_close.sh	link
 hubs/roles/role-arch.txt	.config/lrm-hubs/roles/role-arch.txt	link
 hubs/roles/role-automa.txt	.config/lrm-hubs/roles/role-automa.txt	link
 hubs/roles/role-datasrc.txt	.config/lrm-hubs/roles/role-datasrc.txt	link
@@ -139,6 +142,7 @@ hubs/roles/role-scrum.txt	.config/lrm-hubs/roles/role-scrum.txt	link
 hubs/roles/role-server.txt	.config/lrm-hubs/roles/role-server.txt	link
 hubs/roles/role-test.txt	.config/lrm-hubs/roles/role-test.txt	link
 hubs/roles/role-ui.txt	.config/lrm-hubs/roles/role-ui.txt	link
+hubs/roles/role-feature.txt	.config/lrm-hubs/roles/role-feature.txt	link
 hubs/slack-bot-manifest.yml	.config/lrm-hubs/slack-bot-manifest.yml	link
 hubs/docs/slack-format.md	.config/lrm-hubs/docs/slack-format.md	link
 hubs/docs/slack-push.md	.config/lrm-hubs/docs/slack-push.md	link
@@ -196,5 +200,15 @@ hubs/night_policy.tsv	.config/lrm-hubs/night_policy.tsv	link
 hubs/launchd/ai.lrm.nightdraft.plist	.config/lrm-hubs/ai.lrm.nightdraft.plist	copy
 hubs/launchd/ai.lrm.nightdispatch.plist	.config/lrm-hubs/ai.lrm.nightdispatch.plist	copy
 board/bin/board-done	orca/board/bin/board-done	link
+tools/board/board-merge-check	orca/board/bin/board-merge-check	link
 board/templates/card-mockup.md	orca/board/templates/card-mockup.md	link
 board/templates/card-task.md	orca/board/templates/card-task.md	link
+hubs/tools/HudRenderer.cs	.config/lrm-hubs/tools/HudRenderer.cs	link
+hubs/tools/ModalRenderer.cs	.config/lrm-hubs/tools/ModalRenderer.cs	link
+hubs/tools/RenderShots.cs	.config/lrm-hubs/tools/RenderShots.cs	link
+hubs/tools/README.md	.config/lrm-hubs/tools/README.md	link
+hubs/tools/hud_build_outcome.sh	.config/lrm-hubs/tools/hud_build_outcome.sh	link
+hubs/tools/hud_render.sh	.config/lrm-hubs/tools/hud_render.sh	link
+hubs/tools/hud_render_fx611.sh	.config/lrm-hubs/tools/hud_render_fx611.sh	link
+hubs/tools/hud_render_modal.sh	.config/lrm-hubs/tools/hud_render_modal.sh	link
+hubs/tools/render_common.sh	.config/lrm-hubs/tools/render_common.sh	link
