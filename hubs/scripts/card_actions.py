@@ -174,6 +174,21 @@ def hub_terminals(slug: str, writable_only: bool = False):
     return [t for t in terms if hub_dups.is_alive(t, live)]
 
 
+def ws_terminals(path: str, writable_only: bool = False):
+    """작업 공간 폴더의 살아 있는 claude 터미널 목록(작업자 세션 포함 — 담당 세션에 알릴 때 씀). 조회 실패는 None.
+    살아 있음 판정은 hub_terminals 와 같음"""
+    res = orca_json(["terminal", "list", "--json", "--limit", "1000"])
+    if res is None or not isinstance(res.get("terminals"), list):
+        return None
+    terms = [t for t in res["terminals"] if isinstance(t, dict) and isinstance(t.get("handle"), str) and t["handle"]
+             and hub_dups.in_hub(t, path=path) and t.get("agentIdentity") == "claude" and (not writable_only or t.get("writable") is True)]
+    try:
+        live = hub_dups.live_handles()
+    except hub_dups.Unavailable:
+        return [t for t in terms if t.get("connected") is True and not t.get("orphaned")]
+    return [t for t in terms if hub_dups.is_alive(t, live)]
+
+
 def by_recent(terms: list) -> list:
     """마지막 출력(lastOutputAt)이 최근인 순. 값이 없으면 가장 오래된 것으로 봄, 같으면 목록 순서 유지"""
     return sorted(terms, key=lambda t: -(t.get("lastOutputAt") if isinstance(t.get("lastOutputAt"), (int, float)) else 0))
@@ -203,8 +218,9 @@ class Result(tuple):
         return self
 
 
-def deliver(slug: str, text: str, only=None):
+def deliver(slug: str, text: str, only=None, find=None):
     """허브 코디네이터에 전송: (상태, 시도한 수, 실패 코드 목록, 후보 수). only 를 주면 그 핸들만 시도(막힘 재시도용).
+    find 는 대상 터미널 목록 함수(기본 = slug 허브의 코디네이터). 작업 공간 세션은 deliver_ws 가 ws_terminals 를 꽂음.
     실패 중 agent_prompt_blocked 가 있으면 FAILED 대신 BLOCKED(나중에 같은 핸들에 다시 보낼 수 있음) — 막힌 핸들은 결과의 .blocked.
     후보를 최근 출력 순으로 시도 → 모두 실패하면 목록을 1회 재조회해 아직 안 보낸 핸들만 시도(같은 핸들에 같은 요청 반복 금지).
     시간 초과는 UNKNOWN 으로 즉시 멈춤. 전체 마감(DELIVER_DEADLINE_S) 뒤에는 남은 호출 시간이 모자라면 후보를 생략"""
@@ -223,7 +239,7 @@ def deliver(slug: str, text: str, only=None):
     for _rnd in range(2):
         if out_of_time():
             break
-        terms = hub_terminals(slug, writable_only=True)
+        terms = find() if find else hub_terminals(slug, writable_only=True)
         if terms is None:
             codes.append("terminal_list_failed")
             break
@@ -244,6 +260,11 @@ def deliver(slug: str, text: str, only=None):
             if err == "timeout":
                 return res(UNKNOWN, len(tried), first)
     return res(FAILED, len(tried), first or 0)
+
+
+def deliver_ws(path: str, text: str, only=None):
+    """작업 공간(담당 세션)에 한 줄 전송. 결과·막힘 규칙은 deliver 와 같음"""
+    return deliver(path, text, only, find=lambda: ws_terminals(path, writable_only=True))
 
 
 def redeliver(slug: str, text: str, handles) -> Result:
