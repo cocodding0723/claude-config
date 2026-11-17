@@ -40,7 +40,10 @@ DOC_BLOCKS = ("p", "li")  # 검사할 본문 단위
 DOC_NO_READ = ("code", "pre", "script", "style", "svg")  # 이 태그 안 글은 가독성 검사에서 제외
 DOC_SLASH_JOIN = re.compile(r"\s/\s")  # ' / ' 로 사실을 이은 줄
 DOC_DOT_JOIN = " · "  # 가운뎃점 나열 구분자(공백 포함)
-DOC_DOT_MAX = 2  # 한 줄의 가운뎃점 상한. 넘으면 사실 나열로 봄('구독·취소' 같은 낱말 묶음은 통과)
+DOC_DOT_MAX = 3  # 한 줄의 가운뎃점 상한. 넘으면 사실 나열로 봄('구독·취소' 같은 낱말 묶음은 통과)
+DOC_DOT_LINE_MIN = 40  # 가운뎃점은 이 글자 수 이상의 줄만 위반으로 봄(날짜·종류 머리 줄 같은 짧은 줄 통과)
+DOC_READ_SKIP = ("meta", "term", "cap", "answer", "tag")  # 이 class 의 문단·항목은 가독성 검사 제외(머리·용어·도식 설명·답 줄)
+DOC_VOID = ("meta", "link", "br", "hr", "img", "input", "source")  # 닫는 태그가 없는 태그
 DOC_READ_REPORT = 3  # 오류 문구에 보여 줄 위반 줄 수
 DOC_ITEMS = ("li", "tr")
 RUNNABLE = ("yes", "no")
@@ -104,30 +107,46 @@ def option_name(opt):
 
 
 class DocScan(HTMLParser):
-    """설명서 HTML 을 절(제목 + 본문 글자 수 + 항목 수)과 도식 수로 훑음"""
+    """설명서 HTML 을 구역(h2 단위)·결정 카드 절(data-check=dcard)·제목 절·도식으로 훑음.
+    표준 형식(20261117-답할것/index.html): 구역마다 div.bg 배경 + 도식, 카드마다 section[data-check=dcard] 의 선택지 tr[data-check=opt]·why-rec"""
 
     def __init__(self):
         super().__init__()
-        self.sections = []  # {"title", "chars", "items"}
+        self.sections = []  # 제목 절 {"title", "chars", "items"} — 카드 절이 없는 단일 결정 문서용
+        self.groups = [{"bg": 0, "diagrams": 0, "dcards": [], "blocks": []}]  # h2 로 나뉘는 구역
         self.diagrams = 0
         self.why_mark = False
         self._head = None  # 열린 제목 태그
         self._skip = 0  # script·style 깊이
         self._svg = []  # 열린 svg 별 도형 수
-        self.blocks = []  # 가독성 검사 대상 본문 줄(문단·항목)
-        self._buf = []  # 열린 문단·항목의 글 조각(중첩이면 쌓음)
+        self._buf = []  # 열린 문단·항목 [글 조각, 제외 여부]
         self._noread = 0  # code·pre 같은 제외 태그 깊이
+        self._stack = []  # 열린 태그 [태그, 배경 구역, 카드 절]
+        self._dc = None  # 열린 카드 절
+
+    @property
+    def group(self):
+        return self.groups[-1]
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
+        cls = (a.get("class") or "").split()
+        if tag not in DOC_VOID:
+            self._stack.append([tag, "bg" in cls or a.get("data-check") == "bg", a.get("data-check") == "dcard" or "decision-card" in cls])
+            if self._stack[-1][2]:
+                self._dc = {"id": "", "opts": 0, "why": False}
+                self.group["dcards"].append(self._dc)
         if tag in DOC_NO_READ:
             self._noread += 1
         if tag in DOC_BLOCKS:
-            self._buf.append([])
+            self._buf.append([[], bool(set(cls) & set(DOC_READ_SKIP))])
         if tag in ("script", "style"):
             self._skip += 1
         elif tag in DOC_HEADINGS:
             self._head = tag
+            if tag in ("h1", "h2"):
+                self.groups.append({"bg": 0, "diagrams": 0, "dcards": [], "blocks": []})
+                self._dc = None
             self.sections.append({"title": "", "chars": 0, "items": 0})
         elif tag == "svg":
             self._svg.append(0)
@@ -137,17 +156,23 @@ class DocScan(HTMLParser):
             src = a.get("src") or ""
             if (src.startswith("data:image") and len(src) >= DOC_DATA_IMG_MIN) or src.split("?")[0].lower().endswith(DOC_IMG_EXT):
                 self.diagrams += 1
-        if tag in DOC_ITEMS or a.get("data-check") == "opt":
-            if self.sections:
-                self.sections[-1]["items"] += 1
+                self.group["diagrams"] += 1
+        if tag in DOC_ITEMS and self.sections:
+            self.sections[-1]["items"] += 1
+        if a.get("data-check") == "opt" and self._dc is not None:
+            self._dc["opts"] += 1
         if a.get("data-check") == "why-rec":
             self.why_mark = True
+            if self._dc is not None:
+                self._dc["why"] = True
 
     def handle_endtag(self, tag):
         if tag in DOC_NO_READ:
             self._noread = max(0, self._noread - 1)
         if tag in DOC_BLOCKS and self._buf:
-            self.blocks.append("".join(self._buf.pop()))
+            parts, skip = self._buf.pop()
+            if not skip:
+                self.group["blocks"].append("".join(parts))
         if tag in ("script", "style"):
             self._skip = max(0, self._skip - 1)
         elif tag == self._head:
@@ -155,31 +180,57 @@ class DocScan(HTMLParser):
         elif tag == "svg" and self._svg:
             if self._svg.pop() >= DOC_SVG_MIN_SHAPES:
                 self.diagrams += 1
+                self.group["diagrams"] += 1
+        for i in range(len(self._stack) - 1, -1, -1):  # 닫는 태그와 짝인 열린 태그까지 정리(닫는 태그 생략된 html 허용)
+            if self._stack[i][0] == tag:
+                if any(x[2] for x in self._stack[i:]):
+                    self._dc = None
+                del self._stack[i:]
+                break
 
     def handle_data(self, data):
         if self._buf and not self._noread:
-            self._buf[-1].append(data)
-        if self._skip or not self.sections:
+            self._buf[-1][0].append(data)
+        if self._skip:
+            return
+        in_bg = any(x[1] for x in self._stack)
+        n = len(re.sub(r"\s", "", data))
+        if in_bg and not self._svg:
+            self.group["bg"] += n
+        if self._dc is not None and self._head == "h3" and not self._dc["id"]:
+            m = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", data)
+            self._dc["id"] = m.group(1) if m else ""
+        if not self.sections:
             return
         if self._head and not self._svg:
             self.sections[-1]["title"] += data.strip()
         elif not self._svg:
-            self.sections[-1]["chars"] += len(re.sub(r"\s", "", data))
+            self.sections[-1]["chars"] += n
 
 
 def line_gaps(text):
-    """본문 한 줄(문단·항목)의 가독성 위반 이유 목록(없으면 빈 목록). 순수 함수 — 슬랙 본문 검사도 재사용할 수 있게 입력은 글 한 줄뿐"""
+    """본문 한 줄(문단·항목)의 가독성 위반 이유 목록(없으면 빈 목록). 순수 함수 — 슬랙 본문 검사도 재사용할 수 있게 입력은 글 한 줄뿐.
+    가운뎃점은 줄이 DOC_DOT_LINE_MIN 자 이상일 때만 봄(짧은 머리 줄·낱말 묶음은 통과)"""
     text = " ".join((text or "").split())
     why = []
     if DOC_SLASH_JOIN.search(text):
         why.append("' / ' 로 사실을 이음")
-    if DOC_DOT_JOIN in text or text.count("·") > DOC_DOT_MAX:
+    if len(text) >= DOC_DOT_LINE_MIN and (DOC_DOT_JOIN in text or text.count("·") > DOC_DOT_MAX):
         why.append("가운뎃점으로 사실을 나열함")
     return why
 
 
-def doc_gaps(path, option_count):
-    """결정 설명서 HTML 의 빠진 것 목록(없으면 빈 목록): 파일·배경(상세)·도식·선택지별 결과·추천 이유"""
+def split_doc(spec):
+    """'경로#카드id' → (경로, 카드 id|''). 카드 한 장이 한 문서를 쓰면 #id 는 생략"""
+    path, _, card_id = (spec or "").partition("#")
+    return path, card_id
+
+
+def doc_gaps(spec, option_count):
+    """결정 설명서 HTML 의 빠진 것 목록(없으면 빈 목록): 파일·배경(상세)·도식·선택지별 결과·추천 이유·가독성.
+    spec 은 '경로' 또는 '경로#카드id'. 카드 절(data-check=dcard)이 있는 표준 형식은 그 카드의 구역·절만 검사하고,
+    여러 카드가 든 문서에서 #카드id 가 없으면 거부함. 카드 절이 없는 문서는 제목 낱말('배경'·'선택지별 결과'·'추천 이유')로 문서 전체를 검사함"""
+    path, card_id = split_doc(spec)
     if not path:
         return ["설명서 경로"]
     if not os.path.isfile(path):
@@ -194,18 +245,31 @@ def doc_gaps(path, option_count):
     scan = DocScan()
     scan.feed(html)
     gaps = []
-
-    def pick(words):
-        return [x for x in scan.sections if any(w in x["title"] for w in words)]
-    if not any(x["chars"] >= DOC_BG_MIN for x in pick(DOC_BG_TITLES)):
-        gaps.append(f"배경(상세) 절('{DOC_BG_TITLES[0]}' 제목 + 본문 {DOC_BG_MIN}자 이상)")
-    if scan.diagrams < 1:
+    dcards = [(g, dc) for g in scan.groups for dc in g["dcards"]]
+    if dcards:
+        mine = [(g, dc) for g, dc in dcards if card_id and dc["id"] == card_id] or (dcards if len(dcards) == 1 and not card_id else [])
+        if not mine:
+            return [f"설명서에 카드 {card_id} 절 없음(data-check=dcard 의 h3 첫 낱말이 카드 id)" if card_id
+                    else f"여러 카드({len(dcards)}장) 설명서 — '설명서: 경로#카드id' 로 카드를 지정"]
+        g, dc = mine[0]
+        bg_ok, svg_ok, opt_ok, why_ok, blocks = g["bg"] >= DOC_BG_MIN, g["diagrams"] >= 1, dc["opts"] >= option_count, dc["why"], g["blocks"]
+    else:
+        def pick(words):
+            return [x for x in scan.sections if any(w in x["title"] for w in words)]
+        bg_ok = any(x["chars"] >= DOC_BG_MIN for x in pick(DOC_BG_TITLES)) or any(g["bg"] >= DOC_BG_MIN for g in scan.groups)
+        svg_ok = scan.diagrams >= 1
+        opt_ok = any(x["items"] >= option_count for x in pick(DOC_OPT_TITLES))
+        why_ok = scan.why_mark or any(x["chars"] >= DOC_WHY_MIN for x in pick(DOC_WHY_TITLES))
+        blocks = [t for g in scan.groups for t in g["blocks"]]
+    if not bg_ok:
+        gaps.append(f"배경(상세) 절('{DOC_BG_TITLES[0]}' 제목 또는 class=bg 구역, 본문 {DOC_BG_MIN}자 이상)")
+    if not svg_ok:
         gaps.append(f"도식(도형 {DOC_SVG_MIN_SHAPES}개 이상 인라인 SVG 또는 PUML 로 만든 SVG 1개 이상)")
-    if not any(x["items"] >= option_count for x in pick(DOC_OPT_TITLES)):
-        gaps.append(f"선택지별 결과 절('{DOC_OPT_TITLES[0]}' 제목 + 선택지 {option_count}개 항목)")
-    if not (scan.why_mark or any(x["chars"] >= DOC_WHY_MIN for x in pick(DOC_WHY_TITLES))):
-        gaps.append(f"추천 이유 절('{DOC_WHY_TITLES[0]}' 제목 + 본문 {DOC_WHY_MIN}자 이상)")
-    bad = [(t, w) for t in scan.blocks for w in line_gaps(t)]
+    if not opt_ok:
+        gaps.append(f"선택지별 결과(제목 '{DOC_OPT_TITLES[0]}' 아래 또는 data-check=opt 항목 {option_count}개)")
+    if not why_ok:
+        gaps.append(f"추천 이유 절('{DOC_WHY_TITLES[0]}' 제목 + 본문 {DOC_WHY_MIN}자 이상 또는 data-check=why-rec)")
+    bad = [(t, w) for t in blocks for w in line_gaps(t)]
     if bad:
         shown = "; ".join(f"'{' '.join(t.split())[:30]}…' {w}" for t, w in bad[:DOC_READ_REPORT])
         gaps.append(f"가독성 위반 {len(bad)}건(줄 하나에 사실 하나, 개행·목록으로 나눔): {shown}")

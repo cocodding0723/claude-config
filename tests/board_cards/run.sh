@@ -60,13 +60,22 @@ for gap in "bg:배경(상세)" "svg:도식" "opt:선택지별 결과" "why:추�
   "$ASK" --runnable no "설명서 ${gap%%:*} 없음" --doc "$SB/bad-${gap%%:*}.html" "${FULL[@]:0:8}" >/dev/null 2>"$SB/err"; rc=$?
   [ "$rc" = 2 ] && grep -q "${gap#*:}" "$SB/err" && grep -q '조치' "$SB/err" && ok "설명서에 ${gap#*:} 없으면 종료 2" || ko "설명서 검사 ${gap%%:*}" "rc=$rc $(cat "$SB/err")"
 done
-for bad in '<p>배경은 A / B 두 갈래다</p>' '<ul><li>가 · 나 · 다 를 한 번에 고름</li></ul>' '<ul><li>가·나·다·라 묶음</li></ul>'; do
+for bad in '<p>배경은 A / B 두 갈래다</p>' '<ul><li>가 · 나 · 다 를 한 번에 고르면 모든 화면에서 같은 값으로 통일되고 이후 변경은 한 곳에서만 한다</li></ul>' '<ul><li>가·나·다·라·마 를 한 번에 고르면 모든 화면에서 같은 값으로 통일되고 이후 변경은 한 곳에서만 한다</li></ul>'; do
   { cat "$DOC"; echo "$bad"; } > "$SB/bad-read.html"
   "$ASK" --runnable no "읽기 위반 $bad" --doc "$SB/bad-read.html" "${FULL[@]:0:8}" >/dev/null 2>"$SB/err"; rc=$?
   [ "$rc" = 2 ] && grep -q '가독성' "$SB/err" && ok "가독성 위반 줄 거부: $bad" || ko "가독성 $bad" "rc=$rc $(cat "$SB/err")"
 done
 { cat "$DOC"; echo '<p>주소는 <code>a / b</code> 와 https://x.test/a/b 와 ~/Documents/a/b 다. 구독·취소 묶음</p><pre>x / y · z · w</pre>'; } > "$SB/ok-read.html"
 "$ASK" --runnable no "읽기 통과 코드·경로" --doc "$SB/ok-read.html" "${FULL[@]:0:8}" >/dev/null 2>"$SB/err" && ok "코드·경로·URL 안의 '/' 와 낱말 묶음 가운뎃점은 통과(오탐 없음)" || ko "가독성 오탐" "$(cat "$SB/err")"
+FIX="$HERE/fixtures"
+"$ASK" --runnable no "표준 형식 카드 절" --doc "$FIX/standard.html#lrm-x.1" "${FULL[@]:0:8}" >/dev/null 2>"$SB/err" && ok "표준 형식 사본(구역 배경·data-check=opt·why-rec)의 카드 절은 통과, 머리 줄 가운뎃점도 통과" || ko "표준 형식" "$(cat "$SB/err")"
+"$ASK" --runnable no "doc-kit 양식" --doc "$FIX/dockit.html" "${FULL[@]:0:8}" >/dev/null 2>"$SB/err" && ok "doc-kit 양식 문서(머리 줄 '날짜 · 종류 · 커밋')도 통과" || ko "doc-kit 양식" "$(cat "$SB/err")"
+"$ASK" --runnable no "표준 형식 id 없음" --doc "$FIX/standard.html" "${FULL[@]:0:8}" >/dev/null 2>"$SB/err"; rc=$?
+[ "$rc" = 2 ] && grep -q '여러 카드' "$SB/err" && grep -q '경로#카드id' "$SB/err" && ok "여러 카드가 든 설명서는 #카드id 없으면 종료 2" || ko "카드 id 없음" "rc=$rc $(cat "$SB/err")"
+"$ASK" --runnable no "표준 형식 둘째 카드" --doc "$FIX/standard.html#lrm-x.2" "${FULL[@]:0:8}" >/dev/null 2>"$SB/err"; rc=$?
+[ "$rc" = 2 ] && grep -q '도식' "$SB/err" && grep -q '배경' "$SB/err" && grep -q '가독성' "$SB/err" && ok "같은 파일의 다른 카드 절은 그 카드 구역 기준으로 따로 거부(앞 카드 통과와 무관)" || ko "둘째 카드" "rc=$rc $(cat "$SB/err")"
+"$ASK" --runnable no "없는 카드 절" --doc "$FIX/standard.html#lrm-none" "${FULL[@]:0:8}" >/dev/null 2>"$SB/err"; rc=$?
+[ "$rc" = 2 ] && grep -q '카드 lrm-none 절 없음' "$SB/err" && ok "문서에 없는 카드 id 는 종료 2" || ko "없는 카드" "rc=$rc"
 "$ASK" --runnable no "설명서 파일 없음" --doc "$SB/none.html" "${FULL[@]:0:8}" >/dev/null 2>"$SB/err"; rc=$?
 [ "$rc" = 2 ] && grep -q '설명서 파일 없음' "$SB/err" && ok "설명서 파일이 없으면 종료 2" || ko "설명서 파일 없음" "rc=$rc $(cat "$SB/err")"
 cp "$DOC" "$SB/doc.txt"; "$ASK" --runnable no "설명서 txt" --doc "$SB/doc.txt" "${FULL[@]:0:8}" >/dev/null 2>"$SB/err"; rc=$?

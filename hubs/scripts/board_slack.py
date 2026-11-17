@@ -32,6 +32,7 @@ ID_HEAD, ID_MAX = "D-B", 16  # slack_notify 결정 번호 규칙: D- 뒤 영문�
 SEND_TIMEOUT = 90
 PREVIEW = os.environ.get("LRM_PREVIEW") or os.path.join(HUB_DIR, "html_preview.sh")  # 390폭 모바일 미리보기 PNG
 PREVIEW_TIMEOUT = 60
+ATTACH_FAIL = "파일 첨부 실패"  # slack_notify 가 카드는 보내고 파일만 못 붙였을 때 stderr 에 남기는 문구
 
 
 def decision_id(card_id):
@@ -75,8 +76,10 @@ def notify_args(card):
     if miss:
         raise cards.Fail(2, f"{card['id']} Slack 카드 필수 칸 없음: {', '.join(miss)}. "
                             "조치: board-ask 를 --background·--terms·--options \"A => 결과|B => 결과\" 로 다시 만들거나 bd update -d 로 설명 보강")
-    doc = d["doc"]
-    doc_miss = cards.doc_gaps(doc, len(d["options"]))  # 카드가 나중에 바뀌었어도 보내기 직전에 다시 검사
+    doc, doc_card = cards.split_doc(d["doc"])  # '경로#카드id' 면 여러 카드 설명서의 그 카드 절만 검사·첨부
+    doc_miss = cards.doc_gaps(d["doc"], len(d["options"]))  # 카드가 나중에 바뀌었어도 보내기 직전에 다시 검사
+    if doc_card and card["id"] != "new" and doc_card != card["id"]:
+        doc_miss.append(f"설명서 절이 다른 카드({doc_card})용")
     if doc_miss:
         raise cards.Fail(2, f"{card['id']} 설명서 부족: {', '.join(doc_miss)}. "
                             f"조치: HTML 설명서를 보강하고 카드 설명에 '{cards.DOC_LINE}: <html 절대 경로>' 줄을 둠(bd update -d)")
@@ -118,8 +121,11 @@ def push(card_id, dry_run=False):
     if p.returncode != 0:
         raise cards.Fail(3 if p.returncode == 1 else 2, f"slack_notify 종료 {p.returncode}: {(p.stderr or p.stdout).strip()[:200]}")
     cards.bd("label", "add", card_id, LABEL + did)
+    doc_state = "failed" if ATTACH_FAIL in (p.stderr or "") else "attached"  # slack_notify 는 첨부가 실패해도 종료 0 + stderr 경고만 냄
+    if doc_state == "failed":
+        cards.bd("comments", "add", card_id, "Slack 카드는 보냈지만 설명서 첨부에 실패함. 조치: 설명서 파일을 카드 스레드에 따로 보냄")
     ts = next((ln[3:].strip() for ln in p.stdout.splitlines() if ln.startswith("ok ")), "")
-    return {"id": card_id, "sent": True, "decisionId": did, "preview": attach_preview(args[-1], ts)}
+    return {"id": card_id, "sent": True, "decisionId": did, "doc": doc_state, "preview": attach_preview(args[-1], ts)}
 
 
 def attach_preview(doc, ts):

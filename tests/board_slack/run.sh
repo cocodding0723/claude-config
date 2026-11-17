@@ -15,6 +15,7 @@ cat > "$LRM_NOTIFY" <<'SH'
 D=$(dirname "$0"); N=$(cat "$D/notify.n" 2>/dev/null || echo 0); N=$((N + 1)); echo "$N" > "$D/notify.n"
 F=notify.args; [ "$N" = 1 ] || F=notify.args$N
 for a in "$@"; do printf '%s\n' "$a"; done > "$D/$F"
+[ -f "$D/attachfail" ] && echo "경고: 카드는 보냈지만 파일 첨부 실패(시험)" >&2
 echo "ok 1794383274.123456"
 SH
 cat > "$LRM_PREVIEW" <<'SH'
@@ -107,5 +108,25 @@ python3 -I "$BS" push "$D3" --dry-run --json | jq -e '.args[-1]' >/dev/null && o
 b update "$D3" -d $'선택지:\n- A => 가 됨\n- B => 나 됨\n추천: A\n배경: 시안이 두 벌이라 하나로 맞춤\n용어: 없음' >/dev/null
 python3 -I "$BS" push "$D3" --dry-run 2>"$SB/err" >/dev/null; rc=$?
 [ "$rc" = 2 ] && grep -q '설명서' "$SB/err" && ok "카드에서 설명서 줄이 사라지면 거부" || ko "설명서 줄 없음" "rc=$rc $(cat "$SB/err")"
+
+# ── 여러 카드 설명서(표준 형식): 경로#카드id ──
+FIX="$HERE/fixtures"; FIXB="$HERE/../board_cards/fixtures"
+E1=$("$SCR/board-ask" --runnable no "표준 형식 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "시안이 두 벌이라 하나로 맞춤" --terms 없음 --doc "$DOC")
+sed "s/lrm-x\.1/$E1/g" "$FIXB/standard.html" > "$SB/std.html"
+desc_with() { b show "$E1" --json | jq -r 'if type=="array" then .[0] else . end | .description' | sed "s|^설명서: .*|설명서: $1|"; }
+b update "$E1" -d "$(desc_with "$SB/std.html#$E1")" >/dev/null
+OUT=$(python3 -I "$BS" push "$E1" --dry-run --json 2>"$SB/err"); rc=$?
+[ "$rc" = 0 ] && [ "$(echo "$OUT" | jq -r '.args[-1]')" = "$SB/std.html" ] && ok "표준 형식 설명서: 카드 절 통과, 첨부 파일은 '#카드id' 를 뺀 경로" || ko "표준 형식 push" "rc=$rc $OUT $(cat "$SB/err")"
+b update "$E1" -d "$(desc_with "$SB/std.html#lrm-other")" >/dev/null
+python3 -I "$BS" push "$E1" --dry-run 2>"$SB/err" >/dev/null; rc=$?
+[ "$rc" = 2 ] && grep -q '절 없음' "$SB/err" && ok "문서에 이 카드 절이 없으면 거부" || ko "없는 절" "rc=$rc $(cat "$SB/err")"
+sed "s/lrm-x\.1/lrm-x.9/g" "$FIXB/standard.html" | sed "s/lrm-x\.2/$E1/g" > "$SB/std2.html"
+b update "$E1" -d "$(desc_with "$SB/std2.html#lrm-x.9")" >/dev/null
+python3 -I "$BS" push "$E1" --dry-run 2>"$SB/err" >/dev/null; rc=$?
+[ "$rc" = 2 ] && grep -q '다른 카드' "$SB/err" && ok "다른 카드 id 의 절을 가리키면 거부(남의 설명서 첨부 방지)" || ko "다른 카드 절" "rc=$rc $(cat "$SB/err")"
+F1=$("$SCR/board-ask" --runnable no "첨부 실패 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "시안이 두 벌이라 하나로 맞춤" --terms 없음 --doc "$DOC")
+touch "$SB/attachfail"
+[ "$(python3 -I "$BS" push "$F1" --json 2>/dev/null | jq -r .doc)" = failed ] && b comments "$F1" --json | jq -r '.[].text' | grep -q '설명서 첨부에 실패' && ok "설명서 첨부 실패는 결과 doc=failed 와 카드 코멘트로 남김" || ko "첨부 실패" ""
+rm -f "$SB/attachfail"
 printf '통과 %d · 실패 %d\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
