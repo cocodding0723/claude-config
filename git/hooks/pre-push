@@ -4,3 +4,7 @@ in=$(mktemp); trap 'rm -f "$in"' EXIT
 cat > "$in"
 HOOK_NAME=pre-push "$(dirname "$0")/_chain" "$@" < "$in" || exit $?
 "${CLAUDE_HOOKS_DIR:-$HOME/.claude/hooks}/lib/local_gate_push.sh" "$@" < "$in"   # 위치 옮기면 CLAUDE_HOOKS_DIR 또는 이 줄만 변경
+rc=$?
+# 통과한 push 는 PR·CI 감시기를 깨움. 감시기가 없거나 실패해도 push 결과는 그대로
+[ "$rc" = 0 ] && { command -v gh-watch >/dev/null 2>&1 && (gh-watch kick >/dev/null 2>&1 &) ; } || :
+exit "$rc"

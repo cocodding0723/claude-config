@@ -153,3 +153,5 @@ MERGED=$(git -C "$REPO" rev-parse HEAD)
 echo "병합: $BRANCH → $INTO (${MERGED:0:7})"
 record "$MERGED"
 "$DONE" "$CARD" "$ACTOR" || { echo "오류: 병합은 됐지만 카드 완료 실패. 원인 해소 뒤 board-merge $CARD $ACTOR 다시 실행" >&2; exit 9; }
+# PR·CI 감시기 깨우기. 감시기가 없거나 실패해도 병합 결과는 그대로
+command -v gh-watch >/dev/null 2>&1 && (gh-watch kick >/dev/null 2>&1 &) || :
