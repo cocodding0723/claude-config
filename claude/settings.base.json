@@ -168,6 +168,17 @@
             "statusMessage": "plan-approval-write-guard 검사 중"
           }
         ]
+      },
+      {
+        "matcher": "Bash|Read|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I ~/.claude/hooks/lib/ws_token_guard.py",
+            "timeout": 10,
+            "statusMessage": "ws-token-guard 검사 중"
+          }
+        ]
       }
     ],
     "PostToolUse": [

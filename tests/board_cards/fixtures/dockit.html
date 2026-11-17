@@ -1,0 +1,13 @@
+<!doctype html><html lang="ko"><meta charset="utf-8">
+<meta name="doc-kit-kind" content="결정">
+<title>결정 설명서(doc-kit 양식 사본)</title>
+<h1>메인 규칙 제안</h1>
+<p class="lede">2026-11-17 · 결정 · 기준 커밋 abc1234</p>
+<div class="summary" data-check="summary"><b>3줄 요약</b><ol><li>규칙 하나를 정한다.</li></ol></div>
+<h2>배경</h2>
+<p>메인 세션이 직접 작업을 하면 코디네이터가 작업판을 읽고 나누는 흐름이 깨진다. 지금은 훅이 없어 사람이 매번 기억해야 하고, 놓치면 한 세션에서 계획과 구현이 섞인다. 그래서 규칙 형태를 정해야 한다.</p>
+<div class="diagram"><svg viewBox="0 0 100 40"><rect x="0" y="0" width="30" height="30"/><rect x="40" y="0" width="30" height="30"/><path d="M30 15 L40 15"/></svg></div>
+<h2>선택지별 결과</h2>
+<ul><li>A 문서 규칙: 훅 없이 문장으로만 둔다.</li><li>B 훅: 직접 작업 시도를 막는다.</li></ul>
+<h2>추천 이유</h2>
+<p>문장 규칙은 놓치기 쉬워 같은 지적이 되풀이되므로 훅으로 막는 쪽이 낫다.</p>
