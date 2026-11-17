@@ -602,5 +602,41 @@ exp "protected: push.default=upstream·upstream dev 면 인자 없는 push 거�
 exp "protected: origin HEAD 는 push.default 무관 같은 이름이라 통과" $GG 'git push origin HEAD' "$PG"
 git -C "$PG" config --unset push.default; git -C "$PG" config --unset branch.feat/w.merge
 
+# ---- ws-token-guard: 작업 공간 직접 생성·봇 토큰·slack_notify.sh ----
+WG="$H/lib/ws_token_guard.py"
+# trun <JSON> [ORCA_ROLE] → pass|deny
+trun() { local out; out=$(printf '%s' "$1" | HOME="$SB/home" ORCA_ROLE="${2:-}" LRM_PUSH_MAIN=/x/main python3 -I "$WG" 2>/dev/null); [ -z "$out" ] && echo pass || printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision'; }
+texp() { local got; got=$(trun "$2" "${4:-}"); [ "$got" = "${3:-pass}" ] && ok "$1" || ko "$1" "기대 ${3:-pass}, 실제 ${got:-빈 출력}"; }
+bj() { jq -cn --arg c "$1" --arg d "${2:-$SB}" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}'; }
+TM="$SB/tg-main"; mk "$TM" main; git -C "$TM" worktree add -q -b feat/tg-w "$SB/tg-worker"; git -C "$TM" worktree add -q -b feat/tg-h "$SB/coord-x-hub"
+texp "ws-guard: git worktree add 거부" "$(bj 'git worktree add ../x -b feat/x' "$TM")" deny
+texp "ws-guard: git -C <경로> worktree add 거부" "$(bj "git -C $TM worktree add /tmp/x" "$TM")" deny
+texp "ws-guard: -c 옵션·여분 공백 worktree  add 거부" "$(bj 'git -c core.x=1   worktree   add /tmp/x' "$TM")" deny
+texp "ws-guard: 연결 명령 안 worktree add 거부" "$(bj 'cd /tmp && git worktree add x' "$TM")" deny
+texp "ws-guard: bash -c 안 worktree add 거부" "$(bj 'bash -c "git worktree add x"' "$TM")" deny
+texp "ws-guard: create_worker_ws.sh 실행은 허용" "$(bj 'bash ~/.claude/skills/orca-hub-create/scripts/create_worker_ws.sh --repo r --name w' "$TM")"
+texp "ws-guard: create_worker_ws.sh 뒤에 붙인 worktree add 는 거부" "$(bj 'create_worker_ws.sh --name w; git worktree add x' "$TM")" deny
+texp "ws-guard: worktree list·remove 는 통과" "$(bj 'git worktree list && git worktree remove x' "$TM")"
+texp "ws-guard: 커밋 메시지 속 worktree add 문구는 통과" "$(bj 'git commit -m "git worktree add 막는 훅"' "$TM")"
+texp "ws-guard: 무관 명령 통과" "$(bj 'ls -la && git status' "$TM")"
+texp "ws-guard: 토큰 Read 거부" '{"tool_name":"Read","tool_input":{"file_path":"/h/.config/lrm-hubs/slack-bot.env"}}' deny
+texp "ws-guard: 토큰 Grep 경로 거부" '{"tool_name":"Grep","tool_input":{"pattern":"TOKEN","path":"/h/.config/lrm-hubs/slack-bot.env"}}' deny
+texp "ws-guard: 양식 파일(.example) Read 통과" '{"tool_name":"Read","tool_input":{"file_path":"/h/hubs/slack-bot.env.example"}}'
+texp "ws-guard: 무관 파일 Read 통과" '{"tool_name":"Read","tool_input":{"file_path":"/h/README.md"}}'
+texp "ws-guard: Bash 의 slack-bot.env 거부(cat)" "$(bj 'cat ~/.config/lrm-hubs/slack-bot.env' "$TM")" deny
+texp "ws-guard: 따옴표 경로도 거부" "$(bj 'cat "$HOME/.config/lrm-hubs/slack-bot.env"' "$TM")" deny
+texp "ws-guard: 메인(ORCA_ROLE=main)도 토큰 Bash 거부" "$(bj 'source ~/.config/lrm-hubs/slack-bot.env' "$TM")" deny main
+NS='~/.config/lrm-hubs/slack_notify.sh --kind done x'
+texp "ws-guard: 작업자(연결 작업 공간) slack_notify.sh 거부" "$(bj "$NS" "$SB/tg-worker")" deny
+texp "ws-guard: 작업자 bash <경로>/slack_notify.sh 거부" "$(bj "bash $NS" "$SB/tg-worker")" deny
+texp "ws-guard: 작업자 환경변수 접두 실행 거부" "$(bj "FOO=1 $NS" "$SB/tg-worker")" deny
+texp "ws-guard: ORCA_ROLE=worker 면 어디서든 거부" "$(bj "$NS" "$TM")" deny worker
+texp "ws-guard: 작업자의 slack_notify.sh 편집·검색은 통과" "$(bj 'grep -n kind lrm-hubs/slack_notify.sh && git add lrm-hubs/slack_notify.sh' "$SB/tg-worker")"
+texp "ws-guard: 작업자 hub_report.py 는 통과" "$(bj '~/.config/lrm-hubs/hub_report.py add --kind done x' "$SB/tg-worker")"
+texp "ws-guard: 허브(coord-*) 세션 slack_notify.sh 통과" "$(bj "$NS" "$SB/coord-x-hub")"
+texp "ws-guard: 메인 체크아웃 세션 slack_notify.sh 통과" "$(bj "$NS" "$TM")"
+texp "ws-guard: ORCA_ROLE=main 이면 작업 공간에서도 통과" "$(bj "$NS" "$SB/tg-worker")" pass main
+texp "ws-guard: 깨진 입력은 통과" '{깨진'
+
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
