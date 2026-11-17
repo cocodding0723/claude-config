@@ -3,13 +3,14 @@
 
 보내기: 열린 kind:decision 카드 → slack_notify.sh --kind decide 번호 카드. 결정 번호는 카드 id 에서 만들고(D-B + 영문·숫자),
        보낸 뒤 카드에 label slack:<결정 번호> 를 붙여 다시 보내지 않음.
+       label 을 붙이기 전에 죽었어도 보낸 기록(slack-sent.jsonl 의 card·decision_id)이 있으면 다시 보내지 않고 label 만 채움(환경 LRM_SENT_LOG 로 위치 재정의).
 설명서: 카드 설명의 '설명서: <html>' 줄을 보내기 직전에 다시 검사해(board_cards.doc_gaps) 카드 스레드에 첨부하고, 모바일 미리보기 PNG 도 붙임(실패해도 카드는 유지).
 답 받기: 버튼 답(slack_socket.py) → 결정 번호로 카드를 찾아 board-answer 와 같은 처리(원문 코멘트 + 닫기).
        직접 입력이 질문이면 코멘트만 남기고 카드는 열어 둠. 작업판 카드가 아닌 결정 번호는 손대지 않음(옛 허브·메인 전달 그대로).
 자동 보내기 스위치: <LRM_HUB_DIR>/.board-slack.on 파일이 있을 때만 board-ask 가 새 결정 카드를 바로 보냄. 기본 꺼짐(봇 꺼짐).
 
-양식 검사: 알림 스크립트(slack_notify.sh)에 건조 경로가 없어, 같은 폴더 slack_notify.sh 안의 양식 A 검사 코드(FORM_PY)를 꺼내 그대로 돌림.
-       push --dry-run 도 이 검사를 거치므로 건조 실행 통과 = 실제 전송 통과. 본문 티켓 번호(LRM-n)·커밋 해시는 맨 아래 '참고:' 줄로 자동 이동하고,
+양식 검사: 알림 스크립트(slack_notify.sh)에 건조 경로가 없어, 같은 폴더 slack_notify.sh 안의 양식 A 검사 코드(FORM_PY: 양식 A·선택지 80자·이모지 이름)와
+       hub_report.py check-text(본문 로컬 경로·비밀 첨부)를 꺼내 그대로 돌림. push --dry-run 도 이 검사를 거치므로 건조 실행 통과 = 실제 전송 통과. 본문 티켓 번호(LRM-n)·커밋 해시는 맨 아래 '참고:' 줄로 자동 이동하고,
        제목(첫 줄)이 40자를 넘으면 카드에 '보강 필요: 제목 40자' 코멘트를 남기고 거부. 전송 때 --card 로 slack-sent.jsonl 에 카드 id 를 남김.
 
 사용: board_slack.py push <카드 id> [--dry-run] [--json]
@@ -34,6 +35,7 @@ import decide_card  # noqa: E402
 HUB_DIR = os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
 NOTIFY = os.environ.get("LRM_NOTIFY") or os.path.join(HUB_DIR, "slack_notify.sh")
 SWITCH = os.path.join(HUB_DIR, ".board-slack.on")
+SENT_LOG = os.environ.get("LRM_SENT_LOG") or os.path.expanduser("~/.config/lrm-hubs/slack-sent.jsonl")  # 알림 스크립트가 보낸 뒤 남기는 기록(위치는 알림 스크립트가 HOME 기준으로 고정)
 LABEL = "slack:"
 ID_HEAD, ID_MAX = "D-B", 16  # slack_notify 결정 번호 규칙: D- 뒤 영문·숫자 1~16자
 SEND_TIMEOUT = 90
@@ -41,16 +43,26 @@ PREVIEW = os.environ.get("LRM_PREVIEW") or os.path.join(HUB_DIR, "html_preview.s
 PREVIEW_TIMEOUT = 60
 NOTIFY_SRC = os.environ.get("LRM_NOTIFY_SRC") or os.path.join(os.path.dirname(os.path.realpath(__file__)), "slack_notify.sh")  # 양식 검사 코드가 든 파일. NOTIFY 는 시험에서 가짜로 바뀌므로 따로 둠
 FORM_OPEN, FORM_CLOSE = "read -r -d '' FORM_PY <<'PYEOF' || true\n", "\nPYEOF\n"  # slack_notify.sh 의 파이썬 본체를 감싼 heredoc 표식
+HUB_REPORT = os.environ.get("LRM_HUB_REPORT") or os.path.join(os.path.dirname(NOTIFY_SRC), "hub_report.py")  # 경로·비밀 파일 검사. 알림 스크립트와 같은 폴더·같은 환경 변수
 FORM_FAIL_LEVELS = ("reject", "hard")  # 실제 전송이 막힐 수 있는 수준(strict 기준). warn 은 통과
 CARD_ID_RE = re.compile(r"^[a-z][a-z0-9]{1,15}-[a-z0-9]{1,12}(\.[0-9]{1,3})*$")  # slack_notify --card 형식. 틀리면 전송이 거부돼 이 경우엔 --card 를 생략
 REF_HEAD = "참고:"
 REF_SEP = " · "
-TICKET_RX = re.compile(r"(?<![0-9A-Za-z_])LRM-\d+(?![0-9A-Za-z_])")  # 알림 스크립트 RX ticket·hex 와 같은 규칙. 어긋나면 위 검사가 잡음
-HEX_RX = re.compile(r"(?<![0-9A-Za-z_])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![0-9A-Za-z_])", re.I)
-REF_WORDS = ((TICKET_RX, "관련 티켓"), (HEX_RX, "관련 커밋"))  # 본문에서는 쉬운 말로 바꾸고 번호는 참고 줄로
+TICKET_RX, HEX_RX = cards.TICKET_RX, cards.HEX_RX  # 알림 스크립트 양식 A 규칙 2 와 같은 식(board_cards 한 곳)
+SKIP_RX = re.compile(r"```.*?```|`[^`\n]*`|https?://\S+", re.S)  # 알림 스크립트 scrub 과 같은 예외 구간: 코드 블록·`코드`·주소 안의 번호는 그대로 둠
+REF_KINDS = ((TICKET_RX, "티켓"), (HEX_RX, "커밋"))  # 본문에서는 쉬운 말로 바꾸고 번호는 참고 줄로
+REF_ONE, REF_NEAR = "관련 ", "(아래 참고)"  # 번호가 하나뿐일 때 앞말·이미 '티켓'·'커밋' 낱말 옆일 때 대체말
+REF_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"  # 번호가 둘 이상이면 '티켓 A'·'티켓 B' 로 구분해 참고 줄과 짝짓기
+PARTICLE_RX = re.compile(r"(\s?)(은|는|이|가|을|를|과|와)(?![가-힣])")
+PARTICLE_PAIR = {"은": ("은", "는"), "는": ("은", "는"), "이": ("이", "가"), "가": ("이", "가"), "을": ("을", "를"), "를": ("을", "를"), "과": ("과", "와"), "와": ("과", "와")}
+LETTER_JONG = set("LMNR")  # 읽을 때 받침이 있는 알파벳(엘·엠·엔·알)
 TITLE_NEED = f"보강 필요: 제목 {cards.TITLE_MAX}자"
 LOCK_DIR = os.path.join(HUB_DIR, ".board-slack-locks")  # 카드별 전송 잠금 파일 폴더
-LOCK_WAIT, LOCK_POLL = SEND_TIMEOUT * 2, 0.2  # 앞 전송이 끝나길 기다리는 최대 초(전송+미리보기 시간 여유)·확인 간격
+# 잠금을 쥐는 최대 시간 = 전송 + label 추가 + 첨부 실패 코멘트(bd 2번) + 미리보기 생성 + 미리보기 전송. 기다리는 쪽은 이보다 길게 기다려야 앞 전송이 길어져도 종료 3 으로 끝나지 않음
+LOCK_HOLD_MAX = SEND_TIMEOUT + 2 * cards.BD_TIMEOUT + PREVIEW_TIMEOUT + SEND_TIMEOUT
+LOCK_WAIT, LOCK_POLL = LOCK_HOLD_MAX + 10, 0.2  # 대기 최대 초(보유 최대 + 여유 10초)·확인 간격
+LOOKUP_WARN_MARK = os.path.join(HUB_DIR, ".board-lookup-warn")  # 카드 조회 실패 Slack 경고를 마지막으로 보낸 시각(파일 mtime)
+LOOKUP_WARN_EVERY = 600  # 같은 경고를 이 초 안에는 다시 보내지 않음(버튼 답마다 알림이 쏟아지지 않게)
 ATTACH_FAIL = "파일 첨부 실패"  # slack_notify 가 카드는 보내고 파일만 못 붙였을 때 stderr 에 남기는 문구
 
 
@@ -86,37 +98,108 @@ def show(card_id):
     return card
 
 
+def has_jong(label):
+    """대체말 끝 글자의 받침 유무(조사 보정용)"""
+    ch = label.rstrip(")")[-1:]
+    if "가" <= ch <= "힣":
+        return (ord(ch) - 0xAC00) % 28 != 0
+    return ch in LETTER_JONG
+
+
+def sub_outside(rx, fn, text):
+    """코드·주소 구간을 건드리지 않고 나머지에만 rx.sub"""
+    out, pos = [], 0
+    for m in SKIP_RX.finditer(text):
+        out.append(rx.sub(fn, text[pos:m.start()]))
+        out.append(m.group(0))
+        pos = m.end()
+    return "".join(out) + rx.sub(fn, text[pos:])
+
+
 def move_refs(lines):
-    """본문 줄의 티켓 번호·커밋 해시를 쉬운 말로 바꾸고 맨 아래 '참고:' 줄로 모음. 번호가 없으면 그대로"""
-    refs = []
+    """본문 줄의 티켓 번호·커밋 해시를 쉬운 말로 바꾸고 맨 아래 '참고:' 줄로 모음. 번호가 없으면 그대로.
+    번호가 하나뿐이면 '관련 티켓', 둘 이상이면 '티켓 A'·'티켓 B' 로 구분해 참고 줄에 'A = LRM-n' 으로 짝지음.
+    코드·주소 안 번호는 그대로 둠. 바꾼 말 뒤 조사는 받침에 맞춰 고침"""
+    found = {noun: [] for _, noun in REF_KINDS}  # 종류별로 처음 나온 순서의 번호
+    order = []  # 참고 줄 순서(나온 순서)
+    for ln in lines:
+        for rx, noun in REF_KINDS:
+            for ref in rx.findall(SKIP_RX.sub(lambda m: " " * len(m.group(0)), ln)):
+                if ref not in found[noun]:
+                    found[noun].append(ref)
+                    order.append((noun, ref))
+
+    def label(noun, ref, near):
+        many = len(found[noun]) > 1
+        letter = REF_LETTERS[found[noun].index(ref) % len(REF_LETTERS)]
+        if many:
+            return letter if near else f"{noun} {letter}"
+        return REF_NEAR if near else REF_ONE + noun
+
     out = []
     for ln in lines:
-        for rx, word in REF_WORDS:
-            refs += rx.findall(ln)
-            ln = rx.sub(word, ln)
+        for rx, noun in REF_KINDS:
+            def rep(m, noun=noun):
+                near = m.string[:m.start()].rstrip().endswith(noun) or m.string[m.end():].lstrip().startswith(noun)
+                word = label(noun, m.group(0), near)
+                if word != REF_NEAR and PARTICLE_RX.match(m.string, m.end()):  # 조사는 바꾼 말 받침에 맞춤. 뒤 글자는 이 치환에서 못 바꿔 표식을 남기고 아래에서 고침
+                    return word + "\x00" + str(has_jong(word))
+                return word
+            ln = sub_outside(rx, rep, ln)
+        ln = re.sub(r"\x00(True|False)(\s?)(은|는|이|가|을|를|과|와)(?![가-힣])",
+                    lambda m: m.group(2) + PARTICLE_PAIR[m.group(3)][0 if m.group(1) == "True" else 1], ln)
         out.append(ln)
-    refs = list(dict.fromkeys(refs))
+    refs = []
+    for noun, ref in order:
+        refs.append(f"{noun} {REF_LETTERS[found[noun].index(ref) % len(REF_LETTERS)]} = {ref}" if len(found[noun]) > 1 else ref)
     return out + ([REF_HEAD + " " + REF_SEP.join(refs)] if refs else [])
+
+
+def form_code():
+    """slack_notify.sh 안의 양식 검사 코드(FORM_PY) 본문. 못 꺼내면 Fail(3)"""
+    try:
+        with open(NOTIFY_SRC, encoding="utf-8") as f:
+            src = f.read()
+        return src.split(FORM_OPEN, 1)[1].split(FORM_CLOSE, 1)[0]
+    except (OSError, IndexError):
+        raise cards.Fail(3, f"양식 검사 코드를 못 찾음({NOTIFY_SRC}). 조치: slack_notify.sh 가 같은 폴더에 있고 FORM_PY 구간이 그대로인지 확인")
+
+
+def run_form(args, text):
+    """FORM_PY 를 알림 스크립트와 같은 방식(-I, LRM_SCRIPT_DIR)으로 돌려 CompletedProcess 반환. 실행 자체가 실패하면 Fail(3)"""
+    env = dict(os.environ, LRM_SCRIPT_DIR=os.path.dirname(NOTIFY_SRC))
+    try:
+        return subprocess.run([sys.executable, "-I", "-c", form_code(), *args], input=text, capture_output=True, text=True,
+                              timeout=SEND_TIMEOUT, env=env)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise cards.Fail(3, f"양식 검사 실행 실패({type(e).__name__}). 조치: python3 동작 확인")
 
 
 def form_problems(text):
     """알림 스크립트와 같은 양식 A 검사(decide·답 줄 안내 있음)를 돌려 막힐 위반 문구 목록을 돌려줌. 검사 코드를 못 꺼내면 Fail(3)"""
-    try:
-        with open(NOTIFY_SRC, encoding="utf-8") as f:
-            src = f.read()
-        code = src.split(FORM_OPEN, 1)[1].split(FORM_CLOSE, 1)[0]
-    except (OSError, IndexError):
-        raise cards.Fail(3, f"양식 검사 코드를 못 찾음({NOTIFY_SRC}). 조치: slack_notify.sh 가 같은 폴더에 있고 FORM_PY 구간이 그대로인지 확인")
-    env = dict(os.environ, LRM_SCRIPT_DIR=os.path.dirname(NOTIFY_SRC))
-    try:
-        p = subprocess.run([sys.executable, "-I", "-c", code, "check", "decide", "1"], input=text, capture_output=True, text=True,
-                           timeout=SEND_TIMEOUT, env=env)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        raise cards.Fail(3, f"양식 검사 실행 실패({type(e).__name__}). 조치: python3 동작 확인")
+    p = run_form(["check", "decide", "1"], text)
     if p.returncode != 0:
         raise cards.Fail(3, f"양식 검사 실패: {p.stderr.strip()[:200]}. 조치: slack_notify.sh 양식 검사 코드 확인")
     rows = [ln.split("\t", 2) for ln in p.stdout.splitlines() if ln.count("\t") >= 2]
     return [r[2] for r in rows if r[0] in FORM_FAIL_LEVELS]
+
+
+def option_problem(opts, rec, did):
+    """선택지 문구 검사(80자·이모지 이름·제어 문자 등). 알림 스크립트가 FORM_PY opts 로 막는 것과 같은 코드. 문제 없으면 빈 문자열"""
+    p = run_form(["opts", f"={rec}", "", f"={did}", "", ""], opts)
+    return p.stderr.strip() if p.returncode == 2 else ""
+
+
+def path_problem(text, doc):
+    """본문에 첨부 아닌 로컬 문서 경로·비밀 파일 첨부가 있는지. 알림 스크립트가 hub_report.py check-text 로 막는 것과 같은 검사. 문제 없으면 빈 문자열"""
+    if not os.path.isfile(HUB_REPORT):
+        raise cards.Fail(3, f"경로 검사 도구를 못 찾음({HUB_REPORT}). 조치: hub_report.py 가 slack_notify.sh 와 같은 폴더에 있는지 확인")
+    try:
+        p = subprocess.run([sys.executable, "-I", HUB_REPORT, "check-text", "--kind", "decide", "--hub-dir", HUB_DIR, "--attached", doc],
+                           input=text, capture_output=True, text=True, timeout=SEND_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise cards.Fail(3, f"경로 검사 실행 실패({type(e).__name__}). 조치: python3 동작 확인")
+    return (p.stderr or p.stdout).strip().removeprefix("오류: ") if p.returncode != 0 else ""
 
 
 def need_title(card_id, n, dry_run):
@@ -155,17 +238,38 @@ def notify_args(card):
     if CARD_ID_RE.match(card["id"]):
         args += ["--card", card["id"]]
     if d["recommend"] in names:
-        args += ["--recommend", str(names.index(d["recommend"]) + 1)]
+        rec_no = names.index(d["recommend"]) + 1
+        args += ["--recommend", str(rec_no)]
     else:
         raise cards.Fail(2, f"{card['id']} 추천 없음. 조치: board-ask --recommend <선택지> 로 다시 만들기")
     text = "\n".join(body)
     bad = form_problems(text)  # 건조 실행도 실제 전송과 같은 검사를 거치게 함
     if bad:
         raise cards.Fail(2, f"{card['id']} Slack 양식 A 위반: {' / '.join(bad)}")
+    for check in (lambda: option_problem(opts, rec_no, decision_id(card["id"])), lambda: path_problem(text, doc)):  # 알림 스크립트가 따로 막는 나머지 검사
+        why = check()
+        if why:
+            raise cards.Fail(2, f"{card['id']} Slack 전송 검사 위반: {why}")
     why = decide_card.problem(text, opts, decision_id(card["id"]))  # 실제 전송 때 막힐 규칙(글자 수 상한 등)을 보내기 전·건조 실행에서 미리 확인
     if why:
         raise cards.Fail(2, f"{card['id']} Slack 카드 규칙 위반: {why}")
     return args + [text, doc]  # 마지막 인자 파일은 slack_notify 가 카드 스레드에 첨부함
+
+
+def sent_before(card_id, did):
+    """보낸 기록(slack-sent.jsonl)에 이 카드의 번호 카드가 이미 있는지. 전송 뒤 label 을 붙이기 전에 죽었을 때 다시 보내지 않으려는 근거. 파일이 없거나 깨진 줄은 무시"""
+    try:
+        with open(SENT_LOG, encoding="utf-8") as f:
+            for ln in f:
+                try:
+                    r = json.loads(ln)
+                except ValueError:
+                    continue
+                if isinstance(r, dict) and r.get("card") == card_id and r.get("decision_id") == did:
+                    return True
+    except OSError:
+        pass
+    return False
 
 
 def push(card_id, dry_run=False):
@@ -184,19 +288,25 @@ def push(card_id, dry_run=False):
     if clash:
         raise cards.Fail(2, f"결정 번호 {did} 를 {clash[0]} 가 이미 씀. 조치: 카드 id 를 확인하고 수동으로 slack_notify.sh 사용")
     if dry_run:
-        return {"id": card_id, "sent": False, "why": "dry-run", "decisionId": did, "args": args}
+        return {"id": card_id, "sent": False, "why": "already" if sent_before(card_id, did) else "dry-run", "decisionId": did, "args": args}
     with card_lock(card_id):  # 메인·허브가 동시에 push 해 같은 카드가 두 번 가던 문제(11-17). 잠금 안에서 label 을 다시 확인
         have = [x for x in show(card_id).get("labels") or [] if x.startswith(LABEL)]
         if have:
             return {"id": card_id, "sent": False, "why": "already", "decisionId": have[0][len(LABEL):]}
+        if sent_before(card_id, did):  # 보냈는데 label 을 붙이기 전에 죽은 경우: 다시 보내지 않고 label 만 채움
+            cards.bd("label", "add", card_id, LABEL + did)
+            return {"id": card_id, "sent": False, "why": "already", "decisionId": did, "recovered": True}
         return send(card_id, did, args)
 
 
 @contextlib.contextmanager
 def card_lock(card_id):
     """카드 하나당 파일 잠금(fcntl.flock). 프로세스가 죽으면 OS 가 풀어 줘서 낡은 잠금이 남지 않음. 못 얻으면 Fail(3)"""
-    os.makedirs(LOCK_DIR, exist_ok=True)
-    fd = os.open(os.path.join(LOCK_DIR, re.sub(r"[^A-Za-z0-9._-]", "_", card_id) + ".lock"), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        os.makedirs(LOCK_DIR, exist_ok=True)
+        fd = os.open(os.path.join(LOCK_DIR, re.sub(r"[^A-Za-z0-9._-]", "_", card_id) + ".lock"), os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError as e:  # 권한·디스크 문제가 traceback 으로 끝나지 않게(board-ask 자동 보내기는 Fail 만 받음)
+        raise cards.Fail(3, f"{card_id} 전송 잠금 폴더를 못 만들거나 못 엶({LOCK_DIR}: {e.strerror}). 조치: 폴더 권한·디스크 여유 확인 뒤 다시 시도(카드는 보내지 않았음)")
     try:
         end = time.monotonic() + LOCK_WAIT
         while True:
@@ -244,14 +354,35 @@ def attach_preview(doc, ts):
         return "attached" if s.returncode == 0 else f"미리보기 전송 실패({(s.stderr or s.stdout).strip()[:80]})"
 
 
+def warn_lookup(did, err):
+    """카드 조회 실패(bd 못 찾음 등)를 Slack 경고로 알림. 답은 메인으로 가므로 작업판 카드가 열린 채 남음을 알려 줌. 실패해도 조용히 넘기고 일정 시간에 한 번만 보냄"""
+    try:
+        if time.time() - os.path.getmtime(LOOKUP_WARN_MARK) < LOOKUP_WARN_EVERY:
+            return
+    except OSError:
+        pass
+    text = (f"작업판 카드 조회 실패\n• 무엇: 버튼 답 {did} 을 작업판 카드에 못 붙이고 메인으로 보냄. 카드는 열린 채 남음\n"
+            f"• 원인: {str(err)[:150]}\n• 조치: bd 설치·BOARD_DIR 확인 뒤 board-answer 로 카드를 직접 닫음")
+    try:
+        r = subprocess.run([NOTIFY, "--kind", "warn", "--tag", "board", text], capture_output=True, text=True, timeout=SEND_TIMEOUT, stdin=subprocess.DEVNULL)
+        if r.returncode != 0:
+            print(f"board_slack: 조회 실패 경고 전송 실패(종료 {r.returncode}): {(r.stderr or r.stdout).strip()[:150]}", file=sys.stderr)
+            return
+        with open(LOOKUP_WARN_MARK, "w"):
+            pass
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"board_slack: 조회 실패 경고를 못 보냄({type(e).__name__})", file=sys.stderr)
+
+
 def card_for(did):
     """결정 번호 → 열린·닫힌 작업판 카드 id. 작업판 카드가 아니거나 조회 실패면 None"""
     if not isinstance(did, str) or not did.startswith(ID_HEAD):
         return None
     try:
         rows = cards.bd_json("list", "--all", "--label", LABEL + did, "--limit", "0") or []
-    except cards.Fail as e:  # 조회 실패를 '작업판 카드 아님'으로 조용히 넘기면 버튼 답이 메인으로 샘. 이유를 로그에 남김
+    except cards.Fail as e:  # 조회 실패를 '작업판 카드 아님'으로 조용히 넘기면 버튼 답이 메인으로 샘. 로그와 Slack 경고로 알림
         print(f"board_slack: 카드 조회 실패 — {e}", file=sys.stderr)
+        warn_lookup(did, e)
         return None
     ids = [r["id"] for r in rows if isinstance(r, dict) and r.get("id")]
     return ids[0] if len(ids) == 1 else None
