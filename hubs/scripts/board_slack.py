@@ -27,7 +27,6 @@ SWITCH = os.path.join(HUB_DIR, ".board-slack.on")
 LABEL = "slack:"
 ID_HEAD, ID_MAX = "D-B", 16  # slack_notify 결정 번호 규칙: D- 뒤 영문·숫자 1~16자
 SEND_TIMEOUT = 90
-OPTION_MAX = 4  # Slack 번호 카드 선택지 상한
 
 
 def decision_id(card_id):
@@ -67,12 +66,7 @@ def notify_args(card):
     if "kind:decision" not in (card.get("labels") or []):
         raise cards.Fail(2, f"{card['id']} 는 결정 카드가 아님. 조치: kind:decision 카드만 보냄")
     d = parse_desc(card.get("description"))
-    miss = [n for n, k in (("배경", "background"), ("용어", "terms")) if not d[k]]
-    if not 2 <= len(d["options"]) <= OPTION_MAX:
-        miss.append(f"선택지 2~{OPTION_MAX}개")
-    no_result = [o for o in d["options"] if "=>" not in o]
-    if no_result:
-        miss.append("선택지 결과('문구 => 고르면 달라지는 점')")
+    miss = cards.card_gaps(d["options"], d["background"], d["terms"])
     if miss:
         raise cards.Fail(2, f"{card['id']} Slack 카드 필수 칸 없음: {', '.join(miss)}. "
                             "조치: board-ask 를 --background·--terms·--options \"A => 결과|B => 결과\" 로 다시 만들거나 bd update -d 로 설명 보강")

@@ -4,6 +4,8 @@
 환경: BOARD_DIR(기본 ~/orca/board), BOARD_BD(기본 bd).
 결정 카드는 '돌려 보면 알 수 있나'(--runnable) 칸이 필수. yes 면 카드를 만들지 않음 — 동작·시간·배치·출력처럼 실행해 보면 아는 사실은
 사람에게 묻지 않고 시제품·실측으로 판정함(제품 방향·취향만 묻는다). 승인 성격(--gate approval)은 사실 질문이 아니라 제외.
+결정 카드는 Slack 번호 카드로 그대로 보낼 수 있는 칸(배경·용어·추천·선택지 2~4개와 각 결과)이 필수. 없으면 종료 2 —
+결정의 원천을 작업판 한 곳으로 두려는 것이라, 칸이 비면 뒤에 Slack 으로 못 보내고 사람이 카드를 다시 손봐야 함.
 종료 코드: 0 정상(이미 있음·이미 닫힘 포함), 2 인자 오류, 3 bd 실패, 4 카드 없음, 5 돌려 보면 아는 질문이라 거부"""
 import argparse
 import json
@@ -18,6 +20,8 @@ LEGACY_APPROVAL = "approval"  # 옛 --kind approval. decision + gate:approval �
 GATES = ("approval",)
 APPROVAL_OPTIONS = ("승인 => 이대로 진행", "보류 => 진행하지 않고 카드를 열어 둠")
 REASON_MAX = 80
+OPTION_MAX = 4  # Slack 번호 카드 선택지 상한(board_slack 도 이 값을 씀)
+RESULT_SEP = "=>"  # 선택지 '문구 => 고르면 달라지는 점'
 RUNNABLE = ("yes", "no")
 EXIT_RUNNABLE = 5
 RUNNABLE_REFUSE = ("돌려 보면 알 수 있는 질문은 결정 카드로 묻지 않음. "
@@ -29,9 +33,13 @@ ASK_HELP = """결정·할 일 카드를 작업판에 만든다. 같은 종류·�
 Slack 자동 보내기 스위치(~/.config/lrm-hubs/.board-slack.on)가 켜져 있으면 새 결정 카드를 바로 Slack 번호 카드로 보냄(board_slack.py).
 
 예:
-  board-ask "패널 정본을 작업판으로 옮길까?" --options "옮김|유지" --recommend 옮김 --runnable no --parent lrm-q5o
+  board-ask "패널 정본을 작업판으로 옮길까?" --runnable no --parent lrm-q5o \\
+    --options "옮김 => 손 칸을 없애 카드 하나로 관리|유지 => 지금처럼 손 칸을 같이 둠" --recommend 옮김 \\
+    --background "패널 칸이 손 입력과 카드 두 곳이라 어긋남" --terms "패널 정본: 패널이 읽는 원본 데이터"
+  board-ask "PR #812 게시" --gate approval --recommend 승인 --background "draft PR 을 올려 리뷰를 받음" --terms 없음
   board-ask "릴리스 키스토어 만들기" --kind user-todo --why "출시 전 Google 로그인 필요"
-  board-ask "PR #812 게시" --gate approval --json
+
+결정 카드 필수 칸: --options(2~4개, 각 '문구 => 결과') · --recommend · --background · --terms(없으면 '없음') · --runnable no
 
 출력: 카드 id 한 줄(--json 이면 {"id","created","kind"})"""
 
@@ -71,7 +79,17 @@ def bd_json(*args):
 
 def option_name(opt):
     """'문구 => 결과' 의 문구. 결과가 없으면 그대로"""
-    return opt.split("=>", 1)[0].strip()
+    return opt.split(RESULT_SEP, 1)[0].strip()
+
+
+def card_gaps(options, background, terms):
+    """Slack 번호 카드 필수 칸 중 빠진 것의 이름 목록. board-ask(만들 때)와 board_slack(보낼 때)이 같은 기준을 씀"""
+    gaps = [n for n, v in (("배경", background), ("용어", terms)) if not v]
+    if not 2 <= len(options) <= OPTION_MAX:
+        gaps.append(f"선택지 2~{OPTION_MAX}개")
+    if any(RESULT_SEP not in o or not o.split(RESULT_SEP, 1)[1].strip() for o in options):
+        gaps.append("선택지 결과('문구 => 고르면 달라지는 점')")
+    return gaps
 
 
 def ask(a):
@@ -91,8 +109,13 @@ def ask(a):
     opts = [o.strip() for o in (a.options or "").split("|") if o.strip()]
     if a.gate == "approval" and not opts:
         opts = list(APPROVAL_OPTIONS)
-    if a.kind == "decision" and len(opts) < 2:
-        raise Fail(2, '결정 카드는 선택지 2개 이상 필요. 조치: --options "A|B"')
+    if a.kind == "decision":
+        gaps = card_gaps(opts, a.background, a.terms)
+        if a.recommend is None:
+            gaps.append("추천")
+        if gaps:
+            raise Fail(2, f"결정 카드 필수 칸 없음: {', '.join(gaps)}. Slack 번호 카드로 못 보내는 카드가 생김. "
+                          "조치: --options \"A => 결과|B => 결과\" --recommend A --background \"…\" --terms \"…\"(없으면 없음) 를 채워 다시 실행")
     names = [option_name(o) for o in opts]
     if a.recommend is not None and a.recommend not in names:
         raise Fail(2, f"추천 '{a.recommend}' 이 선택지에 없음. 조치: --options 안의 값 하나")
@@ -161,15 +184,15 @@ def main(argv):
     if cmd == "ask":
         ap = argparse.ArgumentParser(prog="board-ask", description=ASK_HELP, formatter_class=fmt)
         ap.add_argument("question", help="카드 제목. 결정이면 질문 한 문장")
-        ap.add_argument("--options", help='선택지 "A|B|C"(결정은 필수). Slack 카드로 보낼 때는 "A => 고르면 달라지는 점|B => …"')
-        ap.add_argument("--recommend", help="추천 선택지(선택지 중 하나)")
+        ap.add_argument("--options", help='선택지 "A => 고르면 달라지는 점|B => …"(결정은 2~4개·결과 필수)')
+        ap.add_argument("--recommend", help="추천 선택지 문구(선택지 중 하나, 결정은 필수)")
         ap.add_argument("--why", help="추천 이유·배경 한 줄")
         ap.add_argument("--parent", help="상위 epic id")
         ap.add_argument("--kind", choices=KINDS + (LEGACY_APPROVAL,), default="decision", help="카드 종류(기본 decision). approval 은 폐지된 옛 값")
         ap.add_argument("--gate", choices=GATES, help="승인 성격 배지(label gate:<값>). 결정 카드에만")
         ap.add_argument("--runnable", choices=RUNNABLE, help="돌려 보면 알 수 있나(결정 카드 필수, 승인 성격 제외). yes 면 거부: 시제품·실측으로 판정")
-        ap.add_argument("--background", help="배경 한 줄(Slack 결정 카드로 보낼 때 필수)")
-        ap.add_argument("--terms", help="낯선 말 풀이 한 줄, 없으면 '없음'(Slack 결정 카드로 보낼 때 필수)")
+        ap.add_argument("--background", help="배경 한 줄(결정 카드 필수)")
+        ap.add_argument("--terms", help="낯선 말 풀이 한 줄, 없으면 '없음'(결정 카드 필수)")
         ap.add_argument("--priority", type=int, choices=range(5), default=1, help="0 최우선~4(기본 1)")
     else:
         ap = argparse.ArgumentParser(prog="board-answer", description=ANSWER_HELP, formatter_class=fmt)

@@ -20,7 +20,10 @@ b() { (cd "$BOARD_DIR" && bd "$@"); }
 labels() { b show "$1" --json | jq -r 'if type=="array" then .[0] else . end | (.labels|sort|join(","))'; }
 BS="$SCR/board_slack.py"
 
-THIN=$("$SCR/board-ask" --runnable no "선택지 결과 없는 결정" --options "A|B" --recommend A)
+legacy() {  # board-ask 가 이제 막는 칸 빠진 옛 결정 카드를 bd 로 직접 만듦
+  b create "$1" -l kind:decision -p 1 -d $'선택지:\n- A\n- B\n추천: A\n돌려 보면 알 수 있나: 아니오' --json | jq -r 'if type=="array" then .[0].id else .id end'
+}
+THIN=$(legacy "선택지 결과 없는 결정")
 python3 -I "$BS" push "$THIN" 2>"$SB/err"; rc=$?
 [ "$rc" = 2 ] && grep -q '배경' "$SB/err" && grep -q '선택지 결과' "$SB/err" && grep -q '조치' "$SB/err" && [ ! -f "$SB/notify.args" ] && ok "필수 칸(배경·용어·결과) 없으면 안 보냄, 원인·조치" || ko "필수 칸" "rc=$rc $(cat "$SB/err")"
 
@@ -54,8 +57,18 @@ R=$(python3 -I "$BS" answer "$DID" "결정 $DID = 선택 2(빨강) (버튼)" --j
 touch "$LRM_HUB_DIR/.board-slack.on"
 A2=$("$SCR/board-ask" --runnable no "글꼴 정할까?" --options "A => 둥근|B => 각진" --recommend A --background "제목 글꼴 후보 둘" --terms 없음)
 labels "$A2" | grep -q 'slack:D-B' && ok "스위치 파일 있으면 board-ask 가 새 결정 카드를 바로 보냄" || ko "auto push" "$(labels "$A2")"
-A3=$("$SCR/board-ask" --runnable no "칸 빠진 결정" --options "A|B" 2>"$SB/err"); rc=$?
-[ "$rc" = 0 ] && [ -n "$A3" ] && grep -q 'Slack 카드 못 보냄' "$SB/err" && ok "자동 보내기 실패는 카드 생성을 막지 않음(경고만)" || ko "auto push 실패" "rc=$rc $(cat "$SB/err")"
+"$SCR/board-ask" --runnable no "칸 빠진 결정" --options "A|B" >/dev/null 2>"$SB/err"; rc=$?
+[ "$rc" = 2 ] && grep -q '배경' "$SB/err" && grep -q '조치' "$SB/err" && [ -z "$(b list --json --limit 0 | jq -r '.[]|select(.title=="칸 빠진 결정")|.id')" ] && ok "board-ask 가 칸 빠진 결정을 종료 2 로 거부(스위치 켜진 상태에서도 카드 안 만듦)" || ko "필수 칸 거부" "rc=$rc $(cat "$SB/err")"
+A3=$(legacy "옛 결정"); python3 -I "$BS" push "$A3" 2>"$SB/err" >/dev/null; rc=$?
+[ "$rc" = 2 ] && ok "옛 카드를 직접 push 하면 거부(원인·조치)" || ko "옛 카드 push" "rc=$rc"
+BG=$(PYTHONPATH= python3 -I - "$SCR" "$A3" 2>"$SB/err" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import board_slack
+board_slack.auto_push(sys.argv[2])
+PY
+)
+grep -q 'Slack 카드 못 보냄' "$SB/err" && ok "자동 보내기 실패는 경고만(예외 없음)" || ko "auto push 실패" "$(cat "$SB/err")"
 rm -f "$LRM_HUB_DIR/.board-slack.on"
 printf '통과 %d · 실패 %d\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
