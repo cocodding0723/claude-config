@@ -14,16 +14,28 @@ OUT6=$(HUBS_TSV="$SB/hubs6.tsv" bash "$RA" --dry-run 2>&1)
 chk "재기동: 부모 칸 있는 허브는 부모 다음, 6칸이 repo 에 섞이지 않음" '[ "$(printf "%s\n" "$OUT6" | grep "^== " | tr "\n" "|")" = "== 부모|== 하위|" ] && ! printf "%s" "$OUT6" | grep -q "REPO=.*par"'
 chk "hubs.tsv 역할 파일이 ~/ 경로이거나 저장소 hubs/roles 와 짝" 'ROLES_OK=1; for r in $(grep -v "^[[:space:]]*#" "$TSV" | grep -v "^[[:space:]]*$" | cut -f3); do case "$r" in "~/.config/lrm-hubs/roles/"*) b=$(basename "$r"); [ -e "$REPO/hubs/roles/$b" ] || [ -e "$REPO/hubs/roles/$b.tmpl" ] || ROLES_OK=0 ;; *) ROLES_OK=0 ;; esac; done; [ "$ROLES_OK" = 1 ]'
 
-hs write --slug ui-layer --run run_ui1 --task "U11 후속 조사" --next "U12 확정" >/dev/null
-mkfile data-design "$OLDT"
-rm -f "$SB/status/scrum.json"
-OUT=$(bash "$RA" --dry-run 2>&1); RC=$?
+# 상태 문구 시험은 실제 hubs.tsv 가 아니라 고정 표로 돌림(실제 표의 휴면 판정이 바뀌어도 안 깨지게). 활성 3개(상태 있음·24시간 초과·상태 없음) + 휴면 1개
+FIX="$SB/fix.tsv"
+printf 'fx-new\t새 상태\t~/r/role-n.txt\t-\t-\nfx-old\t낡은 상태\t~/r/role-o.txt\t-\t-\nfx-none\t상태 없음\t~/r/role-z.txt\t-\t-\nfx-dorm\t휴면\t~/r/role-d.txt\t-\t-\n#dormant\tfx-dorm\t기능 팀으로 대체\n' > "$FIX"
+hs write --slug fx-new --run run_ui1 --task "U11 후속 조사" --next "U12 확정" >/dev/null
+mkfile fx-old "$OLDT"
+mkfile fx-dorm "$NEWT"
+OUT=$(HUBS_TSV="$FIX" bash "$RA" --dry-run 2>&1); RC=$?
 chk "dry-run 종료 코드 0" '[ "$RC" = 0 ]' "rc=$RC"
-MISSING=""; for s in "${SLUGS[@]}"; do printf '%s' "$OUT" | grep -q -- "--slug $s " || MISSING="$MISSING $s"; done
-chk "dry-run 출력에 허브 전부(slug 별 create_hub 명령)" '[ -z "$MISSING" ]' "빠진 허브:$MISSING"
+chk "dry-run: 활성 허브 3개 기동 명령, 휴면 허브는 건너뜀" '[ "$(printf "%s" "$OUT" | grep -c -- "--slug fx-")" = 3 ] && ! printf "%s" "$OUT" | grep -q -- "--slug fx-dorm " && printf "%s" "$OUT" | grep -q "휴면(기능 팀으로 대체)"'
 chk "dry-run: 상태 있는 허브는 상태 문구" 'printf "%s" "$OUT" | grep -q "Run: run_ui1"'
 chk "dry-run: 24시간 초과 허브는 오래된 상태 표시" 'printf "%s" "$OUT" | grep -q "오래된 상태($OLDT)"'
 chk "dry-run: 상태 파일 없는 허브는 일반 문구" 'printf "%s" "$OUT" | grep -q "상태 파일 없음 — HANDOFF.md 와 run-list 로 이어받기"'
+chk "dry-run: 휴면 허브는 상태 파일이 있어도 문구를 만들지 않음" '! printf "%s" "$OUT" | grep -q "fx-dorm.*Run:"'
+# 실제 hubs.tsv: 활성 허브 전부 기동 명령, 휴면 허브는 없음
+OUTR=$(bash "$RA" --dry-run 2>&1)
+DORM=$(awk -F'\t' '$1 == "#dormant" { print $2 }' "$TSV")
+MISSING=""; WRONG=""
+for s in "${SLUGS[@]}"; do
+  if printf '%s\n' "$DORM" | grep -Fxq -- "$s"; then printf '%s' "$OUTR" | grep -q -- "--slug $s " && WRONG="$WRONG $s"
+  else printf '%s' "$OUTR" | grep -q -- "--slug $s " || MISSING="$MISSING $s"; fi
+done
+chk "실제 hubs.tsv dry-run: 활성 허브 전부 기동, 휴면 허브는 기동 안 함" '[ -z "$MISSING" ] && [ -z "$WRONG" ]' "빠진:$MISSING 잘못 기동:$WRONG"
 chk "dry-run: 옛 하드코딩 문구 없음" '! printf "%s" "$OUT" | grep -q "run_a186706b4d4b\|run_ed7531cdf2bf"'
 chk "dry-run: 가짜 터미널 목록 외 실제 기동 없음(create_hub 미실행)" '! printf "%s" "$OUT" | grep -q "hub=.*terminal=term_"'
 chk "resume_all.sh 에 하드코딩 Run ID 없음" '! grep -q "run_[0-9a-f]\{12\}" "$RA"'
@@ -43,7 +55,7 @@ i=args.index("--resume"); assert nasty.split("\n")[0].replace("\n"," ") in args[
 assert "둘째 줄" in args[i+1]
 assert not __import__("os").path.exists(sb+"/PWNED")
 PY'
-chk "--only 는 지정 허브만" '! printf "%s" "$OUT2" | grep -q -- "--slug ui-layer "'
+chk "--only 는 지정 허브만" '! printf "%s" "$OUT2" | grep -q -- "--slug test-qa "'
 chk "--only 없는 slug: 종료 코드 2 + 조치" 'bash "$RA" --dry-run --only zzz 2>"$SB/e" >/dev/null; [ $? = 2 ] && grep -q "hubs.tsv" "$SB/e"'
 
 # 생존 판정 = 핸들별 claude 프로세스 존재(HUB_PROC_TABLE 가짜 표). Orca 의 connected·orphaned·writable·출력 시각은 판정에 안 씀
