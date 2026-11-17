@@ -53,7 +53,7 @@ DOC_HEADINGS = ("h1", "h2", "h3", "h4")
 # 가독성(사용자 11-17: 개행으로 읽기 좋게): 문단·목록 항목 한 줄에 사실은 하나. 코드·경로·URL 안의 '/' 는 보지 않음
 DOC_BLOCKS = ("p", "li")  # 검사할 본문 단위
 DOC_NO_READ = ("code", "pre", "script", "style", "svg")  # 이 태그 안 글은 가독성 검사에서 제외
-DOC_SLASH_JOIN = re.compile(r"\s/\s")  # ' / ' 로 사실을 이은 줄
+DOC_SLASH_JOIN = re.compile(r"(?<!\d)\s/\s|\s/\s(?!\d)")  # ' / ' 로 사실을 이은 줄. 양옆이 모두 숫자인 분수('2 / 3')는 제외
 DOC_DOT_JOIN = " · "  # 가운뎃점 나열 구분자(공백 포함)
 DOC_DOT_MAX = 3  # 한 줄의 가운뎃점 상한. 넘으면 사실 나열로 봄('구독·취소' 같은 낱말 묶음은 통과)
 DOC_DOT_LINE_MIN = 40  # 가운뎃점은 이 글자 수 이상의 줄만 위반으로 봄(날짜·종류 머리 줄 같은 짧은 줄 통과)
@@ -235,16 +235,65 @@ class DocScan(HTMLParser):
             self.sections[-1]["chars"] += n
 
 
+WHY_SLASH = "' / ' 로 사실을 이음"
+WHY_DOT = "가운뎃점으로 사실을 나열함"
+
+
 def line_gaps(text):
     """본문 한 줄(문단·항목)의 가독성 위반 이유 목록(없으면 빈 목록). 순수 함수 — 슬랙 본문 검사도 재사용할 수 있게 입력은 글 한 줄뿐.
     가운뎃점은 줄이 DOC_DOT_LINE_MIN 자 이상일 때만 봄(짧은 머리 줄·낱말 묶음은 통과)"""
     text = " ".join((text or "").split())
     why = []
     if DOC_SLASH_JOIN.search(text):
-        why.append("' / ' 로 사실을 이음")
+        why.append(WHY_SLASH)
     if len(text) >= DOC_DOT_LINE_MIN and (DOC_DOT_JOIN in text or text.count("·") > DOC_DOT_MAX):
-        why.append("가운뎃점으로 사실을 나열함")
+        why.append(WHY_DOT)
     return why
+
+
+# Slack 본문·허브 보고 가독성 검사 설정(검사는 text_gaps 한 곳, 알림 스크립트·hub_report 가 부름)
+# 위반 종류별 처리: reject = 전송·접수 거부(종료 2), warn = 경고만 하고 통과.
+# 실제 최근 보고 300건 점검(11-17)에서 ' / ' 이은 줄만 사실 이음으로 확인돼 거부. 가운뎃점은 '(A·B·C)' 같은 낱말 나열과 구분이 안 되어 오탐이 남아 경고로 시작함
+LINE_LEVEL = {WHY_SLASH: "reject", WHY_DOT: "warn"}
+LINE_MASK = (re.compile(r"```.*?```", re.S), re.compile(r"`[^`\n]*`"), re.compile(r"https?://\S+"),
+             re.compile(r'"[^"\n]{1,30}"|“[^”\n]{1,30}”'))  # 코드·URL·짧은 따옴표 문구(화면 글자·버튼 이름) 안의 '/' 는 검사 밖
+LINE_SKIP = re.compile(r"^[ \t]*(?:\||(?:👉|:point_right:)[ \t]*답[ \t]*:|(?::(?:one|two|three|four):|[1-4]\ufe0f?\u20e3))")  # 표·답 줄·번호 선택지 줄은 고정 양식이라 제외
+LINE_REF = re.compile(r"^[ \t]*(?:[•\-*][ \t]*)?참고[ \t]*:")  # 첫 줄 뒤의 마지막 '참고:' 줄부터 끝까지 제외
+LINE_EG_MAX = 20  # 고쳐 쓴 예에 보이는 항목 한 개의 글자 수
+LINE_FIX = "항목마다 줄을 나눠 '- ' 로 시작하세요. 예: '- 무엇: 시각 변경' 한 줄, '- 왜: 놓침 방지' 한 줄"
+
+
+def text_gaps(text, skip_first=False):
+    """여러 줄 본문의 가독성 위반 목록 [(줄 번호, 이유, 처리 'reject'|'warn')]. 코드·URL·짧은 따옴표 문구는 지우고 보며 줄 판정은 line_gaps 한 곳.
+    skip_first 는 첫 줄이 제목인 본문(알림 스크립트·결정 보고)용"""
+    text = text or ""
+    for rx in LINE_MASK:
+        text = rx.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+    lines = text.split("\n")
+    refs = [i for i, ln in enumerate(lines) if i > 0 and LINE_REF.match(ln)]
+    end = refs[-1] if refs else len(lines)
+    out = []
+    for i, ln in enumerate(lines[:end]):
+        if (skip_first and i == 0) or LINE_SKIP.match(ln):
+            continue
+        out.extend((i + 1, why, LINE_LEVEL[why]) for why in line_gaps(ln))
+    return out
+
+
+def gap_message(gaps, text=""):
+    """text_gaps 결과 → 원인+조치 한 줄(거부·경고 공통 문구). 없으면 빈 문자열.
+    text 를 주면 첫 위반 줄을 ' / ' 로 쪼개 고쳐 쓴 예를 덧붙임"""
+    if not gaps:
+        return ""
+    where = ", ".join("%d번째 줄(%s)" % (n, why) for n, why, _ in gaps[:3])
+    msg = "한 줄에 사실 여러 개가 이어짐: %s — %s" % (where, LINE_FIX)
+    lines = (text or "").split("\n")
+    n, why, _ = gaps[0]
+    if why == WHY_SLASH and n <= len(lines):
+        parts = [p.strip(" -•") for p in DOC_SLASH_JOIN.split(lines[n - 1]) if p.strip(" -•")]
+        if len(parts) >= 2:
+            msg += " (이 줄은 '- %s' 줄과 '- %s' 줄로)" % (parts[0][-LINE_EG_MAX:], parts[1][:LINE_EG_MAX])
+    return msg
 
 
 def split_doc(spec):

@@ -25,6 +25,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # -I 실행·복사 설치에서도 같은 폴더의 hub_status 를 찾음
+import board_cards  # noqa: E402
 import decide_card  # noqa: E402
 import hub_status  # noqa: E402
 
@@ -261,6 +262,13 @@ def has_secret(*texts: str) -> bool:
     return any(hub_status.SECRET_RE.search(t) for t in texts)
 
 
+def line_gaps_split(text: str, kind: str) -> tuple:
+    """(거부 문구, 경고 문구) — 줄 가독성 판정은 board_cards.text_gaps 한 곳(알림 스크립트와 같음). decide 는 첫 줄이 제목이라 제외"""
+    gaps = board_cards.text_gaps(text, skip_first=kind == "decide")
+    return (board_cards.gap_message([g for g in gaps if g[2] == "reject"], text),
+            board_cards.gap_message([g for g in gaps if g[2] == "warn"], text))
+
+
 def make_report(hub, task, kind, text, files, options=None, recommend=None, decision_id=None, reversible=None,
                 thread=None, no_doc=False, card=None, ws=None) -> dict:
     """입력 검증 → 보고 dict(id·at 제외). 잘못되면 ReportError.
@@ -288,6 +296,8 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
         if why := secret_file_problem(f):
             raise ReportError(f"--file 거부 — {why}")
     if why := path_problem("\n".join(lines), files):
+        raise ReportError(why)
+    if why := line_gaps_split("\n".join(lines), kind)[0]:
         raise ReportError(why)
     extra = [options, recommend, decision_id, reversible]
     rep = {"hub": hub, "task": task, "kind": kind, "text": "\n".join(lines), "files": files}
@@ -543,6 +553,8 @@ def main(argv=None) -> int:
             for f in rep["files"]:
                 if why := file_problem(f):
                     sys.stderr.write(f"경고: --file {f} 첨부 불가({why}) — 기록은 하고 전송기가 '첨부 실패' 한 줄을 남김\n")
+            if why := line_gaps_split(rep["text"], args.kind)[1]:
+                sys.stderr.write(f"경고: {why}\n")
             if found := unattached_paths(rep["text"], rep["files"]):
                 sys.stderr.write(f"경고: 본문에 로컬 경로({', '.join(found[:3])})만 있고 --file 첨부 없음 — 사용자는 경로를 열 수 없음. --file 로 첨부\n")
             rep, fresh = add(path, rep, time.time(), args.dry_run, stage=True)

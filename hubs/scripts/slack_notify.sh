@@ -253,8 +253,6 @@ RX = {
     "decision_id": re.compile(r"D-[0-9A-Za-z]{1,16}", re.A),
     "todo_id": re.compile(r"T-[0-9A-Za-z]{1,16}", re.A),
     "seq": re.compile(r"([0-9]{1,3})/([0-9]{1,3})", re.A),
-    # 항목을 ' / '·' · ' 로 한 줄에 이은 패턴. 3개 이상이면 항목마다 줄바꿈하라는 경고(전송은 막지 않음)
-    "chain": re.compile(r"(?:\s/\s.*){3}|(?:\s·\s.*){3}"),
     "opt_line": re.compile(r"^[ \t]*(?::(?:one|two|three|four):|[1-4]️?⃣)", re.M),
 }
 # --kind 별 색 띠. 색 값은 여기에만 둠(bash 3.2 는 연관 배열이 없어 파이썬 dict 사용)
@@ -332,11 +330,12 @@ def check_form(msg, kind, guided):
     n = len(RX["bold"].findall(scan.split("\n", 1)[1] if "\n" in scan else ""))
     if n > 1:
         out.append(("warn", "bold", "굵게가 %d곳 — 메시지당 1곳으로 줄이세요" % n))
-    # 제목·표·답 줄(선택지를 ' · ' 로 잇는 고정 양식)은 제외
-    chained = [i + 1 for i, ln in enumerate(scan.split("\n"))
-               if i > 0 and not ln.lstrip().startswith("|") and not RX["answer"].match(ln) and RX["chain"].search(ln)]
-    if chained:
-        out.append(("warn", "oneline", "' / '·' · ' 로 이은 줄이 있음(%s번째 줄) — 항목마다 줄바꿈하고 '- ' 로 시작하세요" % ", ".join(map(str, chained[:3]))))
+    # 줄 가독성(' / ' 이은 줄 거부, 가운뎃점 나열 경고)은 board_cards 한 곳. 제목·표·답 줄은 그쪽에서 제외
+    gaps = board_cards.text_gaps(msg, skip_first=True)
+    for level, code, tag in (("reject", "line", "hard"), ("warn", "line-dot", "warn")):
+        hit = [g for g in gaps if g[2] == level]
+        if hit:
+            out.append((tag, code, board_cards.gap_message(hit, msg)))
     return out
 
 def attach_guide(msg, guide):
