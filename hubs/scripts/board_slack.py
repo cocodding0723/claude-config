@@ -61,6 +61,8 @@ LOCK_DIR = os.path.join(HUB_DIR, ".board-slack-locks")  # 카드별 전송 잠�
 # 잠금을 쥐는 최대 시간 = 전송 + label 추가 + 첨부 실패 코멘트(bd 2번) + 미리보기 생성 + 미리보기 전송. 기다리는 쪽은 이보다 길게 기다려야 앞 전송이 길어져도 종료 3 으로 끝나지 않음
 LOCK_HOLD_MAX = SEND_TIMEOUT + 2 * cards.BD_TIMEOUT + PREVIEW_TIMEOUT + SEND_TIMEOUT
 LOCK_WAIT, LOCK_POLL = LOCK_HOLD_MAX + 10, 0.2  # 대기 최대 초(보유 최대 + 여유 10초)·확인 간격
+LOOKUP_WARN_MARK = os.path.join(HUB_DIR, ".board-lookup-warn")  # 카드 조회 실패 Slack 경고를 마지막으로 보낸 시각(파일 mtime)
+LOOKUP_WARN_EVERY = 600  # 같은 경고를 이 초 안에는 다시 보내지 않음(버튼 답마다 알림이 쏟아지지 않게)
 ATTACH_FAIL = "파일 첨부 실패"  # slack_notify 가 카드는 보내고 파일만 못 붙였을 때 stderr 에 남기는 문구
 
 
@@ -352,14 +354,35 @@ def attach_preview(doc, ts):
         return "attached" if s.returncode == 0 else f"미리보기 전송 실패({(s.stderr or s.stdout).strip()[:80]})"
 
 
+def warn_lookup(did, err):
+    """카드 조회 실패(bd 못 찾음 등)를 Slack 경고로 알림. 답은 메인으로 가므로 작업판 카드가 열린 채 남음을 알려 줌. 실패해도 조용히 넘기고 일정 시간에 한 번만 보냄"""
+    try:
+        if time.time() - os.path.getmtime(LOOKUP_WARN_MARK) < LOOKUP_WARN_EVERY:
+            return
+    except OSError:
+        pass
+    text = (f"작업판 카드 조회 실패\n• 무엇: 버튼 답 {did} 을 작업판 카드에 못 붙이고 메인으로 보냄. 카드는 열린 채 남음\n"
+            f"• 원인: {str(err)[:150]}\n• 조치: bd 설치·BOARD_DIR 확인 뒤 board-answer 로 카드를 직접 닫음")
+    try:
+        r = subprocess.run([NOTIFY, "--kind", "warn", "--tag", "board", text], capture_output=True, text=True, timeout=SEND_TIMEOUT, stdin=subprocess.DEVNULL)
+        if r.returncode != 0:
+            print(f"board_slack: 조회 실패 경고 전송 실패(종료 {r.returncode}): {(r.stderr or r.stdout).strip()[:150]}", file=sys.stderr)
+            return
+        with open(LOOKUP_WARN_MARK, "w"):
+            pass
+    except (OSError, subprocess.TimeoutExpired) as e:
+        print(f"board_slack: 조회 실패 경고를 못 보냄({type(e).__name__})", file=sys.stderr)
+
+
 def card_for(did):
     """결정 번호 → 열린·닫힌 작업판 카드 id. 작업판 카드가 아니거나 조회 실패면 None"""
     if not isinstance(did, str) or not did.startswith(ID_HEAD):
         return None
     try:
         rows = cards.bd_json("list", "--all", "--label", LABEL + did, "--limit", "0") or []
-    except cards.Fail as e:  # 조회 실패를 '작업판 카드 아님'으로 조용히 넘기면 버튼 답이 메인으로 샘. 이유를 로그에 남김
+    except cards.Fail as e:  # 조회 실패를 '작업판 카드 아님'으로 조용히 넘기면 버튼 답이 메인으로 샘. 로그와 Slack 경고로 알림
         print(f"board_slack: 카드 조회 실패 — {e}", file=sys.stderr)
+        warn_lookup(did, e)
         return None
     ids = [r["id"] for r in rows if isinstance(r, dict) and r.get("id")]
     return ids[0] if len(ids) == 1 else None

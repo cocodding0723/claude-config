@@ -239,6 +239,23 @@ LRM_HUB_DIR="$SB/h2" python3 -I "$BS" push "$S3" 2>"$SB/err" >/dev/null; rc=$?
 [ "$rc" = 3 ] && grep -q '조치' "$SB/err" && grep -q '잠금 폴더' "$SB/err" && ! grep -q Traceback "$SB/err" && [ ! -f "$SB/notify.args" ] && ok "잠금 폴더를 못 만들면 종료 3·원인·조치(traceback 없음, 전송 안 함)" || ko "잠금 폴더 실패" "rc=$rc $(cat "$SB/err")"
 LRM_HUB_DIR="$SB/h2" "$SCR/board-ask" --runnable no "잠금 폴더 막힌 자동 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "시안이 두 벌이라 하나로 맞춤" --terms 없음 --doc "$DOC" >/dev/null 2>"$SB/err"; rc=$?
 [ "$rc" = 0 ] && grep -q '잠금 폴더' "$SB/err" && ! grep -q Traceback "$SB/err" && ok "board-ask 자동 보내기도 잠금 실패에 경고만 남기고 traceback 없이 끝남" || ko "board-ask 잠금 실패" "rc=$rc $(cat "$SB/err")"
+# bd 를 못 찾으면 로그뿐 아니라 Slack 경고(10분에 한 번)
+rm -f "$SB/notify.args"* "$SB/notify.n" "$LRM_HUB_DIR/.board-lookup-warn"
+for i in 1 2; do
+  BOARD_BD="$SB/없는/bd" python3 -I -c 'import sys;sys.path.insert(0,sys.argv[1]);import board_slack;print(board_slack.card_for(sys.argv[2]))' "$SCR" D-Bwarn1 >"$SB/o$i" 2>"$SB/err$i"
+done
+[ "$(cat "$SB/o1")" = None ] && grep -q '카드 조회 실패' "$SB/err1" && grep -qx -- '--kind' "$SB/notify.args" && grep -qx 'warn' "$SB/notify.args" && grep -q '조치: bd 설치' "$SB/notify.args" && [ ! -f "$SB/notify.args2" ] && [ -f "$LRM_HUB_DIR/.board-lookup-warn" ] && ok "카드 조회 실패 → Slack 경고 1회(같은 시간 안 두 번째는 보내지 않음), 결과는 None 유지" || ko "조회 실패 경고" "$(cat "$SB/err1" "$SB/notify.args" 2>&1)"
+python3 -I - "$SCR" "$SB/notify.args" <<'PY' && ok "경고 문구가 알림 스크립트 양식 검사(warn)를 통과" || ko "경고 양식" ""
+import sys
+sys.path.insert(0, sys.argv[1])
+import board_slack as b
+text = open(sys.argv[2], encoding="utf-8").read().split("\n")
+text = "\n".join(text[text.index("board") + 1:]).strip()
+p = b.run_form(["check", "warn", "0"], text)
+assert p.returncode == 0 and not [r for r in p.stdout.splitlines() if r.split("\t")[0] in b.FORM_FAIL_LEVELS], p.stdout
+PY
+rm -f "$LRM_HUB_DIR/.board-lookup-warn" "$SB/notify.args"*
+[ "$(python3 -I "$BS" answer D-Bnone99 "x" --json | jq -r .board)" = false ] && [ ! -f "$SB/notify.args" ] && ok "작업판 카드가 아닌 번호(조회는 성공)는 경고하지 않음" || ko "경고 오탐" ""
 # launchd 최소 환경에서 결정 번호 → 카드 조회
 DIDH=$(python3 -I "$BS" push "$H1" --json | jq -r .decisionId)
 OUT=$(env -i PATH=/usr/bin:/bin HOME="$HOME" BOARD_DIR="$BOARD_DIR" LRM_HUB_DIR="$LRM_HUB_DIR" python3 -I -c 'import sys;sys.path.insert(0,sys.argv[1]);import board_slack;print(board_slack.card_for(sys.argv[2]))' "$SCR" "$DIDH" 2>&1)
