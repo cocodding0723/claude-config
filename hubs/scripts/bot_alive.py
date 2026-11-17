@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""봇 생존 줄 출력. 근거는 slack_socket.py 의 '생존' 로그(10분 주기).
+"""봇 생존 줄 출력. 근거는 slack_socket.py 의 '생존' 로그(10분 주기)와 '연결됨'·'재연결됨' 로그.
+재시작 직후에는 첫 생존 줄이 10분 뒤에 찍히므로 연결 줄도 생존 근거로 씀(없으면 재시작마다 옛 생존 줄로 거짓 끊김 경고).
 
 사용: bot_alive.py            → '봇: 연결됨 · 마지막 수신 N분 전' 한 줄
       bot_alive.py --warn-once → 끊김(생존 기록 STALE_MIN 분 이상 없음)이면 warn 1회 전송, 복구되면 다시 보낼 수 있게 초기화
@@ -17,6 +18,8 @@ LOG = DIR / "slack-socket.log"
 FLAG = DIR / "bot-alive.warned"  # 끊김 알림을 보냈다는 표시. 복구 시 삭제
 STALE_MIN = 15  # 생존 기록 주기 10분 + 여유 5분
 ALIVE = re.compile(r"^(\d\d-\d\d \d\d:\d\d:\d\d) \[socket\] 생존 연결=(\S+) 마지막이벤트=(\S+(?: 전)?)")
+CONNECTED = re.compile(r"^(\d\d-\d\d \d\d:\d\d:\d\d) \[socket\] (?:재)?연결됨$")
+JUST_CONNECTED = "연결 직후"
 
 
 def last_alive(now):
@@ -26,7 +29,7 @@ def last_alive(now):
     except OSError:
         return None
     for ln in reversed(lines):
-        m = ALIVE.match(ln)
+        m = ALIVE.match(ln) or CONNECTED.match(ln)
         if not m:
             continue
         # 로그 시각에 연도가 없어 올해로 보고, 미래면 작년(연말 경계)
@@ -34,6 +37,8 @@ def last_alive(now):
         ts = time.mktime(time.strptime(f"{lt.tm_year}-{m.group(1)}", "%Y-%m-%d %H:%M:%S"))
         if ts > now + 60:
             ts = time.mktime(time.strptime(f"{lt.tm_year - 1}-{m.group(1)}", "%Y-%m-%d %H:%M:%S"))
+        if m.re is CONNECTED:
+            return int((now - ts) // 60), True, JUST_CONNECTED
         return int((now - ts) // 60), m.group(2) == "예", m.group(3)
     return None
 
@@ -47,6 +52,8 @@ def status(now=None):
     age, up, last = got
     if age >= STALE_MIN or not up:
         return False, f"봇: 끊김 · 생존 기록 {age}분 전"
+    if last == JUST_CONNECTED:
+        return True, f"봇: 연결됨 · {age}분 전 (재)시작"
     return True, f"봇: 연결됨 · 마지막 수신 {last}"
 
 

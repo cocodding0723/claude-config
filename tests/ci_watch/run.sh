@@ -40,6 +40,14 @@ python3 "$S/bot_alive.py" --warn-once; python3 "$S/bot_alive.py" --warn-once
 [ "$(sent)" = 1 ] && grep -q -- "--kind warn" "$D/sent.log" && ok "끊김 warn 1회만" || ko "끊김 1회" "$(sent)"
 echo "$(now) [socket] 생존 연결=예 마지막이벤트=1분 전 재연결=0회" >> "$D/slack-socket.log"
 python3 "$S/bot_alive.py" --warn-once; [ ! -e "$D/bot-alive.warned" ] && ok "복구 시 표시 초기화" || ko "초기화"
+# 재시작 직후: 마지막 생존 줄은 20분 전(옛 프로세스)이지만 새 프로세스의 '연결됨' 줄이 있으면 끊김이 아님(11-17 거짓 경고)
+rm -f "$D/sent.log"  # 빈 파일이면 sent() 가 grep -c 의 0 과 echo 0 을 함께 냄
+{ echo "$(old) [socket] 생존 연결=예 마지막이벤트=3분 전 재연결=0회"; echo "$(now) [socket] 연결됨"; echo "$(now) [socket] 시작 → 수집 rc=0 {}"; } > "$D/slack-socket.log"
+python3 "$S/bot_alive.py" --warn-once; rc=$?
+[ "$rc" = 0 ] && [ "$(sent)" = 0 ] && ok "재시작 직후 '연결됨' 줄 → 연결됨(경고 없음·종료 코드 0)" || ko "재시작 직후" "rc=$rc sent=$(sent)"
+out=$(python3 "$S/bot_alive.py"); [ "$out" = "봇: 연결됨 · 0분 전 (재)시작" ] && ok "재시작 직후 생존 줄 문구" || ko "재시작 문구" "$out"
+echo "$(old) [socket] 재연결됨" > "$D/slack-socket.log"
+python3 "$S/bot_alive.py" --warn-once; [ $? = 3 ] && [ "$(sent)" = 1 ] && ok "연결 줄도 15분 넘게 묵으면 끊김 경고" || ko "묵은 연결 줄" "sent=$(sent)"
 
 # ---- AI 리뷰 지적 전달 ----
 rm -f "$D/ci-watch.state.json"; : > "$D/sent.log"; : > "$D/orca.log"; rm -f "$MJ"; cp "$HERE/../../hubs/ci-review-hubs.tsv" "$D/"
