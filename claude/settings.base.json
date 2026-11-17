@@ -190,6 +190,17 @@
             "statusMessage": "epic-scope-guard 검사 중"
           }
         ]
+      },
+      {
+        "matcher": "Agent|Task|Write|Edit|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I ~/.claude/hooks/lib/main_work_guard.py",
+            "timeout": 10,
+            "statusMessage": "main-work-guard 검사 중"
+          }
+        ]
       }
     ],
     "PostToolUse": [
