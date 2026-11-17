@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # 허브 하위 워커용 워크스페이스 생성(기본 sparse·detached). 출력: 경로 한 줄(--json 이면 path·branch·displayName·parent JSON 한 줄)
+# --card <작업판 카드 id>: 그 카드의 Slack 스레드를 열도록 hub_report 에 "시작" 한 줄을 예약(스레드 개설·카드 등록은 report_sender 가 함). 예약 실패는 경고만 하고 생성은 유지.
 # 종료 코드: 0 생성(부모 연결 확인됨), 1 부모 허브 연결 실패(폴더는 남음, stderr 에 수동 명령), 2 인자 오류, 3 같은 이름 폴더가 이미 있음(덮어쓰지 않음), 4 정리 뒤에도 하위 작업 공간이 상한 이상이라 생성 거부(폴더 안 만듦)
 # 허브는 출력(경로·JSON)을 그대로 쓴다. 'LRM-507-*' 같은 폴더를 추측해 고르면 다른 허브의 작업 공간을 고를 수 있음.
 set -euo pipefail
 REPO="${REPO:-$HOME/orca/LoveRevolutionMaker}"
 WS_ROOT="${WS_ROOT:-$HOME/orca/workspaces/LoveRevolutionMaker}"
-HUB="" NAME="" PATHS="" BRANCH="" FULL=0 BASE="origin/dev" JSON=0
+HUB="" NAME="" PATHS="" BRANCH="" FULL=0 BASE="origin/dev" JSON=0 CARD=""
 while [ $# -gt 0 ]; do case "$1" in
   --hub) HUB="$2"; shift 2;; --name) NAME="$2"; shift 2;; --paths) PATHS="$2"; shift 2;;
-  --branch) BRANCH="$2"; shift 2;; --base) BASE="$2"; shift 2;; --full) FULL=1; shift;; --json) JSON=1; shift;;
+  --branch) BRANCH="$2"; shift 2;; --card) CARD="$2"; shift 2;; --base) BASE="$2"; shift 2;; --full) FULL=1; shift;; --json) JSON=1; shift;;
   *) echo "알 수 없는 인자: $1" >&2; exit 2;; esac; done
 : "${HUB:?--hub 필요}" "${NAME:?--name 필요}"
 # 허브당 하위 작업 공간 상한(설정은 이 블록 한 곳). 넘으면 그 허브 하위만 ws_gc 로 1회 정리하고, 그래도 넘으면 기록 뒤 생성 거부(종료 4). 하위 수 조회 실패(빈 값)는 판정 불가라 경고만 하고 생성 계속 — Orca 일시 오류로 작업이 멈추는 것을 피함
@@ -104,6 +105,12 @@ until link_parent; do
   fi
   sleep "$CFG_REG_INTERVAL"
 done
+# 카드의 Slack 스레드 시작 예약. 허브 이름은 허브 폴더 coord-<slug>-hub 에서 따옴
+if [ -n "$CARD" ]; then
+  start_slug="$(basename "$HUB")"; start_slug="${start_slug#coord-}"; start_slug="${start_slug%-hub}"
+  python3 "$CFG_HUB_REPORT" add --hub "$start_slug" --task 없음 --kind info --card "$CARD" --ws "$P" \
+    --text "작업 공간 시작: $NAME${BRANCH:+ (브랜치 $BRANCH)}" >/dev/null 2>&1 || echo "⚠️ 카드 $CARD 의 Slack 스레드 시작 예약 실패 — hub_report.py add --card $CARD --ws $P 로 직접 기록" >&2
+fi
 if [ "$JSON" = 1 ]; then
   jq -nc --arg path "$P" --arg branch "$BRANCH" --arg displayName "$NAME" --arg parent "$PARENT_OK" \
     '{path:$path, branch:(if $branch == "" then null else $branch end), displayName:$displayName, parent:$parent}'
