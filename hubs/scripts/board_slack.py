@@ -47,7 +47,13 @@ CARD_ID_RE = re.compile(r"^[a-z][a-z0-9]{1,15}-[a-z0-9]{1,12}(\.[0-9]{1,3})*$") 
 REF_HEAD = "참고:"
 REF_SEP = " · "
 TICKET_RX, HEX_RX = decide_card.TICKET_RX, decide_card.HEX_RX  # 알림 스크립트 양식 A 규칙 2 와 같은 식(decide_card 한 곳)
-REF_WORDS = ((TICKET_RX, "관련 티켓"), (HEX_RX, "관련 커밋"))  # 본문에서는 쉬운 말로 바꾸고 번호는 참고 줄로
+SKIP_RX = re.compile(r"```.*?```|`[^`\n]*`|https?://\S+", re.S)  # 알림 스크립트 scrub 과 같은 예외 구간: 코드 블록·`코드`·주소 안의 번호는 그대로 둠
+REF_KINDS = ((TICKET_RX, "티켓"), (HEX_RX, "커밋"))  # 본문에서는 쉬운 말로 바꾸고 번호는 참고 줄로
+REF_ONE, REF_NEAR = "관련 ", "(아래 참고)"  # 번호가 하나뿐일 때 앞말·이미 '티켓'·'커밋' 낱말 옆일 때 대체말
+REF_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"  # 번호가 둘 이상이면 '티켓 A'·'티켓 B' 로 구분해 참고 줄과 짝짓기
+PARTICLE_RX = re.compile(r"(\s?)(은|는|이|가|을|를|과|와)(?![가-힣])")
+PARTICLE_PAIR = {"은": ("은", "는"), "는": ("은", "는"), "이": ("이", "가"), "가": ("이", "가"), "을": ("을", "를"), "를": ("을", "를"), "과": ("과", "와"), "와": ("과", "와")}
+LETTER_JONG = set("LMNR")  # 읽을 때 받침이 있는 알파벳(엘·엠·엔·알)
 TITLE_NEED = f"보강 필요: 제목 {cards.TITLE_MAX}자"
 LOCK_DIR = os.path.join(HUB_DIR, ".board-slack-locks")  # 카드별 전송 잠금 파일 폴더
 LOCK_WAIT, LOCK_POLL = SEND_TIMEOUT * 2, 0.2  # 앞 전송이 끝나길 기다리는 최대 초(전송+미리보기 시간 여유)·확인 간격
@@ -86,16 +92,60 @@ def show(card_id):
     return card
 
 
+def has_jong(label):
+    """대체말 끝 글자의 받침 유무(조사 보정용)"""
+    ch = label.rstrip(")")[-1:]
+    if "가" <= ch <= "힣":
+        return (ord(ch) - 0xAC00) % 28 != 0
+    return ch in LETTER_JONG
+
+
+def sub_outside(rx, fn, text):
+    """코드·주소 구간을 건드리지 않고 나머지에만 rx.sub"""
+    out, pos = [], 0
+    for m in SKIP_RX.finditer(text):
+        out.append(rx.sub(fn, text[pos:m.start()]))
+        out.append(m.group(0))
+        pos = m.end()
+    return "".join(out) + rx.sub(fn, text[pos:])
+
+
 def move_refs(lines):
-    """본문 줄의 티켓 번호·커밋 해시를 쉬운 말로 바꾸고 맨 아래 '참고:' 줄로 모음. 번호가 없으면 그대로"""
-    refs = []
+    """본문 줄의 티켓 번호·커밋 해시를 쉬운 말로 바꾸고 맨 아래 '참고:' 줄로 모음. 번호가 없으면 그대로.
+    번호가 하나뿐이면 '관련 티켓', 둘 이상이면 '티켓 A'·'티켓 B' 로 구분해 참고 줄에 'A = LRM-n' 으로 짝지음.
+    코드·주소 안 번호는 그대로 둠. 바꾼 말 뒤 조사는 받침에 맞춰 고침"""
+    found = {noun: [] for _, noun in REF_KINDS}  # 종류별로 처음 나온 순서의 번호
+    order = []  # 참고 줄 순서(나온 순서)
+    for ln in lines:
+        for rx, noun in REF_KINDS:
+            for ref in rx.findall(SKIP_RX.sub(lambda m: " " * len(m.group(0)), ln)):
+                if ref not in found[noun]:
+                    found[noun].append(ref)
+                    order.append((noun, ref))
+
+    def label(noun, ref, near):
+        many = len(found[noun]) > 1
+        letter = REF_LETTERS[found[noun].index(ref) % len(REF_LETTERS)]
+        if many:
+            return letter if near else f"{noun} {letter}"
+        return REF_NEAR if near else REF_ONE + noun
+
     out = []
     for ln in lines:
-        for rx, word in REF_WORDS:
-            refs += rx.findall(ln)
-            ln = rx.sub(word, ln)
+        for rx, noun in REF_KINDS:
+            def rep(m, noun=noun):
+                near = m.string[:m.start()].rstrip().endswith(noun) or m.string[m.end():].lstrip().startswith(noun)
+                word = label(noun, m.group(0), near)
+                if word != REF_NEAR and PARTICLE_RX.match(m.string, m.end()):  # 조사는 바꾼 말 받침에 맞춤. 뒤 글자는 이 치환에서 못 바꿔 표식을 남기고 아래에서 고침
+                    return word + "\x00" + str(has_jong(word))
+                return word
+            ln = sub_outside(rx, rep, ln)
+        ln = re.sub(r"\x00(True|False)(\s?)(은|는|이|가|을|를|과|와)(?![가-힣])",
+                    lambda m: m.group(2) + PARTICLE_PAIR[m.group(3)][0 if m.group(1) == "True" else 1], ln)
         out.append(ln)
-    refs = list(dict.fromkeys(refs))
+    refs = []
+    for noun, ref in order:
+        refs.append(f"{noun} {REF_LETTERS[found[noun].index(ref) % len(REF_LETTERS)]} = {ref}" if len(found[noun]) > 1 else ref)
     return out + ([REF_HEAD + " " + REF_SEP.join(refs)] if refs else [])
 
 

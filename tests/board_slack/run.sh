@@ -135,8 +135,25 @@ rm -f "$SB/notify.args"* "$SB/notify.n"
 G1=$("$SCR/board-ask" --runnable no "번호 옮길 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "LRM-462 에서 시작했고 커밋 3856f0998 이 원인임" --terms "LRM-7 은 티켓" --doc "$DOC")
 OUT=$(python3 -I "$BS" push "$G1" --dry-run --json 2>"$SB/err"); rc=$?
 TXT=$(echo "$OUT" | jq -r '.args | .[(index("--decision-id")+2):-1] | .[]')
-[ "$rc" = 0 ] && echo "$TXT" | tail -1 | grep -qx '참고: LRM-462 · 3856f0998 · LRM-7' && ! echo "$TXT" | sed '$d' | grep -Eq 'LRM-[0-9]|3856f0998' && echo "$TXT" | grep -q '관련 티켓 에서 시작했고 커밋 관련 커밋 이' && ok "본문 티켓·커밋 번호를 맨 아래 '참고:' 줄로 옮기고 본문은 쉬운 말로 바꿈(건조 실행 통과)" || ko "참고 줄" "rc=$rc $OUT $(cat "$SB/err")"
+[ "$rc" = 0 ] && echo "$TXT" | tail -1 | grep -qx '참고: 티켓 A = LRM-462 · 3856f0998 · 티켓 B = LRM-7' && ! echo "$TXT" | sed '$d' | grep -Eq 'LRM-[0-9]|3856f0998' && echo "$TXT" | grep -q '티켓 A 에서 시작했고 커밋 (아래 참고) 이 원인임' && echo "$TXT" | grep -q '티켓 B 는 티켓' && ok "본문 티켓·커밋 번호를 맨 아래 '참고:' 줄로 옮기고 본문은 쉬운 말로 바꿈(건조 실행 통과)" || ko "참고 줄" "rc=$rc $OUT $(cat "$SB/err")"
 echo "$OUT" | jq -e '.args | index("--card") as $i | .[$i+1] == "'"$G1"'"' >/dev/null && ok "알림 스크립트 호출에 --card <카드 id>" || ko "--card" "$OUT"
+# 번호 이동: 서로 다른 티켓은 구분되는 말, 코드·주소 안 번호는 그대로, 조사는 받침에 맞춤
+python3 -I - "$SCR" <<'PY' && ok "번호 이동: 티켓 둘은 '티켓 A·B' 로 구분하고 참고 줄과 짝짓기, 한 개는 '관련 티켓'" || ko "번호 이동 구분" ""
+import sys
+sys.path.insert(0, sys.argv[1])
+import board_slack as b
+r = b.move_refs(["LRM-621 은 에픽이 없고 LRM-395 를 서로 모르고", "LRM-7 이 원인"])
+assert r == ["티켓 A 는 에픽이 없고 티켓 B 를 서로 모르고", "티켓 C 가 원인", "참고: 티켓 A = LRM-621 · 티켓 B = LRM-395 · 티켓 C = LRM-7"], r
+r = b.move_refs(["LRM-462 가 원인이고 LRM-462는 같은 티켓"])
+assert r == ["관련 티켓 이 원인이고 관련 티켓은 같은 티켓", "참고: LRM-462"], r
+PY
+python3 -I - "$SCR" <<'PY' && ok "번호 이동: 코드 블록·\`코드\`·주소 안 번호는 건드리지 않음(참고 줄에도 안 모음)" || ko "번호 이동 예외 구간" ""
+import sys
+sys.path.insert(0, sys.argv[1])
+import board_slack as b
+t = "주소 https://x.example/browse/LRM-462 와 `LRM-9 abc1234def` 와 색 #F2994A80"
+assert b.move_refs([t]) == [t], b.move_refs([t])
+PY
 LONG="제목이 사십 글자를 넘어 슬랙 첫 줄 규칙에 걸리는 아주 긴 결정 카드 이름입니다 정말로 매우 많이 깁니다 계속 이어집니다"
 L1=$(b create "$LONG" -l kind:decision -p 1 -d "$(printf '선택지:\n- A => 가 됨\n- B => 나 됨\n추천: A\n배경: 시안이 두 벌이라 하나로 맞춤\n용어: 없음\n설명서: %s' "$DOC")" --json | jq -r 'if type=="array" then .[0].id else .id end')
 python3 -I "$BS" push "$L1" --dry-run 2>"$SB/err" >/dev/null; rc=$?
