@@ -12,25 +12,36 @@ DUPS="${HUB_DUPS_PY:-$HERE/hub_dups.py}"
 
 usage() {
   cat <<'E'
-사용: restart_hub.sh [--dry-run] <옛 터미널> <허브 폴더명> <role 이름>
+사용: restart_hub.sh [--dry-run] [--wake] <옛 터미널> <허브 폴더명> <role 이름>
       restart_hub.sh --help
 
   새 코디네이터를 띄우고 첫 출력을 확인한 뒤, 옛 터미널과 같은 허브 폴더의 다른 claude 코디네이터를 닫는다.
   닫기 전에 각 터미널 마지막 화면을 ~/.config/lrm-hubs/hub-inbox/<slug>/ 에 보관한다(LRM_HUB_INBOX 로 변경).
   orchestration 워커(active·retained Dispatch)는 닫지 않는다. 새 세션이 준비되지 않으면 옛 세션을 그대로 둔다.
   --dry-run   띄우거나 닫지 않고 새로 띄울 명령 요약만 출력
+  --wake      휴면 허브(hubs.tsv 의 #dormant 줄, resume_all.sh --list 로 확인)를 이번에만 띄움. 없으면 휴면 허브는 거부
 출력: 새 터미널 핸들 한 줄(stdout)
-종료 코드: 0 성공, 1 기동·준비 실패 또는 일부 정리 실패(옛 세션 유지), 2 인자·파일 오류
+종료 코드: 0 성공, 1 기동·준비 실패 또는 일부 정리 실패(옛 세션 유지), 2 인자·파일 오류, 3 휴면 허브 거부
 예: restart_hub.sh term_abc123 coord-test-qa-hub test
 E
 }
 
-DRY=0
-case "${1:-}" in
-  -h|--help) usage; exit 0 ;;
-  --dry-run) DRY=1; shift ;;
-esac
+DRY=0 WAKE=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --dry-run) DRY=1; shift ;;
+    --wake) WAKE=1; shift ;;
+    *) break ;;
+  esac
+done
 [ $# -eq 3 ] || { usage >&2; exit 2; }
+# 휴면 판정은 resume_all.sh 가 한 곳에서 소유. 폴더 coord-<slug>-hub 의 slug 가 표에 없으면(문서 허브 등) 휴면 아님
+SLUG=$(printf '%s' "$2" | sed -n 's/^coord-\(.*\)-hub$/\1/p')
+if [ "$WAKE" = 0 ] && [ -n "$SLUG" ] && REASON=$(bash "$HERE/resume_all.sh" --is-dormant "$SLUG" 2>/dev/null); then
+  echo "ERROR: 허브 $SLUG 는 휴면(${REASON:-사유 없음}) — 기능 팀으로 대체됨. 깨우려면 --wake 를 붙여 다시 실행" >&2
+  exit 3
+fi
 OLD="$1"; HUB="${HUB_ROOT:-$HOME/orca/workspaces/LoveRevolutionMaker}/$2"; ROLE="${ROLE_FILE:-$HOME/.config/lrm-hubs/roles/role-$3.txt}"
 COMMON="${COMMON_FILE-$HOME/.claude/skills/orca-hub-create/references/common-rules.txt}"
 [ -f "$HUB/HANDOFF.md" ] || { echo "ERROR: $HUB/HANDOFF.md 없음 — 인계 파일을 먼저 작성" >&2; exit 2; }

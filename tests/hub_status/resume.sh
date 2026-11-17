@@ -19,8 +19,10 @@ mkfile data-design "$OLDT"
 rm -f "$SB/status/scrum.json"
 OUT=$(bash "$RA" --dry-run 2>&1); RC=$?
 chk "dry-run 종료 코드 0" '[ "$RC" = 0 ]' "rc=$RC"
-MISSING=""; for s in "${SLUGS[@]}"; do printf '%s' "$OUT" | grep -q -- "--slug $s " || MISSING="$MISSING $s"; done
-chk "dry-run 출력에 허브 전부(slug 별 create_hub 명령)" '[ -z "$MISSING" ]' "빠진 허브:$MISSING"
+# 휴면 허브(#dormant 표식)는 기동 명령이 없는 게 정상. 시험은 tests/resume_all
+DORM=$(awk -F'\t' '$1 == "#dormant" { print $2 }' "$TSV")
+MISSING=""; for s in "${SLUGS[@]}"; do printf '%s\n' "$DORM" | grep -Fxq -- "$s" && continue; printf '%s' "$OUT" | grep -q -- "--slug $s " || MISSING="$MISSING $s"; done
+chk "dry-run 출력에 활성 허브 전부(slug 별 create_hub 명령)" '[ -z "$MISSING" ]' "빠진 허브:$MISSING"
 chk "dry-run: 상태 있는 허브는 상태 문구" 'printf "%s" "$OUT" | grep -q "Run: run_ui1"'
 chk "dry-run: 24시간 초과 허브는 오래된 상태 표시" 'printf "%s" "$OUT" | grep -q "오래된 상태($OLDT)"'
 chk "dry-run: 상태 파일 없는 허브는 일반 문구" 'printf "%s" "$OUT" | grep -q "상태 파일 없음 — HANDOFF.md 와 run-list 로 이어받기"'
