@@ -42,6 +42,8 @@ grep -q '폐지' "$SB/err" && [ "$(b show "$L" --json | jq -r 'if type=="array" 
 O=$(b create "예전 승인 카드" -l kind:approval --json | id_of)
 
 # 수집기 원료
+mkdir -p "$SB/hub/ai-state"; printf '{"cwd":"/ws/feat-mail","state":"needs_input","kind":"permission_prompt","at":%s}\n' "$(date +%s)" > "$SB/hub/ai-state/s1.json"
+printf '{"cwd":"/ws/old","state":"working","at":1}\n' > "$SB/hub/ai-state/s2.json"; printf 'broken' > "$SB/hub/ai-state/s3.json"
 P=$(env -u PANEL_GH_REPOS PANEL_ORCA=/usr/bin/false LRM_HUB_DIR="$SB/hub" bash "$SCRIPTS/panel_collect.sh" --print 2>/dev/null)
 v() { echo "$P" | jq -r ".sources.board.value$1"; }
 [ "$(echo "$P" | jq -r .sources.board.ok)" = true ] && ok "수집기: board 원료 ok" || ko "board ok" "$(echo "$P" | jq -c .sources.board | head -c 200)"
@@ -54,6 +56,12 @@ v() { echo "$P" | jq -r ".sources.board.value$1"; }
 [ "$(v '.headline.id')/$(v '.headline.done')/$(v '.headline.total')" = "$EPIC/1/3" ] && ok "헤드라인 = 열린 epic, 진척 닫힌/전체" || ko "headline" "$(v '.headline')"
 [ "$(v '.recent[0].id')" = "$DONE" ] && [ "$(v '.recent[0].reason')" = "커밋 abc" ] && ok "최근 기록 = 닫힌 카드" || ko "recent" "$(v '.recent')"
 [ "$(echo "$P" | jq --arg d "$D" '[.sources.board.value.doing[].id] | index($d)')" = null ] && ok "kind 카드는 진행 줄에 중복 안 나옴" || ko "중복" ""
+
+F=$(echo "$P" | jq -c --arg e "$EPIC" '.sources.board.value.features[] | select(.id==$e)')
+[ "$(echo "$F" | jq -r '"\(.done)/\(.total)/\(.doingCount)/\(.asks)/\(.doing[0].who)/\(.closedAt)"')" = "1/2/1/1/worker-1/null" ] && [ "$(echo "$F" | jq -r '.lastAt|type')" = number ] && ok "기능 줄 원료: 진척(작업 카드만)·진행 수·답 대기·담당·마지막 변화" || ko "features" "$F"
+[ "$(echo "$P" | jq -r --arg d "$D" '.sources.board.value.decisions[] | select(.id==$d) | "\(.parent)/\(.waiting)"')" = "$EPIC/1" ] && ok "결정 카드: 부모 epic·막는 작업 수" || ko "waiting" "$(v '.decisions[0]')"
+[ "$(echo "$P" | jq -r '.sources.ai.value.sessions | length')" = 1 ] && [ "$(echo "$P" | jq -r '.sources.ai.value.sessions[0].state')" = needs_input ] && ok "세션 상태 파일: 최근 것만, 깨진 파일 건너뜀" || ko "ai 원료" "$(echo "$P" | jq -c .sources.ai)"
+[ "$(echo "$P" | jq -r '.sources.ghState.ok')" = false ] && ok "gh-state.json 없음 → ghState 원료 missing(패널은 기존 gh 사용)" || ko "ghState" "$(echo "$P" | jq -c .sources.ghState)"
 
 # board-answer
 R=$("$SCRIPTS/board-answer" "$D" "옮김. Slack 칸은 숨겨" --json)

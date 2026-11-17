@@ -98,7 +98,32 @@ export type AutoCard = {
   desc?: string | null
   /** 결정 카드의 승인 성격 배지(label gate:approval, 옛 kind:approval). 없으면 null */
   gate?: string | null
+  /** 결정·할 일 카드의 부모 epic */
+  parent?: string | null
+  /** 결정 카드: 같은 기능에서 진행 중인 작업 카드 수(답을 기다리는 AI 수 근사) */
+  waiting?: number
 }
+
+/** 기능(epic) 한 줄 원료. 시각은 epoch 초 */
+export type AutoFeature = {
+  id: string
+  title: string
+  slug: string | null
+  done: number
+  total: number
+  doing: Array<{ title: string; who: string | null; beatAt: number | null }>
+  doingCount: number
+  blocked: number
+  asks: number
+  lastAt: number | null
+  closedAt: number | null
+  p: number
+}
+
+/** 세션 훅 상태 파일(claude/hooks/ai-state.sh) 요약 */
+export type AutoAi = { sessions: Array<{ cwd: string; state: 'working' | 'needs_input' | 'idle'; kind: string | null; at: number }> }
+/** PR·CI 감시기의 gh-state.json 읽는 자리(스키마 확정 전) */
+export type AutoGhState = { present: boolean; mtime: number }
 
 /** 작업판(beads, ~/orca/board) 요약. 패널의 정본. 옛 파일은 doing·counts 만 있음 */
 export type AutoWorkBoard = {
@@ -110,6 +135,7 @@ export type AutoWorkBoard = {
   todos?: AutoCard[]
   headline?: { id: string; title: string; done: number; total: number; epics: number } | null
   recent?: Array<{ id: string; title: string; at: number | null; reason: string | null }>
+  features?: AutoFeature[]
 }
 
 /** 수집기(panel_collect.sh)가 쓰는 panel-auto.json */
@@ -130,6 +156,8 @@ export type AutoBoard = {
     workers?: AutoSource<AutoWorkers>
     gh?: AutoSource<AutoGh>
     idle?: AutoSource<AutoIdle>
+    ai?: AutoSource<AutoAi>
+    ghState?: AutoSource<AutoGhState>
   }
 }
 
@@ -139,6 +167,9 @@ export type BoardView = {
   /** 마지막 폴링 시각(ms). 오래됨 판정용 */
   nowMs: number
   autoError?: string
+  /** 데스크톱 알림 보낸 기록: 항목 키 → 보낸 시각(ms), 최근 한 시간 보낸 시각 목록 */
+  notified?: Record<string, number>
+  sentAt?: number[]
 }
 
 declare module 'claude-code' {

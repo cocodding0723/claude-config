@@ -264,3 +264,100 @@ test('headlineText·recentLines·blockedLines', () => {
   assert.deepEqual(b.blockedLines(wb({ blocked: [card()] })), ['a-1 T · u'])
   assert.deepEqual(b.blockedLines(undefined), [])
 })
+
+// ---- 11-17 4칸 패널 ----
+const feat = (o = {}) => ({ id: 'e-1', title: '메일함', slug: 'mail', done: 1, total: 3, doing: [{ title: '목록 화면', who: 'w1', beatAt: sec(NOW - 60000) }],
+  doingCount: 1, blocked: 0, asks: 0, lastAt: sec(NOW - 60000), closedAt: null, p: 2, ...o })
+const okBanner = { level: 'ok', text: '데이터 1초 전' }
+
+test('PANEL_CONFIG: 칸 순서 문제→답할 것→할 일→AI, 임계값 한 곳', () => {
+  assert.deepEqual([...b.PANEL_CONFIG.order], ['problem', 'ask', 'todo', 'ai'])
+  assert.equal(b.AUTO_STALE_MIN, b.PANEL_CONFIG.staleMin)
+  assert.equal(b.PANEL_CONFIG.stuckMin, 15)
+})
+
+test('askLines: 막는 AI 수 많은 순 → 오래된 순, 대기 분·답법 한 줄, 승인 배지', () => {
+  const cs = [
+    { ...card({ id: 'a', title: 'A', createdAt: sec(NOW - 5 * 60000) }), waiting: 0 },
+    { ...card({ id: 'b', title: 'B', createdAt: sec(NOW - 2 * 60000) }), waiting: 2 },
+    { ...card({ id: 'c', title: 'C', createdAt: sec(NOW - 9 * 60000), gate: 'approval' }), waiting: 0 },
+  ]
+  const ls = b.askLines(cs, NOW)
+  assert.deepEqual(ls.map(l => l.key), ['ask:b', 'ask:c', 'ask:a'])
+  assert.equal(ls[0].sub, 'AI 2곳 대기 2분 · 답: board-answer b "<답 원문>"')
+  assert.equal(ls[1].text, `${b.APPROVAL_BADGE} C`)
+  assert.match(ls[1].sub, /승인·보류/)
+})
+
+test('featureState: 답 대기 > 멈춤 의심(15분) > 막힘 > 작업 중 > 쉼, 끝남은 안 봄', () => {
+  assert.equal(b.featureState(feat({ asks: 1 }), null, NOW).mark, '?')
+  assert.equal(b.featureState(feat({ lastAt: sec(NOW - 20 * 60000) }), null, NOW).mark, '!')
+  assert.equal(b.featureState(feat({ lastAt: sec(NOW - 14 * 60000) }), null, NOW).mark, '✻')
+  assert.equal(b.featureState(feat({ doing: [], doingCount: 0, blocked: 1 }), null, NOW).mark, '✕')
+  assert.equal(b.featureState(feat({ doing: [], doingCount: 0 }), null, NOW).mark, '-')
+  assert.equal(b.featureState(feat({ closedAt: sec(NOW - 60000) }), null, NOW).mark, '✓')
+})
+
+test('featureState: 세션 훅 상태 파일(입력 필요·작업 중)이 카드보다 먼저', () => {
+  const ai = s => ({ sessions: [{ cwd: '/ws/feat-mail', state: s, kind: null, at: sec(NOW - 30000) }] })
+  assert.equal(b.featureState(feat(), ai('needs_input'), NOW).mark, '?')
+  assert.equal(b.featureState(feat({ doing: [], doingCount: 0, lastAt: sec(NOW - 3600000) }), ai('working'), NOW).mark, '✻')
+  assert.equal(b.featureState(feat(), { sessions: [{ cwd: '/ws/feat-shop', state: 'needs_input', kind: null, at: sec(NOW) }] }, NOW).mark, '✻')
+})
+
+test('featureLines: 기능 한 줄(이름·지금 하는 일·진척·분 단위), 오래 끝난 기능 숨김, 많으면 작업 중 접기', () => {
+  const [l] = b.featureLines([feat()], null, NOW)
+  assert.equal(l.text, '메일함 · 목록 화면 (1/3)')
+  assert.equal(l.age, '1분')
+  assert.equal(b.featureLines([feat({ closedAt: sec(NOW - 2 * 3600000) })], null, NOW).length, 0)
+  const many = Array.from({ length: 9 }, (_, i) => feat({ id: `e${i}`, title: `f${i}` }))
+  many.push(feat({ id: 'q', asks: 1 }))
+  const ls = b.featureLines(many, null, NOW)
+  assert.equal(ls[0].mark, '?')
+  assert.ok(ls.some(x => x.folded === true && /작업 중 9개/.test(x.text)))
+  assert.equal(b.featureCounts(ls), '입력 필요 1 / 작업 9')
+})
+
+test('problemLines: 있을 때만, 수집 끊김·멈춤 의심·막힌 카드·CI 실패·디스크 부족', () => {
+  assert.deepEqual(b.problemLines(auto(0), okBanner, [], NOW), [])
+  const a = auto(0, { sources: {
+    board: { ok: true, err: null, at: sec(NOW), stale: false, value: { counts: {}, doing: [], more: 0, blocked: [card({ id: 'x', title: '막힘' })] } },
+    gh: { ok: true, err: null, at: sec(NOW), stale: false, value: { repos: [{ repo: 'o/r', open: 2, ciFail: 1 }], open: 2, ciFail: 1 } },
+    idle: { ok: true, err: null, at: sec(NOW), stale: false, value: { disk: { freeGB: 5, usedPct: 98, minGB: 20, warn: true } } },
+  } })
+  const stuck = b.featureLines([feat({ lastAt: sec(NOW - 30 * 60000) })], null, NOW)
+  const ps = b.problemLines(a, { level: 'stale', text: '⚠️ 데이터 5분 전 — 자동 수집 멈춤' }, stuck, NOW)
+  assert.deepEqual(ps.map(p => p.key.split(':')[1]), ['collect', 'stuck', 'blocked', 'ci', 'disk'])
+  assert.equal(ps[0].text, '데이터 5분 전 — 자동 수집 멈춤')
+})
+
+test('headerLine: 칸별 개수·수집 시각, 낡으면 stale', () => {
+  const h = b.headerLine({ problem: 1, ask: 2, todo: 0, ai: 3 }, okBanner, NOW - 2 * 60000, NOW)
+  assert.equal(h.text, '문제 1 / 답할 것 2 / 할 일 0 / AI 3 · 수집 2분 전')
+  assert.equal(h.stale, false)
+  assert.equal(b.headerLine({ problem: 0, ask: 0, todo: 0, ai: 0 }, { level: 'stale', text: 'x' }, NOW, NOW).stale, true)
+})
+
+test('pickNotify: 첫 회차는 기록만, 새 항목만, 같은 항목 재전송 없음, 시간당 상한·묶음', () => {
+  const it = k => ({ key: k, text: k, head: 'h' })
+  let r = b.pickNotify([it('a')], {}, [], NOW, true)
+  assert.equal(r.send.length, 0)
+  r = b.pickNotify([it('a'), it('b')], r.seen, r.sent, NOW + 1000, false)
+  assert.deepEqual(r.send.map(x => x.text), ['b'])
+  const again = b.pickNotify([it('a'), it('b')], r.seen, r.sent, NOW + 2000, false)
+  assert.equal(again.send.length, 0)
+  const later = b.pickNotify([it('a')], r.seen, r.sent, NOW + 31 * 60000, false)
+  assert.deepEqual(later.send.map(x => x.text), ['a'])
+  const burst = b.pickNotify(['p', 'q', 'r', 's', 't', 'u', 'v'].map(it), {}, [NOW - 1000, NOW - 2000], NOW, false)
+  assert.equal(burst.send.length, 3)
+  assert.match(burst.send[2].text, /새 항목 5개/)
+  assert.equal(b.pickNotify([it('z')], {}, burst.sent, NOW + 1, false).send.length, 0)
+})
+
+test('detailText: 뺀 참고 정보를 슬래시 명령 글로(기능별 진행 카드 담당·원료 상태·gh-state 자리)', () => {
+  const a = auto(0, { sources: { board: { ok: true, err: null, at: sec(NOW), stale: false, value: { counts: {}, doing: [], more: 0, features: [feat()] } } } })
+  const t = b.detailText(a, NOW)
+  assert.match(t, /- 목록 화면 · w1 · 1분/)
+  assert.match(t, /gh-state.json: 없음 → 기존 gh 원료 사용/)
+  assert.match(t, /## 원료 상태/)
+})
