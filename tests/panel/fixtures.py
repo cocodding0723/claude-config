@@ -6,7 +6,7 @@ import sys
 import time
 
 fake, hub, mark, tok = sys.argv[1:5]
-now_ms = int(time.time() * 1000)
+now_ms = int(time.time()) * 1000  # 수집기 now 가 초 단위로 잘리므로 같은 초 안이면 1분 모자라 dup 시험이 4분으로 흔들렸음(11-17)
 B = "─" * 40
 
 
