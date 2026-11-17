@@ -76,21 +76,84 @@ class ParentTest(unittest.TestCase):
         self.assertEqual(text.splitlines()[0], "구조 개선")
         self.assertIn("- 지금: 하위 작업 없음", text)
 
-    def test_blank_what_or_why_blocks_report_with_fix_hint(self):
+    def test_blank_what_or_why_holds_report_with_fix_hint(self):
         for desc, gap in (("쉬운 이름: x\n왜: 요청", "무엇"), ("쉬운 이름: x\n무엇: 고친다", "왜"), ("", "무엇·왜")):
             with self.subTest(gap=gap):
                 self.card(desc, [])
                 rep = self.report(text=f"보고 {gap}")
                 res = self.run_round()
-                self.assertEqual((res["sent"], res.get("stopped")), (0, 1))
+                self.assertEqual((res["sent"], res.get("stopped"), res.get("held")), (0, None, 1))  # 영구 중단이 아니라 보류
                 warn = self.calls()[-1][-1]
                 self.assertIn(f"설명 칸 비어 있음({gap})", warn)
-                self.assertIn("카드 설명에 '무엇:'·'왜:' 줄 추가(bd update lrm-q5o -d ...)", warn)
-                self.assertIn(rep["id"], self.state()["bad"])
+                self.assertIn("카드 설명에 '무엇:'·'왜:' 줄 추가(bd update lrm-q5o -d ...). 추가하면 다음 회차에 자동 전송", warn)
+                self.assertNotIn(rep["id"], self.state()["bad"])
                 self.assertEqual(self.topics(), {})  # 부모(주제 스레드)는 만들지 않음
                 os.remove(self.p("state.json"))
                 os.remove(self.conf.outbox)
                 os.remove(self.p("calls.jsonl"))
+
+    def test_held_report_goes_out_next_round_after_card_fixed(self):
+        self.card("", [])
+        self.report(text="막힌 보고")
+        self.assertEqual(self.run_round()["sent"], 0)
+        self.assertEqual(self.run_round()["sent"], 0)  # 계속 대기
+        self.card(FULL, [])
+        res = self.run_round()
+        self.assertEqual((res["sent"], res.get("held")), (1, None))
+        self.assertIn("구조 개선: Slack 봇·작업판 정상화", [c[-1].splitlines()[0] for c in self.calls()])  # 카드를 고친 뒤 같은 보고가 그 양식으로 나감
+        self.assertIn("lrm-q5o", self.topics())
+        self.assertEqual(self.state()["bad"], {})
+
+    def test_hold_warns_once_per_day_per_card(self):
+        self.card("", [])
+        self.report(text="첫 보고")
+        for _ in range(3):
+            self.run_round()
+        warns = [c for c in self.calls() if "warn" in c]
+        self.assertEqual(len(warns), 1)  # 회차마다가 아니라 하루 1회
+        self.assertIn("structure-v2", warns[0])  # 그 카드 주인 허브 이름으로
+        st = self.state()
+        st["card_warn"]["lrm-q5o"] -= report_sender.CARD_WARN_INTERVAL_S + 1  # 하루 경과
+        report_sender.save_state(self.conf.state, st)
+        self.run_round()
+        self.assertEqual(len([c for c in self.calls() if "warn" in c]), 2)
+
+    def test_fallback_material_builds_parent(self):
+        desc = ("# 작업 카드: 로그인 오류 고치기\n\n순서: 독립(lrm-q5o.4 보다 먼저)\n\n- 로그인 화면이 두 번 뜨는 문제를 고친다. 원인은 중복 호출이다.\n\n"
+                "## 지시(사용자 원문)\n\n• 원문(11-17, 캡처): \"로그인이 두 번 떠서 불편함\"\n")
+        self.card(desc, [], title="로그인 오류")
+        self.report()
+        self.assertEqual(self.run_round()["sent"], 1)
+        text = self.calls()[0][-1]
+        self.assertIn("- 무엇: 로그인 화면이 두 번 뜨는 문제를 고친다.", text)  # 첫 문장, 머리줄·메타 줄·목록 기호 제외
+        self.assertIn("- 왜: 로그인이 두 번 떠서 불편함", text)  # 사용자 원문 줄
+        self.assertNotIn("lrm-q5o.4", "\n".join(text.splitlines()[:-1]))
+
+    def test_fallback_why_from_instruction_section(self):
+        self.card("무엇: 고친다\n\n## 지시\n\n- 결제 오류를 없앤다.\n## 완료\n- 끝", [])
+        self.report()
+        self.assertEqual(self.run_round()["sent"], 1)
+        self.assertIn("- 왜: 결제 오류를 없앤다.", self.calls()[0][-1])
+
+    def test_child_lookup_failure_omits_progress_line(self):
+        info = {"id": "x-1", "title": "t", "fields": {"무엇": "a", "왜": "b"}, "closed": 0, "total": None}  # None = 하위 조회 실패
+        self.assertNotIn("- 지금", report_sender.card_parent_text(info, "h"))
+        self.assertIn("- 지금: 하위 작업 없음", report_sender.card_parent_text({**info, "total": 0}, "h"))
+
+    def test_dead_parent_is_not_retried(self):
+        self.report(text="첫 보고")
+        self.run_round()
+        self.card(FULL, ["closed", "closed", "closed"])
+        with open(self.p("fail.n"), "w") as f:
+            f.write("1")
+        with open(self.p("fail.msg"), "w") as f:
+            f.write("message_not_found")
+        self.report(text="둘째 보고")
+        self.run_round()
+        self.assertTrue(self.topics()["lrm-q5o"].get("update_dead"))
+        self.report(text="셋째 보고")
+        self.run_round()
+        self.assertEqual(len([c for c in self.calls() if "--update" in c]), 1)  # 더는 고쳐 쓰기를 시도하지 않음
 
     def state(self):
         with open(self.p("state.json"), encoding="utf-8") as f:
