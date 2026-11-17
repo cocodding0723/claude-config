@@ -178,5 +178,14 @@ chk "set 이 성공을 말해도 부모가 비면 실패(종료 1, JSON 출력 �
 setlist 1; rm -f "$F"/show.n; runx --name p5 --json
 chk "--json 의 parent 는 show 로 확인한 값" '[ "$RC" = 0 ] && jq -e --arg h "$HUBP" ".parent == \$h" "$SB/out" >/dev/null' "$(cat "$SB/out" "$SB/err")"
 
+# ---- --card: 카드 Slack 스레드 시작 예약(hub_report 에 시작 한 줄) ----
+setlist 1; rm -f "$F"/show.n; : > "$F/report.calls"; runx --name "[C1] 카드 작업" --card t-abc --branch feat/c1
+chk "--card: 허브 이름·카드·작업 공간 경로·시작 문구로 hub_report 호출" '[ "$RC" = 0 ] && [ "$(cat "$F/report.calls")" = "add --hub q --task 없음 --kind info --card t-abc --ws $WSR/feat-c1 --text 작업 공간 시작: [C1] 카드 작업 (브랜치 feat/c1)" ]' "rc=$RC $(cat "$F/report.calls")"
+chk "--card: 출력은 경로 한 줄 그대로" '[ "$(cat "$SB/out")" = "$WSR/feat-c1" ]'
+setlist 1; rm -f "$F"/show.n; : > "$F/report.calls"; runx --name "[C2] 카드 없음"
+chk "--card 없음: 보고 예약 안 함(기존 동작)" '[ "$RC" = 0 ] && [ ! -s "$F/report.calls" ]'
+setlist 1; rm -f "$F"/show.n; : > "$F/report.calls"; FAKE_REPORT_FAIL=1 runx --name "[C3] 예약 실패" --card t-abc
+chk "--card 예약 실패: 경고만 하고 생성·종료 0 유지" '[ "$RC" = 0 ] && [ -d "$WSR/C3-예약-실패" ] && grep -q "Slack 스레드 시작 예약 실패" "$SB/err"' "rc=$RC $(cat "$SB/err")"
+
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]

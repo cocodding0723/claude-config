@@ -13,6 +13,7 @@ CFG_CREATE_HUB="${LRM_CREATE_HUB:-$HERE/../../skills/orca-hub-create/scripts/cre
 CFG_ROLE_TMPL="${LRM_FEATURE_ROLE:-$HERE/../roles/role-feature.txt}"
 CFG_ROLE_OUT="${LRM_ROLES_DIR:-$HOME/.config/lrm-hubs/roles}"   # restart_hub.sh 가 role-<이름>.txt 로 읽는 곳
 CFG_MODEL="claude-opus-5-5"
+CFG_HUB_REPORT="${LRM_HUB_REPORT:-$HERE/hub_report.py}"   # 기능 Slack 스레드 시작 보고를 예약하는 CLI
 
 usage() {
   cat <<'USAGE'
@@ -23,6 +24,8 @@ usage() {
   3 작업판 epic 카드 (bd create -t epic, label feature:<slug>·branch:<통합 브랜치>·repo:<저장소>·base:<기준>. 범위 검사 기준·완료 증거 커밋 묶기·병합 기록 대조에 씀)
   4 역할 파일 ~/.config/lrm-hubs/roles/role-feat-<slug>.txt 와 Opus 코디네이터 기동
     (살아 있는 코디네이터가 있으면 기동하지 않음)
+  5 기능 Slack 스레드 시작 예약: hub_report 에 epic 주제 "시작" 한 줄(같은 내용은 중복 무시라 재실행 안전).
+    스레드를 열고 epic 에 label slack-thread:<ts> 를 붙이는 일은 report_sender 가 함. 예약 실패는 경고만 하고 종료 코드에 영향 없음
 
 옵션:
   --ticket LRM-n  Jira 티켓(필수)
@@ -108,6 +111,11 @@ else
     3) STATUS=already_running ;;   # 살아 있는 코디네이터 있음 → 재실행 안전
     *) die "허브 생성·기동 실패(종료 $RC): $(printf '%s' "$HUB_OUT" | tail -3) — epic $EPIC 은 남음. 원인 해결 뒤 같은 명령 재실행" 1 ;;
   esac
+fi
+
+if [ "$DRY" = 0 ] && [ -n "$EPIC" ]; then
+  python3 "$CFG_HUB_REPORT" add --hub "$HUB_SLUG" --task 없음 --kind info --card "$EPIC" \
+    --text "기능 시작: $NAME ($TICKET, 통합 브랜치 $BRANCH)" >/dev/null 2>&1 || echo "⚠️ 기능 스레드 시작 예약 실패 — hub_report.py add --hub $HUB_SLUG --card $EPIC 로 직접 기록" >&2
 fi
 
 if [ "$JSON" = 1 ]; then

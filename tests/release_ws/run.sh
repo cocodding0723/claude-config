@@ -49,6 +49,18 @@ mk arcfail; echo md > "$W/arcfail/r.md"; worker d_arc arcfail; mkdir -p "$ARC/re
 mk dry_ws; echo md > "$W/dry_ws/r.md"; worker d_dry dry_ws active; printf 'term_d_dry\t%s\n' "$W/dry_ws" >> "$FAKE/terminals.tsv"
 mk kid_parent; worker d_kp kid_parent
 mk newcommit; echo more > "$W/newcommit/g.txt"; git -C "$W/newcommit" add -A; GIT_AUTHOR_DATE=$OLD GIT_COMMITTER_DATE=$OLD git -C "$W/newcommit" commit -q -m unpushed; worker d_nc newcommit
+# 카드 스레드 끝 한 줄: 임시 작업판·가짜 hub_report(호출 인자 기록). 실제 작업판·Slack 무관
+BOARD="$SB/board"; mkdir -p "$BOARD"; (cd "$BOARD" && git init -q && bd init --prefix t -q >/dev/null 2>&1)
+export LRM_BOARD="$BOARD"
+printf '#!/usr/bin/env python3\nimport sys\nopen(sys.argv[0] + ".calls", "a").write(" ".join(sys.argv[1:]) + "\\n")\n' > "$SB/hub_report.py"; chmod +x "$SB/hub_report.py"
+export LRM_HUB_REPORT="$SB/hub_report.py"
+mk endws; worker d_end endws
+CARD=$(cd "$BOARD" && bd create "끝낼 작업" -t task -l "feature:x,ws:$W/endws" --json | jq -r .id)
+CARD_KEEP=$(cd "$BOARD" && bd create "남길 작업" -t task -l "feature:x,ws:$W/code_untr" --json | jq -r .id)
+CARD_REFUSE=$(cd "$BOARD" && bd create "거부될 작업" -t task -l "feature:x,ws:$W/shared" --json | jq -r .id)
+mk twocards; worker d_two twocards
+CARD_T1=$(cd "$BOARD" && bd create "둘 중 하나" -t task -l "feature:x,ws:$W/twocards" --json | jq -r .id)
+CARD_T2=$(cd "$BOARD" && bd create "둘 중 둘째" -t task -l "feature:x,ws:$W/twocards" --json | jq -r .id)
 mk ignored_code; mkdir -p "$W/ignored_code/secret"; echo 'class S{}' > "$W/ignored_code/secret/Foo.cs"; printf 'secret/\n' >> "$W/ignored_code/.git/info/exclude"; worker d_ic ignored_code
 
 jq -R -s '{ok:true,result:{worktrees:(split("\n")|map(select(length>0)|split("\t")|{id:("repo::"+.[0]),path:.[0],branch:.[1],lastActivityAt:(.[2]|tonumber),isMainWorktree:(.[3]=="true"),childWorktreeIds:[]}))}}' "$SB/reg.tsv" > "$FAKE/worktrees.json"
@@ -82,6 +94,20 @@ rel --dispatch d_nc --released; chk "병합된 PR 뒤 push 안 한 커밋: 로�
 chk "--released: 삭제 전 worker-release 없음(정리 뒤 기록 정리만)" '[ "$(grep -n "worker-release --dispatch d_nc" "$FAKE/orca.calls" | head -1 | cut -d: -f1)" -gt "$(grep -n "^worktree rm" "$FAKE/orca.calls" | head -1 | cut -d: -f1)" ]'
 rel --dispatch d_ic; chk "gitignore 코드 파일(secret/Foo.cs): 남김 종료 4·삭제 안 함" '[ "$RC" = 4 ] && [ -e "$W/ignored_code/secret/Foo.cs" ] && [ "$(rm_calls)" = 0 ] && grep -q "secret/Foo.cs" "$SB/out"' "rc=$RC $(cat "$SB/out")"
 rel --dispatch d_kp --dry-run; chk "--dry-run(깨끗): 삭제 가능" '[ "$RC" = 0 ] && [ -e "$W/kid_parent" ]'
+
+# ---- 반납 → 카드 스레드 끝 한 줄 ----
+card_labels() { (cd "$BOARD" && bd list --all --id "$CARD" --limit 0 --json | jq -r '.[0].labels | join(",")'); }
+rel --dispatch d_end --dry-run; chk "--dry-run: 스레드 끝 한 줄·종료 표시 없음" '[ ! -e "$SB/hub_report.py.calls" ] && ! card_labels | grep -q slack-thread-end'
+rel --dispatch d_end
+chk "반납: 그 작업 공간 카드 스레드에 끝 한 줄 예약(허브=feat-<기능>)" '[ "$RC" = 0 ] && [ "$(cat "$SB/hub_report.py.calls")" = "add --hub feat-x --task 없음 --kind info --card $CARD --text 끝. 이후 답은 기능 코디네이터가 받음" ]' "rc=$RC $(cat "$SB/hub_report.py.calls" "$SB/err" 2>&1)"
+chk "반납: 카드에 slack-thread-end 표시" 'card_labels | grep -q slack-thread-end'
+rel --dispatch d_hub; chk "카드 없는 작업 공간(허브 폴더): 끝 한 줄 더 안 남김" '[ "$(wc -l < "$SB/hub_report.py.calls" | tr -d " ")" = 1 ]'
+rm -f "$SB/hub_report.py.calls"; rel --dispatch d_s1
+chk "카드가 없는 거부(5): 끝 한 줄 예약 없음" '[ "$RC" = 5 ] && [ ! -e "$SB/hub_report.py.calls" ]'
+lab() { (cd "$BOARD" && bd list --all --id "$1" --limit 0 --json | jq -r '.[0].labels | join(",")'); }
+rel --dispatch d_s1; chk "카드 있는 거부(5): 스레드 끝내지 않음(작업 공간이 살아 있음)" '[ "$RC" = 5 ] && [ ! -e "$SB/hub_report.py.calls" ] && ! lab "$CARD_REFUSE" | grep -q slack-thread-end'
+rel --dispatch d_code; chk "카드 있는 남김(4): 스레드 끝내지 않음" '[ "$RC" = 4 ] && [ ! -e "$SB/hub_report.py.calls" ] && ! lab "$CARD_KEEP" | grep -q slack-thread-end'
+rel --dispatch d_two; chk "삭제: 그 작업 공간 카드 둘 다 끝 한 줄·종료 표시" '[ "$RC" = 0 ] && [ "$(wc -l < "$SB/hub_report.py.calls" | tr -d " ")" = 2 ] && lab "$CARD_T1" | grep -q slack-thread-end && lab "$CARD_T2" | grep -q slack-thread-end' "rc=$RC $(cat "$SB/out" "$SB/err")"
 
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
