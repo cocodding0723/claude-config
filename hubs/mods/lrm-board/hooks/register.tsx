@@ -10,9 +10,8 @@ import {
   applyEpicToggle,
   detailText,
   epicOpen,
-  kidLines,
+  epicRows,
   parseEpicView,
-  epicBar,
   featureCounts,
   featureLines,
   headerLine,
@@ -54,7 +53,7 @@ const C = {
   stale: '#EF5350',
 } as const
 
-const MARK_COLOR: Record<string, string> = { '?': '#FFCA28', '!': '#EF5350', '✕': '#EF5350', '✻': '#66BB6A', '✓': '#90A4AE', '-': '#616161' }
+const MARK_COLOR: Record<string, string> = { '?': '#FFCA28', '!': '#EF5350', '✕': '#EF5350', '✻': '#66BB6A', '✓': '#90A4AE', '◐': '#66BB6A', '○': '#9E9E9E', '✕': '#EF5350', '-': '#616161' }
 
 const SECTION: Record<SectionId, { label: string; color: string }> = {
   problem: { label: '🚨 문제', color: C.problem },
@@ -184,6 +183,7 @@ export const register: Register = on => {
       banner, autoStamp(auto, autoMtimeMs, nowMs), nowMs,
     )
     const readFail = board === undefined
+    const anyOpen = (board?.features ?? []).some(x => x.closedAt === null && x.total > 0 && epicOpen(ev, x.id))
 
     // 글머리 기호는 폭 고정 칸(3칸)에 두어 애매 폭 글자가 줄을 밀지 않게 함
     const row = (mark: string, markColor: string, text: string, color: string, tail?: string) => (
@@ -233,17 +233,17 @@ export const register: Register = on => {
       if (id === 'ai') {
         return (
           <Box flexDirection="column">
-            {title('ai', feats.length, feats.length > 0 ? featureCounts(feats) : undefined)}
+            {title('ai', feats.length, feats.length > 0 ? `${featureCounts(feats)}${anyOpen ? ' · 접기: /board-epics off' : ''}` : undefined)}
             {readFail ? <Text color={C.problem}>읽기 실패</Text> : feats.length === 0 ? <Text dimColor>쉬는 중</Text> :
               feats.map(f => {
                 const src = (board?.features ?? []).find(x => `ai:${x.id}` === f.key && x.closedAt === null)
                 if (src === undefined) return row(f.mark, MARK_COLOR[f.mark] ?? C.meta, f.text, f.mark === '-' ? C.meta : C.title, f.age)
-                const open = epicOpen(ev, src.id)
-                const tail = `${open ? '▾' : '▸'} ${epicBar(src.done, src.total)}  ${f.age}`
+                const rows = epicRows(src, epicOpen(ev, src.id), nowMs)
                 return (
                   <Box flexDirection="column">
-                    {row(f.mark, MARK_COLOR[f.mark] ?? C.meta, f.text, C.title, tail)}
-                    {open && kidLines(src.kids, nowMs).map(k => row(k.mark, MARK_COLOR[k.mark] ?? C.meta, `  ${k.text}`, k.mark === '✓' ? C.meta : C.detail, k.age))}
+                    {row(f.mark, MARK_COLOR[f.mark] ?? C.meta, f.text, C.title, f.age)}
+                    {rows.bar !== undefined && row('', C.meta, rows.bar, C.meta)}
+                    {rows.kids.map(k => row(k.mark, MARK_COLOR[k.mark] ?? C.meta, `  ${k.text}`, k.mark === '✓' ? C.meta : C.detail, k.age))}
                   </Box>
                 )
               })}
