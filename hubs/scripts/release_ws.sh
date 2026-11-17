@@ -27,7 +27,8 @@ usage() {
   --released       이미 worker-release 한 워커(session_gc 자동 호출용). worker-release 를 다시 부르지 않음
   --json           결과를 JSON 한 줄로 출력
 반납하면 그 작업 공간 카드(label ws:<경로>)의 Slack 스레드에 "끝. 이후 답은 기능 코디네이터가 받음" 한 줄을 예약하고
-카드에 label slack-thread-end 를 붙임(이후 스레드 답은 기능 코디네이터로 감). 카드·작업판이 없거나 실패해도 반납 결과는 그대로(경고만).
+카드에 label slack-thread-end 를 붙임(이후 스레드 답은 기능 코디네이터로 감). 실제로 삭제했을 때만, 그 작업 공간 경로 라벨이 붙은 카드 전부에 한다
+(거부·남김·환경 오류에서는 작업 공간이 살아 있으므로 하지 않음). 카드·작업판이 없거나 실패해도 반납 결과는 그대로(경고만).
 환경: LRM_WS_GC(ws_gc.sh 위치), WS_GC_* (ws_gc.sh 설정), LRM_BOARD(작업판), LRM_HUB_REPORT, LRM_FEEDBACK_ROUTE
 종료 코드: 0 삭제함(--dry-run 은 삭제 가능), 1 삭제 단계 실패, 2 인자 오류·알 수 없는 dispatch,
           3 환경 오류(orca·jq 없음, orca 응답 없음, 정리기 실행 중), 4 남김(코드 변경·열린 PR·미병합 등),
@@ -67,21 +68,23 @@ while :; do
 done
 [ -n "$hit" ] && [ "$hit" != NOTFOUND ] || { [ "$hit" = NOTFOUND ] && die "dispatch 를 찾지 못함: $DISPATCH — orca orchestration worker-list 로 id 확인" || die "이 워커에 연결된 작업 공간이 없음: $DISPATCH" 4; }
 
-thread_end() { # 반납한 워커의 작업 공간 카드 스레드에 끝 표시. 카드 없음·실패는 경고만(반납 결과에 영향 없음)
+thread_end() { # 작업 공간을 실제로 지운 뒤, 그 경로 라벨이 붙은 카드 전부의 스레드에 끝 표시. 카드 없음·실패는 경고만(반납 결과에 영향 없음)
   [ "$DRY" = 0 ] && command -v bd >/dev/null 2>&1 && [ -d "$CFG_BOARD" ] || return 0
-  local row card slug hub=ws
-  row=$(cd "$CFG_BOARD" && bd list --all --label "ws:$WSP" --json 2>/dev/null | jq -c '[.[] | select(.issue_type != "epic")][0] // empty' 2>/dev/null) || return 0
-  [ -n "$row" ] || return 0
-  card=$(echo "$row" | jq -r .id); slug=$(echo "$row" | jq -r '[.labels[]? | select(startswith("feature:")) | sub("^feature:"; "")][0] // empty')
-  [ -z "$slug" ] || hub="feat-$slug"
-  python3 "$CFG_HUB_REPORT" add --hub "$hub" --task 없음 --kind info --card "$card" --text "$CFG_END_TEXT" >/dev/null 2>&1 \
-    || echo "⚠️ 카드 $card 스레드 끝 한 줄 예약 실패 — hub_report.py add --card $card 로 직접 기록" >&2
-  BOARD_DIR="$CFG_BOARD" python3 -I "$CFG_THREAD_ROUTE" end-thread --card "$card" >/dev/null 2>&1 \
-    || echo "⚠️ 카드 $card 스레드 종료 표시 실패 — feedback_route.py end-thread --card $card 로 직접 실행" >&2
+  local rows row card slug hub
+  rows=$(cd "$CFG_BOARD" && bd list --all --label "ws:$WSP" --json 2>/dev/null | jq -c '.[] | select(.issue_type != "epic") | select((.labels // []) | index("slack-thread-end") | not)' 2>/dev/null) || return 0
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    card=$(echo "$row" | jq -r .id); slug=$(echo "$row" | jq -r '[.labels[]? | select(startswith("feature:")) | sub("^feature:"; "")][0] // empty')
+    hub=ws; [ -z "$slug" ] || hub="feat-$slug"
+    python3 "$CFG_HUB_REPORT" add --hub "$hub" --task 없음 --kind info --card "$card" --text "$CFG_END_TEXT" >/dev/null 2>&1 \
+      || echo "⚠️ 카드 $card 스레드 끝 한 줄 예약 실패 — hub_report.py add --card $card 로 직접 기록" >&2
+    BOARD_DIR="$CFG_BOARD" python3 -I "$CFG_THREAD_ROUTE" end-thread --card "$card" >/dev/null 2>&1 \
+      || echo "⚠️ 카드 $card 스레드 종료 표시 실패 — feedback_route.py end-thread --card $card 로 직접 실행" >&2
+  done <<< "$rows"
 }
 
-result() { # 코드 상태 메시지 [종료코드]
-  thread_end
+result() { # 코드 상태 메시지 [종료코드]. 스레드는 실제로 삭제했을 때만 끝냄(거부·환경 오류·건너뜀·남김은 작업 공간이 그대로 살아 있음)
+  [ "$1" = deleted ] && thread_end
   if [ "$JSON" = 1 ]; then jq -nc --arg s "$1" --arg m "$2" --arg p "$WSP" --arg d "$DISPATCH" '{status:$s, message:$m, workspace:$p, dispatch:$d}'; else echo "$2"; fi
   exit "$3"
 }
