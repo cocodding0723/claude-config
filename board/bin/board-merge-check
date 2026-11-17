@@ -8,12 +8,15 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
 import board_scope as bs  # noqa: E402
+import incident  # noqa: E402
 
 HELP_EPILOG = """\
-종료 코드:
 기준(--base) 생략 시: 카드 label base:<ref> → 상위 epic label branch:<ref>(기능 통합 브랜치) 순. 둘 다 없으면 종료 2.
-file: 범위는 ~/·저장소 상대·./ 표기를 같은 절대 경로로 맞춘 뒤 '/' 경계로 비교함.
+--epic <epic> 이면 하위 카드 전부의 file: 범위 합집합으로 검사함(기능 통합 브랜치 → dev 반영 전 검사). 기준은 --base → epic label base:.
+file: 범위는 ~/·저장소 상대·./ 표기를 (저장소, 저장소 안 경로)로 맞춘 뒤 '/' 경계로 비교함.
+이름 바꾸기는 지운 파일 + 새 파일 두 줄로 봄(--no-renames). 범위 밖 파일을 범위 안으로 옮겨 지우는 것도 거부.
 
+종료 코드:
   0  범위 안 (경고가 있어도 --strict 가 아니면 0)
   2  사용법 오류·카드에 file: label 없음
   3  환경 문제 (git·bd 실행 실패)
@@ -24,6 +27,7 @@ file: 범위는 ~/·저장소 상대·./ 표기를 같은 절대 경로로 맞�
   board-merge-check lrm-12 feat/foo                       # 기준은 카드·epic label
   board-merge-check lrm-12 feat/foo --base origin/dev --json
   board-merge-check lrm-12 feat/foo --repo ~/orca/LoveRevolutionMaker --strict
+  board-merge-check --epic lrm-3 feature/mailbox --base origin/dev --repo ~/orca/LoveRevolutionMaker
 
 환경 변수:
   BOARD_DIR  작업판 폴더 (기본 ~/orca/board). bd 를 이 폴더에서 실행함
@@ -54,13 +58,18 @@ def file_labels(card):
     return bs.labels(card, "file")
 
 
-def covered(path, prefixes, repo):
+def scope(card, repo):
+    """카드 file: 범위를 (저장소, 경로) 목록으로. 상대 경로 기준은 카드 repo:(없거나 반납됐으면 검사 저장소)"""
+    base = bs.card_repo(card, repo)
+    return [bs.locate(p, base) for p in file_labels(card)]
+
+
+def covered(path, pre, repo):
     # .meta 는 원본(폴더 .meta 는 폴더)이 범위 안이면 같이 통과
-    full = bs.norm(path, repo)
-    pre = [bs.norm(p, repo) for p in prefixes]
-    if any(bs.covers(p, full) for p in pre):
+    full = bs.locate(path, repo)
+    if any(bs.loc_covers(p, full) for p in pre):
         return True
-    return full.endswith(".meta") and any(bs.covers(p, full[:-5]) for p in pre)
+    return full[1].endswith(".meta") and any(bs.loc_covers(p, (full[0], full[1][:-5])) for p in pre)
 
 
 def resolve_base(card, board):
@@ -79,34 +88,60 @@ def main():
         epilog=HELP_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("card", help="작업판 카드 id")
+    ap.add_argument("card", help="작업판 카드 id (--epic 이면 epic id)")
     ap.add_argument("branch", help="검사할 브랜치")
     ap.add_argument("--base", default="", help="비교 기준 ref (기본: 카드 base: → epic branch: label)")
     ap.add_argument("--repo", default=".", help="git 저장소 경로 (기본 현재 폴더)")
     ap.add_argument("--json", action="store_true", help="결과를 JSON 으로 출력")
     ap.add_argument("--strict", action="store_true", help="경고가 있으면 종료 5")
+    ap.add_argument("--epic", action="store_true", help="card 를 epic 으로 보고 하위 카드 범위 합집합으로 검사")
     a = ap.parse_args()
 
     board = os.environ.get("BOARD_DIR", os.path.expanduser("~/orca/board"))
     repo = os.path.abspath(os.path.expanduser(a.repo))
 
     shown = bd_json(["show", a.card], board)
-    card = shown[0] if isinstance(shown, list) else shown
-    mine = file_labels(card)
-    if not mine:
-        fail(f"거부: {a.card} 에 file: label 없음. 조치: bd label add {a.card} file:<경로> 뒤 다시 실행")
-
-    a.base = a.base or resolve_base(card, board)
+    card = (shown[0] if isinstance(shown, list) and shown else shown) or {}
+    if a.epic:
+        if card.get("issue_type") != "epic":
+            fail(f"거부: {a.card} 는 epic 이 아님(issue_type={card.get('issue_type')}). 조치: --epic 없이 카드로 검사")
+        kids = [k for k in bd_json(["children", a.card], board) or [] if file_labels(k)]
+        if not kids:
+            fail(f"거부: epic {a.card} 에 file: label 있는 하위 카드 없음")
+        mine = [p for k in kids for p in file_labels(k)]
+        mine_loc = [loc for k in kids for loc in scope(k, repo)]
+        card["parent"] = a.card
+        family = {a.card} | {k["id"] for k in kids}
+        a.base = a.base or bs.label(card, "base")
+        if not a.base:
+            fail(f"거부: --epic 기준 없음. 조치: --base origin/dev 를 주거나 bd label add {a.card} base:<ref>")
+    else:
+        mine = file_labels(card)
+        if not mine:
+            fail(f"거부: {a.card} 에 file: label 없음. 조치: bd label add {a.card} file:<경로> 뒤 다시 실행")
+        mine_loc = scope(card, repo)
+        family = {a.card} | ({card["parent"]} if card.get("parent") else set())
+        a.base = a.base or resolve_base(card, board)
     if not a.base:
         fail(f"거부: 비교 기준 없음. 조치: --base <기능 통합 브랜치> 를 주거나 bd label add {a.card} base:<ref>")
     rng = f"{a.base}...{a.branch}"
-    files = [f for f in run(["git", "diff", "--name-only", rng], repo).splitlines() if f]
-    outside = [f for f in files if not covered(f, mine, repo)]
+    files = [f for f in run(["git", "diff", "--name-only", "--no-renames", rng], repo).splitlines() if f]
+    broad = [bs.loc_text(l) or "." for l in mine_loc if bs.too_broad(l)]
+    if broad:
+        fail(f"거부: {a.card} 범위 {broad[0]} 는 저장소 전체(아무 변경이나 통과). 조치: 코디네이터가 고칠 폴더·파일로 좁히고 decisions.tsv 에 기록")
+    outside = [f for f in files if not covered(f, mine_loc, repo)]
 
     others = []
     for c in bd_json(["list", "--status", "in_progress,closed", "--limit", "0"], board):
-        if c.get("id") != a.card and file_labels(c):
-            others.append((c["id"], c.get("status", ""), file_labels(c)))
+        if c.get("id") in family or not file_labels(c):
+            continue
+        # 닫힌 카드는 같은 기능 묶음이거나 그 브랜치가 이미 기준에 들어갔으면 경고에서 뺌(쌓이는 영구 경고 방지)
+        if c.get("status") == "closed":
+            ob = bs.label(c, "branch")
+            if (card.get("parent") and c.get("parent") == card.get("parent")) or (
+                    ob and subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", ob, a.base], capture_output=True).returncode == 0):
+                continue
+        others.append((c["id"], c.get("status", ""), scope(c, repo)))
 
     warnings = []
     for f in files:
@@ -120,6 +155,12 @@ def main():
             warnings.append({"kind": "revert", "commit": sha[:12], "subject": subj})
 
     code = 4 if outside else (5 if a.strict and warnings else 0)
+    if outside:
+        incident.record("merge_reject", f"범위 밖 파일 {len(outside)}개: {', '.join(outside[:5])}", source="board-merge-check",
+                        card=a.card, branch=a.branch, base=a.base)
+    for w in warnings:
+        if w["kind"] == "revert":
+            incident.record("revert", f"되돌림 커밋 {w['commit']} {w['subject']}", source="board-merge-check", card=a.card, branch=a.branch)
     result = {
         "card": a.card, "branch": a.branch, "base": a.base, "scope": mine,
         "files": files, "outside": outside, "warnings": warnings,
@@ -133,7 +174,7 @@ def main():
             print("거부: 카드 범위 밖 파일")
             for f in outside:
                 print(f"  {f}")
-            print(f"조치: bd label add {a.card} file:<경로> 로 범위를 넓힌 뒤 다시 실행, 또는 해당 파일을 {a.base} 상태로 되돌림")
+            print(f"조치: 해당 파일을 {a.base} 상태로 되돌림. 범위가 정말 더 필요하면 코디네이터가 file: 을 추가하고 decisions.tsv 에 이유를 남김")
         for w in warnings:
             if w["kind"] == "revert":
                 print(f"경고: 되돌림 커밋 {w['commit']} {w['subject']}")

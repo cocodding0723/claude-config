@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+"""사건 자동 기록 CLI(셸 스크립트용). 늘 종료 0.
+사용: board-incident <종류> <원인> [키=값 …]
+예:  board-incident merge_reject "범위 밖 파일 2개" card=lrm-12 branch=feat/x source=board-merge
+종류·기록 위치: board/lib/incident.py"""
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
+import incident  # noqa: E402
+
+if __name__ == "__main__":
+    if len(sys.argv) < 3 or sys.argv[1] in ("-h", "--help"):
+        print(__doc__)
+        sys.exit(0)
+    extra = dict(a.split("=", 1) for a in sys.argv[3:] if "=" in a)
+    incident.record(sys.argv[1], sys.argv[2], source=extra.pop("source", "board-incident"), **extra)

@@ -11,23 +11,28 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
 import board_scope as bs  # noqa: E402
+import board_config  # noqa: E402
 
 USAGE_EPILOG = """\
-증거는 카드 notes 나 코멘트에 한 줄씩 단다:
-  evidence:compile=<컴파일 로그>        error CS 줄 0
-  evidence:editmode=<NUnit 결과 xml>   failed 0, 실패 결과 없음
+증거는 카드 notes 나 코멘트에 한 줄씩 단다. 로그는 board-run 으로 만든다(마지막 줄에 붙일 증거 줄을 출력함):
+  evidence:compile=<board-run compile 로그>   '# exit 0', error CS 줄 0
+  evidence:editmode=<board-run editmode --result 로그 또는 NUnit xml>   total·passed ≥1, failed 0, 전부 건너뜀 아님
+  evidence:test=<board-run test 로그>         label kind:tool 카드(Unity 없는 도구 저장소)만. '# exit 0'
+board-run 로그는 머리줄 tree= 가 브랜치 끝 커밋의 tree 와 같아야 함(시험 → 커밋 순서도 인정). 손으로 쓴 로그·빈 로그는 거부.
   evidence:mapping=<대응표 md>          시안 카드만. "연결 기능" 빈 칸 0
   evidence:prefab-diff=<비교 결과>      시안 카드만. 불일치 0
   evidence:screenshot=<png>  evidence:recording=<mp4>   --epic 만
   evidence:review=<판정 json>          --epic 만. {"verdict":"pass","reviewer_model":..,"author_model":..} 두 모델이 달라야 함
 증거 줄 끝에 commit=<해시> 를 붙여 어느 커밋의 증거인지 묶는다. 카드 label branch:<브랜치>·repo:<저장소 경로> 가 필요하고,
 해시가 그 브랜치 끝과 같아야 하며 파일은 그 커밋 시각 이후에 만들어져야 함(낡은 증거·다른 커밋 증거 거부).
-BOARD_COMPILE_CMD 가 있으면 게이트가 repo 에서 직접 컴파일을 돌려 compile 증거를 만든다(작업자 로그 대신 씀).
+게이트 컴파일: <BOARD_DIR>/repos.json 의 그 저장소 "compile"(또는 BOARD_COMPILE_CMD)이 있으면 게이트가 repo 에서 직접 컴파일을 돌려
+compile 증거를 만든다(작업자 로그 대신 씀). 설정이 없으면 경고만 내고 작업자 로그를 검사함. 양식: board/repos.example.json
+epic 이 닫히면 label stage:review(사용자 검수 대기)를 붙임. 사용자 검수 답이 오면 board-done --epic <id> <이름> --user-ok "<원문>" 로 뗌.
 epic 이 닫히고 label feature:<slug> 가 있으면 BOARD_FEATURE_CLOSE(기본 ~/.config/lrm-hubs/feature_close.sh) --slug <slug> --yes 를
 분리 실행해 기능 코디네이터를 정리함(BOARD_FEATURE_CLOSE=off 로 끔).
 같은 종류가 여럿이면 마지막 줄(notes 다음 코멘트 순)만 봄. '<종류>=' 를 생략하면 파일 이름으로 추정함. 모든 파일은 존재·비어 있지 않음·카드 claim 이후 수정이어야 함.
 
-카드 종류: label kind:mockup → 시안 카드, 그 외 → 일반 카드.
+카드 종류: label kind:mockup → 시안 카드, kind:tool → 도구 카드(test 증거), 그 외 → 일반 카드.
 
 예:
   board-done bd-12 ui-worker
@@ -43,6 +48,7 @@ EXIT_OK, EXIT_USAGE, EXIT_ENV, EXIT_STATE, EXIT_ACTOR, EXIT_MISSING, EXIT_INVALI
 
 REQUIRED = {
     "task": ["compile", "editmode"],
+    "tool": ["test"],
     "mockup": ["compile", "editmode", "mapping", "prefab-diff"],
     "epic": ["screenshot", "recording", "review"],
 }
@@ -57,6 +63,7 @@ GUESS = [
 ]
 
 EMPTY_CELL = {"", "-", "—", "미정", "todo", "tbd", "?"}
+RUN_HEAD = re.compile(r"^# board-run kind=(\S+) tree=([0-9a-f]{40}) head=(\S+)", re.M)
 EVIDENCE_RE = re.compile(r"^\s*evidence:\s*(?:([a-z-]+)=)?(\S.*?)(?:\s+commit=([0-9a-f]{7,40}))?\s*$", re.M)
 
 
@@ -115,6 +122,11 @@ def git(repo, *args):
 def branch_head(card):
     """(repo, 브랜치, 끝 해시, 커밋 시각). label 이 없거나 브랜치를 못 읽으면 Fail"""
     repo, branch = os.path.expanduser(bs.label(card, "repo")), bs.label(card, "branch")
+    if branch and card.get("parent") and not (repo and git(repo, "rev-parse", "--verify", "-q", branch + "^{commit}")):
+        # 작업 공간이 반납돼 repo: 폴더가 없으면 epic 의 repo:(주 저장소)에서 브랜치를 읽음
+        epic = bd_json("show", card["parent"]) or []
+        epic = epic[0] if isinstance(epic, list) and epic else epic or {}
+        repo = os.path.expanduser(bs.label(epic, "repo")) or repo
     if not repo or not branch:
         raise Fail(EXIT_MISSING, f"{card['id']} 에 branch:·repo: label 없음(증거를 커밋에 묶을 수 없음)",
                    f"bd label add {card['id']} branch:<브랜치> && bd label add {card['id']} repo:<저장소 경로>")
@@ -122,6 +134,28 @@ def branch_head(card):
     if not head:
         raise Fail(EXIT_ENV, f"{repo} 에서 브랜치 {branch} 를 못 읽음", "repo:·branch: label 확인")
     return repo, branch, head, float(git(repo, "show", "-s", "--format=%ct", head) or 0)
+
+
+def unrecorded_merges(epic, kids):
+    """epic 통합 브랜치(base:..branch:)의 첫 부모 병합 중 board-merge 기록이 없는 것. 기준 브랜치 받아오기 병합은 제외.
+    epic 에 base: label 이 없으면 검사 못 함(빈 목록)"""
+    repo, branch, base = os.path.expanduser(bs.label(epic, "repo")), bs.label(epic, "branch"), bs.label(epic, "base")
+    if not (repo and branch and base) or not git(repo, "rev-parse", "--verify", "-q", base):
+        return []
+    recorded = set()
+    for k in kids:
+        for c in bd_json("comments", k["id"]) or []:
+            t = (c.get("text") or "").split()
+            if len(t) >= 2 and t[0] == "board-merge:":
+                recorded.add(t[1])
+    out = []
+    for m in git(repo, "rev-list", "--first-parent", "--merges", f"{base}..{branch}").split():
+        side = git(repo, "rev-parse", m + "^2")
+        if not side or subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", side, base]).returncode == 0:
+            continue
+        if not any(m.startswith(r) or r.startswith(m) for r in recorded):
+            out.append(m)
+    return out
 
 
 def check_commit(sha, head, branch):
@@ -132,21 +166,18 @@ def check_commit(sha, head, branch):
     return None
 
 
-def gate_compile(card, repo, head):
-    """BOARD_COMPILE_CMD 를 repo 에서 실행해 증거 로그를 만든다. repo 의 HEAD 가 브랜치 끝이어야 함"""
-    cmd = os.environ.get("BOARD_COMPILE_CMD")
+def gate_compile(card, repo, head, warnings):
+    """저장소 설정 compile(또는 BOARD_COMPILE_CMD)을 repo 에서 board-run 으로 실행해 증거 로그를 만든다. repo 의 HEAD 가 브랜치 끝이어야 함"""
+    cmd = os.environ.get("BOARD_COMPILE_CMD") or board_config.get(repo, "compile")
     if not cmd:
+        warnings.append(f"{bs.repo_id(repo) or repo} 의 게이트 컴파일 설정 없음 → 작업자 board-run 로그만 검사. 켜기: {board_config.path()} 에 \"compile\"(양식 board/repos.example.json)")
         return None
     if git(repo, "rev-parse", "HEAD") != head:
         raise Fail(EXIT_STATE, f"{repo} 의 HEAD 가 브랜치 끝 {head[:12]} 가 아님(게이트 컴파일 불가)", f"git -C {repo} checkout <브랜치> 뒤 다시 실행")
     os.makedirs(".evidence", exist_ok=True)
     log = os.path.abspath(os.path.join(".evidence", f"{card['id']}-compile-{head[:12]}.log"))
-    r = subprocess.run(cmd, shell=True, cwd=repo, capture_output=True, text=True)
-    with open(log, "w", encoding="utf-8") as f:
-        f.write(r.stdout + r.stderr + f"\n# exit {r.returncode}\n")
-    if r.returncode != 0 and not re.search(r"\berror CS\d+", r.stdout + r.stderr):
-        with open(log, "a", encoding="utf-8") as f:
-            f.write(f"error CS0000: BOARD_COMPILE_CMD 종료 {r.returncode}\n")
+    run = os.path.join(os.path.dirname(os.path.realpath(__file__)), "board-run")
+    subprocess.run([run, "compile", "--out", log, "--", "bash", "-c", cmd], cwd=repo, capture_output=True, text=True)
     return log
 
 
@@ -155,8 +186,43 @@ def check_file(path, since):
         return f"{path} 없음"
     if os.path.getsize(path) == 0:
         return f"{path} 비어 있음"
-    if os.path.getmtime(path) < since:
+    if not runlog(path) and os.path.getmtime(path) < since:
         return f"{path} 가 카드 claim 이전에 수정됨(낡은 증거)"
+    return None
+
+
+def runlog(path):
+    """board-run 로그 해석. 아니면 None. {kind, tree, head, exit(int|None), results:[(경로, sha256)]}"""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            first = f.readline()
+            if not first.startswith("# board-run "):
+                return None
+            text = first + f.read()
+    except OSError:
+        return None
+    m = RUN_HEAD.match(text)
+    if not m:
+        return None
+    ex = re.findall(r"^# exit (-?\d+)\s*$", text, re.M)
+    res = re.findall(r"^# result (\S+) sha256=([0-9a-f]{64})\s*$", text, re.M)
+    return {"kind": m.group(1), "tree": m.group(2), "head": m.group(3), "exit": int(ex[-1]) if ex else None,
+            "results": res, "text": text}
+
+
+def check_run(path, kind, tree):
+    """board-run 로그가 그 종류·브랜치 끝 내용으로 끝까지 돌아 종료 0 이었는지"""
+    rl = runlog(path)
+    if not rl:
+        return f"{path} 가 board-run 로그가 아님(손으로 쓴 로그 거부). board-run {kind} -- <명령> 으로 다시 만듦"
+    if rl["kind"] != kind:
+        return f"{path} 는 board-run {rl['kind']} 로그(필요: {kind})"
+    if rl["tree"] != tree:
+        return f"{path} 는 다른 내용(tree {rl['tree'][:12]})에서 돌린 결과. 브랜치 끝 tree {tree[:12]} 에서 다시 실행"
+    if rl["exit"] is None:
+        return f"{path} 에 '# exit' 줄 없음(중간에 끊긴 실행)"
+    if rl["exit"] != 0:
+        return f"{path} 명령 종료 {rl['exit']}"
     return None
 
 
@@ -165,24 +231,52 @@ def read(path):
         return f.read()
 
 
-def check_compile(path):
+def check_compile(path, tree):
     errs = [l for l in read(path).splitlines() if re.search(r"\berror CS\d+", l)]
-    return f"{path} 에 컴파일 오류 {len(errs)}줄: {errs[0].strip()[:160]}" if errs else None
+    if errs:
+        return f"{path} 에 컴파일 오류 {len(errs)}줄: {errs[0].strip()[:160]}"
+    return check_run(path, "compile", tree)
 
 
-def check_editmode(path):
+def check_test(path, tree):
+    return check_run(path, "test", tree)
+
+
+def check_xml(path):
     text = read(path)
     m = re.search(r"<test-run\b[^>]*>", text)
     if not m:
         return f"{path} 가 NUnit 결과 xml 이 아님(<test-run> 없음)"
     head = m.group(0)
-    failed = re.search(r'\bfailed="(\d+)"', head)
-    total = re.search(r'\btotal="(\d+)"', head)
-    if total and total.group(1) == "0":
-        return f"{path} 실행된 시험 0개"
-    if (failed and failed.group(1) != "0") or re.search(r'\bresult="Failed', head):
-        return f"{path} 실패한 시험 있음(failed={failed.group(1) if failed else '?'})"
+    num = lambda k: int(re.search(rf'\b{k}="(\d+)"', head).group(1)) if re.search(rf'\b{k}="(\d+)"', head) else None
+    total, passed, failed = num("total"), num("passed"), num("failed")
+    if total is None or passed is None:
+        return f"{path} <test-run> 에 total·passed 없음(형식만 맞춘 결과 거부)"
+    if (failed or 0) != 0 or re.search(r'\bresult="Failed', head):
+        return f"{path} 실패한 시험 있음(failed={failed if failed is not None else '?'})"
+    if total == 0 or passed == 0:
+        return f"{path} 통과한 시험 0개(total={total}, passed={passed}. 전부 건너뜀·필터 불일치)"
     return None
+
+
+def check_editmode(path, tree):
+    """NUnit xml 직접(claim 이후 수정) 또는 board-run editmode --result 로그(내용·sha256 묶음)"""
+    rl = runlog(path)
+    if not rl:
+        return check_xml(path)
+    err = check_run(path, "editmode", tree)
+    if err:
+        return err
+    if not rl["results"]:
+        return f"{path} 에 '# result <xml> sha256=' 줄 없음. board-run editmode --result <xml> -- … 로 다시 실행"
+    xml, sha = rl["results"][-1]
+    if not os.path.isfile(xml):
+        return f"{xml} 없음(로그 {path} 가 가리킴)"
+    import hashlib
+    with open(xml, "rb") as f:
+        if hashlib.sha256(f.read()).hexdigest() != sha:
+            return f"{xml} 가 실행 뒤 바뀜(sha256 불일치)"
+    return check_xml(xml)
 
 
 def check_mapping(path):
@@ -236,14 +330,16 @@ def check_prefab_diff(path):
 CONTENT = {
     "compile": check_compile,
     "editmode": check_editmode,
-    "mapping": check_mapping,
-    "prefab-diff": check_prefab_diff,
-    "review": check_review,
+    "test": check_test,
+    "mapping": lambda p, _t: check_mapping(p),
+    "prefab-diff": lambda p, _t: check_prefab_diff(p),
+    "review": lambda p, _t: check_review(p),
 }
 
 FIX = {
-    "compile": "컴파일을 다시 돌려 로그를 남기고 evidence:compile=<경로> 추가",
-    "editmode": "관련 EditMode 를 돌려 결과 xml 을 남기고 evidence:editmode=<경로> 추가",
+    "compile": "board-run compile -- <컴파일 명령> 을 브랜치 끝에서 돌려 출력된 evidence:compile=… 줄 추가",
+    "editmode": "board-run editmode --result <xml> -- <EditMode 명령> 을 돌려 출력된 evidence:editmode=… 줄 추가",
+    "test": "board-run test -- <시험 명령> 을 브랜치 끝에서 돌려 출력된 evidence:test=… 줄 추가",
     "mapping": "templates/card-mockup.md 의 대응표를 채우고 evidence:mapping=<경로> 추가",
     "prefab-diff": "프리팹 값 비교를 돌려 결과를 남기고 evidence:prefab-diff=<경로> 추가",
     "screenshot": "기능 묶음 화면을 촬영하고 evidence:screenshot=<png> 추가",
@@ -252,7 +348,7 @@ FIX = {
 }
 
 
-def gate(card, actor, epic):
+def gate(card, actor, epic, warnings):
     if epic and card.get("issue_type") != "epic":
         raise Fail(EXIT_STATE, f"{card['id']} 는 epic 이 아님(issue_type={card.get('issue_type')})", "--epic 없이 다시 실행")
     if not epic and card.get("issue_type") == "epic":
@@ -267,16 +363,26 @@ def gate(card, actor, epic):
         kids = bd_json("children", card["id"]) or []
         open_kids = [k["id"] for k in kids if k.get("status") != "closed"]
         if open_kids:
-            raise Fail(EXIT_STATE, f"하위 카드 {len(open_kids)}개 안 닫힘: {', '.join(open_kids[:5])}", "하위 카드를 board-done 으로 먼저 닫음")
+            raise Fail(EXIT_STATE, f"하위 카드 {len(open_kids)}개 안 닫힘: {', '.join(open_kids[:5])}", "하위 카드를 board-merge 로 먼저 닫음")
+        direct = [k["id"] for k in kids if not str(k.get("close_reason") or "").startswith("board-done:")]
+        if direct:
+            raise Fail(EXIT_STATE, f"하위 카드 {len(direct)}개가 완료 게이트 없이 닫힘(bd close 직접): {', '.join(direct[:5])}",
+                       "bd reopen <id> 뒤 board-merge <id> <작업자> 로 다시 닫음")
+        stray = unrecorded_merges(card, kids)
+        if stray:
+            raise Fail(EXIT_STATE, f"통합 브랜치에 board-merge 기록 없는 병합 {len(stray)}개: {', '.join(m[:12] for m in stray[:5])}",
+                       "직접 git merge 한 카드 브랜치를 board-merge <카드> <작업자> 로 다시 실행(범위·증거 검사 뒤 기록됨)")
         kind = "epic"
     else:
-        kind = "mockup" if "kind:mockup" in (card.get("labels") or []) else "task"
+        labs = card.get("labels") or []
+        kind = "mockup" if "kind:mockup" in labs else "tool" if "kind:tool" in labs else "task"
 
     repo, branch, head, head_time = branch_head(card)
+    tree = git(repo, "rev-parse", head + "^{tree}")
     since = max(parse_time(card.get("started_at") or card["created_at"]), head_time)
     found = collect_evidence(card)
-    if kind != "epic":
-        log = gate_compile(card, repo, head)
+    if "compile" in REQUIRED[kind]:
+        log = gate_compile(card, repo, head, warnings)
         if log:
             found.setdefault("compile", []).append((log, head))
     checks = []
@@ -294,7 +400,7 @@ def gate(card, actor, epic):
                 err = check_file(p, since)
             code = EXIT_MISSING if err else EXIT_INVALID
             if not err and need in CONTENT:
-                err = CONTENT[need](p)
+                err = CONTENT[need](p, tree)
             checks.append({"kind": need, "path": p, "ok": not err, **({"code": code, "cause": err, "fix": FIX[need]} if err else {})})
     return kind, checks
 
@@ -325,6 +431,7 @@ def main():
     ap.add_argument("actor", help="카드를 집은 작업자 이름(BD_ACTOR 로 씀)")
     ap.add_argument("--epic", action="store_true", help="기능 묶음(epic) 완료. 하위 카드 전부 닫힘 + 화면 촬영·녹화 요구")
     ap.add_argument("--dry-run", action="store_true", help="검사만 하고 닫지 않음")
+    ap.add_argument("--user-ok", default=None, metavar="원문", help="--epic: 사용자 검수 통과 원문. stage:review 를 떼고 원문을 남김")
     ap.add_argument("--json", action="store_true", help="결과를 JSON 한 개로 stdout 에 출력")
     try:
         a = ap.parse_args()
@@ -340,12 +447,25 @@ def main():
             raise Fail(EXIT_ENV, f"작업판 폴더 {board} 없음", "BOARD_DIR=<작업판 경로> board-done <id> <작업자>")
         os.chdir(board)
         card = load_card(a.card_id)
+        if a.user_ok is not None:
+            if not a.epic or not a.user_ok.strip():
+                raise Fail(EXIT_USAGE, "--user-ok 는 --epic 과 사용자 원문이 필요", 'board-done --epic <id> <이름> --user-ok "<원문>"')
+            if "stage:review" not in (card.get("labels") or []):
+                raise Fail(EXIT_STATE, f"{a.card_id} 는 검수 대기(stage:review)가 아님", "board-done --epic 으로 먼저 닫음")
+            bd("comments", "add", a.card_id, f"user-ok: {a.user_ok}", actor=a.actor)
+            bd("label", "remove", a.card_id, "stage:review", actor=a.actor)
+            out.update(ok=True, closed=False, user_ok=True, exit=EXIT_OK)
+            print(json.dumps(out, ensure_ascii=False) if a.json else f"검수 통과 기록: {a.card_id}")
+            sys.exit(EXIT_OK)
         if card.get("status") == "closed":
             out.update(ok=True, closed=False, already=True, exit=EXIT_OK)
             print(json.dumps(out, ensure_ascii=False) if a.json else f"이미 닫힘: {a.card_id}")
             sys.exit(EXIT_OK)
-        kind, checks = gate(card, a.actor, a.epic)
-        out.update(kind=kind, checks=checks)
+        warnings = []
+        kind, checks = gate(card, a.actor, a.epic, warnings)
+        out.update(kind=kind, checks=checks, warnings=warnings)
+        for w in warnings if not a.json else []:
+            print(f"경고: {w}", file=sys.stderr)
         bad = [c for c in checks if not c["ok"]]
         if bad:
             code = min(c["code"] for c in bad)
@@ -357,6 +477,8 @@ def main():
                 raise Fail(EXIT_CLOSE, f"bd close 실패: {(r.stderr or r.stdout).strip()[:300]}", "메시지 원인 해소 뒤 다시 실행")
         out.update(ok=True, closed=not a.dry_run, exit=EXIT_OK)
         if a.epic and not a.dry_run:
+            # 사용자 최종 검수 대기로 표시(board-claim 의 검수 대기 상한이 셈). 검수 답이 오면 --user-ok 로 뗌
+            bd("label", "add", a.card_id, "stage:review", actor=a.actor)
             out["feature_close"] = spawn_feature_close(card)
     except Fail as f:
         out.update(ok=False, closed=False, exit=f.code, cause=f.cause, fix=f.fix)

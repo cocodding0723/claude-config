@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PreToolUse(Write|Edit|MultiEdit|NotebookEdit|Bash): 계획 승인 기록 쓰기는 메인(ORCA_ROLE=main)만. 판정은 lib/plan_write_guard.py, 실행 실패는 ask.
+# PreToolUse(Write|Edit|MultiEdit|NotebookEdit|Bash): 계획 승인 기록은 메인만, 승인 원장·세션 기록·board-approve 는 모든 세션 금지. 판정은 lib/plan_write_guard.py(쓰기 대상 해석), 실행 실패는 ask.
 input=$(cat)
 GUARD_DIR=$(cd "$(dirname "$(perl -MCwd=realpath -e 'print realpath shift' "${BASH_SOURCE[0]}")")" && pwd -P)
 out=$(printf '%s' "$input" | python3 -I "$GUARD_DIR/lib/plan_write_guard.py" 2>/dev/null) \

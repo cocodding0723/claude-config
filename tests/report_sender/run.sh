@@ -3,4 +3,6 @@
 # 사용: tests/report_sender/run.sh [unittest 인자]   종료 코드: 0 전부 통과, 1 실패
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd -P)
-cd "$HERE" && exec python3 -m unittest discover -v -s . -p 'test_*.py' "$@"
+export BOARD_INCIDENTS="${TMPDIR:-/tmp}/report-sender-incidents.$$.jsonl"   # 실제 작업판 사건 기록 보호
+trap 'rm -f "$BOARD_INCIDENTS"' EXIT
+cd "$HERE" && python3 -m unittest discover -v -s . -p 'test_*.py' "$@"

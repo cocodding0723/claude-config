@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""사용자 터미널 승인 기록. 사용자가 Claude Code 프롬프트에서 '!' 로 직접 실행하는 명령(모델 실행은 훅이 거부).
+Slack 봇이 꺼져 있을 때 draft PR 생성 승인을 남기는 길. 기록은 <허브>/user-approvals.jsonl(세션에서 쓰기 금지 원장)에
+한 줄 추가하고, PR 가드는 그 세션 기록(projects/*/<세션>.jsonl)에 사용자가 친 같은 '!' 명령이 있을 때만 인정함."""
+import argparse
+import datetime
+import json
+import os
+import re
+import subprocess
+import sys
+
+EPILOG = """\
+사용(Claude Code 프롬프트에서):
+  ! ~/orca/board/bin/board-approve Basakansoft/LoveRevolutionMaker sprint-20261117/fix-x "draft PR 올려"
+  ! ~/orca/board/bin/board-approve . "$(git branch --show-current)" "올려"      # 저장소를 현재 폴더 origin 으로
+  ! ~/orca/board/bin/board-approve --glob --base dev Basakansoft/LoveRevolutionMaker 'sprint-*/fix-lrm-*' "버그 Fix PR은 승인할게"
+인정 범위: 정확한 브랜치는 그 브랜치 draft PR 생성, 24시간. --glob 은 이름이 패턴에 맞는 브랜치의 draft PR 생성(상시 승인), 7일.
+--base 를 주면 PR 의 --base 가 그 값일 때만 인정. ready 전환·병합은 어느 쪽도 인정하지 않음.
+종료: 0 기록 / 2 사용법·세션 밖 실행(CLAUDE_CODE_SESSION_ID 없음)·저장소 해석 실패 / 3 기록 실패
+환경: LRM_HUB_DIR(기본 ~/.config/lrm-hubs)
+"""
+
+
+def origin(path):
+    try:
+        url = subprocess.run(["git", "-C", path, "config", "--get", "remote.origin.url"], capture_output=True, text=True).stdout.strip()
+    except OSError:
+        return ""
+    m = re.search(r"[:/]([\w.\-]+/[\w.\-]+?)(?:\.git)?/?$", url)
+    return m.group(1) if m else ""
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="board-approve", description="사용자 터미널 승인 기록(draft PR 생성).",
+                                 epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("repo", help="owner/repo 또는 저장소 경로(. 이면 현재 폴더 origin)")
+    ap.add_argument("branch", help="PR 을 올릴 브랜치")
+    ap.add_argument("text", help="사용자 원문(그대로 기록)")
+    ap.add_argument("--glob", action="store_true", help="branch 를 패턴(* ? [])으로 보고 상시 승인(7일)")
+    ap.add_argument("--base", default="", help="PR 기준 브랜치 제한(예: dev)")
+    try:
+        a = ap.parse_args()
+    except SystemExit as e:
+        sys.exit(0 if e.code == 0 else 2)
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    if not sid:
+        print("거부: Claude Code 세션 밖. 조치: 세션 프롬프트에서 '! board-approve …' 로 실행", file=sys.stderr)
+        sys.exit(2)
+    repo = a.repo if re.fullmatch(r"[\w.\-]+/[\w.\-]+", a.repo) and not os.path.isdir(a.repo) else origin(os.path.expanduser(a.repo))
+    if not repo:
+        print(f"거부: 저장소 {a.repo!r} 해석 실패. 조치: owner/repo 로 지정", file=sys.stderr)
+        sys.exit(2)
+    if not a.text.strip() or not a.branch.strip():
+        print("거부: 브랜치·원문이 비어 있음", file=sys.stderr)
+        sys.exit(2)
+    hub = os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    rec = {"type": "terminal", "kind": "pr", "at": now.isoformat(timespec="seconds"), "ts": now.timestamp(),
+           "repo": repo, "repo_arg": a.repo, "branch": a.branch, "text": a.text, "session_id": sid, "cwd": os.getcwd(),
+           "glob": a.glob, "base": a.base, "draft": True}
+    try:
+        os.makedirs(hub, exist_ok=True)
+        with open(os.path.join(hub, "user-approvals.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except OSError as e:
+        print(f"실패: 기록 못 씀({e})", file=sys.stderr)
+        sys.exit(3)
+    span = "상시 승인 7일" if a.glob else "24시간"
+    print(f"기록: {repo} {a.branch}{' → ' + a.base if a.base else ''} draft PR 생성 승인({span}). 원문: {a.text}")
+
+
+if __name__ == "__main__":
+    main()

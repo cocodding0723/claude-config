@@ -506,12 +506,32 @@ def warn_stop(conf: Conf, rep: dict, st: dict, why: str, permanent: "bool | None
                + (["--thread", thread] if thread else []) + [msg], deadline)
 
 
+def incident(kind: str, cause: str, **fields) -> None:
+    """사건 자동 기록(작업판 incidents.jsonl, 형식은 board/lib/incident.py). 작업판이 없거나 못 써도 전송 흐름은 그대로"""
+    path = os.environ.get("BOARD_INCIDENTS") or ""
+    if not path:
+        board = os.environ.get("BOARD_DIR") or os.path.expanduser("~/orca/board")
+        path = os.path.join(board, "incidents.jsonl") if os.path.isdir(board) else ""
+    if not path:
+        return
+    rec = {"at": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime()), "kind": kind, "cause": safe_text(cause)[:500],
+           "source": "report_sender", **fields}
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
 def stop_report(conf: Conf, rep: dict, st: dict, why: str, permanent: bool, deadline: float) -> None:
     """보고를 재시도 대상에서 빼고(bad) 경고 1건. 경고 전송이 실패하면 다음 회차에 경고만 다시 시도"""
     st["bad"][rep["id"]] = int(time.time())
     rs = st["reports"].setdefault(rep["id"], {})
     rs["error"], rs["stop_permanent"] = why, permanent  # 경고 재시도에도 같은 원인 분류를 쓰도록 저장
     save_state(conf.state, st)
+    incident("report_stopped", ("입력 오류: " if permanent else f"{conf.fail_limit}회 연속 실패: ") + str(why),
+             hub=rep.get("hub", ""), report=rep.get("id", ""))
     warn_pending(conf, rep, st, deadline)
 
 
@@ -563,6 +583,7 @@ def halt(conf: Conf, err: StateCorrupt, out: dict, dry: bool, deadline: float) -
     sig = state_signature(conf.state)
     if dry or read_text(marker) == sig:
         return out
+    incident("report_stopped", f"상태 파일 {err}", state=conf.state)
     msg = f"허브 보고 전송 중단\n\n- 원인: 상태 파일 {err}\n- 결과: 보고 전송 멈춤(같은 보고 재게시 방지)\n- 조치: {out['guide']}"
     try:
         run_notify(conf, ["--kind", "warn", "--from", "report_sender", "--state", "halted", msg], deadline)  # 회차 공통 deadline 을 지킴

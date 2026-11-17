@@ -1,1 +1,14 @@
-_chain
+#!/usr/bin/env bash
+# Global post-commit: repo-local post-commit 먼저, 이어서 되돌림 커밋이면 작업판 사건 기록(board-incident revert).
+# 임시 폴더 저장소(시험)는 BOARD_INCIDENTS 를 명시했을 때만 기록. 기록 실패는 커밋 결과에 영향 없음.
+HOOK_NAME=post-commit "$(dirname "$0")/_chain" "$@"; rc=$?
+subj=$(git log -1 --format=%s 2>/dev/null)
+case "$subj" in
+  Revert\ *|revert:*|revert\(*)
+    top=$(git rev-parse --show-toplevel 2>/dev/null)
+    case "$top" in /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*) [ -n "${BOARD_INCIDENTS:-}" ] || exit "$rc" ;; esac
+    b="${BOARD_DIR:-$HOME/orca/board}/bin/board-incident"
+    [ -x "$b" ] && "$b" revert "되돌림 커밋: $subj" source=post-commit "repo=$top" "commit=$(git rev-parse --short HEAD)" "branch=$(git symbolic-ref --short -q HEAD)" >/dev/null 2>&1
+    ;;
+esac
+exit "$rc"

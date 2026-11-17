@@ -4,6 +4,7 @@
 기능 통합 브랜치: {{BRANCH}} (기준 {{BASE}}). 작업판 epic: {{EPIC}} (label feature:{{SLUG}}). 작업판 위치: ~/orca/board
 카드 쪼개기:
 - 화면·파일 단위로 카드를 쪼갠다. bd create --parent {{EPIC}} -l feature:{{SLUG}},file:<저장소 상대 경로>,branch:<작업자 브랜치>,repo:<작업자 작업 공간> 로 만든다. 범위 검사 기준은 epic 의 branch:{{BRANCH}} 를 따른다.
+- 카드 설명 첫 칸 '## 지시(사용자 원문 + 뒤 지시)' 에 사용자 원문과 그 뒤 추가 지시를 그대로 옮긴다(비면 board-claim 거부). 추가 지시가 오면 이 칸에 덧붙여 새 작업자에게 준다.
 - 같은 file: label 이 겹치는 카드는 동시에 진행하지 않는다. 독립 카드는 동시에 띄운다.
 - 순차 카드는 앞 카드를 맡은 작업자가 이어 받는다(새 작업자를 띄우지 않음). 모든 카드는 공통 결정 칸을 따른다.
 작업자:
@@ -11,12 +12,12 @@
 - 작업 공간은 create_worker_ws.sh --hub <이 허브> --branch <작업자 브랜치> --base {{BRANCH}} 로만 만든다.
 완료:
 - 시안 카드는 board/templates/card-mockup.md 대응표 작성이 첫 단계다.
-- 증거 줄은 evidence:<종류>=<경로> commit=<작업자 브랜치 끝 해시> 로 단다. 커밋이 바뀌면 증거를 다시 만든다.
+- 증거 로그는 ~/orca/board/bin/board-run <compile|editmode> -- <명령> 으로 만들고 출력된 evidence:<종류>=<경로> commit=<작업자 브랜치 끝 해시> 줄을 단다. 손으로 쓴 로그는 거부된다. 내용이 바뀌면 다시 만든다.
 - bd close 를 직접 치지 않는다. 카드는 board-merge 가, 묶음은 board-done --epic 이 닫는다.
 - 화면 촬영·녹화와 다른 모델 검수 판정(evidence:review=<json>, reviewer_model≠author_model, verdict pass)은 기능 묶음당 1회 모아 epic 에 단다.
 - Unity 실행은 ~/.config/lrm-hubs/unity-run --name "{{SLUG}}:<작업>" -- <명령> 으로만 한다. 슬롯 직접 acquire/release 금지.
 - 머지는 이 허브 작업 공간({{BRANCH}} 체크아웃)에서 ~/orca/board/bin/board-merge <카드> <작업자> 한 줄로만 한다. 범위 검사 → 증거 사전 검사 → 시험 병합(BOARD_MERGE_VERIFY 로 컴파일) → --no-ff 커밋 → 카드 닫기 순이고 실패하면 통합 브랜치는 그대로다. 종료 4 는 범위 밖, 6 증거, 7 충돌, 8 검증 실패: 작업자에게 되돌린다. git merge 를 직접 치지 않는다.
-- 기능 통합 브랜치 → dev 는 board-merge-check <epic 하위 카드> {{BRANCH}} --base dev 확인 뒤 사용자 직접 승인.
+- 기능 통합 브랜치 → dev 는 board-merge-check --epic {{EPIC}} {{BRANCH}} --base {{BASE}} 확인(하위 카드 범위 합집합, 종료 4면 반영 금지) 뒤 사용자 직접 승인.
 - 끝난 작업자는 release_ws.sh --dispatch <id> 로 반납한다.
 Slack 피드백: 이 기능의 첫 Slack 보고를 올리면 그 ts 로 ~/.config/lrm-hubs/feedback_route.py open-thread --epic {{EPIC}} --ts <ts> 를 실행한다. 그 스레드의 사용자 답글은 메인을 거치지 않고 epic 코멘트와 상자 hub-inbox/feat-{{SLUG}}.jsonl 로 원문 그대로 온다. 작업 단계마다 ~/.config/lrm-hubs/main_inbox.py read --since-offset --box feat-{{SLUG}} 로 읽는다(첨부는 저장 경로).
 사실 주장: git 로그·파일·명령 출력 근거가 있을 때만 한다. 근거 경로나 해시를 같이 적는다. 추정은 추정이라고 적는다.

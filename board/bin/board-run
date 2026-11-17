@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# 증거 로그 생성기. 명령을 실행하고 그 순간 작업 트리 내용(tree 해시)·종료 코드를 로그에 묶음.
+# board-done 은 이 머리줄의 tree 가 브랜치 끝 커밋의 tree 와 같을 때만 증거로 인정함(시험 → 커밋 순서도 인정, 낡은 증거 거부).
+set -uo pipefail
+
+usage() {
+  cat <<'H'
+사용: board-run <compile|editmode|test> [--out <로그>] [--result <결과 파일>] -- <명령…>
+  현재 폴더(git 작업 트리)에서 명령을 실행하고 로그를 남김. 마지막 줄에 증거 줄을 출력함.
+  로그 머리줄: # board-run kind=<종류> tree=<작업 트리 tree 해시> head=<HEAD>
+  로그 끝줄:   # exit <종료 코드>
+  --result: 명령이 만든 결과 파일(예: EditMode xml)의 sha256 을 로그에 묶음. 증거 줄은 로그를 가리킴.
+  tree 는 추적 파일 + 무시되지 않은 새 파일의 현재 내용. 커밋 전에 돌려도 그대로 커밋하면 같은 값.
+종료: 명령의 종료 코드 / 2 사용법·git 작업 트리 아님
+환경: BOARD_DIR(기본 ~/orca/board, 로그 기본 위치 <BOARD_DIR>/.evidence)
+예:
+  board-run compile -- bash Tools/compile.sh
+  board-run editmode --result /tmp/em.xml -- ~/.config/lrm-hubs/unity-run --name ui:em -- "$UNITY" -batchmode -runTests -testResults /tmp/em.xml
+  board-run test -- bash tests/board_claim/run.sh
+H
+}
+
+KIND="${1:-}"; [ $# -gt 0 ] && shift
+case "$KIND" in
+  -h|--help) usage; exit 0 ;;
+  compile|editmode|test) ;;
+  *) usage >&2; exit 2 ;;
+esac
+OUT="" RESULT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --out) OUT="${2:?--out 값 필요}"; shift 2 ;;
+    --result) RESULT="${2:?--result 값 필요}"; shift 2 ;;
+    --) shift; break ;;
+    *) echo "오류: 알 수 없는 인자 '$1'. 명령 앞에 -- 필요" >&2; exit 2 ;;
+  esac
+done
+[ $# -gt 0 ] || { echo "오류: 실행할 명령 없음. 예: board-run compile -- bash Tools/compile.sh" >&2; exit 2; }
+TOP=$(git rev-parse --show-toplevel 2>/dev/null) || { echo "오류: $(pwd) 는 git 작업 트리가 아님. 저장소 안에서 실행" >&2; exit 2; }
+
+worktree_tree() {
+  local idx; idx=$(mktemp "${TMPDIR:-/tmp}/board-run-idx.XXXXXX") || return 1
+  cp "$(git rev-parse --git-path index)" "$idx" 2>/dev/null || :
+  (cd "$TOP" && GIT_INDEX_FILE="$idx" git add -A . >/dev/null 2>&1 && GIT_INDEX_FILE="$idx" git write-tree)
+  rm -f -- "$idx"
+}
+
+TREE=$(worktree_tree) || { echo "오류: 작업 트리 tree 계산 실패" >&2; exit 2; }
+HEAD=$(git rev-parse -q --verify HEAD || echo none)
+if [ -z "$OUT" ]; then
+  dir="${BOARD_DIR:-$HOME/orca/board}/.evidence"; mkdir -p "$dir"
+  OUT="$dir/$KIND-${TREE:0:12}-$(date +%Y%m%d%H%M%S)-$$.log"
+fi
+OUT=$(cd "$(dirname "$OUT")" && pwd -P)/$(basename "$OUT")
+{
+  echo "# board-run kind=$KIND tree=$TREE head=$HEAD"
+  printf '# cmd:'; printf ' %q' "$@"; echo
+} > "$OUT"
+"$@" >> "$OUT" 2>&1; RC=$?
+if [ -n "$RESULT" ]; then
+  if [ -s "$RESULT" ]; then echo "# result $(cd "$(dirname "$RESULT")" && pwd -P)/$(basename "$RESULT") sha256=$(shasum -a 256 "$RESULT" | cut -d' ' -f1)" >> "$OUT"
+  else echo "# result $RESULT 없음" >> "$OUT"; fi
+fi
+echo "# exit $RC" >> "$OUT"
+echo "evidence:$KIND=$OUT commit=$HEAD"
+[ "$TREE" = "$(git rev-parse -q --verify 'HEAD^{tree}' 2>/dev/null)" ] || echo "참고: 커밋 안 된 변경 포함. 이 내용 그대로 커밋하면 commit= 을 새 커밋 해시로 바꿔 달 것" >&2
+exit "$RC"

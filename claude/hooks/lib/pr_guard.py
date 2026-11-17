@@ -33,7 +33,8 @@ API_CREATE_REASON = "gh api 로 새 PR 생성 — 승인 기록을 확인할 수
 CREATE_APPROVAL_REASON = ("새 PR 생성은 사용자 승인 뒤에만(사용자 11-16) — [{repo} {branch}] 결정 카드 {did} 의 1번 답 필요. 예: "
                           "slack_notify.sh --kind decide --decision-id {did} --options '1=PR 올리기 => draft PR 생성,2=보류 => 로컬 유지' "
                           "--recommend 1 --no-doc $'{repo} {branch} PR 생성 승인\\n배경: …\\n용어: 없음'. 또는 계획서에 이 PR 을 추가한 뒤 컨펌 "
-                          "→ plan-approvals/<plan-id>.json 의 prs 에 {{repo, branch}} 기록")
+                          "→ plan-approvals/<plan-id>.json 의 prs 에 {{repo, branch}} 기록. Slack 봇이 꺼져 있으면 사용자에게 프롬프트에서 "
+                          "'! ~/orca/board/bin/board-approve {repo} {branch} \"<원문>\"' 한 줄을 직접 치도록 안내(모델은 실행하지 않음)")
 
 
 class Unknown(Exception):
@@ -182,12 +183,16 @@ def check_create(toks, flags, repo, here):
     """gh pr create: --draft 필수 + D-PR<해시> 승인. 저장소·브랜치를 못 풀면 Unknown"""
     if not has_draft(flags):
         return "deny", CREATE_REASON
-    head = ""
+    head = base = ""
     for i, t in enumerate(toks):
         if t in ("-H", "--head") and i + 1 < len(toks):
             head = toks[i + 1]
         elif t.startswith("--head="):
             head = t.split("=", 1)[1]
+        elif t in ("-B", "--base") and i + 1 < len(toks):
+            base = toks[i + 1]
+        elif t.startswith("--base="):
+            base = t.split("=", 1)[1]
     head = head.split(":", 1)[-1]  # owner:branch 형태
     if here is None and not (repo and head):
         raise Unknown("cd 경로에 변수·치환 — 저장소·브랜치를 알 수 없음(-R·--head 로 지정)")
@@ -195,7 +200,7 @@ def check_create(toks, flags, repo, here):
     head = head or current_branch(here)
     if not REPO_RE.fullmatch(repo or "") or not head:
         raise Unknown("새 PR 의 저장소·브랜치를 알 수 없음(-R·--head 로 지정)")
-    if plan_ok(pa.find_pr, repo, head):
+    if plan_ok(pa.find_pr, repo, head, base):
         return None
     did = pr_create_id(repo, head)
     if not decided(did, repo):

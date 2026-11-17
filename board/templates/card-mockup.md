@@ -4,6 +4,13 @@ labels: `kind:mockup` · `file:<고칠 경로 접두>`
 
 순서: 독립 | 순차(<앞 카드 id>) — 계획서 카드 표와 같게. 순차 카드는 앞 카드 작업자가 이어 받는다.
 
+## 지시(사용자 원문 + 뒤 지시)
+
+비우면 board-claim 이 거부한다. 요약하지 말고 그대로 옮긴다. 추가 지시가 오면 이 칸에 덧붙이고 새 작업자에게 준다.
+
+- 원문(<날짜>): "<사용자 말 그대로>"
+- 뒤 지시(<날짜>): "<추가 지시 그대로>"
+
 ## 1. 대응표 (첫 단계, 비우면 완료 불가)
 
 대응표는 `<작업 공간>/evidence/<카드 id>/mapping.md` 에 이 표 그대로 두고 카드에 `evidence:mapping=<경로>` 줄을 단다.
@@ -20,8 +27,8 @@ labels: `kind:mockup` · `file:<고칠 경로 접두>`
 - [ ] 프리팹 배치·값 반영
 - [ ] 연결 기능 코드 연결
 - [ ] 프리팹 값 비교 실행 → `evidence:prefab-diff=<경로>` (불일치 0)
-- [ ] 컴파일 → `evidence:compile=<로그 경로>`
-- [ ] 관련 EditMode → `evidence:editmode=<결과 xml 경로>`
+- [ ] 컴파일 → `~/orca/board/bin/board-run compile -- <컴파일 명령>` 이 출력한 `evidence:compile=… commit=…` 줄
+- [ ] 관련 EditMode → `board-run editmode --result <xml> -- <EditMode 명령>` 이 출력한 `evidence:editmode=…` 줄(통과 1개 이상, 전부 건너뜀 거부)
 
 ## 3. 완료
 
