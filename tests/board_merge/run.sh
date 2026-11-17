@@ -73,6 +73,17 @@ branch w-lab src/a/la.cs 1; branch w-oth src/a/ot.cs 1; c7=$(card 다른브랜�
 before=$(into); expect "--branch 가 카드 label 과 다르면 2" 2 "$BIN" "$c7" w1 --repo "$R" --branch w-oth; unchanged "$before" "--branch 불일치"
 expect "--branch 가 label 과 같으면 0" 0 "$BIN" "$c7" w1 --repo "$R" --branch w-lab
 
+# 동시 병합: 뒤 병합은 앞 병합(시험 병합 중)이 끝날 때까지 잠금에서 기다림
+branch w-c1 src/a/c1.cs 1; branch w-c2 src/a/c2.cs 1
+k1=$(card 동시1 w-c1 src/a/c1.cs); k2=$(card 동시2 w-c2 src/a/c2.cs); claim "$k1" w1; claim "$k2" w2; evidence "$k1" w-c1; evidence "$k2" w-c2
+BOARD_MERGE_VERIFY='sleep 4' "$BIN" "$k1" w1 --repo "$R" >"$SB/o1" 2>&1 & bg=$!
+sleep 2; "$BIN" "$k2" w2 --repo "$R" >"$SB/o2" 2>&1; r2=$?; wait "$bg"; r1=$?
+[ "$r1" = 0 ] && [ "$r2" = 0 ] && ok "동시 병합 둘 다 성공(뒤는 잠금 대기)" || ko "동시 병합" "rc $r1/$r2: $(tail -2 "$SB/o2")"
+branch w-c3 src/a/c3.cs 1; k3=$(card 대기초과 w-c3 src/a/c3.cs); claim "$k3" w1; evidence "$k3" w-c3
+mkdir "$R/.git/board-merge.lock"; echo $$ > "$R/.git/board-merge.lock/pid"
+expect "살아 있는 잠금은 BOARD_MERGE_WAIT 뒤 3" 3 env BOARD_MERGE_WAIT=2 "$BIN" "$k3" w1 --repo "$R"
+rm -rf "$R/.git/board-merge.lock"
+
 expect "--help 0" 0 "$BIN" --help
 expect "인자 부족 2" 2 "$BIN" onlycard
 

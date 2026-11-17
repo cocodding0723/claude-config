@@ -48,7 +48,6 @@ BOARD="${BOARD_DIR:-$HOME/orca/board}"
 REPO=$(cd "$REPO" 2>/dev/null && pwd -P) || die "저장소 폴더 없음"
 git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || die "$REPO 는 git 저장소가 아님"
 INTO=$(git -C "$REPO" symbolic-ref --short -q HEAD) || die "$REPO 가 브랜치에 있지 않음(detached). 통합 브랜치를 체크아웃"
-[ -z "$(git -C "$REPO" status --porcelain --untracked-files=no)" ] || die "$REPO 에 커밋 안 된 변경 있음. 정리 뒤 다시 실행"
 
 # 카드: 상태·닫힌 사유·branch: label·board-merge 기록
 CARD_INFO=$(cd "$BOARD" && { bd show "$CARD" --json; echo; bd comments "$CARD" --json 2>/dev/null; } | python3 -c '
@@ -81,12 +80,15 @@ LOCK="$(git -C "$REPO" rev-parse --absolute-git-dir)/board-merge.lock"
 waited=0
 until mkdir "$LOCK" 2>/dev/null; do
   owner=$(cat "$LOCK/pid" 2>/dev/null)
-  if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then rm -rf -- "${LOCK:?}"; continue; fi
+  # 죽은 잠금 회수는 mv 로 이름을 바꾼 한 명만 지움(둘이 동시에 회수해 둘 다 잡는 경쟁 방지)
+  if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null && mv "$LOCK" "$LOCK.stale.$$" 2>/dev/null; then rm -rf -- "${LOCK:?}.stale.$$"; continue; fi
   [ "$waited" -ge "${BOARD_MERGE_WAIT:-600}" ] && die "병합 잠금 대기 초과($LOCK, pid ${owner:-?}). 다른 병합 확인"
   sleep 2; waited=$((waited + 2))
 done
 echo $$ > "$LOCK/pid"
 trap 'rm -rf -- "${LOCK:?}"' EXIT
+# 작업 트리 검사는 잠금 안에서: 앞 병합의 시험 병합 상태를 '더러움'으로 오판하지 않게
+[ -z "$(git -C "$REPO" status --porcelain --untracked-files=no)" ] || die "$REPO 에 커밋 안 된 변경 있음. 정리 뒤 다시 실행"
 
 # 이미 들어간 브랜치: board-merge 기록이 있으면 완료만(종료 9 재실행), 없으면 git merge 직접 병합 → 들인 병합 커밋의 첫 부모 대비로 검사
 BASE=$INTO ALREADY=0
