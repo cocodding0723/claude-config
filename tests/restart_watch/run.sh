@@ -262,5 +262,16 @@ chk "소켓: 잠금 보유 중에는 아직 resume 하지 않음" '[ ! -s "$FAKE
 if wf k5 out '후속 동작 rc=0' ; then chk "소켓: 잠금 해제 뒤 이어서 처리 → resume_all.sh --only alpha --only beta 1회" '[ "$(cat "$FAKE_RESUME_LOG")" = "--only alpha --only beta" ]' "$(cat "$FAKE_RESUME_LOG")"; else ko "소켓 이어서 처리" "$(tail -3 "$SB/k5/out")"; fi
 kill "$(cat "$SB/k5/pid")" 2>/dev/null
 
+# ---- 휴면 허브: #dormant 줄이 있는 허브는 이어받기 카드 대상에서 제외(판정은 resume_all.sh --list) ----
+mkst alpha "$NOW" '["기능 A 구현 LRM-266","기능 B"]'; mkst beta "$NOW" '["<!channel> 베타 작업"]'
+tg() { PYTHONPATH="$SCRIPTS" python3 -c "import restart_watch as w;print(','.join(h['slug'] for h in w.targets()))"; }
+chk "휴면 표식 없음: alpha·beta 모두 대상" '[ "$(tg)" = "alpha,beta" ]' "$(tg)"
+cp "$HUBS_TSV" "$SB/hubs.keep"; printf '#dormant\tbeta\t기능 팀으로 대체\n' >> "$HUBS_TSV"
+chk "휴면 beta 는 대상에서 제외(진행 작업이 있어도)" '[ "$(tg)" = "alpha" ]' "$(tg)"
+chk "휴면 표식이 카드 본문에도 반영(beta 줄 없음)" 'PYTHONPATH="$SCRIPTS" python3 -c "import restart_watch as w;t=w.card_text({\"startedAt\":\"\"},w.targets());assert \"beta\" not in t and \"alpha\" in t"'
+printf '#dormant\tbetaa\t오타\n' >> "$HUBS_TSV"
+chk "휴면 판정 실패(표식 오타)는 기존처럼 전부 대상" '[ "$(tg)" = "alpha,beta" ]' "$(tg)"
+cp "$SB/hubs.keep" "$HUBS_TSV"
+
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

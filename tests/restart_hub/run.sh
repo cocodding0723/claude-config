@@ -118,5 +118,24 @@ chk "--help(restart_hub·hub_dups)" 'bash "$RH" --help | grep -q "종료 코드"
 chk "인자 부족: 종료 코드 2" 'bash "$RH" >/dev/null 2>&1; [ $? = 2 ]'
 chk "HANDOFF.md 없음: 종료 코드 2" 'bash "$RH" term_old1 coord-none-hub x >/dev/null 2>&1; [ $? = 2 ]'
 
+# 11) 휴면 허브: 표식(#dormant)이 있으면 거부, --wake 면 통과. 판정은 resume_all.sh --is-dormant 가 소유
+printf 'x\tX\t-\t-\t-\ny\tY\t-\t-\t-\n#dormant\tx\t기능 팀으로 대체\n' > "$SB/dorm.tsv"
+setup
+OUT=$(HUBS_TSV="$SB/dorm.tsv" bash "$RH" term_old1 coord-x-hub x 2>"$SB/err"); RC=$?
+chk "휴면 허브: 종료 코드 3 + 원인·조치, 기동·닫기 호출 0" '[ "$RC" = 3 ] && grep -q "휴면(기능 팀으로 대체)" "$SB/err" && grep -q -- "--wake" "$SB/err" && [ ! -s "$SB/orca.log" ]' "rc=$RC"
+setup
+OUT=$(HUBS_TSV="$SB/dorm.tsv" bash "$RH" --wake term_old1 coord-x-hub x 2>"$SB/err"); RC=$?
+chk "--wake: 휴면 허브도 재시작(새 핸들 출력)" '[ "$RC" = 0 ] && [ "$OUT" = term_new ]' "rc=$RC out=$OUT"
+setup
+printf 'x\tX\t-\t-\t-\ny\tY\t-\t-\t-\n#dormant\ty\t다른 허브\n' > "$SB/act.tsv"
+OUT=$(HUBS_TSV="$SB/act.tsv" bash "$RH" --dry-run term_old1 coord-x-hub x 2>&1); RC=$?
+chk "활성 허브(표에 있고 표식 없음)는 그대로 진행(dry-run 종료 0·새 세션 명령 출력)" '[ "$RC" = 0 ] && printf "%s" "$OUT" | grep -q "^새 세션: orca agent launch"' "rc=$RC"
+chk "표에 없는 허브 폴더(문서 허브 등)는 휴면 거부 대상 아님" 'HUBS_TSV="$SB/dorm.tsv" bash "$RH" --dry-run term_old1 coord-none-hub x >/dev/null 2>"$SB/e3"; [ $? = 2 ] && grep -q "HANDOFF.md" "$SB/e3"' '휴면 판정 뒤 HANDOFF 검사까지 진행해야 함'
+printf 'x\tX\t-\t-\t-\n#dormant\txx\t오타\n' > "$SB/typo.tsv"
+setup
+OUT=$(HUBS_TSV="$SB/typo.tsv" bash "$RH" --dry-run term_old1 coord-x-hub x 2>"$SB/err"); RC=$?
+chk "휴면 판정 실패(표식 오타): 경고 한 줄 + 재시작은 진행" '[ "$RC" = 0 ] && grep -q "경고: 휴면 판정 실패" "$SB/err"' "rc=$RC"
+chk "--help 에 --wake·종료 코드 3" 'bash "$RH" --help | grep -q -- "--wake" && bash "$RH" --help | grep -q "3 휴면"'
+
 printf '\n%s\n' "결과: PASS $PASS / FAIL $FAIL"
 [ "$FAIL" = 0 ]

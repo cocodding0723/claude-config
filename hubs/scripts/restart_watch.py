@@ -132,11 +132,25 @@ def clean(text: str) -> str:
     return UNSAFE_RE.sub("", hub_status.one_line(text))
 
 
+def dormant_slugs() -> set[str]:
+    """휴면 허브 slug. 판정은 resume_all.sh --list 한 곳이 소유(#dormant 줄). 실행 실패는 빈 집합: 카드를 못 내는 것보다 기존처럼 내는 쪽이 안전"""
+    try:
+        p = subprocess.run(["bash", os.path.join(HERE, "resume_all.sh"), "--list"], capture_output=True, text=True, timeout=NOTIFY_TIMEOUT_S, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    if p.returncode != 0:
+        return set()
+    return {c[0] for c in (ln.split("\t") for ln in p.stdout.splitlines()) if len(c) >= 2 and c[1] == "휴면"}
+
+
 def targets() -> list[dict]:
-    """이어받을 허브: 상태 파일에 진행 작업이 있고 낡음 기준 안에 갱신된 허브"""
+    """이어받을 허브: 상태 파일에 진행 작업이 있고 낡음 기준 안에 갱신된 허브. 휴면 허브(기능 팀으로 대체)는 제외"""
     out = []
     limit = timedelta(hours=hub_status.stale_hours())
+    dormant = dormant_slugs()
     for slug, name in hub_rows():
+        if slug in dormant:
+            continue
         data, _path, err = hub_status.load(slug)
         if err or not data or not data.get("tasks"):
             continue

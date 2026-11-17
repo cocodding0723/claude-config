@@ -53,5 +53,34 @@ python3 -I "$SCR/main_inbox.py" append --kind feedback --source x --box feat-mai
 [ -s "$LRM_HUB_DIR/hub-inbox/feat-mail.jsonl" ] && ok "기능 상자(feat-*)는 작업판 경로와 무관" || ko "기능 상자" ""
 python3 -I "$SCR/board_notify.py" post --kind ci --source t --json "직접 호출 $WORK" | jq -e '.status=="board"' >/dev/null && ok "board_notify.py post CLI" || ko "CLI" ""
 python3 -I "$SCR/board_notify.py" post --kind ci "x" >/dev/null 2>&1; [ $? = 2 ] && ok "CLI 인자 빠짐 → 종료 2" || ko "CLI 인자" ""
+# ---- Slack 답 → 부모 메시지로 보낸 기록 → 원래 카드 ----
+SENT="$LRM_HUB_DIR/slack-sent.jsonl" INB="$LRM_HUB_DIR/slack-inbox.jsonl"
+CARD=$(b create "봇 메시지가 붙은 작업" --json | id_of)
+{
+  jq -nc --arg c "$CARD" '{ts:"1700000100.001",thread_ts:"",title:"카드 칸 있는 보고",card:$c}'
+  jq -nc '{ts:"1700000100.002",thread_ts:"",title:"옛 기록 결정 D-Btabc 확인"}'
+  jq -nc --arg w "$WORK" '{ts:"1700000100.003",thread_ts:"",title:("옛 기록 \($w) 진행")}'
+  jq -nc '{ts:"1700000100.004",thread_ts:"",title:"카드 단서 없는 보고"}'
+} > "$SENT"
+{
+  jq -nc '{type:"thread_reply",ts:"1700000200.001",parent_ts:"1700000100.001",text:"이미지 첨부해서 ㄱㄱ"}'
+  jq -nc '{type:"thread_reply",ts:"1700000200.002",parent_ts:"1700000100.002",text:"응 그걸로"}'
+  jq -nc '{type:"thread_reply",ts:"1700000200.003",parent_ts:"1700000100.003",text:"계속 해"}'
+  jq -nc '{type:"thread_reply",ts:"1700000200.004",parent_ts:"1700000100.004",text:"이건 뭐야"}'
+  jq -nc '{type:"thread_reply",ts:"1700000200.005",parent_ts:"1700000999.999",text:"기록에 없는 부모"}'
+  jq -nc '{type:"note",ts:"1700000200.006",text:"스레드 아님"}'
+} > "$INB"
+bn() { python3 -I "$SCR/board_notify.py" post --kind slack --source t --json --dry-run --ref "slack $1" "${2:-본문}"; }
+R=$(bn 1700000200.001); [ "$(echo "$R" | jq -r '.card+" "+.how')" = "$CARD parent-card" ] && ok "부모 기록의 card 칸 → 그 카드" || ko "card 칸" "$R"
+R=$(bn 1700000200.002); [ "$(echo "$R" | jq -r '.card+" "+.how')" = "$DEC parent-text" ] && ok "card 칸 없는 옛 기록 → 제목의 결정 번호로 카드" || ko "옛 기록 결정" "$R"
+R=$(bn 1700000200.003); [ "$(echo "$R" | jq -r '.card+" "+.how')" = "$WORK parent-text" ] && ok "옛 기록 제목의 카드 id → 그 카드" || ko "옛 기록 id" "$R"
+R=$(bn 1700000200.004); [ "$(echo "$R" | jq -r .how)" = confirm ] && ok "부모 기록에 단서 없음 → 확인 카드" || ko "확인 카드" "$R"
+R=$(bn 1700000200.005); [ "$(echo "$R" | jq -r .how)" = confirm ] && ok "부모 기록 자체가 없음 → 확인 카드" || ko "기록 없음" "$R"
+R=$(bn 1700000200.006); [ "$(echo "$R" | jq -r .how)" = alert ] && ok "스레드 답이 아닌 메시지 → 기존 모음 카드" || ko "비답" "$R"
+R=$(bn 1700000200.004 "본문에 $WORK 있음"); [ "$(echo "$R" | jq -r '.card+" "+.how')" = "$WORK id" ] && ok "부모 기록에 없어도 본문의 카드 id 는 그대로 찾음" || ko "본문 id" "$R"
+python3 -I "$SCR/board_notify.py" post --kind slack --source t --ref "slack 1700000200.004" "확인 카드 실제 기록" >/dev/null
+CF=$(b list --label alert:confirm --json --limit 0)
+[ "$(echo "$CF" | jq length)" = 1 ] && echo "$CF" | jq -e '.[0].labels|index("kind:confirm") and index("hub:main")' >/dev/null \
+  && [ "$(cnt "$(echo "$CF" | jq -r '.[0].id')")" = 1 ] && ok "확인 카드 1장 생성(kind:confirm)·코멘트 1개" || ko "확인 카드 생성" "$CF"
 printf '통과 %d · 실패 %d\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

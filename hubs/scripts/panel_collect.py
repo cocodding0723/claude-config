@@ -818,7 +818,8 @@ BOARD_TIMEOUT, BOARD_DOING_MAX, BOARD_LIST_MAX, BOARD_RECENT = 10, 8, 10, 5
 BOARD_STATUSES = ("in_progress", "open", "blocked")
 # 사람 손이 필요한 카드 종류. 라벨 kind:<값>. 승인 성격은 결정 카드의 label gate:approval(배지), 옛 kind:approval 카드도 결정으로 읽음
 BOARD_KINDS = {"decision": "decisions", "user-todo": "todos"}
-LEGACY_KINDS = {"approval": "decision"}
+# 모음 카드(board_notify 의 자동 알림·확인 카드)도 사용자가 읽고 처리할 것이라 '답할 것'(todos)에 띄움
+LEGACY_KINDS = {"approval": "decision", "alert": "user-todo", "confirm": "user-todo"}
 GATE_PREFIX = "gate:"
 DESC_MAX = 600
 

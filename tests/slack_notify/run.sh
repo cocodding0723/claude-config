@@ -21,6 +21,7 @@ chmod 755 "$BIN/python3"
 API=http://127.0.0.1:9
 FAKE_TOKEN="fake-token-0123456789-abcdefghij"
 unset LRM_FORMAT
+export LRM_FILE_TS_WAIT=0 LRM_FILE_TS_TRIES=3  # 파일 ts 조회 재시도 대기 없음(시험 속도)
 export LRM_BTN_WARN=off  # 버튼 없음 경고는 J 에서만 확인(기존 시험이 stderr 0줄을 봄)
 
 HOME_DIR="" CFG=""
@@ -846,6 +847,31 @@ printf 'x' > "$LOG/fail.link"
 run_n --kind progress $'진행\n\n- 결정 D-0Q01 선택 대기'
 [ "$RC" = 0 ] && ! text | grep -q 'slack.com' && grep -q 'D-0Q01 카드 링크 조회 실패' "$SB/err" && ok "Q 링크 조회 실패 → 링크 없이 전송(경고)" || ko "Q 조회 실패" "rc=$RC $(cat "$SB/err")"
 : > "$LOG/fail.link"
+# ---- R. --card 기록·파일 메시지 ts 조회 ---------------------------------------------------------
+newhome card
+run_n --kind done --card lrm-q5o.2 "카드 글"
+[ "$RC" = 0 ] && [ "$(lastrec | jq -r '.card')" = lrm-q5o.2 ] && ok "R --card → 기록에 card 칸" || ko "R card 기록" "rc=$RC $(lastrec)"
+run_n --kind done "카드 없는 글"
+[ "$RC" = 0 ] && [ "$(lastrec | jq 'has("card")')" = false ] && ok "R --card 없으면 card 칸 없음(기존 모양)" || ko "R card 없음" "$(lastrec)"
+for bad in 'LRM-Q5O' 'lrm_q5o.2' 'lrm-q5o.' '../x' ''; do
+  run_n --card "$bad" "x"
+  [ "$RC" = 2 ] && nocall && grep -q -- '--card' "$SB/err" || ko "R 잘못된 card '$bad'" "rc=$RC $(cat "$SB/err")"
+done
+ok "R 잘못된 card 형식 5종 → 종료 코드 2, API 호출 0회"
+run_n --card
+[ "$RC" = 2 ] && nocall && ok "R --card 값 없음 → 종료 코드 2" || ko "R card 값 없음" "rc=$RC"
+printf 'doc' > "$SB/card.html"
+printf x > "$LOG/fail.ts"
+run_n --kind doc --card lrm-q5o.2 $'문서\n\n• 무엇: 첨부' "$SB/card.html"
+r=$(lastrec)
+[ "$RC" = 0 ] && [ "$(printf '%s' "$r" | jq -r '[.card,.ts,.file_id,(.ts_pending|tostring)]|join(",")')" = "lrm-q5o.2,,Ffake1,true" ] && grep -q 'ts 조회 실패' "$SB/err" && [ "$(grep -c '^http.*files.info' "$LOG/calls.log")" = 3 ] \
+  && ok "R 파일 ts 조회 실패 → 3회 재시도 뒤 ts_pending:true·경고 한 줄(전송 성공)" || ko "R ts 실패 표식" "rc=$RC $r $(cat "$SB/err")"
+rm -f "$LOG/fail.ts"
+run_n --kind doc --card lrm-q5o.2 $'문서\n\n• 무엇: 첨부' "$SB/card.html"
+r=$(lastrec)
+[ "$RC" = 0 ] && [ "$(printf '%s' "$r" | jq -r '[.card,.ts,.file_id,(has("ts_pending")|tostring)]|join(",")')" = "lrm-q5o.2,1700000009.000200,Ffake1,false" ] && ! grep -q '경고' "$SB/err" && ok "R 파일 전송 → files.info shares 의 ts 를 기록(card 함께, ts_pending 없음)" || ko "R 파일 ts" "rc=$RC $r $(cat "$SB/err")"
+run_n --kind doc $'문서\n\n• 무엇: 첨부' "$SB/card.html"
+[ "$(lastrec | jq -r '[.ts,has("card")|tostring]|join(",")')" = "1700000009.000200,false" ] && ok "R --card 없는 파일 전송도 ts 기록, card 칸 없음" || ko "R 파일 card 없음" "$(lastrec)"
 
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

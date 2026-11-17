@@ -40,6 +40,8 @@ L=$("$SCRIPTS/board-ask" "옛 승인 호출" --kind approval 2>"$SB/err")
 grep -q '폐지' "$SB/err" && [ "$(b show "$L" --json | jq -r 'if type=="array" then .[0] else . end | (.labels|sort|join(","))')" = "gate:approval,kind:decision" ] && ok "board-ask --kind approval(옛 호출): 폐지 안내 + 결정 카드로" || ko "옛 approval" "$(cat "$SB/err")"
 "$SCRIPTS/board-ask" "할 일에 게이트" --kind user-todo --gate approval >/dev/null 2>&1; [ $? = 2 ] && ok "board-ask: --gate 는 결정 카드에만(종료 2)" || ko "gate todo" ""
 O=$(b create "예전 승인 카드" -l kind:approval --json | id_of)
+AL=$(b create "📥 자동 알림: slack" -l kind:alert,alert:slack,hub:main --json | id_of)
+CF=$(b create "❓ 확인 필요: 답" -l kind:confirm,alert:confirm,hub:main --json | id_of)
 
 # 수집기 원료
 mkdir -p "$SB/hub/ai-state"; printf '{"cwd":"/ws/feat-mail","state":"needs_input","kind":"permission_prompt","at":%s}\n' "$(date +%s)" > "$SB/hub/ai-state/s1.json"
@@ -49,6 +51,9 @@ v() { echo "$P" | jq -r ".sources.board.value$1"; }
 [ "$(echo "$P" | jq -r .sources.board.ok)" = true ] && ok "수집기: board 원료 ok" || ko "board ok" "$(echo "$P" | jq -c .sources.board | head -c 200)"
 [ "$(v '.decisions[0].id')" = "$D" ] && v '.decisions[0].desc' | grep -q '추천: 옮김' && ok "결정 대기 = kind:decision 열린 카드, 설명에 선택지·추천" || ko "decisions" "$(v '.decisions' | head -c 200)"
 [ "$(v '.todos[0].id')" = "$T" ] && ok "할 일 = kind:user-todo" || ko "todos" ""
+[ "$(echo "$P" | jq -r --arg a "$AL" --arg c "$CF" '[.sources.board.value.todos[].id | select(.==$a or .==$c)] | length')" = 2 ] \
+  && [ "$(echo "$P" | jq -r --arg a "$AL" --arg c "$CF" '[.sources.board.value.doing[]?.id | select(.==$a or .==$c)] | length')" = 0 ] \
+  && ok "모음 카드(kind:alert)·확인 카드(kind:confirm) → 답할 것(todos)에 보임, 진행 줄엔 중복 없음" || ko "모음·확인 카드 todos" "$(v '.todos' | head -c 300)"
 [ "$(v '.approvals')" = null ] && [ "$(echo "$P" | jq -r --arg a "$A" --arg o "$O" '[.sources.board.value.decisions[] | select(.id==$a or .id==$o) | .gate] | join(",")')" = "approval,approval" ] && ok "승인 칸 없음: gate:approval·옛 kind:approval 카드도 결정 대기에 gate 배지로" || ko "gate 결정" "$(v '.decisions' | head -c 300)"
 [ "$(v '.decisions[0].gate')" = null ] && ok "일반 결정 카드는 gate null" || ko "gate null" "$(v '.decisions[0]')"
 [ "$(v '.doing[0].id')" = "$WORK" ] && [ "$(v '.doing[0].who')" = worker-1 ] && [ "$(v '.doing[0].beatAt|type')" = number ] && [ "$(v '.doing[0].startedAt|type')" = number ] && ok "진행 = in_progress 카드, 담당·시작·마지막 신호" || ko "doing" "$(v '.doing' | head -c 200)"
