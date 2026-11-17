@@ -1,6 +1,7 @@
 """계획 승인 기록 조회(사용자 11-16 "전부 추천대로"). 계획서 컨펌 1회가 그 계획서에 적힌 티켓 발급·draft PR 생성·Jira 상태 전환을 함께 승인.
 기록: <허브 폴더>/plan-approvals/<plan_id>.json =
-  {plan_id, approved_at, approver_quote, source:{slack_ts}, tickets:[{summary}], prs:[{repo, branch}], jira_transitions:[{key, to}]}
+  {plan_id, approved_at, approver_quote, source:{slack_ts}, tickets:[{summary}], prs:[{repo, branch} | {repo, branch_glob, base, draft:true}], jira_transitions:[{key, to}]}
+  prs 의 branch_glob 은 상시 승인(예: sprint-*/fix-lrm-*). draft 생성만 덮고 base 를 적으면 PR --base 가 같아야 함.
 유효 조건: plan_id 가 파일 이름과 같음 + approved_at(ISO 8601, 시간대 포함)이 지금부터 7일 안 + approver_quote(사용자 원문 인용)가 비지 않음
 + source.slack_ts 가 Slack 수신기가 쓴 slack-inbox.jsonl 의 사용자 답(thread_reply·note·button) 한 줄을 가리키고 그 본문에 인용문이 들어 있음.
 인용 대조는 메인(모델)이 사용자 말 없이 기록을 지어내는 것을 막기 위함. slack-inbox.jsonl 쓰기는 모든 Claude 세션에서 훅이 막음(수신기는 launchd 프로세스).
@@ -98,12 +99,24 @@ def _items(rec, field):
     return [x for x in v if isinstance(x, dict)] if isinstance(v, list) else []
 
 
-def find_pr(hub, repo, branch):
-    """repo:branch 가 적힌 계획의 plan_id → 없으면 사용자 터미널 승인(board-approve, Slack 봇이 꺼져 있을 때) → 없으면 ''"""
+def pr_item_ok(x, repo, branch, base):
+    """prs 항목 하나가 이 draft PR 생성을 덮는지. {repo, branch} 정확히 또는 {repo, branch_glob, base?, draft:true} 상시 승인"""
+    if x.get("repo") != repo:
+        return False
+    if x.get("branch"):
+        return x["branch"] == branch
+    if x.get("branch_glob") and x.get("draft", True) is True:
+        return user_approval.branch_ok(str(x["branch_glob"]), True, branch) and (not x.get("base") or x["base"] == base)
+    return False
+
+
+def find_pr(hub, repo, branch, base=""):
+    """repo:branch 를 덮는 계획의 plan_id → 없으면 사용자 터미널 승인(board-approve, Slack 봇이 꺼져 있을 때) → 없으면 ''.
+    base 는 PR 의 --base(모르면 ''). 항목에 base 가 있으면 같아야 함"""
     for r in records(hub):
-        if any(x.get("repo") == repo and x.get("branch") == branch for x in _items(r, "prs")):
+        if any(pr_item_ok(x, repo, branch, base) for x in _items(r, "prs")):
             return r["plan_id"]
-    return user_approval.find_pr(hub, repo, branch)
+    return user_approval.find_pr(hub, repo, branch, base)
 
 
 def find_ticket(hub, summary):

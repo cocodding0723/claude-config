@@ -183,12 +183,16 @@ def check_create(toks, flags, repo, here):
     """gh pr create: --draft 필수 + D-PR<해시> 승인. 저장소·브랜치를 못 풀면 Unknown"""
     if not has_draft(flags):
         return "deny", CREATE_REASON
-    head = ""
+    head = base = ""
     for i, t in enumerate(toks):
         if t in ("-H", "--head") and i + 1 < len(toks):
             head = toks[i + 1]
         elif t.startswith("--head="):
             head = t.split("=", 1)[1]
+        elif t in ("-B", "--base") and i + 1 < len(toks):
+            base = toks[i + 1]
+        elif t.startswith("--base="):
+            base = t.split("=", 1)[1]
     head = head.split(":", 1)[-1]  # owner:branch 형태
     if here is None and not (repo and head):
         raise Unknown("cd 경로에 변수·치환 — 저장소·브랜치를 알 수 없음(-R·--head 로 지정)")
@@ -196,7 +200,7 @@ def check_create(toks, flags, repo, here):
     head = head or current_branch(here)
     if not REPO_RE.fullmatch(repo or "") or not head:
         raise Unknown("새 PR 의 저장소·브랜치를 알 수 없음(-R·--head 로 지정)")
-    if plan_ok(pa.find_pr, repo, head):
+    if plan_ok(pa.find_pr, repo, head, base):
         return None
     did = pr_create_id(repo, head)
     if not decided(did, repo):

@@ -346,6 +346,16 @@ jq -cn --arg t "$TS" '{type:"user",isSidechain:false,timestamp:$t,message:{role:
 exp "terminal: 사용자 '!' 줄 + 원장이면 draft PR 생성 통과" $PD 'gh pr create --draft -R Org/RepoA --head feat/term -t t' "$PR"
 exp "terminal: 다른 브랜치는 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/term2 -t t' "$PR" deny
 exp "terminal: ready 는 인정 안 함" $PD 'gh pr ready 31 -R Org/RepoA' "$PR" deny
+# 상시 승인(패턴): 버그 수정 브랜치 draft PR 을 건마다 묻지 않음
+HOME="$SB/home" CLAUDE_CODE_SESSION_ID=sidT "$BA" --glob --base dev Org/RepoA 'sprint-*/fix-lrm-*' "버그 Fix PR은 승인할게" >/dev/null 2>&1
+jq -cn --arg t "$TS" '{type:"user",isSidechain:false,timestamp:$t,message:{role:"user",content:"<bash-input>board-approve --glob --base dev Org/RepoA '"'"'sprint-*/fix-lrm-*'"'"' \"버그 Fix PR은 승인할게\"</bash-input>"}}' >> "$SB/home/.claude/projects/-k/sidT.jsonl"
+exp "glob: 패턴에 맞는 브랜치 + --base dev 는 통과" $PD 'gh pr create --draft -R Org/RepoA --head sprint-20261117/fix-lrm-77 --base dev -t t' "$PR"
+exp "glob: --base 가 다르면 거부" $PD 'gh pr create --draft -R Org/RepoA --head sprint-20261117/fix-lrm-77 --base main -t t' "$PR" deny
+exp "glob: 패턴 밖 브랜치는 거부" $PD 'gh pr create --draft -R Org/RepoA --head sprint-20261117/feat-x --base dev -t t' "$PR" deny
+exp "glob: draft 아니면 거부" $PD 'gh pr create -R Org/RepoA --head sprint-20261117/fix-lrm-77 --base dev -t t' "$PR" deny
+plan PG '{"plan_id":"PG","source":{"slack_ts":"900.1"},"approved_at":"@NOW@","approver_quote":"전부 추천대로","prs":[{"repo":"Org/RepoB","branch_glob":"sprint-*/fix-lrm-*","base":"dev","draft":true}]}'
+exp "glob: 계획 기록의 branch_glob 도 통과" $PD 'gh pr create --draft -R Org/RepoB --head sprint-1/fix-lrm-9 --base dev -t t' "$PR"
+exp "glob: 계획 기록 branch_glob base 불일치 거부" $PD 'gh pr create --draft -R Org/RepoB --head sprint-1/fix-lrm-9 --base release/v1 -t t' "$PR" deny
 chmod 000 "$PA/P1.json"
 exp "plan: 계획 기록을 못 읽으면 ask" $PD 'gh pr create --draft -R Org/RepoA --head feat/plan -t t' "$PR" ask
 jexp "plan: Jira 도 계획 기록을 못 읽으면 ask" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 티켓 하나"}}' ask
