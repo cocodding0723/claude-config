@@ -44,7 +44,7 @@ usage() {
            slack_cmd.sh 즉답 명령·30분 넘게 묵은 항목은 제외. 권한 부족이면 조용히 건너뛰고 10분마다 재시도(상태: ack_disabled_reason).
            전송 전에 상태(acked·ack_sent)부터 저장하므로 실패해도 다시 보내지 않음. 이미 보낸 답장은 지우거나 고치지 않음(아래 전달 완료 표시만 예외)
 전달 완료 표시: 메인 전달(slack_push.sh)이 slack-push-delivered.jsonl 에 남긴 기록을 읽어 그 스레드의 확인 답장을 chat.update(POST, chat:write)로
-           "📨 메인에 전달했어요 (n건)" 으로 고침. n 은 스레드 누적 전달 건수, 기록 1건·스레드 1개당 1회, 회차당 5회.
+           "📨 메인에 전달했어요 (n건)"(작업판 경로 기록이면 "📋 작업판에 기록했어요 (n건)") 으로 고침. n 은 스레드 누적 전달 건수, 기록 1건·스레드 1개당 1회, 회차당 5회.
            처리 위치는 기록의 단조 증가 번호(seq)로 저장해 그보다 큰 기록만 처리(기록 파일이 잘려도 옛 기록 재처리 없음).
            앞 확인 답장이 아직 '집계 중'이면 같은 스레드에 새 답장을 보내지 않음(앞 답장이 영구히 '집계 중'으로 남는 것 방지)
            실패(message_not_found·cant_update_message·edit_window_closed 등)는 stderr 1줄만 남기고 재시도 안 함. LRM_ACK_UPDATE=off 로 끔
@@ -197,6 +197,7 @@ ACK_RETRY = RX_RETRY
 # 토큰이 없는 push 대신 여기서 호출. LRM_ACK=off 또는 LRM_ACK_UPDATE=off 면 안 함
 PUSH_DELIVERED = os.path.join(DIR, "slack-push-delivered.jsonl")
 DONE_TEXT = "📨 메인에 전달했어요 ({n}건)"
+DONE_TEXT_BOARD = "📋 작업판에 기록했어요 ({n}건)"  # 전달 기록 via=board(main-route=board 경로)
 UPD_MAX = 5                                  # 회차당 chat.update 상한
 # slack_cmd.sh 가 직접 답하는 명령. case 라벨(대기|미승인|"승인 대기" / PR|pr|"초안 PR" / 할일|"할 일" / CI|ci / 문서\ *)을 옮긴 것이라 그쪽을 바꾸면 함께 바꿀 것
 CMD_REPLY_EXACT = frozenset({"대기", "미승인", "승인 대기", "PR", "pr", "초안 PR", "할일", "할 일", "CI", "ci"})
@@ -733,7 +734,8 @@ def done_phase(state):
             save_state(state)
             calls += 1
             try:
-                api("chat.update", _post=True, channel=ent.get("ch") or "", ts=ent["ts"], text=DONE_TEXT.format(n=ent["n"]))
+                done = DONE_TEXT_BOARD if rec.get("via") == "board" else DONE_TEXT
+                api("chat.update", _post=True, channel=ent.get("ch") or "", ts=ent["ts"], text=done.format(n=ent["n"]))
             except ApiError as e:
                 print(f"전달 완료 표시 건너뜀({e.code or 'http'}) — 재시도 안 함", file=sys.stderr)
                 if e.code in ACK_DISABLE:  # 권한·채널 문제는 나머지도 실패하므로 이번 회차 중단

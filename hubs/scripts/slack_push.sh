@@ -9,6 +9,9 @@ usage() {
   --run   워커를 앞에서 실행: 조용해질 때까지 묶음 → 메인 터미널에 1회 전달 → 전달할 것이 없어지면 종료
 흐름: 폴러가 inbox 에 기록 → 마지막 새 메시지 뒤 LRM_PUSH_QUIET 초 조용하거나 첫 대기 메시지로부터 LRM_PUSH_MAX 초가 지나면 전달
       → 성공하면 .main-read-lines 를 전달한 줄까지 올림(max 로만 갱신). 폴러의 읽음 반응이 그 줄을 👀→✅ 로 바꿈
+작업판 경로(11-17): ~/.config/lrm-hubs/main-route 첫 줄이 board 면 아래 터미널 전송을 하지 않음. 메시지·반응마다 작업판 카드 코멘트
+      (main_inbox → board_notify: 결정 답은 그 결정 카드, 그 밖은 '📥 자동 알림: slack' 카드. 작업판 쓰기 실패면 hub-inbox/main.jsonl)
+      → 데스크톱 알림 1회(LRM_OSASCRIPT, 기본 osascript) → 읽음 표식·전달 기록(via=board). 기록 실패는 보류 board_fail 로 다음 회차 재시도
 대상: ~/.config/lrm-hubs/main.env 의 MAIN_TERMINAL=<핸들> 한 줄(그 줄만 읽음, 형식 term_<16진·하이픈>)이 가리키는 터미널 하나.
       전송 직전 orca terminal show 로 연결됨·쓰기 가능·고아 아님·메인 체크아웃(LRM_PUSH_MAIN) 소속·agentIdentity=claude 인지 확인하고, 아니면 보류.
       제목은 보조 조건: show 에 paneTitle 이 있고 LRM_PUSH_PANE(기본 MAIN)과 다르면 보류, 키가 없으면 통과(LRM_PUSH_PANE="" 이면 대조 생략).
