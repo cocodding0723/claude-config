@@ -18,8 +18,10 @@ import unicodedata
 from html.parser import HTMLParser
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # -I 실행에서도 같은 폴더의 board_slack 을 찾음
+import decide_card  # noqa: E402
 
 KINDS = ("decision", "user-todo")
+BD_TIMEOUT = 30  # bd 호출 한 번의 시간 제한(초). board_slack 잠금 대기 계산도 이 값을 씀
 BD_CANDIDATES = ("/opt/homebrew/bin/bd", "/usr/local/bin/bd")  # launchd 기본 PATH(/usr/bin:/bin)에는 bd 가 없어 버튼 답이 카드로 못 갔음(11-17)
 LEGACY_APPROVAL = "approval"  # 옛 --kind approval. decision + gate:approval 로 바꿔 받음
 GATES = ("approval",)
@@ -27,9 +29,16 @@ APPROVAL_OPTIONS = ("승인 => 이대로 진행", "보류 => 진행하지 않고
 REASON_MAX = 80
 OPTION_MAX = 4  # Slack 번호 카드 선택지 상한(board_slack 도 이 값을 씀)
 RESULT_SEP = "=>"  # 선택지 '문구 => 고르면 달라지는 점'
-TITLE_MAX = 40  # 결정 카드 제목(Slack 첫 줄) 상한. slack_notify 양식 A 규칙 1 과 같은 값이라 board_slack 도 이 값을 씀
-TITLE_DROP = ("So", "Sk", "Cf", "Mn", "Me")  # 알림 스크립트가 글자 수에서 빼는 이모지·결합 문자 범주
+# Slack 양식 A 규칙(제목 길이·본문 번호 판정). 알림 스크립트 검사(FORM_PY)와 board_slack 이 이 값을 그대로 씀.
+# 설치 위치(~/.config/lrm-hubs)에서 decide_card.py·hub_report.py 는 복사본이라 갱신이 늦지만 이 파일은 링크라 항상 최신이므로 공유 규칙은 여기 둠
+TITLE_MAX = 40  # 결정 카드 제목(Slack 첫 줄) 상한
+TITLE_DROP = ("So", "Sk", "Cf", "Mn", "Me")  # 글자 수에서 빼는 이모지·결합 문자 범주
 TITLE_EMOJI = re.compile(r"(?<!\w):[\w+\-]{1,40}:(?!\w)")  # :이름: 이모지 코드도 제외
+TICKET_RX = re.compile(r"(?<![0-9A-Za-z_])LRM-\d+(?![0-9A-Za-z_])")  # 본문에 있으면 안 되는 티켓 번호
+# 커밋 해시: 숫자·a~f 가 섞인 7~40자. 앞뒤가 '#'·'-' 이면 색 값(#F2994A80)·세션 번호 조각(5660c10e-1211-…)이라 커밋으로 보지 않음
+HEX_RX = re.compile(r"(?<![0-9A-Za-z_#\-])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![0-9A-Za-z_\-])", re.I)
+
+
 # 결정 카드 HTML 설명서 검사 기준(검사는 doc_gaps 한 함수). board-ask 와 board_slack 전송 직전이 같이 씀
 DOC_LINE = "설명서"  # 카드 설명의 '설명서: <html 절대 경로>' 줄 머리
 DOC_EXT = ".html"
@@ -70,7 +79,7 @@ Slack 자동 보내기 스위치(~/.config/lrm-hubs/.board-slack.on)가 켜져 �
   board-ask "릴리스 키스토어 만들기" --kind user-todo --why "출시 전 Google 로그인 필요"
 
 결정 카드 필수 칸: --options(2~4개, 각 '문구 => 결과') · --recommend · --background · --terms(없으면 '없음') · --doc(HTML 설명서) · --runnable no
-결정 카드 제목은 40자 이내(이모지·공백 제외). 넘으면 종료 2. 티켓·커밋 번호는 보낼 때 맨 아래 '참고:' 줄로 자동 이동
+결정 카드 제목은 @TITLE_MAX@자 이내(이모지·공백 제외). 넘으면 종료 2. 티켓·커밋 번호는 보낼 때 맨 아래 '참고:' 줄로 자동 이동
 
 출력: 카드 id 한 줄(--json 이면 {"id","created","kind"})"""
 
@@ -98,7 +107,7 @@ def bd(*args):
     cmd = [find_bd(), *args]
     try:
         p = subprocess.run(cmd, cwd=os.environ.get("BOARD_DIR") or os.path.expanduser("~/orca/board"),
-                           capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+                           capture_output=True, text=True, timeout=BD_TIMEOUT, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise Fail(3, f"bd 실행 실패({type(e).__name__}). 조치: bd 설치·BOARD_DIR 확인")
     if p.returncode != 0:
@@ -114,7 +123,7 @@ def bd_json(*args):
 
 
 def title_len(title):
-    """알림 스크립트(slack_notify 양식 A 규칙 1)와 같은 방식의 제목 글자 수: 이모지·공백 제외"""
+    """제목(첫 줄) 글자 수. 이모지·공백 제외"""
     t = TITLE_EMOJI.sub("", unicodedata.normalize("NFC", title.split("\n", 1)[0]))
     return sum(1 for c in t if unicodedata.category(c) not in TITLE_DROP and not c.isspace())
 
@@ -310,7 +319,7 @@ def ask(a):
         raise Fail(2, "질문이 비었음. 조치: 첫 인자에 질문 한 문장")
     if a.kind in ("decision", LEGACY_APPROVAL) and title_len(title) > TITLE_MAX:
         raise Fail(2, f"결정 카드 제목이 {title_len(title)}자(최대 {TITLE_MAX}). Slack 첫 줄 규칙에 걸려 못 보냄. "
-                      "조치: 제목을 40자 안으로 줄이고 세부는 --background 로 옮김")
+                      f"조치: 제목을 {TITLE_MAX}자 안으로 줄이고 세부는 --background 로 옮김")
     if a.kind == LEGACY_APPROVAL:
         print("board-ask: --kind approval 은 폐지됨 → 결정 카드 + gate:approval 로 만듦. 조치: --gate approval 사용", file=sys.stderr)
         a.kind, a.gate = "decision", "approval"
@@ -407,7 +416,7 @@ def main(argv):
     cmd, rest = argv[0], argv[1:]
     fmt = argparse.RawDescriptionHelpFormatter
     if cmd == "ask":
-        ap = argparse.ArgumentParser(prog="board-ask", description=ASK_HELP, formatter_class=fmt)
+        ap = argparse.ArgumentParser(prog="board-ask", description=ASK_HELP.replace("@TITLE_MAX@", str(TITLE_MAX)), formatter_class=fmt)
         ap.add_argument("question", help="카드 제목. 결정이면 질문 한 문장")
         ap.add_argument("--options", help='선택지 "A => 고르면 달라지는 점|B => …"(결정은 2~4개·결과 필수)')
         ap.add_argument("--recommend", help="추천 선택지 문구(선택지 중 하나, 결정은 필수)")

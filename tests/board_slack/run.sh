@@ -7,7 +7,7 @@ PASS=0 FAIL=0
 ok() { PASS=$((PASS + 1)); printf 'PASS  %s\n' "$1"; }
 ko() { FAIL=$((FAIL + 1)); printf 'FAIL  %s — %s\n' "$1" "${2:-}"; }
 SB=$(mktemp -d "${TMPDIR:-/tmp}/board-slack.XXXXXX"); trap 'rm -rf "${SB:?}"' EXIT
-export BOARD_DIR="$SB/board" LRM_HUB_DIR="$SB/hub" LRM_NOTIFY="$SB/notify.sh" LRM_PREVIEW="$SB/preview.sh"
+export BOARD_DIR="$SB/board" LRM_HUB_DIR="$SB/hub" LRM_SENT_LOG="$SB/sent.jsonl" LRM_NOTIFY="$SB/notify.sh" LRM_PREVIEW="$SB/preview.sh"
 mkdir -p "$BOARD_DIR" "$LRM_HUB_DIR"
 (cd "$BOARD_DIR" && git init -q && bd init --prefix tst -q >/dev/null 2>&1) || { echo "임시 작업판 준비 실패"; exit 1; }
 cat > "$LRM_NOTIFY" <<'SH'
@@ -135,8 +135,25 @@ rm -f "$SB/notify.args"* "$SB/notify.n"
 G1=$("$SCR/board-ask" --runnable no "번호 옮길 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "LRM-462 에서 시작했고 커밋 3856f0998 이 원인임" --terms "LRM-7 은 티켓" --doc "$DOC")
 OUT=$(python3 -I "$BS" push "$G1" --dry-run --json 2>"$SB/err"); rc=$?
 TXT=$(echo "$OUT" | jq -r '.args | .[(index("--decision-id")+2):-1] | .[]')
-[ "$rc" = 0 ] && echo "$TXT" | tail -1 | grep -qx '참고: LRM-462 · 3856f0998 · LRM-7' && ! echo "$TXT" | sed '$d' | grep -Eq 'LRM-[0-9]|3856f0998' && echo "$TXT" | grep -q '관련 티켓 에서 시작했고 커밋 관련 커밋 이' && ok "본문 티켓·커밋 번호를 맨 아래 '참고:' 줄로 옮기고 본문은 쉬운 말로 바꿈(건조 실행 통과)" || ko "참고 줄" "rc=$rc $OUT $(cat "$SB/err")"
+[ "$rc" = 0 ] && echo "$TXT" | tail -1 | grep -qx '참고: 티켓 A = LRM-462 · 3856f0998 · 티켓 B = LRM-7' && ! echo "$TXT" | sed '$d' | grep -Eq 'LRM-[0-9]|3856f0998' && echo "$TXT" | grep -q '티켓 A 에서 시작했고 커밋 (아래 참고) 이 원인임' && echo "$TXT" | grep -q '티켓 B 는 티켓' && ok "본문 티켓·커밋 번호를 맨 아래 '참고:' 줄로 옮기고 본문은 쉬운 말로 바꿈(건조 실행 통과)" || ko "참고 줄" "rc=$rc $OUT $(cat "$SB/err")"
 echo "$OUT" | jq -e '.args | index("--card") as $i | .[$i+1] == "'"$G1"'"' >/dev/null && ok "알림 스크립트 호출에 --card <카드 id>" || ko "--card" "$OUT"
+# 번호 이동: 서로 다른 티켓은 구분되는 말, 코드·주소 안 번호는 그대로, 조사는 받침에 맞춤
+python3 -I - "$SCR" <<'PY' && ok "번호 이동: 티켓 둘은 '티켓 A·B' 로 구분하고 참고 줄과 짝짓기, 한 개는 '관련 티켓'" || ko "번호 이동 구분" ""
+import sys
+sys.path.insert(0, sys.argv[1])
+import board_slack as b
+r = b.move_refs(["LRM-621 은 에픽이 없고 LRM-395 를 서로 모르고", "LRM-7 이 원인"])
+assert r == ["티켓 A 는 에픽이 없고 티켓 B 를 서로 모르고", "티켓 C 가 원인", "참고: 티켓 A = LRM-621 · 티켓 B = LRM-395 · 티켓 C = LRM-7"], r
+r = b.move_refs(["LRM-462 가 원인이고 LRM-462는 같은 티켓"])
+assert r == ["관련 티켓 이 원인이고 관련 티켓은 같은 티켓", "참고: LRM-462"], r
+PY
+python3 -I - "$SCR" <<'PY' && ok "번호 이동: 코드 블록·\`코드\`·주소 안 번호는 건드리지 않음(참고 줄에도 안 모음)" || ko "번호 이동 예외 구간" ""
+import sys
+sys.path.insert(0, sys.argv[1])
+import board_slack as b
+t = "주소 https://x.example/browse/LRM-462 와 `LRM-9 abc1234def` 와 색 #F2994A80"
+assert b.move_refs([t]) == [t], b.move_refs([t])
+PY
 LONG="제목이 사십 글자를 넘어 슬랙 첫 줄 규칙에 걸리는 아주 긴 결정 카드 이름입니다 정말로 매우 많이 깁니다 계속 이어집니다"
 L1=$(b create "$LONG" -l kind:decision -p 1 -d "$(printf '선택지:\n- A => 가 됨\n- B => 나 됨\n추천: A\n배경: 시안이 두 벌이라 하나로 맞춤\n용어: 없음\n설명서: %s' "$DOC")" --json | jq -r 'if type=="array" then .[0].id else .id end')
 python3 -I "$BS" push "$L1" --dry-run 2>"$SB/err" >/dev/null; rc=$?
@@ -150,13 +167,44 @@ python3 -I "$BS" push "$L1" 2>/dev/null >&2; python3 -I "$BS" push "$L1" 2>/dev/
 python3 - "$SCR/slack_notify.sh" "$SB/notify_src.sh" <<'PY'
 import sys
 s = open(sys.argv[1], encoding="utf-8").read()
-open(sys.argv[2], "w", encoding="utf-8").write(s.replace("len(head) > 40", "len(head) > 3", 1))
+open(sys.argv[2], "w", encoding="utf-8").write(s.replace("head_len > board_cards.TITLE_MAX", "head_len > 3", 1))
 PY
-cp "$SCR/decide_card.py" "$SB/"
+cp "$SCR/decide_card.py" "$SCR/board_cards.py" "$SB/"  # 변형 사본 옆에 양식 검사가 부르는 모듈도 둠
 LRM_NOTIFY_SRC="$SB/notify_src.sh" python3 -I "$BS" push "$G1" --dry-run 2>"$SB/err" >/dev/null; rc=$?
 [ "$rc" = 2 ] && grep -q '양식 A 위반' "$SB/err" && ok "건조 실행이 slack_notify 양식 검사 코드를 그대로 돌림(검사가 바뀌면 결과도 바뀜)" || ko "양식 검사 연동" "rc=$rc $(cat "$SB/err")"
 LRM_NOTIFY_SRC="$SB/없음.sh" python3 -I "$BS" push "$G1" --dry-run 2>"$SB/err" >/dev/null; rc=$?
 [ "$rc" = 3 ] && grep -q '조치' "$SB/err" && ok "양식 검사 코드를 못 찾으면 통과시키지 않고 거부(종료 3)" || ko "검사 코드 없음" "rc=$rc"
+# 알림 스크립트가 따로 막는 나머지 3종도 건조 실행에서 거부(건조 통과 = 실제 통과)
+mkcard3() {  # mkcard3 <제목> <배경> <선택지 목록> [추천 이름=A]
+  b create "$1" -l kind:decision -p 1 -d "$(printf '선택지:\n%s\n추천: %s\n배경: %s\n용어: 없음\n설명서: %s' "$3" "${4:-A}" "$2" "$DOC")" --json | jq -r 'if type=="array" then .[0].id else .id end'
+}
+OKOPT=$'- A => 가 됨\n- B => 나 됨'
+X0=$(mkcard3 "검사 3종 통과 카드" "시안이 두 벌이라 하나로 맞춰야 화면 작업을 이어 갈 수 있음" "$OKOPT")
+python3 -I "$BS" push "$X0" --dry-run >/dev/null 2>"$SB/err"; rc=$?
+[ "$rc" = 0 ] && ok "대조군: 문제 없는 카드는 건조 실행 통과" || ko "대조군" "rc=$rc $(cat "$SB/err")"
+X1=$(mkcard3 "로컬 경로 든 카드" "시안이 두 벌이라 ~/Documents/spec/plan.html 을 보고 하나로 맞춰야 함" "$OKOPT")
+python3 -I "$BS" push "$X1" --dry-run 2>"$SB/err" >/dev/null; rc=$?
+[ "$rc" = 2 ] && grep -q 'plan.html' "$SB/err" && ok "건조 실행: 본문에 첨부 아닌 로컬 문서 경로가 있으면 거부" || ko "로컬 경로" "rc=$rc $(cat "$SB/err")"
+L80=$(printf '가%.0s' $(seq 1 81))
+X2=$(mkcard3 "선택지 80자 카드" "시안이 두 벌이라 하나로 맞춰야 화면 작업을 이어 갈 수 있음" $'- '"$L80"$' => 가 됨\n- B => 나 됨' B)
+python3 -I "$BS" push "$X2" --dry-run 2>"$SB/err" >/dev/null; rc=$?
+[ "$rc" = 2 ] && grep -q '81자' "$SB/err" && grep -q '1번' "$SB/err" && ok "건조 실행: 선택지 문구가 80자를 넘으면 거부" || ko "선택지 80자" "rc=$rc $(cat "$SB/err")"
+X3=$(mkcard3 "선택지 이모지 카드" "시안이 두 벌이라 하나로 맞춰야 화면 작업을 이어 갈 수 있음" $'- 로켓 :rocket: 발사 => 가 됨\n- B => 나 됨' B)
+python3 -I "$BS" push "$X3" --dry-run 2>"$SB/err" >/dev/null; rc=$?
+[ "$rc" = 2 ] && grep -q '이모지 이름' "$SB/err" && ok "건조 실행: 선택지 문구에 :이름: 이모지가 있으면 거부" || ko "선택지 이모지" "rc=$rc $(cat "$SB/err")"
+# 제목 기준 공유: board-ask 쪽 글자 수와 알림 스크립트 양식 검사가 경계(40·41자, 이모지·코드 제외)에서 같은 결과
+python3 -I - "$SCR" <<'PY' && ok "제목 40자 기준·세는 방식이 알림 스크립트·board_cards 에서 같은 값(board_cards 한 곳)" || ko "제목 기준 공유" ""
+import re, subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import board_cards
+src = open(sys.argv[1] + "/slack_notify.sh", encoding="utf-8").read()
+code = src.split("read -r -d '' FORM_PY <<'PYEOF' || true\n", 1)[1].split("\nPYEOF\n", 1)[0]
+assert board_cards.TITLE_MAX == 40
+for t in ("가" * 40, "가" * 41, "🚀 " + "가" * 40, ":rocket: " + "가" * 41, "가 " * 20 + "나"):
+    out = subprocess.run([sys.executable, "-I", "-c", code, "check", "decide", "1"], input=t, capture_output=True, text=True,
+                         env={"LRM_SCRIPT_DIR": sys.argv[1]}).stdout
+    assert ("title-len" in out) == (board_cards.title_len(t) > board_cards.TITLE_MAX), (t, out)
+PY
 # 동시 push 2개 → 전송 1번
 H1=$("$SCR/board-ask" --runnable no "동시에 보낼 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "시안이 두 벌이라 하나로 맞춤" --terms 없음 --doc "$DOC")
 rm -f "$SB/notify.args"* "$SB/notify.n"; touch "$SB/slow"
@@ -165,6 +213,49 @@ python3 -I "$BS" push "$H1" --json >"$SB/o2" 2>&1 & P2=$!
 wait $P1 $P2; rm -f "$SB/slow"
 SENT=$(cat "$SB/o1" "$SB/o2" | jq -r 'select(.sent==true)|.id' | wc -l | tr -d ' ')
 [ "$SENT" = 1 ] && [ "$(cat "$SB/o1" "$SB/o2" | jq -r 'select(.why=="already")|.id' | wc -l | tr -d ' ')" = 1 ] && [ ! -f "$SB/notify.args3" ] && ok "동시 push 2개 → 카드 전송 1번(나머지는 already)" || ko "동시 push" "sent=$SENT $(cat "$SB/o1" "$SB/o2")"
+# 전송 뒤 label 을 붙이기 전에 죽은 경우: 보낸 기록이 있으면 다시 보내지 않고 label 만 채움
+S1=$("$SCR/board-ask" --runnable no "죽었다 살아난 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "시안이 두 벌이라 하나로 맞춤" --terms 없음 --doc "$DOC")
+SD=$(python3 -I "$BS" push "$S1" --dry-run --json | jq -r .decisionId)
+printf '{"at":1,"kind":"text","card":"%s","decision_id":"%s"}\nnot-json\n' "$S1" "$SD" > "$SB/sent.jsonl"
+rm -f "$SB/notify.args"* "$SB/notify.n"
+[ "$(python3 -I "$BS" push "$S1" --dry-run --json | jq -r .why)" = already ] && ok "건조 실행도 보낸 기록이 있으면 already" || ko "건조 already" ""
+OUT=$(python3 -I "$BS" push "$S1" --json); rc=$?
+[ "$rc" = 0 ] && [ "$(echo "$OUT" | jq -r .why)" = already ] && [ "$(echo "$OUT" | jq -r .recovered)" = true ] && [ ! -f "$SB/notify.args" ] && labels "$S1" | grep -q "slack:$SD" && ok "보낸 기록이 있으면 재전송 없이 label 만 채움(보낸 뒤 label 전에 죽은 경우)" || ko "보낸 기록 복구" "rc=$rc $OUT"
+S2=$("$SCR/board-ask" --runnable no "다른 카드 기록만 있는 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "시안이 두 벌이라 하나로 맞춤" --terms 없음 --doc "$DOC")
+printf '{"at":1,"kind":"file","card":"%s"}\n{"at":1,"kind":"text","card":"other-1","decision_id":"D-Bother1"}\n' "$S2" > "$SB/sent.jsonl"
+[ "$(python3 -I "$BS" push "$S2" --json | jq -r .sent)" = true ] && ok "다른 카드 기록·설명서 첨부 기록(번호 없음)만으로는 막지 않음" || ko "오탐" ""
+: > "$SB/sent.jsonl"
+# 잠금: 대기 시간 >= 보유 최대 시간, 폴더 실패는 원인·조치(traceback 없음)
+python3 -I - "$SCR" <<'PY' && ok "잠금 대기(LOCK_WAIT)가 잠금 최대 보유 시간(전송+bd 2번+미리보기 2단계)보다 김" || ko "잠금 대기 계산" ""
+import sys
+sys.path.insert(0, sys.argv[1])
+import board_slack as b, board_cards as c
+assert b.LOCK_HOLD_MAX == 2 * b.SEND_TIMEOUT + 2 * c.BD_TIMEOUT + b.PREVIEW_TIMEOUT, b.LOCK_HOLD_MAX
+assert b.LOCK_WAIT >= b.LOCK_HOLD_MAX, (b.LOCK_WAIT, b.LOCK_HOLD_MAX)
+PY
+S3=$("$SCR/board-ask" --runnable no "잠금 폴더 막힌 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "시안이 두 벌이라 하나로 맞춤" --terms 없음 --doc "$DOC")
+mkdir -p "$SB/h2"; : > "$SB/h2/.board-slack-locks"; touch "$SB/h2/.board-slack.on"; rm -f "$SB/notify.args"* "$SB/notify.n"  # 잠금 폴더 자리에 파일을 둬 폴더 생성 실패를 만듦
+LRM_HUB_DIR="$SB/h2" python3 -I "$BS" push "$S3" 2>"$SB/err" >/dev/null; rc=$?
+[ "$rc" = 3 ] && grep -q '조치' "$SB/err" && grep -q '잠금 폴더' "$SB/err" && ! grep -q Traceback "$SB/err" && [ ! -f "$SB/notify.args" ] && ok "잠금 폴더를 못 만들면 종료 3·원인·조치(traceback 없음, 전송 안 함)" || ko "잠금 폴더 실패" "rc=$rc $(cat "$SB/err")"
+LRM_HUB_DIR="$SB/h2" "$SCR/board-ask" --runnable no "잠금 폴더 막힌 자동 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "시안이 두 벌이라 하나로 맞춤" --terms 없음 --doc "$DOC" >/dev/null 2>"$SB/err"; rc=$?
+[ "$rc" = 0 ] && grep -q '잠금 폴더' "$SB/err" && ! grep -q Traceback "$SB/err" && ok "board-ask 자동 보내기도 잠금 실패에 경고만 남기고 traceback 없이 끝남" || ko "board-ask 잠금 실패" "rc=$rc $(cat "$SB/err")"
+# bd 를 못 찾으면 로그뿐 아니라 Slack 경고(10분에 한 번)
+rm -f "$SB/notify.args"* "$SB/notify.n" "$LRM_HUB_DIR/.board-lookup-warn"
+for i in 1 2; do
+  BOARD_BD="$SB/없는/bd" python3 -I -c 'import sys;sys.path.insert(0,sys.argv[1]);import board_slack;print(board_slack.card_for(sys.argv[2]))' "$SCR" D-Bwarn1 >"$SB/o$i" 2>"$SB/err$i"
+done
+[ "$(cat "$SB/o1")" = None ] && grep -q '카드 조회 실패' "$SB/err1" && grep -qx -- '--kind' "$SB/notify.args" && grep -qx 'warn' "$SB/notify.args" && grep -q '조치: bd 설치' "$SB/notify.args" && [ ! -f "$SB/notify.args2" ] && [ -f "$LRM_HUB_DIR/.board-lookup-warn" ] && ok "카드 조회 실패 → Slack 경고 1회(같은 시간 안 두 번째는 보내지 않음), 결과는 None 유지" || ko "조회 실패 경고" "$(cat "$SB/err1" "$SB/notify.args" 2>&1)"
+python3 -I - "$SCR" "$SB/notify.args" <<'PY' && ok "경고 문구가 알림 스크립트 양식 검사(warn)를 통과" || ko "경고 양식" ""
+import sys
+sys.path.insert(0, sys.argv[1])
+import board_slack as b
+text = open(sys.argv[2], encoding="utf-8").read().split("\n")
+text = "\n".join(text[text.index("board") + 1:]).strip()
+p = b.run_form(["check", "warn", "0"], text)
+assert p.returncode == 0 and not [r for r in p.stdout.splitlines() if r.split("\t")[0] in b.FORM_FAIL_LEVELS], p.stdout
+PY
+rm -f "$LRM_HUB_DIR/.board-lookup-warn" "$SB/notify.args"*
+[ "$(python3 -I "$BS" answer D-Bnone99 "x" --json | jq -r .board)" = false ] && [ ! -f "$SB/notify.args" ] && ok "작업판 카드가 아닌 번호(조회는 성공)는 경고하지 않음" || ko "경고 오탐" ""
 # launchd 최소 환경에서 결정 번호 → 카드 조회
 DIDH=$(python3 -I "$BS" push "$H1" --json | jq -r .decisionId)
 OUT=$(env -i PATH=/usr/bin:/bin HOME="$HOME" BOARD_DIR="$BOARD_DIR" LRM_HUB_DIR="$LRM_HUB_DIR" python3 -I -c 'import sys;sys.path.insert(0,sys.argv[1]);import board_slack;print(board_slack.card_for(sys.argv[2]))' "$SCR" "$DIDH" 2>&1)
