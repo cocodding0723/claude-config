@@ -9,7 +9,7 @@ ko() { FAIL=$((FAIL + 1)); printf 'FAIL  %s — %s\n' "$1" "${2:-}"; }
 SB=$(mktemp -d "${TMPDIR:-/tmp}/bclaim-test.XXXXXX"); trap 'rm -rf "${SB:?}"' EXIT
 export BOARD_DIR="$SB/board" BD_LAST_TOUCHED_FALLBACK=0
 mkdir -p "$BOARD_DIR" && cd "$BOARD_DIR" && git init -q && bd init --quiet >/dev/null 2>&1 || { echo "bd init 실패"; exit 1; }
-new_card() { bd create "$1" --labels "$2" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'; }
+new_card() { bd create "$1" --labels "$2" -d "${3-$'## 지시(사용자 원문 + 뒤 지시)\n- 원문: "고쳐줘"'}" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'; }
 expect() { local name=$1 want=$2; shift 2; "$@" >"$SB/out" 2>&1; local got=$?; [ "$got" = "$want" ] && ok "$name" || ko "$name" "종료 $got(기대 $want): $(head -c 300 "$SB/out")"; }
 
 a=$(new_card a "file:src/a/,repo:$SB/r")
@@ -44,6 +44,14 @@ expect "상대 경로인데 repo: 없으면 2" 2 "$BIN" "$r" w1
 
 wide=$(new_card wide "file:.,repo:$G")
 expect "file:. (저장소 전체) 범위는 2" 2 "$BIN" "$wide" w1
+
+# 지시 되말하기: 사용자 원문 칸이 비면 거부
+e1=$(new_card e1 "file:/abs/dir1/" "")
+expect "지시 칸 없는 카드는 2" 2 "$BIN" "$e1" w1
+e2=$(new_card e2 "file:/abs/dir2/" $'## 지시(사용자 원문 + 뒤 지시)\n- 원문(<날짜>): "<사용자 말 그대로>"')
+expect "자리표시만 있는 지시 칸은 2" 2 "$BIN" "$e2" w1
+e3=$(new_card e3 "file:/abs/dir3/" '사용자 11-16 원문: "그럼 위 구조 추천대로 반영해줘"')
+expect "사용자 원문 한 줄 형식은 집음" 0 "$BIN" "$e3" w1
 
 n=$(new_card n "")
 expect "file: label 없으면 2" 2 "$BIN" "$n" w1

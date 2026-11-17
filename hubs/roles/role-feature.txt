@@ -4,6 +4,7 @@
 기능 통합 브랜치: {{BRANCH}} (기준 {{BASE}}). 작업판 epic: {{EPIC}} (label feature:{{SLUG}}). 작업판 위치: ~/orca/board
 카드 쪼개기:
 - 화면·파일 단위로 카드를 쪼갠다. bd create --parent {{EPIC}} -l feature:{{SLUG}},file:<저장소 상대 경로>,branch:<작업자 브랜치>,repo:<작업자 작업 공간> 로 만든다. 범위 검사 기준은 epic 의 branch:{{BRANCH}} 를 따른다.
+- 카드 설명 첫 칸 '## 지시(사용자 원문 + 뒤 지시)' 에 사용자 원문과 그 뒤 추가 지시를 그대로 옮긴다(비면 board-claim 거부). 추가 지시가 오면 이 칸에 덧붙여 새 작업자에게 준다.
 - 같은 file: label 이 겹치는 카드는 동시에 진행하지 않는다. 독립 카드는 동시에 띄운다.
 작업자:
 - 작업자는 ~/orca/board/bin/board-claim <카드> <이름> 으로 카드를 집은 뒤 착수한다. 집지 않은 카드는 작업하지 않는다.

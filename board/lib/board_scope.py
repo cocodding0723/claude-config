@@ -118,7 +118,28 @@ def loc_text(loc):
 def too_broad(loc):
     """저장소 전체(file:.)·파일 시스템 최상위처럼 아무 변경이나 통과시키는 범위"""
     rid, rel = loc
-    return (bool(rid) and rel == "") or (not rid and rel.count("/") <= 2 and os.path.isabs(rel)) or rel in ("", ".")
+    home = os.path.expanduser("~")
+    return (bool(rid) and rel == "") or rel in ("", ".") or (not rid and os.path.isabs(rel) and (rel.count("/") <= 1 or rel in (home, os.path.dirname(home))))
+
+
+DIRECTIVE_HEAD = re.compile(r"^#{1,6}\s*지시\b.*$", re.M)
+DIRECTIVE_INLINE = re.compile(r"사용자[^\n:：]{0,16}원문\s*[:：]\s*(\S.*)")
+
+
+def directive(card):
+    """카드의 '지시(사용자 원문 + 뒤 지시)' 칸 내용. 양식: '## 지시 …' 제목 아래 본문, 또는 '사용자 … 원문: …' 한 줄. 없거나 자리표시뿐이면 ''"""
+    text = card.get("description") or ""
+    m = DIRECTIVE_HEAD.search(text)
+    if m:
+        body = text[m.end():]
+        nxt = re.search(r"^#{1,6}\s", body, re.M)
+        body = body[:nxt.start()] if nxt else body
+    else:
+        m = DIRECTIVE_INLINE.search(text)
+        body = m.group(1) if m else ""
+    body = re.sub(r"<[^>\n]*>", "", body)
+    body = re.sub(r"[-*\s:：\"'“”()（）]|원문|뒤\s*지시", "", body)
+    return body
 
 
 def card_repo(card, fallback=""):
