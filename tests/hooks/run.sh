@@ -272,21 +272,22 @@ jrun() { local out; out=$(printf '%s' "$1" | HOME="$SB/home" bash "$H/jira-appro
 jexp() { local got; got=$(jrun "$2"); [ "$got" = "${3:-pass}" ] && ok "$1" || ko "$1" "기대 ${3:-pass}, 실제 ${got:-빈 출력}"; }
 JC='{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"projectKey":"LRM","summary":"  버튼  안 눌림 ","issueTypeName":"버그"}}'
 JID="D-JIRA$(printf '버튼 안 눌림' | shasum | cut -c1-8)"
-jexp "jira: 승인 없는 생성 거부" "$JC" deny
-jexp "jira: executeWrite 경유 생성도 거부" '{"tool_name":"mcp__atlassian__executeWrite","tool_input":{"name":"createJiraIssue","cloudId":"c","inputs":{"summary":"버튼 안 눌림"}}}' deny
+jexp "jira: 승인 없는 생성도 통과(11-17)" "$JC"
+jexp "jira: executeWrite 경유 생성도 통과(11-17)" '{"tool_name":"mcp__atlassian__executeWrite","tool_input":{"name":"createJiraIssue","cloudId":"c","inputs":{"summary":"버튼 안 눌림"}}}'
 jexp "jira: 상태 변경 승인 없음 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","transition":{"id":"31"}}}' deny
 jexp "jira: edit 의 status 필드 거부" '{"tool_name":"mcp__atlassian__editJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","fields":{"status":{"name":"완료"}}}}' deny
 jexp "jira: edit 의 일반 필드는 통과" '{"tool_name":"mcp__atlassian__editJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","fields":{"summary":"x"}}}'
 jexp "jira: 읽기 도구는 통과" '{"tool_name":"mcp__atlassian__getJiraIssue","tool_input":{"issueIdOrKey":"LRM-12"}}'
-jexp "jira: 요약 없는 생성은 ask" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"projectKey":"LRM"}}' ask
+jexp "jira: 요약 없는 생성도 통과(11-17)" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"projectKey":"LRM"}}'
 cardrow 300.1 "Jira 이슈 발급 승인" "$JID" 1 >> "$HUB/slack-inbox.jsonl"
 cardrow 300.2 "Jira LRM-12 상태 변경 승인" D-JSTLRM12 1 >> "$HUB/slack-inbox.jsonl"
 jexp "jira: D-JIRA 카드 1번 답이면 생성 통과(공백 정리 후 같은 번호)" "$JC"
-jexp "jira: 다른 요약은 거부" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"다른 버그"}}' deny
+jexp "jira: 다른 요약도 통과(11-17)" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"다른 버그"}}'
 jexp "jira: D-JST 카드 1번 답이면 상태 변경 통과" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","transition":{"id":"31"}}}'
 jexp "jira: 다른 이슈 상태 변경은 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-13","transition":{"id":"31"}}}' deny
 chmod 000 "$HUB/slack-inbox.jsonl"
-jexp "jira: 승인 기록을 못 읽으면 ask" "$JC" ask
+jexp "jira: 승인 기록을 못 읽어도 발급은 통과(기록을 안 읽음)" "$JC"
+jexp "jira: 승인 기록을 못 읽으면 상태 변경은 ask" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","transition":{"id":"31"}}}' ask
 chmod 600 "$HUB/slack-inbox.jsonl"
 
 # ---- 계획 승인 기록(사용자 11-16 "전부 추천대로"): 계획서 컨펌 1회가 적힌 발급·draft PR·상태 전환을 함께 승인 ----
@@ -306,12 +307,12 @@ exp "plan: 계획 승인은 gh api draft 해제를 허용하지 않음" $PD 'gh 
 jq -e '.permissions.deny | index("Bash(gh pr merge:*)")' "$HERE/../../claude/settings.base.json" >/dev/null \
   && ! grep -q 'merge' "$H/lib/plan_approval.py" && ok "plan: gh pr merge 는 권한 deny 고정·계획 승인 모듈이 병합을 다루지 않음" || ko "plan: 병합 고정" "settings deny 또는 plan_approval.py 확인"
 jexp "plan: 계획에 적힌 요약은 Jira 발급 통과(공백 정리)" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":" 계획  티켓 하나"}}'
-jexp "plan: 계획에 없는 요약은 거부" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 밖 티켓"}}' deny
+jexp "plan: 계획에 없는 요약도 Jira 발급 통과(11-17)" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 밖 티켓"}}'
 jexp "plan: 계획에 적힌 이슈 상태 전환 통과" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-77","transition":{"id":"21"}}}'
 jexp "plan: 대상 상태가 다르면 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-77","transition":{"id":"31","name":"완료"}}}' deny
 jexp "plan: 계획에 없는 이슈 전환은 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-78","transition":{"id":"21"}}}' deny
-jmsg=$(printf '%s' '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 밖 티켓"}}' | HOME="$SB/home" bash "$H/jira-approval-guard.sh" | jq -r '.hookSpecificOutput.permissionDecisionReason')
-case "$jmsg" in *"계획서에 추가한 뒤 컨펌"*) ok "plan: Jira 거부 메시지에 계획서 추가 조치";; *) ko "plan: Jira 거부 메시지" "$jmsg";; esac
+jmsg=$(printf '%s' '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-78","transition":{"id":"21"}}}' | HOME="$SB/home" bash "$H/jira-approval-guard.sh" | jq -r '.hookSpecificOutput.permissionDecisionReason')
+case "$jmsg" in *"계획서에 추가한 뒤 컨펌"*"D-JSTLRM78"*) ok "plan: Jira 상태 변경 거부 메시지에 계획서 추가 조치·D-JST 번호";; *) ko "plan: Jira 거부 메시지" "$jmsg";; esac
 plan P2 '{"plan_id":"P2","approved_at":"@NOW@","approver_quote":"  ","tickets":[{"summary":"인용 없는 티켓"}],"prs":[{"repo":"Org/RepoA","branch":"feat/noquote"}]}'
 plan P3 '{"plan_id":"다른이름","approved_at":"x","approver_quote":"좋아","prs":[{"repo":"Org/RepoA","branch":"feat/badid"}]}'
 plan P4 '{"plan_id":"P4","approver_quote":"좋아","prs":[{"repo":"Org/RepoA","branch":"feat/notime"}]}'
@@ -323,7 +324,7 @@ plan PS4 '{"plan_id":"PS4","approved_at":"@NOW@","approver_quote":"전부 추천
 plan P6 "{\"plan_id\":\"P6\",\"approved_at\":\"$OLD\",\"approver_quote\":\"전부 추천대로\",\"source\":{\"slack_ts\":\"900.1\"},\"prs\":[{\"repo\":\"Org/RepoA\",\"branch\":\"feat/old\"}]}"
 plan P7 '{"plan_id":"P7","approved_at":"2026-11-16T10:00:00","approver_quote":"전부 추천대로","source":{"slack_ts":"900.1"},"prs":[{"repo":"Org/RepoA","branch":"feat/notz"}]}'
 plan P8 '{"plan_id":"P8","approved_at":"2999-01-01T00:00:00+00:00","approver_quote":"전부 추천대로","source":{"slack_ts":"900.1"},"prs":[{"repo":"Org/RepoA","branch":"feat/future"}]}'
-jexp "plan: 사용자 원문 인용 없는 기록은 무효" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"인용 없는 티켓"}}' deny
+jexp "plan: 사용자 원문 인용 없는 기록은 무효(상태 전환)" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-79","transition":{"id":"21"}}}' deny
 exp "plan: 인용 없는 기록의 PR 은 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/noquote -t t' "$PR" deny
 exp "plan: plan_id 가 파일 이름과 다르면 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/badid -t t' "$PR" deny
 exp "plan: approved_at 없으면 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/notime -t t' "$PR" deny
@@ -436,14 +437,15 @@ uexp "said: 지시가 있어도 --draft 없으면 거부" "$(uline 'PR 올려')"
 uexp "said: 지시가 있어도 ready 는 거부" "$(uline 'PR 올려. ready 도 해')" deny 'gh pr ready 40 -R Org/RepoA'
 uexp "said: Jira 지시는 PR 승인이 아님" "$(uline '에픽 만들어')" deny
 JS='{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"projectKey":"LRM","summary":"공통 작업 에픽"}}'
-uexp "said: Jira 지시 없으면 발급 거부" "$(uline 'PR 올려')" deny "$JS" main jira
+uexp "said: Jira 지시 없어도 발급 통과(11-17)" "$(uline 'PR 올려')" pass "$JS" main jira
 uexp "said: 메인 대화의 '에픽 만들어' 는 Jira 발급 통과" "$(uline '공통 작업으로 묶어서 에픽 만들어')" pass "$JS" main jira
-uexp "said: Jira 도 허브·작업자 세션은 거부" "$(uline '에픽 만들어')" deny "$JS" worker jira
-uexp "said: '티켓 발급하지 마' 는 거부" "$(uline '티켓 발급하지 마')" deny "$JS" main jira
+uexp "said: Jira 발급은 허브·작업자 세션도 통과(11-17)" "$(uline '에픽 만들어')" pass "$JS" worker jira
+uexp "said: '티켓 발급하지 마' 여도 발급 훅은 막지 않음(11-17)" "$(uline '티켓 발급하지 마')" pass "$JS" main jira
 uexp "said: 사용자 지시로 Jira 상태 변경은 허용 안 함" "$(uline '티켓 만들어')" deny '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-90","transition":{"id":"31"}}}' main jira
 chmod 000 "$PA/P1.json"
 exp "plan: 계획 기록을 못 읽으면 ask" $PD 'gh pr create --draft -R Org/RepoA --head feat/plan -t t' "$PR" ask
-jexp "plan: Jira 도 계획 기록을 못 읽으면 ask" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 티켓 하나"}}' ask
+jexp "plan: Jira 상태 전환도 계획 기록을 못 읽으면 ask" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-77","transition":{"id":"21"}}}' ask
+jexp "plan: 계획 기록을 못 읽어도 Jira 발급은 통과(11-17)" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 티켓 하나"}}'
 chmod 600 "$PA/P1.json"
 
 # ---- 계획 승인 기록 쓰기는 메인만 ----
