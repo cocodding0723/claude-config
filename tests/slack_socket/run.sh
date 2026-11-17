@@ -147,6 +147,8 @@ start s8 "{\"events\":[$EVS]}"
 sleep 4.0
 [ "$(count s8 out 'DM → 수집 rc=0')" = 1 ] && [ "$(count s8 out '반응 → 수집 rc=0')" = 1 ] && ok "본인 DM → 'DM → 수집', 본인 반응 → '반응 → 수집' (기존 문구)" || ko "DM·반응 수집" "$(grep -c '수집' "$SB/s8/out")건"
 [ "$(wc -l < "$SB/s8/hub/poll.calls" | tr -d ' ')" = 3 ] && ok "봇 자신·타인·채널 글·비 이벤트는 수집을 일으키지 않음(수집 3회=시작+DM+반응)" || ko "무시해야 할 이벤트" "수집 $(wc -l < "$SB/s8/hub/poll.calls" | tr -d ' ')회"
+grep -q '무시 message/- — 다른 사용자' "$SB/s8/out" && grep -q '무시 message/- channel_type=channel' "$SB/s8/out" && [ "$(count s8 out '무시 ')" = 2 ] && ! grep -q Uother9 "$SB/s8/out" \
+  && ok "타인·DM 아닌 글은 무시 사유 1줄씩(봇 자신 글은 기록 안 함, 사용자 id 없음)" || ko "무시 기록" "$(grep '무시' "$SB/s8/out" | tr '\n' '|')"
 [ "$(count s8 calls ' ack ')" = 6 ] && ok "모든 요청에 응답(ack) 전송" || ko "ack" "$(count s8 calls ' ack ')건"
 stop s8
 # 재연결로 만든 새 클라이언트(2번)가 받은 이벤트도 처리·응답해야 함(리스너 누락 검출)

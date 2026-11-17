@@ -656,13 +656,19 @@ def main() -> int:
             return
         event = (req.payload or {}).get("event", {})
         kind = event.get("type")
-        # 사용자 본인이 보낸 DM·반응만. 봇 자신의 메시지는 무시
-        if event.get("bot_id") or (me and event.get("user") not in (me, None)):
+        # 사용자 본인이 보낸 DM·반응만. 봇 자신의 메시지는 무시(봇 글마다 오므로 기록 안 함)
+        if event.get("bot_id"):
+            return
+        sub = event.get("subtype") or ""
+        if me and event.get("user") not in (me, None):
+            log(f"무시 {kind}/{sub or '-'} — 다른 사용자")  # 수신 누락 진단용. 사용자 id·본문은 남기지 않음
             return
         if kind == "message" and event.get("channel_type") == "im":
-            trigger.fire("DM")
+            trigger.fire(f"DM{'(' + sub + ')' if sub else ''}{'(스레드)' if event.get('thread_ts') else ''}")
         elif kind == "reaction_added":
             trigger.fire("반응")
+        else:
+            log(f"무시 {kind}/{sub or '-'} channel_type={event.get('channel_type') or '-'}")
 
     def make() -> SocketModeClient:
         fresh = SocketModeClient(app_token=app_token)
