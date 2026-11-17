@@ -127,9 +127,14 @@ setup
 OUT=$(HUBS_TSV="$SB/dorm.tsv" bash "$RH" --wake term_old1 coord-x-hub x 2>"$SB/err"); RC=$?
 chk "--wake: 휴면 허브도 재시작(새 핸들 출력)" '[ "$RC" = 0 ] && [ "$OUT" = term_new ]' "rc=$RC out=$OUT"
 setup
-OUT=$(HUBS_TSV="$SB/dorm.tsv" bash "$RH" --dry-run term_old1 coord-y-hub y 2>&1); RC=$?
-chk "활성 허브(표에 있고 표식 없음)는 그대로 진행" '[ "$RC" != 3 ]' "rc=$RC"
+printf 'x\tX\t-\t-\t-\ny\tY\t-\t-\t-\n#dormant\ty\t다른 허브\n' > "$SB/act.tsv"
+OUT=$(HUBS_TSV="$SB/act.tsv" bash "$RH" --dry-run term_old1 coord-x-hub x 2>&1); RC=$?
+chk "활성 허브(표에 있고 표식 없음)는 그대로 진행(dry-run 종료 0·새 세션 명령 출력)" '[ "$RC" = 0 ] && printf "%s" "$OUT" | grep -q "^새 세션: orca agent launch"' "rc=$RC"
 chk "표에 없는 허브 폴더(문서 허브 등)는 휴면 거부 대상 아님" 'HUBS_TSV="$SB/dorm.tsv" bash "$RH" --dry-run term_old1 coord-none-hub x >/dev/null 2>"$SB/e3"; [ $? = 2 ] && grep -q "HANDOFF.md" "$SB/e3"' '휴면 판정 뒤 HANDOFF 검사까지 진행해야 함'
+printf 'x\tX\t-\t-\t-\n#dormant\txx\t오타\n' > "$SB/typo.tsv"
+setup
+OUT=$(HUBS_TSV="$SB/typo.tsv" bash "$RH" --dry-run term_old1 coord-x-hub x 2>"$SB/err"); RC=$?
+chk "휴면 판정 실패(표식 오타): 경고 한 줄 + 재시작은 진행" '[ "$RC" = 0 ] && grep -q "경고: 휴면 판정 실패" "$SB/err"' "rc=$RC"
 chk "--help 에 --wake·종료 코드 3" 'bash "$RH" --help | grep -q -- "--wake" && bash "$RH" --help | grep -q "3 휴면"'
 
 printf '\n%s\n' "결과: PASS $PASS / FAIL $FAIL"

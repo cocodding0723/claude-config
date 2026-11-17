@@ -38,9 +38,16 @@ done
 [ $# -eq 3 ] || { usage >&2; exit 2; }
 # 휴면 판정은 resume_all.sh 가 한 곳에서 소유. 폴더 coord-<slug>-hub 의 slug 가 표에 없으면(문서 허브 등) 휴면 아님
 SLUG=$(printf '%s' "$2" | sed -n 's/^coord-\(.*\)-hub$/\1/p')
-if [ "$WAKE" = 0 ] && [ -n "$SLUG" ] && REASON=$(bash "$HERE/resume_all.sh" --is-dormant "$SLUG" 2>/dev/null); then
-  echo "ERROR: 허브 $SLUG 는 휴면(${REASON:-사유 없음}) — 기능 팀으로 대체됨. 깨우려면 --wake 를 붙여 다시 실행" >&2
-  exit 3
+if [ "$WAKE" = 0 ] && [ -n "$SLUG" ]; then
+  # 종료 코드 0 휴면, 1 활성, 2 표에 없는 허브(출력 없음). 그 밖이거나 2 인데 오류 출력이 있으면 판정 실패(표식 오타 등)라 경고만 내고 진행
+  REASON=$(bash "$HERE/resume_all.sh" --is-dormant "$SLUG" 2>"${TMPDIR:-/tmp}/dormant-err.$$") && RC=0 || RC=$?  # set -e 아래서 비 0 종료도 판정 값으로 받음
+  DERR=$(head -c 200 "${TMPDIR:-/tmp}/dormant-err.$$" 2>/dev/null | tr '\n' ' '); rm -f "${TMPDIR:-/tmp}/dormant-err.$$"
+  if [ "$RC" = 0 ]; then
+    echo "ERROR: 허브 $SLUG 는 휴면(${REASON:-사유 없음}) — 기능 팀으로 대체됨. 깨우려면 --wake 를 붙여 다시 실행" >&2
+    exit 3
+  elif [ "$RC" -gt 2 ] || { [ "$RC" = 2 ] && [ -n "$DERR" ]; }; then
+    echo "경고: 휴면 판정 실패(종료 코드 $RC ${DERR}) — 휴면 여부를 모른 채 진행. hubs.tsv 의 #dormant 줄을 확인" >&2
+  fi
 fi
 OLD="$1"; HUB="${HUB_ROOT:-$HOME/orca/workspaces/LoveRevolutionMaker}/$2"; ROLE="${ROLE_FILE:-$HOME/.config/lrm-hubs/roles/role-$3.txt}"
 COMMON="${COMMON_FILE-$HOME/.claude/skills/orca-hub-create/references/common-rules.txt}"

@@ -33,7 +33,7 @@ usage() {
   --is-dormant S  S 가 휴면이면 사유를 출력하고 종료 코드 0, 아니면 1, 목록에 없으면 2(restart_hub.sh 가 씀)
 
 환경: HUB_DUPS_PY hub_dups.py 경로, HUBS_TSV 허브 목록 파일, LRM_HUB_STATUS_DIR 상태 폴더, CREATE_HUB create_hub.sh 경로
-종료 코드: 0 성공(휴면 건너뜀 포함), 1 허브 기동 실패 있음, 2 인자·목록 오류. --is-dormant 는 위 값
+종료 코드: 0 성공(휴면 건너뜀 포함), 1 허브 기동 실패 있음, 2 인자·목록 오류(휴면 표식 slug 가 목록에 없는 오타도 2 이며 --list·--only·--dry-run 포함 모든 실행이 중단됨). --is-dormant 는 위 값
 예: resume_all.sh --dry-run · resume_all.sh --wake ui-layer
 E
 }
@@ -55,15 +55,17 @@ done
 # 휴면 표식 "#dormant<TAB>slug<TAB>사유" → "slug<TAB>사유"
 dormant_rows() { awk -F'\t' -v tag="$DORMANT_TAG" '$1 == tag && $2 != "" { print $2 "\t" $3 }' "$TSV"; }
 hub_slugs() { grep -v '^[[:space:]]*#' "$TSV" | grep -v '^[[:space:]]*$' | cut -f1; }
+# pipefail 아래 grep -q 는 앞 명령이 SIGPIPE(141)로 끝나 거짓 실패가 될 수 있어 awk 가 끝까지 읽어 판정
+has_slug() { hub_slugs | awk -v s="$1" '$0 == s { f = 1 } END { exit !f }'; }
 # 휴면이면 사유 출력 + 0, 아니면 1
 dormant_reason() { dormant_rows | awk -F'\t' -v s="$1" '$1 == s { print $2; f = 1 } END { exit !f }'; }
 # 오타로 표식이 조용히 무시되면 휴면 허브가 다시 뜸. 목록에 없는 slug 는 거부
 while IFS=$'\t' read -r DS _; do
-  hub_slugs | grep -Fxq -- "$DS" || die "휴면 표식의 slug '$DS' 가 $TSV 에 없음 — #dormant 줄의 slug 를 허브 목록 첫 칸과 맞춤"
+  has_slug "$DS" || die "휴면 표식의 slug '$DS' 가 $TSV 에 없음 — #dormant 줄의 slug 를 허브 목록 첫 칸과 맞춤"
 done < <(dormant_rows)
 
 if [ -n "$IS_DORMANT" ]; then
-  hub_slugs | grep -Fxq -- "$IS_DORMANT" || exit 2
+  has_slug "$IS_DORMANT" || exit 2
   dormant_reason "$IS_DORMANT"; exit $?
 fi
 if [ "$LIST" = 1 ]; then
@@ -117,7 +119,7 @@ expand() { case "$1" in "~/"*) printf '%s' "$HOME/${1#\~/}" ;; -) printf '' ;; *
 
 # --only 로 지정한 slug 가 목록에 있는지 먼저 확인
 for o in ${ONLY[@]+"${ONLY[@]}"}; do
-  grep -v '^[[:space:]]*#' "$TSV" | cut -f1 | grep -Fxq -- "$o" || die "slug '$o' 가 $TSV 에 없음 — 목록의 첫 칸 중 하나를 지정"
+  has_slug "$o" || die "slug '$o' 가 $TSV 에 없음 — 목록의 첫 칸 중 하나를 지정"
 done
 
 FAILED=0

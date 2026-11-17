@@ -6,13 +6,13 @@
 # slug	name	role_file	ws_root	repo	parent
 # 휴면 표식(11-17, 카드 lrm-edq): "#dormant<TAB>slug<TAB>사유" 줄. 주석이라 이 표를 읽는 코드는 그대로 건너뛰고 resume_all.sh·restart_hub.sh 만 읽음
 # 휴면 = 11-16 기능 팀 구조(feature_open.sh·feature_close.sh)로 대체돼 재기동하지 않는 허브. 행은 유지(진행 목록·상태 파일 이름 호환). 깨우기: resume_all.sh --wake <slug>, 계속 깨워 두려면 아래 #dormant 줄 삭제. 목록: resume_all.sh --list
-# 판정 기준: 현재 일이 기능 카드로 옮겨 갈 수 있고 상태 파일이 하루 넘게 갱신 없음 → 휴면. 도는 워커·열린 PR 스택·대기 결정이 있거나 기능 팀이 대신하지 못하는 창구면 유지(애매하면 유지)
+# 판정 기준: 현재 일이 기능 카드로 옮겨 갈 수 있고 (진행 중 작업 없이 대기뿐이거나 상태 파일이 하루 넘게 갱신 없음) → 휴면. 도는 워커·열린 PR 스택·대기 결정이 있거나 기능 팀이 대신하지 못하는 창구면 유지(애매하면 유지)
 #dormant	ui-layer	UI 규약 U1~U10 확정·상태 파일 11-16 10:14 이후 갱신 없음·남은 LRM-601 은 기능 팀 몫
-#dormant	data-design	상태 파일 11-16 14:11 이후 갱신 없음·"허브 재개 때" 대기뿐·LRM-547·395 는 기능 카드로 재개
+#dormant	data-design	"허브 재개 때" 대기뿐(진행 중 워커 없음)·LRM-547·395 는 기능 카드로 재개
 #dormant	arch-audit	상태 파일 없음(최근 사용 흔적 없음)·독립 리뷰는 기능 팀 검수 단계가 대체
 #dormant	tutorial	상태 파일 없음(최근 사용 흔적 없음)·튜토리얼은 기능 카드 단위로 진행
-#dormant	coord-server-hub	상태 파일 11-16 14:11 이후 갱신 없음·"허브 재개 때" 대기·LRM-311 은 기능 팀으로 재개
-# 유지(이유): test-qa 시험 T0288 대기·다른 허브 [qa] 판정 창구 / scrum 개인 비서(스크럼 자동화가 의존) / docs 문서 수신 허브(대체 경로 확인 못 함) / vfx 오늘 00:06 갱신 / automa-hub 머지 대기 PR 4개·워커 1 / data-source-hub 지금 가동·PR #775 대기 / config 대기 결정 D-NIGHTQ·야간 큐 1단계 미완 / pr-fix 열린 PR 정비 창구(자체 정비 규칙 반영 전)
+#dormant	coord-server-hub	"허브 재개 때" 대기뿐(진행 중 워커 없음)·LRM-311 은 기능 팀으로 재개
+# 유지(이유): test-qa 시험 T0288 대기·다른 허브 [qa] 판정 창구 / scrum 개인 비서(ai.lrm.scrum.plist·scrum_run.sh 가 의존) / docs 문서 코디네이터(slug 로 참조하는 스크립트·표는 없음을 grep 으로 확인했으나 doc-kit 허브 대체 여부는 미확인이라 유지) / vfx 오늘 00:06 갱신 / automa-hub 머지 대기 PR 4개·워커 1 / data-source-hub 지금 가동·PR #775 대기 / config 대기 결정 D-NIGHTQ·야간 큐 1단계 미완 / pr-fix 열린 PR 정비 창구(자체 정비 규칙 반영 전)
 ui-layer	UI 계층 통합 설계	~/.config/lrm-hubs/roles/role-ui.txt	-	-
 test-qa	테스트·QA	~/.config/lrm-hubs/roles/role-test.txt	-	-
 arch-audit	아키텍처 점검	~/.config/lrm-hubs/roles/role-arch.txt	-	-

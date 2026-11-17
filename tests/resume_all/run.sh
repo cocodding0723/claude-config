@@ -31,6 +31,9 @@ chk "--is-dormant: 휴면 0(사유 출력)·활성 1·없음 2" '[ "$R1 $R2 $R3"
 printf 'alpha\t알파\t~/r/role-a.txt\t-\t-\n#dormant\tbetaa\t오타\n' > "$SB/typo.tsv"
 HUBS_TSV="$SB/typo.tsv" bash "$RA" --dry-run >/dev/null 2>"$SB/e"; RC=$?
 chk "표식 slug 오타: 종료 코드 2 + 원인·조치" '[ "$RC" = 2 ] && grep -q "betaa" "$SB/e" && grep -q "맞춤" "$SB/e"' "rc=$RC"
+HUBS_TSV="$SB/typo.tsv" bash "$RA" --list >/dev/null 2>&1; R4=$?; HUBS_TSV="$SB/typo.tsv" bash "$RA" --dry-run --only alpha >/dev/null 2>&1; R5=$?
+chk "표식 오타는 --list·--only 도 종료 2 로 중단" '[ "$R4 $R5" = "2 2" ]' "$R4 $R5"
+chk "--help 에 표식 오타 중단 안내" 'bash "$RA" --help | grep -q "오타도 2"'
 bash "$RA" --is-dormant >/dev/null 2>&1; chk "--is-dormant 인자 없음: 종료 코드 2" '[ $? = 2 ]'
 chk "--help 에 휴면·깨우기·종료 코드" 'bash "$RA" --help | grep -q -- "--wake" && bash "$RA" --help | grep -q "#dormant" && bash "$RA" --help | grep -q "휴면 건너뜀 포함"'
 
