@@ -12,6 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 SCRIPT = os.path.join(ROOT, "hubs", "scripts", "feedback_route.py")
 FAKE_ORCA = os.path.join(ROOT, "tests", "stall_watch", "fake_orca.py")
+FAKE_ORCA_SHOW = os.path.join(HERE, "fake_orca_show.py")  # terminal show(화면 끝) 지원판
 TERM = "term_00000000-0000-4000-8000-0000000000aa"
 WS = "/w/feat-a"
 END = "slack-thread-end"
@@ -91,10 +92,28 @@ class ReplyBase(unittest.TestCase):
         self.bd("label", "add", cid, lb)
 
 
+    def use_show_orca(self):
+        shutil.copy(FAKE_ORCA_SHOW, os.path.join(self.bin, "orca"))
+        os.chmod(os.path.join(self.bin, "orca"), 0o755)
+        self.env["FAKE_ORCA_BASE"] = FAKE_ORCA
+
+    def assert_handed_off(self, why_part):
+        """세션에 닿지 못한 답: 부모 기능 코디네이터 상자에 한 줄 + 작업 공간 카드 코멘트에 넘겼다는 한 줄. 기능 epic 코멘트는 건드리지 않음"""
+        rows = self.box("feat-x")
+        self.assertEqual(len(rows), 1)
+        self.assertIn(f"작업 공간 카드 {self.ws_card} 에 Slack 답 도착, 세션에 알리지 못함", rows[0]["text"])
+        self.assertIn(why_part, rows[0]["text"])
+        notes = [t for t in self.comments(self.ws_card) if "세션에 알리지 못해" in t]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("기능 코디네이터 상자 feat-x", notes[0])
+        self.assertEqual(self.comments(self.epic), [])
+
+
 class ReplyToSessionTest(ReplyBase):
     RAW = "버튼 색이 *진해요* — `#FFB` 로\n둘째 줄도 그대로"
 
     def test_reply_goes_to_card_comment_and_session_inbox_verbatim(self):
+        self.wake_on()  # 스위치 꺼짐은 부모 상자로 넘기므로(아래 폴백 시험) 여기서는 켜 둠
         self.reply("1794383300.000001", PARENT_TS, self.RAW, ["/hub/slack-files/a.png"])
         out = self.route()
         self.assertEqual([(r["to"], r["card"]) for r in out["routed"]], [("ws", self.ws_card)])
@@ -105,12 +124,13 @@ class ReplyToSessionTest(ReplyBase):
         self.assertEqual(self.comments(self.epic), [], "기능 코디네이터 쪽에는 가지 않음")
         self.assertEqual(self.box("main"), [])
 
-    def test_switch_off_means_no_input_line(self):
+    def test_switch_off_means_no_input_line_and_hands_off_to_feature_box(self):
         self.reply("1794383300.000001", PARENT_TS, "답")
         self.route()
         self.assertEqual(self.sends(), [])
-        self.assertFalse(os.path.exists(os.path.join(self.hub, "thread-wake.json")))
+        self.assertEqual(json.load(open(os.path.join(self.hub, "thread-wake.json")))["items"], [])
         self.assertEqual(len(self.box("ws-" + self.ws_card.replace(".", "-"))), 1, "편지함·코멘트는 늘 넣음")
+        self.assert_handed_off("스위치 꺼짐")
 
     def test_switch_on_sends_one_line_to_session_terminal(self):
         self.wake_on()
@@ -152,18 +172,87 @@ class ReplyToSessionTest(ReplyBase):
                 d = json.load(open(state))
                 d["items"][0]["next_at"] = 0
                 self.write(state, json.dumps(d))
-        self.assertEqual(seen, ["blocked_retry"] * 4 + ["gave_up"])
+        self.assertEqual(seen, ["blocked_retry"] * 4 + ["handed_off"])
         self.assertEqual(json.load(open(state))["items"], [])
         self.assertEqual(self.sends(), [])
-        self.assertEqual(len(self.comments(self.ws_card)), 1)
+        self.assert_handed_off("입력 막힘 5회")
 
-    def test_no_live_terminal_drops_wake_without_losing_answer(self):
+    def test_no_live_terminal_retries_then_hands_off_to_feature_box(self):
         self.wake_on()
         self.set_terminals([])
         self.reply("1794383300.000001", PARENT_TS, "답")
-        out = self.route()
-        self.assertEqual([w["wake"] for w in out["wake"]], ["failed"])
+        state = os.path.join(self.hub, "thread-wake.json")
+        seen = []
+        for _ in range(5):
+            seen += [w["wake"] for w in self.route().get("wake", [])]
+            if os.path.exists(state) and json.load(open(state))["items"]:
+                d = json.load(open(state))
+                d["items"][0]["next_at"] = 0
+                self.write(state, json.dumps(d))
+        self.assertEqual(seen, ["failed_retry"] * 4 + ["handed_off"])
         self.assertEqual(len(self.box("ws-" + self.ws_card.replace(".", "-"))), 1)
+        self.assert_handed_off("터미널 전송 실패 5회")
+
+    def test_draft_in_input_box_defers_wake_and_counts_toward_limit(self):
+        """입력 칸에 사용자가 쓰던 글이 있으면 보내지 않고 미룸(막힘과 같은 5회 상한). 칸이 비면 다음 회차에 보냄"""
+        self.use_show_orca()
+        self.write(os.path.join(self.fake, f"preview_{TERM}.txt"), "작업 중\n> 쓰던 글 입니다\n")
+        self.wake_on()
+        self.reply("1794383300.000001", PARENT_TS, "답")
+        out = self.route()
+        self.assertEqual([w["wake"] for w in out["wake"]], ["blocked_retry"])
+        self.assertIn("screen_draft", out["wake"][0]["why"])
+        self.assertEqual(self.sends(), [])
+        state = os.path.join(self.hub, "thread-wake.json")
+        self.assertEqual(json.load(open(state))["items"][0]["tries"], 1)
+        self.write(os.path.join(self.fake, f"preview_{TERM}.txt"), "작업 중\n> \n")  # 사용자가 글을 지움
+        d = json.load(open(state))
+        d["items"][0]["next_at"] = 0
+        self.write(state, json.dumps(d))
+        self.assertEqual([w["wake"] for w in self.route()["wake"]], ["sent"])
+        self.assertEqual(len(self.sends()), 1)
+
+    def test_draft_forever_hands_off_after_limit(self):
+        self.use_show_orca()
+        self.write(os.path.join(self.fake, f"preview_{TERM}.txt"), "> 쓰던 글\n")
+        self.wake_on()
+        self.reply("1794383300.000001", PARENT_TS, "답")
+        state = os.path.join(self.hub, "thread-wake.json")
+        seen = []
+        for _ in range(5):
+            seen += [w["wake"] for w in self.route().get("wake", [])]
+            if os.path.exists(state) and json.load(open(state))["items"]:
+                d = json.load(open(state))
+                d["items"][0]["next_at"] = 0
+                self.write(state, json.dumps(d))
+        self.assertEqual(seen, ["blocked_retry"] * 4 + ["handed_off"])
+        self.assertEqual(self.sends(), [])
+
+    def test_stale_queue_item_is_handed_off_instead_of_sent(self):
+        """스위치를 오래 꺼 뒀다 켠 경우: 나이 상한을 넘은 대기 항목은 입력창에 보내지 않고 부모 상자로"""
+        self.wake_on()
+        self.reply("1794383300.000001", PARENT_TS, "답")
+        self.route(env={"FAKE_SEND_BLOCK": f"{TERM}:1"})  # 막힌 채로 대기열에 남김
+        state = os.path.join(self.hub, "thread-wake.json")
+        d = json.load(open(state))
+        d["items"][0]["at"] -= 7200
+        d["items"][0]["next_at"] = 0
+        self.write(state, json.dumps(d))
+        out = self.route()
+        self.assertEqual([w["wake"] for w in out["wake"]], ["handed_off"])
+        self.assertEqual(self.sends(), [])
+        self.assert_handed_off("분 넘게 대기")
+
+    def test_no_feature_parent_hands_off_to_confirm_card(self):
+        orphan = self.make("부모 없는 작업", "-t", "task", "-l", "ws:/w/orphan,slack-thread:1794383274.333333")
+        self.reply("1794383300.000001", "1794383274.333333", "답")
+        out = self.route()
+        self.assertEqual(out["wake"][0]["wake"], "handed_off")
+        self.assertIn("확인 카드", out["wake"][0]["to"])
+        triage = [r for r in self.bd("list", "--label", "feedback:triage", "--limit", "0") if "작업 공간 답 전달 확인 필요" in r["title"]]
+        self.assertEqual(len(triage), 1)
+        self.assertIn(f"작업 공간 카드 {orphan} 에 Slack 답 도착", self.bd("show", triage[0]["id"])[0]["description"])
+        self.assertTrue(any("확인 카드" in t for t in self.comments(orphan)))
 
     def test_dry_run_changes_nothing(self):
         self.wake_on()

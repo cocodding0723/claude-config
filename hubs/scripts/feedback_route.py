@@ -9,7 +9,8 @@
 전달(--once, 폴러 회차마다): slack-inbox.jsonl 의 새 thread_reply 중 parent_ts 가 등록된 스레드면
   - 열린 기능 epic 1개: 원문 그대로 epic 코멘트 + 그 기능 상자에 kind feedback 한 줄(첨부는 저장 경로 그대로). 고쳐 쓰지 않음.
   - 열린 작업 공간 카드: 원문 그대로 카드 코멘트 + 그 상자 한 줄, 이어서 세션 입력창에 'Slack 답 도착: bd show <카드>' 한 줄 알림
-    (스위치 파일 <작업 폴더>/.thread-wake.on 이 있을 때만. 없으면 코멘트·상자만). 입력 막힘(확인 창)은 회차마다 재시도, 시간 초과는 다시 보내지 않음.
+    (스위치 파일 <작업 폴더>/.thread-wake.on 이 있을 때만). 입력 막힘(확인 창)·입력 칸에 쓰던 글(화면 보류)·터미널 없음은 회차마다 재시도, 시간 초과는 다시 보내지 않음.
+    세션에 닿지 못하면(스위치 꺼짐·재시도 WAKE_MAX_TRIES 회 실패·대기 WAKE_MAX_AGE_S 초과) 부모 기능 코디네이터 상자 feat-<slug> 에 한 줄(없거나 끝났으면 확인 카드)을 넣고 카드 코멘트에 남김.
   - 끝난 작업 공간 카드(닫힘 또는 label slack-thread-end): 그 카드의 부모 기능 epic 으로 보냄. 기능도 끝났으면 확인 카드로.
   - 애매함(같은 스레드에 카드 여럿, 닫힌 epic 만, 담당 없는 카드): 메인 카드 '📥 기능 판별 필요'(label hub:main,feedback:triage)에 원문 코멘트.
   - 등록 안 된 스레드: 손대지 않음(기존 메인 전달 그대로).
@@ -50,6 +51,10 @@ WAKE_PER_RUN = 3                # 회차당 입력창 전송 시도 상한
 WAKE_BUDGET_S = 60              # 회차당 입력창 전송에 쓰는 시간 상한. 넘으면 남은 알림은 다음 회차로
 WAKE_MAX_TRIES = actions.BLOCK_RETRIES  # 막힘 재시도 횟수 = 결정 답 전달 경로와 같은 값
 WAKE_GAP_S = actions.BLOCK_GAP_S
+WAKE_MAX_AGE_S = 3600           # 대기열 항목 나이 상한. 넘으면 세션 알림 대신 부모 상자로 넘김(스위치를 오래 꺼 뒀다 켠 경우 등)
+HANDOFF_TEXT = "작업 공간 카드 {card} 에 Slack 답 도착, 세션에 알리지 못함({why}). 답 원문: bd show {card}"
+HANDOFF_NOTE = "세션에 알리지 못해({why}) {to} 로 넘김"
+HANDOFF_TRIAGE_TITLE = "📥 작업 공간 답 전달 확인 필요: {card}"
 TRIAGE_LABELS = "hub:main,feedback:triage"
 TRIAGE_TITLE = "📥 기능 판별 필요: Slack 스레드 {ts}"
 TS_RE = re.compile(r"^[0-9]{1,12}\.[0-9]{1,9}$")
@@ -235,42 +240,89 @@ def save_wake(items):
     os.replace(tmp, path)
 
 
-def queue_wake(card_id, ws):
+def queue_wake(card_id, ws, now=None):
     """입력창 알림 대기열에 추가. 같은 카드의 알림이 이미 대기 중이면 합침(문구가 같고 카드 코멘트에 답이 다 있음)"""
     items = load_wake()
     if any(x["card"] == card_id for x in items):
         return False
-    items.append({"card": card_id, "ws": ws, "tries": 0, "next_at": 0})
+    items.append({"card": card_id, "ws": ws, "tries": 0, "next_at": 0, "at": int(time.time() if now is None else now)})
     save_wake(items)
     return True
 
 
+def hand_off(card_id, why):
+    """세션에 닿지 못한 작업 공간 카드 답을 부모로 넘김: 열린 기능 epic 의 코디네이터 상자(기존 기능 스레드 경로, to_feature 와 같은 상자)에 한 줄,
+    기능이 없거나 끝났으면 확인 카드. 넘긴 사실은 작업 공간 카드 코멘트 한 줄. 반환 = 넘긴 곳 이름, 실패는 None(대기열에 남겨 다음 회차 재시도)"""
+    try:
+        row = card_row(card_id)
+        up = card_row(row["parent"]) if row and row.get("parent") else None
+        text = HANDOFF_TEXT.format(card=card_id, why=why)
+        if up and up.get("status") != "closed" and is_feature(up):
+            box = BOX_HEAD + slug_of(up)
+            main_inbox.append("feedback", text, SOURCE, ref=f"{card_id} handoff", box=box)
+            to = f"기능 코디네이터 상자 {box}"
+        else:
+            title = HANDOFF_TRIAGE_TITLE.format(card=card_id)
+            hit = next((r["id"] for r in cards.bd_json("list", "--label", "feedback:triage", "--limit", "0") or []
+                        if isinstance(r, dict) and r.get("title") == title and r.get("status") != "closed"), None)
+            if hit:
+                cards.bd("comments", "add", hit, text)
+            else:
+                made = cards.bd_json("create", title, "-t", "task", "-p", "1", "-l", TRIAGE_LABELS, "-d", text)
+                made = made[0] if isinstance(made, list) else made
+                hit = made["id"]
+            to = f"확인 카드 {hit}"
+        cards.bd("comments", "add", card_id, HANDOFF_NOTE.format(why=why, to=to))
+        return to
+    except (cards.Fail, OSError, KeyError, TypeError):
+        return None
+
+
 def run_wakes(now=None):
-    """대기 알림을 한 번씩 시도. 결과 요약 목록. 스위치가 꺼져 있으면 대기열을 비우지 않고 건너뜀(켜면 이어 보냄).
-    전송 결과: 성공·시간 초과(도착 불명 → 다시 보내지 않음)·막힘 아닌 실패는 대기열에서 뺌. 막힘(확인 창)은 WAKE_GAP_S 뒤 재시도, WAKE_MAX_TRIES 회째에 포기.
-    포기·실패해도 답은 카드 코멘트와 받은 편지함에 이미 있음"""
+    """대기 알림을 한 번씩 처리. 결과 요약 목록.
+    세션에 닿지 못하는 경우는 모두 부모 상자로 넘김(hand_off): 스위치 꺼짐, 나이 상한(WAKE_MAX_AGE_S) 초과, 막힘·화면 보류·터미널 없음이 WAKE_MAX_TRIES 회 계속됨.
+    전송 결과: 성공·시간 초과(도착 불명 → 다시 보내지 않음)는 대기열에서 뺌. 막힘·막힘 아닌 실패는 WAKE_GAP_S 뒤 재시도하고 WAKE_MAX_TRIES 회째에 넘김.
+    넘기기에 실패하면 항목을 남겨 다음 회차에 다시 시도(답이 사라지지 않게). 답 자체는 카드 코멘트와 작업 공간 상자에 이미 있음"""
     now = time.time() if now is None else now
     items, keep, out = load_wake(), [], []
-    if not items or not wake_on():
+    if not items:
         return out
+    on = wake_on()
     start, sent = time.monotonic(), 0
+
+    def give(it, row, why):
+        to = hand_off(it["card"], why)
+        if to is None:
+            keep.append(it)
+            row["wake"] = "handoff_failed"
+        else:
+            row.update(wake="handed_off", why=why, to=to)
+        out.append(row)
+
     for it in items:
+        row = {"card": it["card"]}
+        if not on:
+            give(it, row, "스위치 꺼짐")
+            continue
+        if now - it.get("at", now) > WAKE_MAX_AGE_S:
+            give(it, row, f"알림이 {WAKE_MAX_AGE_S // 60}분 넘게 대기")
+            continue
         if it.get("next_at", 0) > now or sent >= WAKE_PER_RUN or time.monotonic() - start > WAKE_BUDGET_S:
             keep.append(it)
             continue
         sent += 1
         status, _tries, codes, _found = actions.deliver_ws(it["ws"], WAKE_TEXT.format(card=it["card"]))
-        row = {"card": it["card"], "wake": status}
-        if status == actions.BLOCKED:
+        row["wake"] = status
+        if status in (actions.BLOCKED, actions.FAILED):
             it["tries"] = it.get("tries", 0) + 1
+            why = ", ".join(dict.fromkeys(codes)) or "세션 터미널 없음"
             if it["tries"] >= WAKE_MAX_TRIES:
-                row["wake"] = "gave_up"
-            else:
-                it["next_at"] = int(now + WAKE_GAP_S)
-                keep.append(it)
-                row["wake"] = "blocked_retry"
-        elif status == actions.FAILED:
-            row["why"] = ", ".join(dict.fromkeys(codes)) or "세션 터미널 없음"
+                give(it, row, f"{'입력 막힘' if status == actions.BLOCKED else '터미널 전송 실패'} {it['tries']}회({why})")
+                continue
+            it["next_at"] = int(now + WAKE_GAP_S)
+            keep.append(it)
+            row["wake"] = "blocked_retry" if status == actions.BLOCKED else "failed_retry"
+            row["why"] = why
         out.append(row)
     save_wake(keep)
     return out
@@ -295,7 +347,6 @@ def once(dry_run=False):
         replies = [r for r in recs if r.get("type") == "thread_reply" and r.get("parent_ts")]
         done = routed_ts(rpath)
         by_ts = thread_cards() if replies else {}
-        wake = wake_on()
         for r in replies:
             if str(r.get("ts")) in done:
                 continue
@@ -311,7 +362,7 @@ def once(dry_run=False):
                 finally:
                     os.close(fd)
                 done.add(got["ts"])
-                if got["to"] == "ws" and wake:
+                if got["to"] == "ws":
                     queue_wake(got["card"], ws_of(next(c for c in by_ts[got["parent_ts"]] if c["id"] == got["card"])))
         if not dry_run:
             main_inbox.save_offset(opath, st.st_ino, end)
