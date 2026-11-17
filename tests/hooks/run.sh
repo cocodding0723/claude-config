@@ -690,8 +690,12 @@ EA=$(mkc ea -t epic -l hub:coord-ea-hub); EA1=$(mkc ea1 --parent "$EA")
 EB=$(mkc eb -t epic -l hub:coord-eb-hub); EB1=$(mkc eb1 --parent "$EB")
 EZ=$(mkc ez -t epic -l feature:zz); EF=$(mkc ef -t epic -l "repo:$SB/ws/coord-ef-hub")
 AL=$(mkc alert -l hub:main,kind:alert)
+NP=$(mkc nop); EFC=$(mkc efc --parent "$EF")
+NDA=$(mkc nda); NDB=$(mkc ndb); (cd "$ESB" && bd update "$NDA" --parent "$EA" >/dev/null 2>&1; bd update "$NDB" --parent "$EB" >/dev/null 2>&1)
+ES=$(mkc es -t epic -l hub:coord-server-hub); ES2=$(mkc es2 -t epic -l hub:sv2)
 git -C "$TM" worktree add -q -b feat/es-a "$SB/coord-ea-hub"; git -C "$TM" worktree add -q -b feat/es-z "$SB/coord-feat-zz-hub"
 git -C "$TM" worktree add -q -b feat/es-n "$SB/coord-none-hub"; git -C "$TM" worktree add -q -b feat/es-f "$SB/coord-ef-hub"
+git -C "$TM" worktree add -q -b feat/es-s "$SB/coord-coord-server-hub-hub"; git -C "$TM" worktree add -q -b feat/es-s2 "$SB/coord-sv2-hub"
 # erun <cmd> <cwd> [ORCA_ROLE] → pass|deny (stderr 는 $SB/es.err)
 erun() { local out; out=$(printf '%s' "$(jq -cn --arg c "$1" --arg d "$2" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}')" | HOME="$SB/home" LRM_BOARD="$ESB" ORCA_ROLE="${3:-}" LRM_PUSH_MAIN=/x/main python3 -I "$EG" 2>"$SB/es.err"); [ -z "$out" ] && echo pass || printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision'; }
 eexp() { local got; got=$(erun "$2" "$3" "${5:-}"); [ "$got" = "${4:-pass}" ] && ok "$1" || ko "$1" "기대 ${4:-pass}, 실제 $got"; }
@@ -705,7 +709,21 @@ eexp "epic-scope: 남의 카드 comments add 거부" "$B comments add $EB1 hi" "
 eexp "epic-scope: label add 거부" "$B label add $EB1 x" "$HA" deny
 eexp "epic-scope: dep add 거부" "$B dep add $EB1 $EA1" "$HA" deny
 eexp "epic-scope: update --parent 로 남의 에픽에 옮기기 거부" "$B update $EA1 --parent $EB" "$HA" deny
-eexp "epic-scope: 사용자 알림 카드(hub:main) 직접 쓰기 거부" "$B comments add $AL x" "$HA" deny
+eexp "epic-scope: hub:main 카드 comments add 통과" "$B comments add $AL x" "$HA"
+eexp "epic-scope: hub:main 카드 comment 단축형 통과" "$B comment $AL x" "$HA"
+eexp "epic-scope: hub:main 카드 close 거부" "$B close $AL" "$HA" deny
+eexp "epic-scope: hub:main 카드 update 거부" "$B update $AL -p 1" "$HA" deny
+eexp "epic-scope: hub:main 카드 label add 거부" "$B label add $AL x" "$HA" deny
+eexp "epic-scope: 부모 없는 카드 comments add 통과" "$B comments add $NP x" "$HA"
+eexp "epic-scope: 부모 없는 카드 close·update 통과" "$B update $NP -p 1 && $B close $NP" "$HA"
+grep -q '부모 에픽이 없는' "$SB/es.err" && ok "epic-scope: 부모 없는 카드 통과는 경고 남김" || ko "epic-scope: 부모 없는 카드 통과는 경고 남김" "stderr: $(cat "$SB/es.err")"
+eexp "epic-scope: 점 없는 하위 카드(parent 칸으로만 이어짐) 자기 에픽이면 통과" "$B update $NDA -p 1" "$HA"
+eexp "epic-scope: 점 없는 하위 카드 남의 에픽이면 거부" "$B update $NDB -p 1" "$HA" deny
+eexp "epic-scope: repo: 라벨만 있는 에픽의 하위 카드 통과" "$B comments add $EFC x" "$SB/coord-ef-hub"
+eexp "epic-scope: repo: 라벨만 있는 에픽 밑에서 남의 카드 거부" "$B update $EB1 -p 1" "$SB/coord-ef-hub" deny
+eexp "epic-scope: 폴더에 hub 가 두 번 든 허브(label hub:<slug>)" "$B update $ES -p 1" "$SB/coord-coord-server-hub-hub"
+eexp "epic-scope: 같은 허브의 남의 에픽 카드 거부" "$B update $EB1 -p 1" "$SB/coord-coord-server-hub-hub" deny
+eexp "epic-scope: 폴더 coord-sv2-hub 에서 label hub:sv2 통과" "$B update $ES2 -p 1" "$SB/coord-sv2-hub"
 eexp "epic-scope: cd <작업판> && bd 형태도 검사" "cd $ESB && bd update $EB1 -p 1" "$HA" deny
 eexp "epic-scope: 읽기 show·list·comments 통과" "$B show $EB1 && $B list && $B comments $EB1 && $B children $EB" "$HA"
 eexp "epic-scope: 작업판이 아닌 -C 는 안 봄" "bd -C /tmp/other update $EB1 -p 1" "$HA"
@@ -722,6 +740,7 @@ eexp "epic-scope: feature 허브의 남의 에픽 거부" "$B update $EA1 -p 1" 
 eexp "epic-scope: repo:<허브 폴더> 표식으로 판별" "$B update $EF -p 1" "$SB/coord-ef-hub"
 eexp "epic-scope: 판별 불가 허브는 통과" "$B update $EB1 -p 1" "$SB/coord-none-hub"
 grep -q '경고' "$SB/es.err" && ok "epic-scope: 판별 불가는 stderr 경고" || ko "epic-scope: 판별 불가는 stderr 경고" "stderr: $(cat "$SB/es.err")"
+grep -q "조치: bd -C .* --add-label hub:coord-none-hub" "$SB/es.err" && grep -q "hub:coord-none-hub" "$SB/es.err" && ok "epic-scope: 판별 불가 경고에 찾은 라벨과 조치 포함" || ko "epic-scope: 판별 불가 경고에 찾은 라벨과 조치 포함" "stderr: $(cat "$SB/es.err")"
 eexp "epic-scope: 작업자(연결 작업 공간) 세션 통과" "$B comments add $EB1 hi" "$SB/tg-worker"
 eexp "epic-scope: ORCA_ROLE=worker 통과" "$B update $EB1 -p 1" "$HA" pass worker
 eexp "epic-scope: ORCA_ROLE=main 통과" "$B update $EB1 -p 1" "$HA" pass main

@@ -7,7 +7,8 @@
 - 자기 에픽: label hub:<허브 폴더|slug> · feature:<slug>(feature_open.sh 가 남김, 허브 coord-feat-<slug>-hub) · repo:<경로>/<허브 폴더> 중 하나인 epic,
   또는 hub:<허브> 가 붙은 카드. 카드의 parent 사슬이 그 안에 있으면 자기 범위.
 - 오탐이 가장 큰 비용이라 불확실하면 통과: 자기 에픽 판별 불가·작업판 조회 실패·작업판에 없는 id 는 통과(+경고).
-- 훅이 안 보는 경로: 스크립트 안의 bd 호출(board_notify.py 등)·변수로 만든 id.
+- 부모 에픽이 없는 카드(--parent 없이 만든 결정·할 일 카드)는 쓰기 모두 통과 + 경고. hub:main 카드(사용자 알림·확인 모음)는 comments add 만 통과, 나머지 쓰기는 거부.
+- 훅이 안 보는 경로: 스크립트 안의 bd 호출(board_notify.py 등)·변수로 만든 id·BEADS 환경 변수로 지정한 작업판·-C 없는 bd. 막는 장치가 아니라 실수 방지 장치라 범위 밖으로 둠.
 종료 코드: 항상 0(판정은 stdout JSON)."""
 import json
 import os
@@ -43,6 +44,7 @@ VALUE_FLAGS = {
     "--reason-file", "--context", "--repo", "--skills", "--storage-class", "--waits-for", "--waits-for-gate", "--wisp-type",
     "--mol-type", "--await-id", "--blocks", "--graph",
 }
+MAIN_LABEL = "hub:main"  # 사용자가 모아 보는 결정·알림·확인 카드
 SKIP_CREATE = {"--dry-run", "--graph", "--file", "-f"}  # 카드를 하나만 만들지 않거나 만들지 않는 형태
 REPLY_TO = "~/.config/lrm-hubs/board_notify.py post --kind other --source <허브> '<본문>'"
 
@@ -84,16 +86,20 @@ def load_cards():
     return {c["id"]: c for c in json.loads(r.stdout)}
 
 
-def own_roots(hub, cards):
-    """자기 에픽 id 와 hub 라벨이 붙은 카드 id"""
+def wanted_labels(hub):
     slug = SLUG_STRIP.sub("", hub)
     feat = FEAT_HUB_RE.match(hub)
-    want = {f"hub:{hub}", f"hub:{slug}"} | ({f"feature:{feat.group(1)}"} if feat else set())
+    return [f"hub:{hub}", f"hub:{slug}"] + ([f"feature:{feat.group(1)}"] if feat else []) + [f"repo:<경로>/{hub}(에픽만)"]
+
+
+def own_roots(hub, cards):
+    """자기 에픽 id 와 hub 라벨이 붙은 카드 id"""
+    want = set(wanted_labels(hub)[:-1])
     out = {"epics": set(), "cards": set()}
     for c in cards.values():
         labels = set(c.get("labels") or [])
         epic = c.get("issue_type") == "epic"
-        if labels & want and not (epic and labels == labels & {"kind:epic"}):
+        if labels & want:
             out["epics" if epic else "cards"].add(c["id"])
         elif epic and any(l.startswith("repo:") and l[5:].rstrip("/").endswith("/" + hub) for l in labels):
             out["epics"].add(c["id"])
@@ -109,6 +115,16 @@ def in_scope(card_id, cards, roots):
         c = cards.get(card_id) or {}
         card_id = c.get("parent") or (card_id.rsplit(".", 1)[0] if "." in card_id else "")
     return False
+
+
+def top_of(card_id, cards):
+    """parent 사슬의 맨 위 카드(없는 id 에서 끊기면 마지막으로 찾은 카드)"""
+    seen, top = set(), None
+    while card_id and card_id not in seen and card_id in cards:
+        seen.add(card_id)
+        top = cards[card_id]
+        card_id = top.get("parent") or (card_id.rsplit(".", 1)[0] if "." in card_id else "")
+    return top
 
 
 def parse_bd(seg, i):
@@ -158,6 +174,10 @@ def targets(pos, flags):
     return [x for x in ids if ID_RE.match(x)], False
 
 
+def is_comment(pos):
+    return pos[:1] == ["comment"] or pos[:2] == ["comments", "add"]
+
+
 def reason_out(card, hub, epics):
     return (f"다른 에픽 카드는 쓰지 않음({card} 는 {hub} 가 맡은 에픽 {', '.join(sorted(epics)) or '-'} 아래가 아님) — "
             f"그 에픽 코디네이터에게 {REPLY_TO} 로 요청하거나 메인에 요청. 읽기(show·list·comments)는 가능")
@@ -204,7 +224,8 @@ def judge(ev):
                 return None
             roots = own_roots(hub, cards)
             if not roots["epics"] and not roots["cards"]:
-                warn(f"{hub} 가 맡은 에픽을 찾지 못함(label hub:·feature:·repo: 없음)")
+                warn(f"{hub} 가 맡은 에픽을 찾지 못함 — 라벨 {' · '.join(wanted_labels(hub))} 중 어느 에픽·카드에도 없음. "
+                     f"조치: bd -C {board_dir()} update <에픽 id> --add-label hub:{hub} 로 허브 라벨을 붙이면 검사가 켜짐")
                 return None
         if is_create:
             parent = flags.get("--parent")
@@ -215,8 +236,17 @@ def judge(ev):
         for cid in ids:
             if cid not in cards:
                 continue  # 작업판에 없는 id(플래그 값·오타)는 bd 가 알아서 오류
-            if not in_scope(cid, cards, roots):
+            if in_scope(cid, cards, roots):
+                continue
+            if MAIN_LABEL in (cards[cid].get("labels") or []):
+                if is_comment(pos):
+                    continue
                 return reason_out(cid, hub, roots["epics"])
+            top = top_of(cid, cards)
+            if not top or top.get("issue_type") != "epic":
+                warn(f"{cid} 는 부모 에픽이 없는 카드라 범위를 판별할 수 없음. 조치: 자기 카드면 메인에 bd update {cid} --parent <에픽 id> 요청")
+                continue
+            return reason_out(cid, hub, roots["epics"])
     return None
 
 
