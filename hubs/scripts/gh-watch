@@ -1,0 +1,6 @@
+#!/bin/bash
+# GitHub PR·CI 감시기 진입점. 본체는 같은 폴더의 gh_watch.py. gh-watch --help 로 사용법
+set -eu
+. "$(dirname "$0")/lib/py.sh"
+HERE=$(cd "$(dirname "$0")" && pwd)
+exec "$PY" "$HERE/gh_watch.py" "$@"

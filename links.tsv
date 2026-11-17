@@ -218,3 +218,9 @@ hubs/tools/hud_render.sh	.config/lrm-hubs/tools/hud_render.sh	link
 hubs/tools/hud_render_fx611.sh	.config/lrm-hubs/tools/hud_render_fx611.sh	link
 hubs/tools/hud_render_modal.sh	.config/lrm-hubs/tools/hud_render_modal.sh	link
 hubs/tools/render_common.sh	.config/lrm-hubs/tools/render_common.sh	link
+hubs/scripts/gh_watch.py	.config/lrm-hubs/gh_watch.py	link
+hubs/scripts/gh_watch_sinks.py	.config/lrm-hubs/gh_watch_sinks.py	link
+hubs/scripts/gh-watch	.config/lrm-hubs/gh-watch	link
+hubs/gh-watch.env.example	.config/lrm-hubs/gh-watch.env.example	link
+hubs/gh-watch-actions.example.json	.config/lrm-hubs/gh-watch-actions.example.json	link
+hubs/launchd/ai.lrm.ghwatch.plist	Library/LaunchAgents/ai.lrm.ghwatch.plist	copy
