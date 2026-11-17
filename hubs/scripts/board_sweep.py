@@ -4,6 +4,8 @@
 규칙(순서·값은 board_sweep.tsv 한 곳, 코드에 숫자·라벨 이름 없음):
   pr_done    결정·할 일 카드가 가리키는 PR(라벨 pr:N, 제목·본문 #N)이 전부 병합·닫힘이고, 전부 카드를 만든 뒤에 끝났으면 근거 댓글 + 닫기.
              카드를 만들 때 이미 끝난 PR 은 '참고로 적은 번호'로 보고 닫지 않음
+  slack_answered  결정 카드의 결정 번호(라벨 slack:<번호>·제목·본문)에 Slack 버튼 답이 있으면 답 원문 댓글 + 닫기.
+             답 기록은 answer_store(slack-inbox.jsonl)를 읽기만 함. 같은 번호의 버튼 답이 여럿이면 가장 늦은 것
   expired    라벨 expires:<ISO> 가 지난 카드 근거 댓글 + 닫기
   stale      만든 지 stale_hours 넘은 결정 카드에 라벨 stale 추가(닫지 않음)
   duplicate  같은 제목의 열린 카드가 여럿이면 가장 새 것만 두고 나머지에 댓글 + 닫기 후보 라벨
@@ -30,7 +32,7 @@ EXIT_OK, EXIT_CONFIG, EXIT_BD, EXIT_LOCKED = 0, 2, 3, 4
 DONE_STATES = ("MERGED", "CLOSED")
 REQUIRED = ("rules", "kinds", "kind_prefix", "pr_repo", "pr_label_prefix", "pr_sources", "pr_min_digits",
             "gh_calls_max", "gh_timeout_sec", "expires_label_prefix", "stale_kinds", "stale_hours", "stale_label",
-            "dup_kinds", "candidate_label", "orphan_hours", "skip_label", "protect_ids", "bd_timeout_sec",
+            "dup_kinds", "slack_kinds", "slack_id_pattern", "slack_label_prefix", "candidate_label", "orphan_hours", "skip_label", "protect_ids", "bd_timeout_sec",
             "log_path", "lock_path")
 
 EPILOG = """예:
@@ -268,6 +270,44 @@ class Sweeper:
                                for n, (s, t) in sorted(states.items()))
             self.close("pr_done", card, reason)
 
+    def slack_answers(self):
+        """결정 번호 → 가장 늦은 버튼 답(inbox 줄). 읽기만 함. answer_store 는 규칙이 돌 때만 불러옴(다른 규칙·launchd 짧은 PATH 에 부담 없게)"""
+        sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+        from answer_store import AnswerStore
+        store = AnswerStore(hub_dir())
+        inbox, done = store.read_inbox(), store.read_done()
+        picks = {}
+        for rec in inbox:
+            did, ts = rec.get("decision_id"), rec.get("parent_ts")
+            if rec.get("type") != "button" or rec.get("action") != "pick" or not did or not ts or not rec.get("option_text"):
+                continue
+            by, win = store.judge(inbox, done, did, ts)  # 같은 카드는 첫 버튼 답만 인정
+            if by and win is rec and (did not in picks or (rec.get("received_at") or 0) >= (picks[did].get("received_at") or 0)):
+                picks[did] = rec
+        return picks
+
+    def rule_slack_answered(self, cards):
+        kinds = set(as_list(self.cfg["slack_kinds"]))
+        pat = re.compile(self.cfg["slack_id_pattern"])
+        lp = self.cfg["slack_label_prefix"]
+        answers = None
+        for card in cards:
+            if card["id"] in self.handled or not (self.kinds(card) & kinds):
+                continue
+            ids = [lab[len(lp):] for lab in card.get("labels") or [] if lab.startswith(lp)]
+            ids += pat.findall(" ".join([card.get("title") or "", card.get("description") or ""]))
+            if not ids:
+                continue
+            if answers is None:
+                answers = self.slack_answers()
+            hit = next((i for i in ids if i in answers), None)
+            if hit is None:
+                continue
+            rec = answers[hit]
+            at = rec.get("received_at")
+            when = dt.datetime.fromtimestamp(at).astimezone().isoformat(timespec="minutes") if at else "시각 미상"
+            self.close("slack_answered", card, f"Slack 에서 답함({hit}, {when}) — 사용자 답: {rec['option_text']}")
+
     def rule_expired(self, cards):
         p = self.cfg["expires_label_prefix"]
         for card in cards:
@@ -362,7 +402,7 @@ class Sweeper:
                 self.count("error")
                 self.log("orphan", card["id"], "reopen-failed", err.strip()[:160])
 
-    RULES = {"pr_done": rule_pr_done, "expired": rule_expired, "stale": rule_stale,
+    RULES = {"pr_done": rule_pr_done, "slack_answered": rule_slack_answered, "expired": rule_expired, "stale": rule_stale,
              "duplicate": rule_duplicate, "orphan": rule_orphan}
 
     def sweep(self):

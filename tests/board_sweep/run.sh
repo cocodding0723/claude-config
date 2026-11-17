@@ -12,7 +12,8 @@ SB=$(mktemp -d "${TMPDIR:-/tmp}/bsweep-test.XXXXXX"); trap 'rm -rf "${SB:?}"' EX
 export BOARD_DIR="$SB/board" BOARD_BD="$HERE/fake_bd.py" BOARD_GH="$HERE/fake_gh.py"
 export LRM_BOARD_SWEEP_POLICY="$REPO/hubs/board_sweep.tsv" LRM_BOARD_SWEEP_LOCAL="$SB/local.tsv"
 export FAKE_BD_STATE="$SB/state.json" FAKE_BD_LOG="$SB/bd.log" FAKE_GH_PRS="$SB/prs.json" FAKE_GH_LOG="$SB/gh.log"
-export BOARD_SWEEP_NOW="2026-11-17T12:00:00+09:00"
+export BOARD_SWEEP_NOW="2026-11-17T12:00:00+09:00" LRM_HUB_DIR="$SB/hub"
+mkdir -p "$LRM_HUB_DIR"
 mkdir -p "$BOARD_DIR"
 
 # 시각 기준: 지금 = 11-17 03:00Z. 카드는 11-16 00:00Z(27시간 전) 또는 11-17 02:00Z(1시간 전)에 만듦
@@ -57,6 +58,37 @@ check "pr_done: 같은 PR 은 실행당 1번만 조회" '[ "$(grep -c "pr view 1
 check "sweep.log 에 닫은 카드마다 한 줄" '[ "$(grep -c "	apply	pr_done	.	close	" "$SB/sweep.log")" = 2 ]' "$(cat "$SB/sweep.log")"
 check "정상 종료 0" '[ "$(rc)" = 0 ]'
 check "sweep.log 회차 끝 요약 한 줄" '[ "$(grep -c "	apply	run	-	summary	cards=6 close=2 " "$SB/sweep.log")" = 1 ]' "$(cat "$SB/sweep.log")"
+
+# ── slack_answered ──
+INBOX="$LRM_HUB_DIR/slack-inbox.jsonl"
+printf '%s\n' \
+  '{"type":"button","parent_ts":"1.1","decision_id":"D-TEST1","kind":"decide","option_text":"1. 엔진 설정 유지","received_at":1794807054,"action":"pick","pick":1,"source":"slack"}' \
+  '{"type":"button","parent_ts":"2.2","decision_id":"D-TEST2","kind":"decide","option_text":"직접 입력: 이거 어떻게 할까?","received_at":1794807189,"action":"custom","text":"이거 어떻게 할까?","source":"slack"}' \
+  '{"type":"thread_reply","ts":"3.3","parent_ts":"3.0","decision_id":"D-TEST3","kind":"decide","text":"1","action":"free","received_at":1794807200}' \
+  '{"type":"button","parent_ts":"4.4","decision_id":"D-BTEST4","kind":"decide","option_text":"2. 유지","received_at":1794807300,"action":"pick","pick":2,"source":"slack"}' > "$INBOX"
+reset "[$(card sa1 open kind:decision,slack:D-TEST1 $OLD '엔진 설정 결정'),$(card sa2 open kind:decision $OLD '옮긴 카드' '배경: D-TEST1 에서 옮김'),
+$(card sa3 open kind:decision,slack:D-TEST2 $OLD),$(card sa4 open kind:decision,slack:D-TEST3 $OLD),$(card sa5 open kind:task,slack:D-TEST1 $OLD),
+$(card sa6 open kind:decision $NEW '번호 없음'),$(card sa7 open kind:decision,slack:D-BTEST4,sweep:skip $OLD),$(card sa8 open kind:decision,slack:D-BTEST4 $OLD)]"
+cp "$FAKE_BD_STATE" "$SB/before.json"
+sweep --dry-run
+check "slack_answered dry-run: 작업판을 바꾸지 않고 mode=dry 로 기록" 'cmp -s "$FAKE_BD_STATE" "$SB/before.json" && grep -q "	dry	slack_answered	sa1	close	" "$SB/sweep.log"' "$(cat "$SB/sweep.log")"
+sweep
+check "slack_answered: 라벨 slack:<번호> 의 버튼 답이 있으면 닫음" '[ "$(status_of sa1)" = closed ]'
+check "slack_answered: 본문에 적힌 결정 번호도 찾음" '[ "$(status_of sa2)" = closed ]'
+check "slack_answered: 답 원문을 댓글에 남김" 'grep -q "\"comment\", \"sa1\", \"정리(자동): Slack 에서 답함(D-TEST1, .*사용자 답: 1. 엔진 설정 유지" "$FAKE_BD_LOG"'
+check "slack_answered: 직접 입력(질문)·스레드 글은 답으로 안 봄" '[ "$(status_of sa3)" = open ] && [ "$(status_of sa4)" = open ]'
+check "slack_answered: 결정 카드가 아니거나 번호가 없으면 둠" '[ "$(status_of sa5)" = open ] && [ "$(status_of sa6)" = open ]'
+check "slack_answered: skip 라벨은 제외, 같은 번호의 다른 카드는 닫음" '[ "$(status_of sa7)" = open ] && [ "$(status_of sa8)" = closed ]'
+check "slack_answered: 카드마다 닫기 한 번·기록 한 줄" '[ "$(grep -c "\"close\", \"sa1\"" "$FAKE_BD_LOG")" = 1 ] && [ "$(grep -c "	apply	slack_answered	sa1	close	" "$SB/sweep.log")" = 1 ]'
+sweep
+check "slack_answered: 다시 실행해도 이미 닫힌 카드에 아무것도 안 함(반복 안전)" '[ "$(grep -c "\"comment\", \"sa1\"" "$FAKE_BD_LOG")" = 1 ]'
+reset "[$(card sa1 open kind:decision,slack:D-TEST1 $OLD)]"
+FAKE_BD_BLOCK=sa1 sweep
+check "slack_answered: 닫기가 게이트로 막히면 우회 없이 닫기 후보 라벨" '[ "$(status_of sa1)" = open ] && [[ "$(labels_of sa1)" == *sweep:close-candidate* ]] && ! grep -q -- "--force" "$FAKE_BD_LOG"'
+rm -f "$INBOX"
+reset "[$(card sa1 open kind:decision,slack:D-TEST1 $OLD)]"
+sweep
+check "slack_answered: 답 기록 파일이 없으면 아무것도 닫지 않음" '[ "$(status_of sa1)" = open ] && [ "$(rc)" = 0 ]'
 
 # ── expired ──
 reset "[$(card x1 open kind:task,expires:2026-11-17T10:00:00+09:00 $NEW),$(card x2 open kind:task,expires:2026-11-18 $NEW),
