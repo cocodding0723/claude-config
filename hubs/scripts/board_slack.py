@@ -3,6 +3,7 @@
 
 보내기: 열린 kind:decision 카드 → slack_notify.sh --kind decide 번호 카드. 결정 번호는 카드 id 에서 만들고(D-B + 영문·숫자),
        보낸 뒤 카드에 label slack:<결정 번호> 를 붙여 다시 보내지 않음.
+       label 을 붙이기 전에 죽었어도 보낸 기록(slack-sent.jsonl 의 card·decision_id)이 있으면 다시 보내지 않고 label 만 채움(환경 LRM_SENT_LOG 로 위치 재정의).
 설명서: 카드 설명의 '설명서: <html>' 줄을 보내기 직전에 다시 검사해(board_cards.doc_gaps) 카드 스레드에 첨부하고, 모바일 미리보기 PNG 도 붙임(실패해도 카드는 유지).
 답 받기: 버튼 답(slack_socket.py) → 결정 번호로 카드를 찾아 board-answer 와 같은 처리(원문 코멘트 + 닫기).
        직접 입력이 질문이면 코멘트만 남기고 카드는 열어 둠. 작업판 카드가 아닌 결정 번호는 손대지 않음(옛 허브·메인 전달 그대로).
@@ -34,6 +35,7 @@ import decide_card  # noqa: E402
 HUB_DIR = os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
 NOTIFY = os.environ.get("LRM_NOTIFY") or os.path.join(HUB_DIR, "slack_notify.sh")
 SWITCH = os.path.join(HUB_DIR, ".board-slack.on")
+SENT_LOG = os.environ.get("LRM_SENT_LOG") or os.path.expanduser("~/.config/lrm-hubs/slack-sent.jsonl")  # 알림 스크립트가 보낸 뒤 남기는 기록(위치는 알림 스크립트가 HOME 기준으로 고정)
 LABEL = "slack:"
 ID_HEAD, ID_MAX = "D-B", 16  # slack_notify 결정 번호 규칙: D- 뒤 영문·숫자 1~16자
 SEND_TIMEOUT = 90
@@ -250,6 +252,22 @@ def notify_args(card):
     return args + [text, doc]  # 마지막 인자 파일은 slack_notify 가 카드 스레드에 첨부함
 
 
+def sent_before(card_id, did):
+    """보낸 기록(slack-sent.jsonl)에 이 카드의 번호 카드가 이미 있는지. 전송 뒤 label 을 붙이기 전에 죽었을 때 다시 보내지 않으려는 근거. 파일이 없거나 깨진 줄은 무시"""
+    try:
+        with open(SENT_LOG, encoding="utf-8") as f:
+            for ln in f:
+                try:
+                    r = json.loads(ln)
+                except ValueError:
+                    continue
+                if isinstance(r, dict) and r.get("card") == card_id and r.get("decision_id") == did:
+                    return True
+    except OSError:
+        pass
+    return False
+
+
 def push(card_id, dry_run=False):
     card = show(card_id)
     if card.get("status") == "closed":
@@ -266,11 +284,14 @@ def push(card_id, dry_run=False):
     if clash:
         raise cards.Fail(2, f"결정 번호 {did} 를 {clash[0]} 가 이미 씀. 조치: 카드 id 를 확인하고 수동으로 slack_notify.sh 사용")
     if dry_run:
-        return {"id": card_id, "sent": False, "why": "dry-run", "decisionId": did, "args": args}
+        return {"id": card_id, "sent": False, "why": "already" if sent_before(card_id, did) else "dry-run", "decisionId": did, "args": args}
     with card_lock(card_id):  # 메인·허브가 동시에 push 해 같은 카드가 두 번 가던 문제(11-17). 잠금 안에서 label 을 다시 확인
         have = [x for x in show(card_id).get("labels") or [] if x.startswith(LABEL)]
         if have:
             return {"id": card_id, "sent": False, "why": "already", "decisionId": have[0][len(LABEL):]}
+        if sent_before(card_id, did):  # 보냈는데 label 을 붙이기 전에 죽은 경우: 다시 보내지 않고 label 만 채움
+            cards.bd("label", "add", card_id, LABEL + did)
+            return {"id": card_id, "sent": False, "why": "already", "decisionId": did, "recovered": True}
         return send(card_id, did, args)
 
 

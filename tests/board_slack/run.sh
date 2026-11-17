@@ -7,7 +7,7 @@ PASS=0 FAIL=0
 ok() { PASS=$((PASS + 1)); printf 'PASS  %s\n' "$1"; }
 ko() { FAIL=$((FAIL + 1)); printf 'FAIL  %s — %s\n' "$1" "${2:-}"; }
 SB=$(mktemp -d "${TMPDIR:-/tmp}/board-slack.XXXXXX"); trap 'rm -rf "${SB:?}"' EXIT
-export BOARD_DIR="$SB/board" LRM_HUB_DIR="$SB/hub" LRM_NOTIFY="$SB/notify.sh" LRM_PREVIEW="$SB/preview.sh"
+export BOARD_DIR="$SB/board" LRM_HUB_DIR="$SB/hub" LRM_SENT_LOG="$SB/sent.jsonl" LRM_NOTIFY="$SB/notify.sh" LRM_PREVIEW="$SB/preview.sh"
 mkdir -p "$BOARD_DIR" "$LRM_HUB_DIR"
 (cd "$BOARD_DIR" && git init -q && bd init --prefix tst -q >/dev/null 2>&1) || { echo "임시 작업판 준비 실패"; exit 1; }
 cat > "$LRM_NOTIFY" <<'SH'
@@ -213,6 +213,18 @@ python3 -I "$BS" push "$H1" --json >"$SB/o2" 2>&1 & P2=$!
 wait $P1 $P2; rm -f "$SB/slow"
 SENT=$(cat "$SB/o1" "$SB/o2" | jq -r 'select(.sent==true)|.id' | wc -l | tr -d ' ')
 [ "$SENT" = 1 ] && [ "$(cat "$SB/o1" "$SB/o2" | jq -r 'select(.why=="already")|.id' | wc -l | tr -d ' ')" = 1 ] && [ ! -f "$SB/notify.args3" ] && ok "동시 push 2개 → 카드 전송 1번(나머지는 already)" || ko "동시 push" "sent=$SENT $(cat "$SB/o1" "$SB/o2")"
+# 전송 뒤 label 을 붙이기 전에 죽은 경우: 보낸 기록이 있으면 다시 보내지 않고 label 만 채움
+S1=$("$SCR/board-ask" --runnable no "죽었다 살아난 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "시안이 두 벌이라 하나로 맞춤" --terms 없음 --doc "$DOC")
+SD=$(python3 -I "$BS" push "$S1" --dry-run --json | jq -r .decisionId)
+printf '{"at":1,"kind":"text","card":"%s","decision_id":"%s"}\nnot-json\n' "$S1" "$SD" > "$SB/sent.jsonl"
+rm -f "$SB/notify.args"* "$SB/notify.n"
+[ "$(python3 -I "$BS" push "$S1" --dry-run --json | jq -r .why)" = already ] && ok "건조 실행도 보낸 기록이 있으면 already" || ko "건조 already" ""
+OUT=$(python3 -I "$BS" push "$S1" --json); rc=$?
+[ "$rc" = 0 ] && [ "$(echo "$OUT" | jq -r .why)" = already ] && [ "$(echo "$OUT" | jq -r .recovered)" = true ] && [ ! -f "$SB/notify.args" ] && labels "$S1" | grep -q "slack:$SD" && ok "보낸 기록이 있으면 재전송 없이 label 만 채움(보낸 뒤 label 전에 죽은 경우)" || ko "보낸 기록 복구" "rc=$rc $OUT"
+S2=$("$SCR/board-ask" --runnable no "다른 카드 기록만 있는 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "시안이 두 벌이라 하나로 맞춤" --terms 없음 --doc "$DOC")
+printf '{"at":1,"kind":"file","card":"%s"}\n{"at":1,"kind":"text","card":"other-1","decision_id":"D-Bother1"}\n' "$S2" > "$SB/sent.jsonl"
+[ "$(python3 -I "$BS" push "$S2" --json | jq -r .sent)" = true ] && ok "다른 카드 기록·설명서 첨부 기록(번호 없음)만으로는 막지 않음" || ko "오탐" ""
+: > "$SB/sent.jsonl"
 # launchd 최소 환경에서 결정 번호 → 카드 조회
 DIDH=$(python3 -I "$BS" push "$H1" --json | jq -r .decisionId)
 OUT=$(env -i PATH=/usr/bin:/bin HOME="$HOME" BOARD_DIR="$BOARD_DIR" LRM_HUB_DIR="$LRM_HUB_DIR" python3 -I -c 'import sys;sys.path.insert(0,sys.argv[1]);import board_slack;print(board_slack.card_for(sys.argv[2]))' "$SCR" "$DIDH" 2>&1)
