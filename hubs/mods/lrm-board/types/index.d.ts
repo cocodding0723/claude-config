@@ -120,6 +120,12 @@ export type AutoCard = {
   waiting?: number
 }
 
+/** 에픽 하위 카드 한 줄 원료 */
+export type AutoKid = { id: string; title: string; st: 'done' | 'doing' | 'blocked' | 'todo'; who: string | null; at: number | null; subs: number }
+
+/** 에픽 펼침 상태 파일(panel-view.json). all 이 기본, epics 는 에픽별 예외 */
+export type EpicView = { all: boolean; epics: Record<string, boolean> }
+
 /** 기능(epic) 한 줄 원료. 시각은 epoch 초 */
 export type AutoFeature = {
   id: string
@@ -129,6 +135,8 @@ export type AutoFeature = {
   total: number
   doing: Array<{ title: string; who: string | null; beatAt: number | null }>
   doingCount: number
+  /** 하위 카드 1단(옛 파일에는 없음). subs 는 그 아래 카드 개수 */
+  kids?: AutoKid[]
   blocked: number
   asks: number
   lastAt: number | null
@@ -187,6 +195,9 @@ export type BoardView = {
   /** 데스크톱 알림 보낸 기록: 항목 키 → 보낸 시각(ms), 최근 한 시간 보낸 시각 목록 */
   notified?: Record<string, number>
   sentAt?: number[]
+  /** 에픽 펼침 상태와 읽은 파일 수정 시각(ms) */
+  epicView?: EpicView
+  viewMtimeMs?: number
 }
 
 declare module 'claude-code' {

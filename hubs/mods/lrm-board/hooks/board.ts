@@ -1,5 +1,5 @@
 // 패널의 순수 함수: 파일 해석·오래됨 판정·표시 문자열. 엔진($) 없이 node 로 시험함(tests/panel/board.test.mjs)
-import type { AutoAgents, AutoAi, AutoBoard, AutoCard, AutoConfirm, AutoFeature, AutoHub, AutoIdle, AutoProgress, AutoSource, AutoWorkBoard, BoardItem } from '../types'
+import type { AutoAgents, AutoAi, AutoBoard, AutoCard, AutoConfirm, AutoFeature, AutoHub, AutoIdle, AutoKid, AutoProgress, AutoSource, AutoWorkBoard, BoardItem, EpicView } from '../types'
 
 /**
  * 패널 설정 한 곳(11-17). 칸 순서·임계 시간·알림 상한은 여기만 고친다.
@@ -17,6 +17,12 @@ export const PANEL_CONFIG = {
   aiFoldMax: 8,
   /** AI 진행 칸 워커 줄 상한(도는 워커 먼저). 넘친 수는 '외 N개' 한 줄 */
   workerRows: 6,
+  /** 펼친 에픽 하나가 그리는 하위 카드 줄 상한. 넘친 수는 '외 N개' 한 줄 */
+  epicKidsMax: 5,
+  /** 하위 줄 제목 글자 수 상한(넘으면 …). 패널 폭을 렌더에서 알 수 없어 고정값으로 한 줄을 지킴 */
+  kidTitleMax: 16,
+  /** 진행률 막대 칸 수 */
+  barCells: 8,
   /** 데스크톱 알림: 시간당 상한, 같은 항목 다시 알림 간격 */
   notifyPerHour: 5,
   renotifyMin: 30,
@@ -523,4 +529,73 @@ export const detailText = (auto: AutoBoard | undefined, nowMs: number): string =
   out.push('## 원료 상태')
   for (const [k, v] of Object.entries(src)) out.push(`- ${k}: ${sourceNote(v as AutoSource<unknown>, nowMs)}`)
   return out.join('\n')
+}
+
+
+// ---- 11-17 에픽 하위 작업 펼치기 ------------------------------------------------------------------
+
+/** 펼침 기본값: 전체 펼침(사용자 요청 '다 보고싶음') */
+export const DEFAULT_EPIC_VIEW: EpicView = { all: true, epics: {} }
+
+/** panel-view.json 해석. 없거나 깨지면 기본값(패널이 죽지 않게 예외 없음) */
+export const parseEpicView = (text: string | undefined): EpicView => {
+  if (text === undefined) return DEFAULT_EPIC_VIEW
+  try {
+    const d = JSON.parse(text) as Partial<EpicView> | null
+    if (d === null || typeof d !== 'object') return DEFAULT_EPIC_VIEW
+    const epics: Record<string, boolean> = {}
+    for (const [k, v] of Object.entries(d.epics !== null && typeof d.epics === 'object' ? d.epics : {})) {
+      if (typeof v === 'boolean') epics[k] = v
+    }
+    return { all: typeof d.all === 'boolean' ? d.all : true, epics }
+  } catch {
+    return DEFAULT_EPIC_VIEW
+  }
+}
+
+export const epicOpen = (view: EpicView, id: string): boolean => view.epics[id] ?? view.all
+
+/**
+ * /board-epics 인자 적용. on·off 는 전체 값을 바꾸고 에픽별 예외를 지움, 인자 없음은 전체 반전,
+ * 그 밖은 에픽 id(또는 접두어 한 개)의 현재 상태 반전. ids 에 없는 값은 error
+ */
+export const applyEpicToggle = (view: EpicView, arg: string, ids: string[]): { view: EpicView; error?: string } => {
+  const a = arg.trim()
+  if (a === 'on' || a === 'off') return { view: { all: a === 'on', epics: {} } }
+  if (a === '' || a === 'toggle') return { view: { all: !view.all, epics: {} } }
+  const hit = ids.includes(a) ? [a] : ids.filter(i => i.endsWith(a) || i.startsWith(a))
+  if (hit.length !== 1) {
+    return { view, error: hit.length === 0 ? `에픽 '${a}' 없음. 목록: ${ids.join(' ')}` : `'${a}' 가 여러 에픽과 맞음: ${hit.join(' ')}` }
+  }
+  return { view: { all: view.all, epics: { ...view.epics, [hit[0]]: !epicOpen(view, hit[0]) } } }
+}
+
+/** 진행률 막대 `▰▰▱▱`. n/m 은 에픽 줄 제목 끝 한 곳에만 있어 여기선 뺌. 하위 0이면 빈 문자열(펼칠 것 없음) */
+export const epicBar = (done: number, total: number, cells = PANEL_CONFIG.barCells): string => {
+  if (total <= 0) return ''
+  const n = Math.round((Math.min(done, total) / total) * cells)
+  return `${'▰'.repeat(n)}${'▱'.repeat(cells - n)}`
+}
+
+const KID_MARK: Record<AutoKid['st'], string> = { todo: '○', doing: '◐', blocked: '✕', done: '✓' }
+
+/** 펼친 에픽의 하위 카드 줄: ○◐✓ 제목 · 담당 · 마지막 갱신 (하위 N). epicKidsMax 넘으면 '외 N개' */
+export const kidLines = (kids: AutoKid[] | undefined, nowMs: number, cfg = PANEL_CONFIG): Array<{ mark: string; text: string; age: string }> => {
+  const ks = kids ?? []
+  const out = ks.slice(0, cfg.epicKidsMax).map(k => ({
+    mark: KID_MARK[k.st] ?? '○',
+    text: [k.title.length > cfg.kidTitleMax ? `${k.title.slice(0, cfg.kidTitleMax)}…` : k.title, k.who ?? undefined, k.subs > 0 ? `하위 ${k.subs}` : undefined].filter(x => x !== undefined).join(' · '),
+    age: fmtMin(k.at, nowMs),
+  }))
+  if (ks.length > cfg.epicKidsMax) out.push({ mark: '', text: `외 ${ks.length - cfg.epicKidsMax}개`, age: '' })
+  return out
+}
+
+/**
+ * 에픽 줄 아래 보조 줄: 첫 줄 `▾ ▰▰▱▱`(꼬리에 두면 제목 칸이 줄어 줄이 꺾임), 펼침이면 하위 목록.
+ * 하위가 0이면 아무것도 없음(기존 한 줄 유지)
+ */
+export const epicRows = (f: AutoFeature, open: boolean, nowMs: number, cfg = PANEL_CONFIG) => {
+  if (f.total <= 0 && (f.kids ?? []).length === 0) return { bar: undefined, kids: [] as ReturnType<typeof kidLines> }
+  return { bar: `${open ? '▾' : '▸'} ${epicBar(f.done, f.total, cfg.barCells)}`, kids: open ? kidLines(f.kids, nowMs, cfg) : [] }
 }

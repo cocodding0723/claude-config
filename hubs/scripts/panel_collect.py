@@ -879,6 +879,18 @@ def board_headline(rows):
 
 FEATURE_DONE_SEC = 24 * 3600   # 닫힌 기능 epic 을 이 시간까지 실어 줌. '안 봄' 표시 시간은 패널 설정(doneShowMin)이 정함
 FEATURE_MAX, FEATURE_DOING_MAX = 20, 5
+EPIC_KIDS_MAX = 30             # 에픽당 싣는 하위 카드 상한. 화면 줄 수 상한은 패널 설정(epicKidsMax)이 따로 정함
+KID_STATE = {"closed": "done", "in_progress": "doing", "blocked": "blocked"}   # 그 밖(open 등)은 todo
+
+
+def board_kids(work, rows_kids, now):
+    """에픽 하위 카드 1단 목록(진행 중 → 막힘 → 열림 → 닫힘, 최근 갱신 먼저). 그 아래는 개수(subs)만"""
+    order = {"doing": 0, "blocked": 1, "todo": 2, "done": 3}
+    out = [{"id": str(k.get("id", ""))[:20], "title": str(k.get("title", ""))[:TITLE_MAX * 2],
+            "st": KID_STATE.get(k.get("status"), "todo"), "who": str(k.get("assignee") or "")[:40] or None,
+            "at": board_time(k.get("updated_at")), "subs": len(rows_kids.get(k.get("id"), []))} for k in work]
+    out.sort(key=lambda x: (order[x["st"]], -(x["at"] or 0)))
+    return out[:EPIC_KIDS_MAX]
 
 
 def board_features(rows, now):
@@ -903,7 +915,8 @@ def board_features(rows, now):
                     "done": sum(1 for k in work if k.get("status") == "closed"), "total": len(work),
                     "doing": [{"title": str(k.get("title", ""))[:TITLE_MAX * 2], "who": str(k.get("assignee") or "")[:40] or None,
                                "beatAt": board_time(k.get("updated_at"))} for k in doing[:FEATURE_DOING_MAX]],
-                    "doingCount": len(doing), "blocked": sum(1 for k in work if k.get("status") == "blocked"),
+                    "doingCount": len(doing), "kids": board_kids(work, kids, now) if e.get("status") != "closed" else [],
+                    "blocked": sum(1 for k in work if k.get("status") == "blocked"),
                     "asks": sum(1 for k in ks if board_kind(k) == "decision" and k.get("status") != "closed"),
                     "lastAt": max(stamps) if stamps else None, "closedAt": closed_at if e.get("status") == "closed" else None,
                     "p": e.get("priority") if isinstance(e.get("priority"), int) else 2})
