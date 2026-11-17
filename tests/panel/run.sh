@@ -122,6 +122,24 @@ colenv "FAKE_ORCA_ALT=tasks" --print
   && [ "$(jq -r '.sources.hubs.ok' "$SB/out")" = true ] && [ "$(jq -r '.sources.idle.err' "$SB/out")" = "workers:internal:TypeError" ] \
   && ok "예상 밖 모양 → 그 원료(부분)만 internal:<예외 이름>, 다른 원료 정상" || ko "예상 밖 모양" "rc=$RC $(jq -c '[.sources.workers.err, .sources.idle.err]' "$SB/out" 2>/dev/null)"
 
+# ---- 5b. AI 진행 칸 워커 줄: 지금 도는 워커·60분 안에 끝난 워커 ---------------------------------------
+[ "$(q '.sources.agents.ok')" = true ] && [ "$(q '[.sources.agents.value.running[].dispatch] | join(",")')" = ctx_live ] && [ "$(q '.sources.agents.value.running[0].startedAt')" = null ] \
+  && [ "$(q '.sources.agents.value.finished | length')" = 0 ] && ok "워커 줄(기본): 살아 있는 워커 1, worker-show 실패면 시각만 비움, 옛 종료는 제외" || ko "agents 기본" "$(q '.sources.agents')"
+n_show=$(grep -c 'worker-show' "$FAKE/orca.calls")
+run_c env FAKE_ORCA_ALT="workers worktrees" bash "$SCRIPTS/panel_collect.sh" --print
+n_show=$(($(grep -c 'worker-show' "$FAKE/orca.calls") - n_show))
+aq() { jq -r ".sources.agents.value$1" "$SB/out"; }
+NOW_S=$(date +%s)
+near() { [ "$1" != null ] && [ $(( $1 - (NOW_S - $2 * 60) )) -le 60 ] && [ $(( (NOW_S - $2 * 60) - $1 )) -le 60 ]; }  # 값 분전 ±60초
+[ "$(aq '.running | map(.dispatch) | join(",")')" = "ctx_run1,ctx_run2" ] && ok "도는 워커: liveness live·안 끝남만(죽은 ready 제외)" || ko "running" "$(aq '.running')"
+[ "$(aq '.running[0] | "\(.hub) \(.agent) \(.model)"')" = "q claude claude-opus-5-5" ] && near "$(aq '.running[0].startedAt')" 25 && [ "$(aq '.running[0].name | length')" -le 40 ] \
+  && ok "도는 워커: 허브(상위 coord-*)·모델(목록 provider)·시작 시각(worker-show dispatchedAt, UTC)·이름 40자" || ko "running[0]" "$(aq '.running[0]')"
+[ "$(aq '.running[1] | "\(.hub) \(.agent) \(.model)"')" = "null codex gpt-6-astra" ] && near "$(aq '.running[1].startedAt')" 3 && ok "도는 워커: 허브 없음·모델은 worker-show startOptions" || ko "running[1]" "$(aq '.running[1]')"
+[ "$(aq '.finished | map("\(.dispatch) \(.status)") | join(",")')" = "ctx_stop stopped,ctx_ok succeeded,ctx_fail failed" ] && ok "끝난 워커: 60분 안만 최근 순(3시간 전 종료 제외)" || ko "finished" "$(aq '.finished')"
+near "$(aq '.finished[2].finishedAt')" 30 && [ "$(aq '.finished[2].hub')" = "일반 상위" ] && near "$(aq '.finished[1].finishedAt')" 10 && [ "$(aq '.finished[1].model')" = claude-fable-5-2 ] \
+  && ok "끝난 워커: 해제 시각 없으면 worker-show completedAt(ISO)·상위가 허브가 아니면 그 표시 이름" || ko "finished 시각" "$(aq '.finished')"
+[ "$n_show" -ge 1 ] && [ "$n_show" -le 12 ] && ! grep -q 'worker-show --dispatch ctx_old\|worker-show --dispatch ctx_dead' "$FAKE/orca.calls" && ok "worker-show 는 상한 안(${n_show}회), 오래 끝난·죽은 행은 부르지 않음" || ko "worker-show 수" "$n_show"
+
 # ---- 6. gh: 끔·간격·실패 -------------------------------------------------------------------------
 [ "$(q '.sources.gh.off')" = true ] && [ "$(ghn)" = 0 ] && ok "PANEL_GH_REPOS 없음 → gh 안 부름(off)" || ko "gh off" "calls=$(ghn)"
 R="PANEL_GH_REPOS=acme/app,acme/web"
@@ -275,7 +293,7 @@ else
 fi
 r=$(python3 -I "$HERE/no_delete_check.py" "$SCRIPTS/panel_collect.py" 2>&1)
 [ "$r" = ok ] && ok "구문 트리: os.remove·os.kill·unlink 등은 임시 파일·잠금·로그 회전·시간 초과 자식 정리 자리에만" || ko "삭제 호출" "$r"
-bad_calls=$( { sed 's/ tok=.*//' "$FAKE/orca.calls" | grep -vE '^(terminal (list|read --terminal [^ ]+ --screen)|orchestration (worker-list|task-list)|worktree list)( |$)'
+bad_calls=$( { sed 's/ tok=.*//' "$FAKE/orca.calls" | grep -vE '^(terminal (list|read --terminal [^ ]+ --screen)|orchestration (worker-list|worker-show|task-list)|worktree list)( |$)'
   grep -vE '^merge-base --is-ancestor HEAD ' "$FAKE/git.calls" 2>/dev/null
   grep -vE '^pr list ' "$FAKE/gh.calls" 2>/dev/null
   grep -vE '^-sk ' "$FAKE/du.calls" 2>/dev/null

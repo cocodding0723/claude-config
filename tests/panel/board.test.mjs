@@ -361,3 +361,41 @@ test('detailText: 뺀 참고 정보를 슬래시 명령 글로(기능별 진행 
   assert.match(t, /gh-state.json: 없음 → 기존 gh 원료 사용/)
   assert.match(t, /## 원료 상태/)
 })
+
+const agent = o => ({ dispatch: 'd', name: '[LRM-1] 작업', hub: 'bugfix', agent: 'claude', model: 'claude-opus-5-5', ...o })
+const hhmm = s => { const d = new Date(s * 1000); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` }
+
+test('workerLines: 도는 워커(경과) → 끝난 워커(✅·❌·⏹, 끝난 시각), 모델 claude- 접두 생략', () => {
+  const v = { running: [agent({ dispatch: 'r1', startedAt: sec(NOW - 25 * 60000) }), agent({ dispatch: 'r2', hub: null, agent: 'codex', model: null, startedAt: null })],
+    runningMore: 0, windowMin: 60, complete: true,
+    finished: [agent({ dispatch: 'f1', status: 'succeeded', finishedAt: sec(NOW - 5 * 60000) }), agent({ dispatch: 'f2', status: 'failed', model: 'gpt-6-astra', finishedAt: sec(NOW - 40 * 60000) }),
+      agent({ dispatch: 'f3', status: 'stopped', finishedAt: sec(NOW - 50 * 60000) })] }
+  const ls = b.workerLines(v, NOW)
+  assert.deepEqual(ls.map(l => l.mark), ['▶', '▶', '✅', '❌', '⏹'])
+  assert.equal(ls[0].text, '[LRM-1] 작업 · bugfix · opus-5-5')
+  assert.equal(ls[0].age, '경과 25분')
+  assert.equal(ls[1].text, '[LRM-1] 작업 · codex')
+  assert.equal(ls[1].age, '작업 중')
+  assert.equal(ls[2].age, `${hhmm(sec(NOW - 5 * 60000))} 끝`)
+  assert.equal(ls[3].text, '[LRM-1] 작업 · bugfix · gpt-6-astra')
+  assert.equal(b.workerCounts(v), '워커 실행 2 · 60분 안 끝남 3(실패 1)')
+})
+
+test('workerLines: workerRows(6) 넘으면 5줄 + 외 N개(수집기가 자른 runningMore 포함), 원료 없으면 빈 배열', () => {
+  const run = Array.from({ length: 4 }, (_, i) => agent({ dispatch: `r${i}`, startedAt: sec(NOW) }))
+  const fin = Array.from({ length: 4 }, (_, i) => agent({ dispatch: `f${i}`, status: 'succeeded', finishedAt: sec(NOW) }))
+  const ls = b.workerLines({ running: run, runningMore: 2, finished: fin, windowMin: 60, complete: true }, NOW)
+  assert.equal(ls.length, b.PANEL_CONFIG.workerRows)
+  assert.deepEqual(ls.slice(0, 4).map(l => l.mark), ['▶', '▶', '▶', '▶'])
+  assert.equal(ls.at(-1).text, '외 5개 (/board-detail)')
+  assert.equal(b.workerLines({ running: run.slice(0, 2), runningMore: 0, finished: fin.slice(0, 4), windowMin: 60, complete: true }, NOW).length, 6)
+  assert.deepEqual(b.workerLines(undefined, NOW), [])
+  assert.equal(b.workerCounts(null), '')
+})
+
+test('detailText: 워커 줄은 상한 없이 전부', () => {
+  const run = Array.from({ length: 8 }, (_, i) => agent({ dispatch: `r${i}`, name: `w${i}`, startedAt: sec(NOW) }))
+  const t = b.detailText({ version: 1, updatedAt: sec(NOW), sources: { agents: { ok: true, err: null, at: sec(NOW), stale: false, value: { running: run, runningMore: 0, finished: [], windowMin: 60, complete: true } } } }, NOW)
+  assert.match(t, /## 워커 \(워커 실행 8 · 60분 안 끝남 0\)/)
+  assert.match(t, /- ▶ w7 · bugfix · opus-5-5 · 경과 방금/)
+})

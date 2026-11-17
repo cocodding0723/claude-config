@@ -120,3 +120,51 @@ for i in range(25):
                 "isMainWorktree": False, "branch": f"refs/heads/feat/w{i}", "baseRef": "" if i == 4 else "origin/main",
                 "lastActivityAt": now_ms - (100 - i) * 86400000 if i != 5 else 0})
 json.dump({"ok": True, "result": {"worktrees": wts, "truncated": False}}, open(os.path.join(fake, "worktrees.json"), "w"))
+
+# AI 진행 칸 워커 줄(FAKE_ORCA_ALT="workers worktrees" 로만 씀. 기본 시험의 숫자를 바꾸지 않게 따로 둠)
+def utc(sec):
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(sec))
+
+
+def iso(sec):
+    return time.strftime("%Y-%m-%dT%H:%M:%S.123Z", time.gmtime(sec))
+
+
+R = "repo-1::"
+agent_wts = [{"id": R + f"{home}/ws/coord-q-hub", "path": f"{home}/ws/coord-q-hub", "displayName": "q 허브", "isMainWorktree": False},
+             {"id": R + f"{home}/ws/plain-parent", "path": f"{home}/ws/plain-parent", "displayName": "일반 상위", "isMainWorktree": False}]
+for n, parent in (("w-run1", "coord-q-hub"), ("w-run2", None), ("w-ok", "coord-q-hub"), ("w-fail", "plain-parent"), ("w-stop", None), ("w-old", None)):
+    agent_wts.append({"id": R + f"{home}/ws/{n}", "path": f"{home}/ws/{n}", "displayName": f"[LRM-1] {n} 작업 " + "다" * 40,
+                      "isMainWorktree": False, "parentWorktreeId": R + f"{home}/ws/{parent}" if parent else None})
+json.dump({"ok": True, "result": {"worktrees": agent_wts, "truncated": False}}, open(os.path.join(fake, "worktrees_alt.json"), "w"), ensure_ascii=False)
+
+
+def wk(d, state, verdict, ws, term="released", release=None, provider=None):
+    return {"dispatchId": d, "taskId": "task_" + d, "runId": "run_a", "workerState": state, "terminalState": term,
+            "resource": {"worktreeId": R + f"{home}/ws/{ws}", "releaseCompletedAt": release},
+            "projection": {"liveness": {"verdict": verdict}, "provider": provider}}
+
+
+agent_rows = [
+    wk("ctx_run1", "ready", "live", "w-run1", term="active", provider={"id": "claude", "model": "claude-opus-5-5"}),
+    wk("ctx_run2", "ready", "live", "w-run2", term="active"),
+    wk("ctx_dead", "ready", "exited", "w-run2", term="active"),
+    wk("ctx_ok", "succeeded", "exited", "w-ok", release=utc(now - 10 * 60)),
+    wk("ctx_fail", "failed", "exited", "w-fail", term="reclaimable"),
+    wk("ctx_stop", "stopped", "exited", "w-stop", release=utc(now - 5 * 60)),
+    wk("ctx_old", "succeeded", "exited", "w-old", release=utc(now - 3 * 3600)),
+]
+json.dump(page(agent_rows, None), open(os.path.join(fake, "workers_alt.json"), "w"))
+
+
+def shown(d, dispatched=None, completed=None, agent=None, model=None):
+    launch = {"effective": {"agent": agent, "model": model}} if agent else {}
+    return {"ok": True, "result": {"dispatch": {"id": d, "dispatchedAt": dispatched, "completedAt": completed},
+                                   "worker": {"dispatchId": d, "createdAt": dispatched, "startOptions": {"launch": launch}}}}
+
+
+for d, body in {"ctx_run1": shown("ctx_run1", dispatched=utc(now - 25 * 60)),
+                "ctx_run2": shown("ctx_run2", dispatched=utc(now - 3 * 60), agent="codex", model="gpt-6-astra"),
+                "ctx_ok": shown("ctx_ok", agent="claude", model="claude-fable-5-2"),
+                "ctx_fail": shown("ctx_fail", completed=iso(now - 30 * 60), agent="claude", model="claude-sonnet-5")}.items():
+    json.dump(body, open(os.path.join(fake, f"show_{d}.json"), "w"))

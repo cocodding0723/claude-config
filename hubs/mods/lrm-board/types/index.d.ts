@@ -58,6 +58,22 @@ export type AutoConfirmItem = { key: string; kind: string; kind_label: string; t
 export type AutoConfirm = { todo: number; done: number; items: AutoConfirmItem[] }
 export type AutoPush = { lines: Array<{ at: string; event: string; reason: string | null }> }
 export type AutoWorkers = { live: number; recent: Array<{ title: string | null; status: string; at: number | null }> }
+/** AI 진행 칸 워커 줄 한 개. 시각은 epoch 초(worker-show 를 못 부르면 null) */
+export type AutoAgent = {
+  dispatch: string
+  /** 작업 공간 표시 이름(40자) */
+  name: string
+  /** 상위 허브 이름(coord-*-hub 의 slug) 또는 상위 작업 공간 표시 이름. 상위가 없으면 null */
+  hub: string | null
+  agent: string | null
+  model: string | null
+  startedAt?: number | null
+  /** succeeded·failed·stopped·abandoned. 도는 워커는 없음 */
+  status?: string
+  finishedAt?: number
+}
+/** 지금 도는 워커(liveness live·안 끝남)와 windowMin 분 안에 끝난 워커(최근 순) */
+export type AutoAgents = { running: AutoAgent[]; runningMore: number; finished: AutoAgent[]; windowMin: number; complete: boolean }
 /** 쉬는 자원. 부분마다 따로 실패해 한 부분이 null 일 수 있음 */
 export type AutoIdle = {
   terminals: { total: number; agents: number } | null
@@ -154,6 +170,7 @@ export type AutoBoard = {
     confirm?: AutoSource<AutoConfirm>
     push?: AutoSource<AutoPush>
     workers?: AutoSource<AutoWorkers>
+    agents?: AutoSource<AutoAgents>
     gh?: AutoSource<AutoGh>
     idle?: AutoSource<AutoIdle>
     ai?: AutoSource<AutoAi>

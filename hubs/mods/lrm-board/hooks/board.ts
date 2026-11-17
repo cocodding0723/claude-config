@@ -1,5 +1,5 @@
 // 패널의 순수 함수: 파일 해석·오래됨 판정·표시 문자열. 엔진($) 없이 node 로 시험함(tests/panel/board.test.mjs)
-import type { AutoAi, AutoBoard, AutoCard, AutoConfirm, AutoFeature, AutoHub, AutoIdle, AutoProgress, AutoSource, AutoWorkBoard, BoardItem } from '../types'
+import type { AutoAgents, AutoAi, AutoBoard, AutoCard, AutoConfirm, AutoFeature, AutoHub, AutoIdle, AutoProgress, AutoSource, AutoWorkBoard, BoardItem } from '../types'
 
 /**
  * 패널 설정 한 곳(11-17). 칸 순서·임계 시간·알림 상한은 여기만 고친다.
@@ -15,6 +15,8 @@ export const PANEL_CONFIG = {
   doneShowMin: 60,
   /** AI 진행 줄이 이보다 많으면 정상 작업 중인 기능을 한 줄로 접음 */
   aiFoldMax: 8,
+  /** AI 진행 칸 워커 줄 상한(도는 워커 먼저). 넘친 수는 '외 N개' 한 줄 */
+  workerRows: 6,
   /** 데스크톱 알림: 시간당 상한, 같은 항목 다시 알림 간격 */
   notifyPerHour: 5,
   renotifyMin: 30,
@@ -398,6 +400,43 @@ export const featureCounts = (lines: FeatureLine[]): string => {
   return [`입력 필요 ${n('?')}`, `작업 ${work}`, n('!') > 0 ? `멈춤 ${n('!')}` : '', n('✓') > 0 ? `끝남 ${n('✓')}` : ''].filter(x => x !== '').join(' / ')
 }
 
+export type WorkerLine = { key: string; mark: string; text: string; age: string; done: boolean }
+
+const WORKER_MARK: Record<string, string> = { succeeded: '✅', failed: '❌', stopped: '⏹', abandoned: '⏹' }
+
+/** 시:분(이 컴퓨터 시간대) */
+const clock = (sec: number) => {
+  const d = new Date(sec * 1000)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/**
+ * 🔄 AI 진행 칸 워커 줄: 도는 워커(▶ 작업 공간 · 허브 · 모델, 경과) → 최근 끝난 워커(✅·❌·⏹, 끝난 시각).
+ * 합쳐 workerRows 줄까지, 넘치면 마지막에 '외 N개'. 원료가 없으면 빈 배열
+ */
+export const workerLines = (v: AutoAgents | null | undefined, nowMs: number, cfg: { workerRows: number } = PANEL_CONFIG): WorkerLine[] => {
+  if (v === null || v === undefined) return []
+  const desc = (a: { name: string; hub: string | null; agent: string | null; model: string | null }) =>
+    [a.name, a.hub, (a.model ?? a.agent ?? '').replace(/^claude-/, '')].filter(x => x !== null && x !== '').join(' · ')
+  const run = v.running.map(a => ({ key: `w:${a.dispatch}`, mark: '▶', text: desc(a), age: a.startedAt ? `경과 ${fmtMin(a.startedAt, nowMs)}` : '작업 중', done: false }))
+  const fin = v.finished.map(a => ({
+    key: `w:${a.dispatch}`, mark: WORKER_MARK[a.status ?? ''] ?? '•', text: desc(a),
+    age: a.finishedAt ? `${clock(a.finishedAt)} 끝` : '끝', done: true,
+  }))
+  const all = [...run, ...fin]
+  const extra = v.runningMore
+  if (all.length + extra <= cfg.workerRows) return all
+  const shown = all.slice(0, cfg.workerRows - 1)
+  return [...shown, { key: 'w:more', mark: '', text: `외 ${all.length - shown.length + extra}개 (/board-detail)`, age: '', done: true }]
+}
+
+/** 워커 줄 머리 글: 실행 n · m분 안 끝남 k(실패 f) */
+export const workerCounts = (v: AutoAgents | null | undefined): string => {
+  if (v === null || v === undefined) return ''
+  const fail = v.finished.filter(a => a.status === 'failed').length
+  return `워커 실행 ${v.running.length + v.runningMore} · ${v.windowMin}분 안 끝남 ${v.finished.length}${fail > 0 ? `(실패 ${fail})` : ''}`
+}
+
 /**
  * 🚨 문제: 있을 때만. 증상만 씀. 수집 끊김 → 멈춤 의심 → 막힌 카드 → CI 실패 → 디스크 부족 → 작업판 읽기 실패
  * gh-state.json(PR·CI 감시기)이 생기면 그쪽을 읽을 자리. 지금은 스키마 확정 전이라 기존 gh 원료의 CI 실패 수를 씀
@@ -476,6 +515,11 @@ export const detailText = (auto: AutoBoard | undefined, nowMs: number): string =
   const recent = recentLines(src.board?.value, nowMs)
   if (recent.length > 0) out.push('## 최근 기록', ...recent.map(l => `- ${l}`))
   if (src.workers?.value) out.push(`- 살아 있는 워커 ${src.workers.value.live}`)
+  const ag = src.agents?.value
+  if (ag) {
+    out.push(`## 워커 (${workerCounts(ag)})`)
+    for (const l of workerLines(ag, nowMs, { workerRows: Infinity })) out.push(`- ${l.mark} ${l.text} · ${l.age}`)
+  }
   out.push('## 원료 상태')
   for (const [k, v] of Object.entries(src)) out.push(`- ${k}: ${sourceNote(v as AutoSource<unknown>, nowMs)}`)
   return out.join('\n')
