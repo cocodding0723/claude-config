@@ -44,6 +44,9 @@ CFG_MAX_PAGES=50                                         # worker-list 쪽 수 �
 CFG_NOTIFY="${WS_GC_NOTIFY:-$HOME/.config/lrm-hubs/slack_notify.sh}"
 CFG_SLACK_TAG="ws-gc"
 CFG_PLACE_LOCK_WAIT=900                                  # 같은 곳을 다른 실행이 처리 중일 때 기다리는 최대 초(넘으면 건너뜀)
+# PR 닫힘 즉시 정리: 브랜치 PR 이 전부 병합·닫힘이고 HEAD 가 그 PR 마지막 커밋 안이면 활동 일수를 기다리지 않고 미커밋까지 보관 뒤 삭제
+CFG_PR_DONE_GRACE_MIN="${WS_GC_PR_DONE_GRACE_MIN:-10}"   # 마지막 활동 후 이 분은 기다림(막 띄운 워커의 빈 공간·병합 직후 정리 중인 곳 보호)
+CFG_PR_DONE_MAX_MB="${WS_GC_PR_DONE_MAX_MB:-2048}"        # 보관할 미커밋이 이보다 크면 건너뜀(archive_big). 디스크 보호
 # ───────────────────────────────────────────────────────────────────────────────────────────
 
 usage() {
@@ -64,6 +67,11 @@ usage() {
     KEEP_CODE 로 기록(--json 의 keep_code)
   3 마지막 활동(Orca 활동 시각·마지막 커밋 중 늦은 것)이 --days 일 이상 전. 로컬 브랜치가 남는 곳은 WS_GC_FRESH_GRACE_MIN(기본 60)분만 지나면 됨
   4 서브모듈 안에 미커밋·미push 가 없음
+PR 닫힘 즉시 정리(위 2·3 대신): 로컬 브랜치가 남고, 그 브랜치 PR 이 전부 MERGED·CLOSED 이고, HEAD 가 그 PR 마지막 커밋에 포함되면
+  활동 일수를 기다리지 않음(마지막 활동 후 WS_GC_PR_DONE_GRACE_MIN 분만 둠). 미커밋이 있어도 전부 보관 뒤 삭제:
+  <archive>/<폴더>-<YYYYMMDD-HHMM>/ 에 tracked.patch(git diff HEAD, 스테이징 포함)·staged.patch·status.txt·meta.txt·list.txt,
+  files/ 아래 미추적·캐시 아닌 gitignore 파일(경로 유지). 파일 수·바이트·내용 대조가 맞아야 지우고(--force), 보관 뒤 바뀌면 안 지움.
+  서브모듈 안 변경·Unity 가 연 곳(Temp/UnityLockfile)·WS_GC_PR_DONE_MAX_MB(기본 2048) 초과는 건너뜀. 브랜치는 유지
 절차(--apply): 허용 목록 결과물(미추적·gitignore)을 <archive>/<저장소>/<폴더>/ 로 복제 → byte 단위 대조(불일치·복사 실패면 삭제 안 함)
   → orca worktree rm(브랜치는 지우지 않음) → 허브 색인 한 줄(~/.config/lrm-hubs/hub-inbox/<허브 slug>.tsv: 시각·작업 공간·보관 경로·파일 수)
   → 쉬고 있는 워커 기록 worker-release.
@@ -350,12 +358,51 @@ submodules_clean() {
   done < <(git -C "$p" submodule status --recursive 2>/dev/null)
   return 0
 }
+# 브랜치 PR 목록 조회 → 전역 prs·PR_LABEL. 실패면 1
+pr_lookup() {
+  prs=$(cd "$1" && gh pr list --head "$2" --state all --json number,state,headRefOid --limit 30 2>/dev/null) && echo "$prs" | jq -e 'type == "array"' >/dev/null 2>&1 || return 1
+  PR_LABEL=$(echo "$prs" | jq -r 'map("#\(.number) \(.state)") | join(",")')
+}
+# PR 이 하나 이상이고 전부 OPEN 이 아니며, HEAD 가 병합·닫힌 PR 의 마지막 커밋에 포함되면 0. PR 뒤에 쌓은 커밋이 있으면 1(새 작업일 수 있어 기존 규칙)
+pr_done_check() {
+  local p="$1" oid
+  echo "$prs" | jq -e 'length > 0 and all(.[]; .state != "OPEN")' >/dev/null 2>&1 || return 1
+  while IFS= read -r oid; do
+    [ -n "$oid" ] && git -C "$p" cat-file -e "$oid^{commit}" 2>/dev/null && git -C "$p" merge-base --is-ancestor HEAD "$oid" 2>/dev/null && return 0
+  done < <(echo "$prs" | jq -r '.[] | select(.state == "MERGED" or .state == "CLOSED") | .headRefOid // empty')
+  return 1
+}
+# 보관 목록: 미추적(부산물 포함)·캐시가 아닌 gitignore 파일. 추적 변경은 patch 로 따로 남김. classify_changes 뒤에 부름
+build_full_list() {
+  awk -F'\t' '$1 ~ /^[NOUGI]$/ { print $2 }' "$TMP/chg.tsv" | LC_ALL=C sort -u | awk 'last != "" && index($0, last) == 1 { next } /\/$/ { last = $0 } { print }' > "$TMP/all.txt"
+  N_TRACKED_ALL=$(awk -F'\t' '$1 == "L" || $1 == "R"' "$TMP/chg.tsv" | wc -l | tr -d ' ')
+}
+# 목록(작업 공간 기준 상대 경로)의 "파일 수 바이트". 폴더 항목은 안의 파일·링크를 셈
+list_stats() {
+  (cd "$1" 2>/dev/null && while IFS= read -r e; do find "${e%/}" \( -type f -o -type l \) -print0 2>/dev/null; done < "$2" | xargs -0 stat -f %z 2>/dev/null) \
+    | awk '{ n++; s += $1 } END { printf "%d %d\n", n, s }'
+}
+# PR 닫힘 즉시 정리 판정. 0 후보(DETAIL·$TMP/all.txt), 1 건너뜀
+evaluate_pr_done() {
+  local p="$1" br="$2" pb st kb bytes
+  submodules_clean "$p" || { REASON=submodule; DETAIL="PR 닫힘($PR_LABEL)이지만 서브모듈 안 미커밋·미push"; return 1; }
+  if [ -e "$p/Temp/UnityLockfile" ] && lsof -t -- "$p/Temp/UnityLockfile" >/dev/null 2>&1; then REASON=unity_open; DETAIL="PR 닫힘($PR_LABEL)이지만 Unity 가 열려 있음"; return 1; fi
+  classify_changes "$p" || { REASON=dirty; DETAIL="PR 닫힘이지만 변경 목록을 못 읽음"; return 1; }
+  build_full_list
+  pb=$(git -C "$p" diff --binary HEAD 2>/dev/null | wc -c | tr -d ' ')
+  st=$(list_stats "$p" "$TMP/all.txt")
+  bytes=$(( ${st#* } + pb )); kb=$(( (bytes + 1023) / 1024 ))
+  PR_DONE_INFO="보관예정 파일 ${st% *}개·추적 변경 ${N_TRACKED_ALL}건(patch $(human $(( (pb + 1023) / 1024 ))))·합계 $(human "$kb")"
+  if [ "$bytes" -gt $((CFG_PR_DONE_MAX_MB * 1048576)) ]; then REASON=archive_big; DETAIL="PR 닫힘($PR_LABEL)이지만 $PR_DONE_INFO 이 상한 ${CFG_PR_DONE_MAX_MB}MB 초과"; return 1; fi
+  DETAIL="pr_done PR $PR_LABEL 병합·닫힘 → 활동 대기 생략 branch=$br $PR_DONE_INFO"
+  return 0
+}
 protected_branch() { local b="$1" x; for x in $CFG_PROTECTED_BRANCHES; do [ "$b" = "$x" ] && return 0; done; case "$b" in release/*) return 0 ;; esac; return 1; }
 
 # evaluate 경로 최근활동ms 살아있는하위수 → 0 후보, 1 건너뜀(REASON·DETAIL)
 evaluate() {
   local p="$1" last_ms="$2" kids="$3" br last_c last age prs keep_br
-  REASON="" DETAIL="" PR_LABEL="" UNMERGED_KEPT=0 keep_br=0
+  REASON="" DETAIL="" PR_LABEL="" UNMERGED_KEPT=0 keep_br=0 PR_DONE=0 PRS_OK=0 prs=""
   case "$(basename "$p")" in "$CFG_HUB_PREFIX"*) REASON=hub; return 1 ;; esac
   [ -e "$p/.git" ] || { REASON=missing; return 1; }
   case "$PWD/" in "$p"/*) REASON=current; return 1 ;; esac
@@ -368,15 +415,18 @@ evaluate() {
   age=$(( (NOW - last) / 86400 ))
   # 브랜치가 로컬에 남는 곳(이름 있는 브랜치)은 공간을 지워도 커밋을 잃지 않음 → 미병합·최근 활동이어도 후보(유예 CFG_FRESH_GRACE_MIN 분만 둠)
   keep_br=0; [ -n "$br" ] && git -C "$p" show-ref --verify --quiet "refs/heads/$br" && keep_br=1
+  # PR 이 병합·닫힌 곳은 활동 일수·미커밋을 기다리지 않음(보관 뒤 삭제). 조회 실패·PR 없음·PR 뒤 새 커밋이면 아래 기존 규칙
+  if [ "$keep_br" = 1 ] && pr_lookup "$p" "$br"; then
+    PRS_OK=1
+    if pr_done_check "$p" && [ $(( (NOW - last) / 60 )) -ge "$CFG_PR_DONE_GRACE_MIN" ]; then PR_DONE=1; evaluate_pr_done "$p" "$br"; return $?; fi
+  fi
   if [ "$age" -lt "$DAYS" ]; then
     if [ "$keep_br" = 0 ] || [ $(( (NOW - last) / 60 )) -lt "$CFG_FRESH_GRACE_MIN" ]; then REASON=idle; DETAIL="${age}일 전 활동"; return 1; fi
   fi
   classify_changes "$p"
   if [ "$N_REAL" -gt 0 ]; then REASON=dirty; DETAIL="미커밋 ${N_REAL}건(추적 수정 ${N_TRACKED}·미확인 ${N_UNVERIFIED})"; return 1; fi
   if [ -n "$br" ]; then
-    prs=$(cd "$p" && gh pr list --head "$br" --state all --json number,state,headRefOid --limit 30 2>/dev/null) && echo "$prs" | jq -e 'type == "array"' >/dev/null 2>&1 \
-      || { REASON=gh_fail; DETAIL="gh pr list 실패(로그인·네트워크 확인)"; return 1; }
-    PR_LABEL=$(echo "$prs" | jq -r 'map("#\(.number) \(.state)") | join(",")')
+    [ "$PRS_OK" = 1 ] || pr_lookup "$p" "$br" || { REASON=gh_fail; DETAIL="gh pr list 실패(로그인·네트워크 확인)"; return 1; }
     if echo "$prs" | jq -e 'any(.[]; .state == "OPEN")' >/dev/null; then REASON=pr_open; DETAIL="$PR_LABEL"; return 1; fi
   fi
   # PR 상태와 별개로 현재 HEAD 가 원격에 올라가 있어야 함(병합된 PR 뒤에 쌓은 push 안 한 커밋 보호).
@@ -411,20 +461,22 @@ tree_same() {
   done < <(find "$s" \( -type f -o -type l \) -print0)
   return 0
 }
-archive_outputs() {
-  local p="$1" dest="$2" e src n total=0
+archive_outputs() { # 작업공간 보관폴더 [목록(기본 결과물)] [verify: 복제 없이 대조만]
+  local p="$1" dest="$2" list="${3:-$TMP/outputs.txt}" mode="${4:-}" e src n total=0
   ARCHIVED_FILES=0
-  [ -s "$TMP/outputs.txt" ] || return 0
-  mkdir -p "$dest" || { log "ARCHIVE_MISMATCH 보관 폴더 생성 실패 → $dest"; return 1; }
-  (cd "$p" && tar -cf - -T "$TMP/outputs.txt") 2>/dev/null | tar -xf - -C "$dest" 2>/dev/null || { log "ARCHIVE_MISMATCH 복제 실패 → $dest"; return 1; }
+  [ -s "$list" ] || return 0
+  if [ "$mode" != verify ]; then
+    mkdir -p "$dest" || { log "ARCHIVE_MISMATCH 보관 폴더 생성 실패 → $dest"; return 1; }
+    (cd "$p" && tar -cf - -T "$list") 2>/dev/null | tar -xf - -C "$dest" 2>/dev/null || { log "ARCHIVE_MISMATCH 복제 실패 → $dest"; return 1; }
+  fi
   while IFS= read -r e; do
     e="${e%/}"; src="$p/$e"
     if [ -L "$src" ]; then [ "$(readlink "$src")" = "$(readlink "$dest/$e" 2>/dev/null)" ] || { log "ARCHIVE_MISMATCH $e 링크가 다름"; return 1; }; n=1
     elif [ -d "$src" ]; then tree_same "$src" "$dest/$e" || { log "ARCHIVE_MISMATCH $e 원본 $(count_files "$src")개와 보관본의 내용·파일 수가 다름"; return 1; }; n=$(count_files "$src")
     elif [ -f "$src" ]; then cmp -s "$src" "$dest/$e" || { log "ARCHIVE_MISMATCH $e 원본과 보관본의 내용이 다름"; return 1; }; n=1
     else log "ARCHIVE_MISMATCH $e 원본이 사라짐"; return 1; fi
-    total=$((total + n)); log "ARCHIVE $e 파일 $n → $dest/$e"
-  done < "$TMP/outputs.txt"
+    total=$((total + n)); [ "$mode" = verify ] || log "ARCHIVE $e 파일 $n → $dest/$e"
+  done < "$list"
   ARCHIVED_FILES=$total
   return 0
 }
@@ -437,6 +489,55 @@ inbox_add() { # 부모경로 이름 보관경로 파일수
   local slug; slug=$(hub_slug "$1")
   mkdir -p "$CFG_INBOX" && printf '%s\t%s\t%s\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S')" "$2" "$3" "$4" >> "$CFG_INBOX/$slug.tsv" \
     && log "INBOX $slug $2 파일 $4" || log "INBOX_FAIL $CFG_INBOX/$slug.tsv 기록 실패(권한 확인). 보관본은 남음"
+}
+
+# PR 닫힘 보관 폴더 <archive>/<폴더>-<YYYYMMDD-HHMM>(같은 분에 이미 있으면 -2, -3 …)
+pr_done_dest() {
+  local base n=1 d
+  base="$CFG_ARCHIVE/$(basename "$1")-$(date '+%Y%m%d-%H%M')"; d="$base"
+  while [ -e "$d" ]; do n=$((n + 1)); d="$base-$n"; done
+  printf '%s\n' "$d"
+}
+# 보관본이 지금 작업 공간과 같으면 0: 목록·patch 두 개·파일 수·바이트·내용. 다르면 지우지 않음(보관 뒤 생긴 변경은 보관본에 없음)
+verify_full() {
+  local p="$1" dest="$2" src dst
+  classify_changes "$p" || { log "ARCHIVE_MISMATCH 변경 목록을 못 읽음"; return 1; }
+  build_full_list
+  cmp -s "$TMP/all.txt" "$dest/list.txt" || { log "ARCHIVE_MISMATCH 보관 뒤 미커밋 목록이 바뀜 → $dest"; return 1; }
+  git -C "$p" diff --binary HEAD 2>/dev/null | cmp -s - "$dest/tracked.patch" || { log "ARCHIVE_MISMATCH tracked.patch 가 지금 추적 변경과 다름"; return 1; }
+  git -C "$p" diff --binary --cached 2>/dev/null | cmp -s - "$dest/staged.patch" || { log "ARCHIVE_MISMATCH staged.patch 가 지금 스테이징과 다름"; return 1; }
+  src=$(list_stats "$p" "$TMP/all.txt"); dst=$(list_stats "$dest/files" "$TMP/all.txt")
+  [ "$src" = "$dst" ] || { log "ARCHIVE_MISMATCH 파일 수·바이트 불일치 원본 $src 보관 $dst"; return 1; }
+  archive_outputs "$p" "$dest/files" "$TMP/all.txt" verify || return 1
+  ARCHIVE_STATS="$src"
+}
+# 미커밋 전부 보관: patch·상태·메타는 dest 바로 아래, 파일은 dest/files/<원래 경로>. 대조까지 통과해야 0
+archive_all() {
+  local p="$1" dest="$2" br
+  br=$(git -C "$p" symbolic-ref -q --short HEAD 2>/dev/null)
+  mkdir -p "$dest/files" || { log "ARCHIVE_MISMATCH 보관 폴더 생성 실패 → $dest"; return 1; }
+  cp "$TMP/all.txt" "$dest/list.txt" \
+    && git -C "$p" diff --binary HEAD > "$dest/tracked.patch" 2>/dev/null \
+    && git -C "$p" diff --binary --cached > "$dest/staged.patch" 2>/dev/null \
+    && git -C "$p" status --porcelain=v1 --untracked-files=all > "$dest/status.txt" 2>/dev/null \
+    && printf 'path\t%s\nbranch\t%s\nhead\t%s\npr\t%s\nat\t%s\nrestore\tgit worktree add <경로> %s && git -C <경로> apply --binary tracked.patch && cp -R files/. <경로>/ (staged.patch 는 스테이징했던 부분 기록)\n' \
+      "$p" "$br" "$(git -C "$p" rev-parse HEAD 2>/dev/null)" "$PR_LABEL" "$(date '+%Y-%m-%dT%H:%M:%S')" "$br" > "$dest/meta.txt" \
+    || { log "ARCHIVE_MISMATCH patch·상태 기록 실패 → $dest"; return 1; }
+  archive_outputs "$p" "$dest/files" "$TMP/all.txt" || return 1
+  verify_full "$p" "$dest" || return 1
+  log "ARCHIVE_OK 파일 수·바이트 ${ARCHIVE_STATS} 일치, tracked.patch $(wc -c < "$dest/tracked.patch" | tr -d ' ')바이트 → $dest"
+}
+remove_pr_done() {
+  local p="$1" dest="$2" out
+  out=$(orca worktree rm --worktree "path:$p" --json 2>&1) && return 0
+  if printf '%s' "$out" | grep -Eiq -- "$CFG_RM_DIRTY_RE" || printf '%s' "$out" | grep -Eq -- "$CFG_RM_DIRTY_STATUS_RE"; then
+    # 미커밋 거부: 보관 뒤 바뀐 것이 없음을 다시 확인한 뒤에만 강제 삭제
+    verify_full "$p" "$dest" || return 1
+    log "RM_RETRY_FORCE PR 닫힘·보관본 대조 일치(${ARCHIVE_STATS}) → --force"
+    orca worktree rm --worktree "path:$p" --force --json >/dev/null 2>&1 && return 0
+  fi
+  log "RM_FAIL $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)"
+  return 1
 }
 
 remove_ws() {
@@ -507,7 +608,7 @@ adopt_orphans() {
 
 # ── 본 흐름 ───────────────────────────────────────────────────────────────────────────────
 : > "$TMP/skips"; : > "$TMP/items.jsonl"; : > "$TMP/keepcode.jsonl"; : > "$TMP/failed.txt"
-N_CAND=0 N_CAND_OUT=0 N_DEL=0 N_DEL_OUT=0 N_FAIL=0 FREED_KB=0 CAND_KB=0
+N_CAND=0 N_CAND_OUT=0 N_DEL=0 N_DEL_OUT=0 N_FAIL=0 FREED_KB=0 CAND_KB=0 N_PRDONE=0
 # 작업 공간별 결과 한 줄(--json 의 items). 판정: skip·candidate·deleted·failed
 item() { jq -nc --arg n "$name" --arg p "$p" --arg v "$1" --arg r "$2" --arg d "$3" '{name:$n,path:$p,verdict:$v,reason:$r,detail:$d}' >> "$TMP/items.jsonl"; }
 log "START root=$CFG_ROOT days=$DAYS only=${ONLY:--} path=${ONLYPATH:--} parent=${PARENT:--}"
@@ -534,6 +635,7 @@ process_place() {
   fi
   N_CAND=$((N_CAND + 1)); [ "$N_OUT" -gt 0 ] && N_CAND_OUT=$((N_CAND_OUT + 1))
   size_kb=$(du -sk "$p" 2>/dev/null | cut -f1); size_kb="${size_kb:-0}"; CAND_KB=$((CAND_KB + size_kb))
+  if [ "$PR_DONE" = 1 ]; then process_pr_done; return 0; fi
   if [ "$N_NOISE$N_LIC" != 00 ]; then
     log "NOISE $name 미커밋 0 으로 친 부산물 ${N_NOISE}건·줄바꿈만 ${N_LIC}건"
     head -n "$CFG_NOISE_LOG_MAX" "$TMP/noise.txt" | while IFS= read -r l; do log "NOISE   $l"; done
@@ -558,6 +660,30 @@ process_place() {
     echo "$name" >> "$TMP/failed.txt"; item failed rm_fail "orca worktree rm 거부"
   fi
 }
+# PR 닫힘 즉시 정리 후보의 보관·삭제(process_place 에서 부름)
+process_pr_done() {
+  N_PRDONE=$((N_PRDONE + 1))
+  if [ "$APPLY" = 0 ]; then
+    log "CANDIDATE $name $DETAIL size=$(human "$size_kb")"
+    item candidate pr_done "$DETAIL"
+    return 0
+  fi
+  dest=$(pr_done_dest "$p")
+  if ! archive_all "$p" "$dest"; then
+    echo archive_fail >> "$TMP/skips"; N_FAIL=$((N_FAIL + 1)); log "SKIP archive_fail $name — PR 닫힘 보관·대조 실패, 삭제 안 함(보관본 $dest 확인)"
+    echo "$name" >> "$TMP/failed.txt"; item failed archive_fail "PR 닫힘 보관·대조 실패"; return 0
+  fi
+  if remove_pr_done "$p" "$dest"; then
+    N_DEL=$((N_DEL + 1)); FREED_KB=$((FREED_KB + size_kb))
+    log "DELETE $name $DETAIL size=$(human "$size_kb") 보관=$dest (브랜치는 유지)"
+    item deleted pr_done "$DETAIL 보관=$dest"
+    inbox_add "$parent" "$name" "$dest" "${ARCHIVE_STATS% *}"
+    release_workers "$p"
+  else
+    echo rm_fail >> "$TMP/skips"; N_FAIL=$((N_FAIL + 1)); log "SKIP rm_fail $name — PR 닫힘 정리 중 삭제 거부·보관 뒤 변경, 보관본은 남음($dest)"
+    echo "$name" >> "$TMP/failed.txt"; item failed rm_fail "PR 닫힘 정리 중 삭제 거부"
+  fi
+}
 while IFS=$'\t' read -r p last_ms kids parent; do
   [ -n "$p" ] || continue
   [ -z "$ONLY" ] || case "$p" in *"$ONLY"*) ;; *) continue ;; esac
@@ -576,11 +702,13 @@ done < "$TMP/rows.tsv"
 label() { case "$1" in
   hub) echo 허브 ;; current) echo 현재작업 ;; children) echo 하위있음 ;; live) echo 터미널·워커 ;; idle) echo 최근활동 ;; dirty) echo 미커밋 ;;
   pr_open) echo PR열림 ;; unmerged) echo 미병합 ;; gh_fail) echo PR조회실패 ;; protected) echo 보호브랜치 ;; submodule) echo 서브모듈 ;;
-  not_orca) echo 미등록 ;; missing) echo 폴더없음 ;; archive_fail) echo 보관실패 ;; lock_busy) echo 잠금대기 ;; rm_fail) echo 삭제실패 ;; *) echo "$1" ;; esac; }
+  not_orca) echo 미등록 ;; missing) echo 폴더없음 ;; archive_fail) echo 보관실패 ;; lock_busy) echo 잠금대기 ;; rm_fail) echo 삭제실패 ;;
+  archive_big) echo 보관과대 ;; unity_open) echo Unity열림 ;; *) echo "$1" ;; esac; }
 SKIP_TXT=$(sort "$TMP/skips" | uniq -c | while read -r n r; do printf '%s %s·' "$(label "$r")" "$n"; done | sed 's/·$//')
 N_SKIP=$(wc -l < "$TMP/skips" | tr -d ' ')
 N_KEEP_CODE=$(wc -l < "$TMP/keepcode.jsonl" | tr -d ' ')
 if [ "$APPLY" = 1 ]; then RESULT="삭제 ${N_DEL}개(결과물만 ${N_DEL_OUT}개)·줄인 용량 $(human "$FREED_KB")"; else RESULT="삭제 후보 ${N_CAND}개(결과물만 ${N_CAND_OUT}개)·예상 용량 $(human "$CAND_KB")(시험, 삭제 없음)"; fi
+[ "$N_PRDONE" -gt 0 ] && RESULT="$RESULT · PR 닫힘 즉시 정리 ${N_PRDONE}개"
 log "END $RESULT 건너뜀 ${N_SKIP}곳: ${SKIP_TXT:-없음} (코드 변경으로 보존 ${N_KEEP_CODE}곳)"
 
 if [ "$JSON" = 1 ]; then

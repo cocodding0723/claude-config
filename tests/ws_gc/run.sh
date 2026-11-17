@@ -504,6 +504,68 @@ chk "[Q] apply: 부산물 되돌린 뒤 삭제(q_today·q_lfs·q_mode)" '[ ! -e 
 chk "[Q] apply: 보존 대상은 그대로(q_fresh·q_det·q_lfs_bad)" '[ -e "$W/q_fresh" ] && [ -e "$W/q_det" ] && [ -e "$W/q_lfs_bad" ]'
 chk "[Q] apply: 브랜치 삭제 옵션 없음" '! grep -q -- "--delete-branch" "$FAKE/orca.calls"'
 
+# ---- 10. PR 닫힘 즉시 정리(11-17): 활동 일수·미커밋을 기다리지 않고 전부 보관 → 대조 → 삭제 ----
+# mkpd 이름 브랜치 활동분전 : 옛 커밋 1개(origin 에 올림) + Orca 활동 시각만 N분 전. PR 은 따로(headRefOid = 지금 HEAD)
+mkpd() { mk "$1" "$2"; perl -pi -e 's#^(\Q'"$W/$1"'\E\t[^\t]*\t)\d+#${1}'"$((NOW_MS - $3 * 60000))"'#' "$SB/reg.tsv"; }
+prh() { pr "$1" "[{\"number\":$2,\"state\":\"$3\",\"headRefOid\":\"$(git -C "$W/$4" rev-parse HEAD)\"}]"; }
+dirty_all() { # 추적 수정·스테이징·미추적 코드·Assets 새 파일·gitignore 코드(보관 대상), Library 캐시(보관 제외)는 mk 가 만듦
+  echo pd-edit >> "$W/$1/README.md"
+  echo staged > "$W/$1/staged.txt"; git -C "$W/$1" add staged.txt
+  mkdir -p "$W/$1/src" "$W/$1/Assets/New" "$W/$1/secret"; echo code > "$W/$1/src/Foo.cs"; echo asset > "$W/$1/Assets/New/a.png"; echo s > "$W/$1/secret/Foo.cs"
+}
+mkpd pd_dirty feat/pd_dirty 20;   prh feat/pd_dirty 90 MERGED pd_dirty; dirty_all pd_dirty
+mkpd pd_closed feat/pd_closed 20; prh feat/pd_closed 91 CLOSED pd_closed; echo late > "$W/pd_closed/notes.cs"
+mkpd pd_open feat/pd_open 20;     pr feat/pd_open "[{\"number\":92,\"state\":\"MERGED\",\"headRefOid\":\"$(git -C "$W/pd_open" rev-parse HEAD)\"},{\"number\":93,\"state\":\"OPEN\"}]"; dirty_all pd_open
+mkpd pd_newc feat/pd_newc 20;     prh feat/pd_newc 94 MERGED pd_newc; echo n > "$W/pd_newc/n.txt"; git -C "$W/pd_newc" add n.txt; oldc pd_newc after-pr; dirty_all pd_newc
+mkpd pd_fresh feat/pd_fresh 3;    prh feat/pd_fresh 95 MERGED pd_fresh; dirty_all pd_fresh
+mkpd pd_live feat/pd_live 20;     prh feat/pd_live 96 MERGED pd_live; dirty_all pd_live; printf 'term_pd\t%s\n' "$W/pd_live" >> "$FAKE/terminals.tsv"
+mkpd pd_nopr feat/pd_nopr 20;     dirty_all pd_nopr
+mkpd pd_sub feat/pd_sub 20
+  git -C "$W/pd_sub" -c protocol.file.allow=always submodule add -q "$O/sub.git" Assets/Sub 2>/dev/null; git -C "$W/pd_sub" add -A; oldc pd_sub sub; git -C "$W/pd_sub" push -q origin feat/pd_sub 2>/dev/null
+  prh feat/pd_sub 97 MERGED pd_sub; echo wip > "$W/pd_sub/Assets/Sub/wip.txt"
+mkpd pd_big feat/pd_big 20;       prh feat/pd_big 98 MERGED pd_big; dirty_all pd_big
+mkpd pd_late feat/pd_late 20;     prh feat/pd_late 99 MERGED pd_late; dirty_all pd_late
+mkpd pd_tar feat/pd_tar 20;       prh feat/pd_tar 100 MERGED pd_tar; dirty_all pd_tar
+mk dev_pd dev; perl -pi -e 's#^(\Q'"$W/dev_pd"'\E\t[^\t]*\t)\d+#${1}'"$((NOW_MS - 20 * 60000))"'#' "$SB/reg.tsv"; prh dev 101 MERGED dev_pd
+regen
+jq -R -s '{ok:true,result:{terminals:(split("\n")|map(select(length>0)|split("\t")|{handle:.[0],worktreePath:.[1],connected:true,orphaned:false}))}}' "$FAKE/terminals.tsv" > "$FAKE/terminals.json"
+pdlog() { grep "repoA/$1 " "$ARC/ws_gc.log" | tail -2; }
+gc --only pd_
+chk "[PD] dry-run: 병합 PR·미커밋 있어도 활동 대기 없이 후보(pr_done)" 'has "CANDIDATE repoA/pd_dirty pr_done PR #90 MERGED"' "$(pdlog pd_dirty)"
+chk "[PD] dry-run: 보관 예정 파일 수·추적 변경 수·크기 기록" 'has "CANDIDATE repoA/pd_dirty .*보관예정 파일 [1-9][0-9]*개·추적 변경 2건"' "$(pdlog pd_dirty)"
+chk "[PD] dry-run: 닫힌(CLOSED) PR 도 후보" 'has "CANDIDATE repoA/pd_closed pr_done PR #91 CLOSED"' "$(pdlog pd_closed)"
+chk "[PD] OPEN PR 이 하나라도 있으면 기존 규칙(후보 아님)" '! has "CANDIDATE repoA/pd_open " && has "SKIP idle repoA/pd_open"' "$(pdlog pd_open)"
+chk "[PD] PR 뒤에 새 커밋이 있으면 기존 규칙" '! has "CANDIDATE repoA/pd_newc " && has "SKIP idle repoA/pd_newc"' "$(pdlog pd_newc)"
+chk "[PD] 마지막 활동 10분 안이면 기존 규칙(유예)" '! has "CANDIDATE repoA/pd_fresh " && has "SKIP idle repoA/pd_fresh"' "$(pdlog pd_fresh)"
+chk "[PD] 터미널이 붙은 곳은 PR 이 닫혀도 보존(live)" 'has "SKIP live repoA/pd_live"'
+chk "[PD] PR 없는 곳은 기존 규칙(미커밋이면 보존)" '! has "CANDIDATE repoA/pd_nopr " && has "SKIP idle repoA/pd_nopr"' "$(pdlog pd_nopr)"
+chk "[PD] 서브모듈 안 변경은 보존(submodule)" 'has "SKIP submodule repoA/pd_sub — PR 닫힘"' "$(pdlog pd_sub)"
+gc --only dev_pd; chk "[PD] 보호 브랜치는 병합 PR 이 있어도 보존" 'has "SKIP protected repoA/dev_pd"'
+chk "[PD] dry-run: 폴더·보관 폴더 그대로" '[ -e "$W/pd_dirty" ] && [ -z "$(ls -d "$ARC"/pd_* 2>/dev/null)" ] && [ "$(rm_calls)" = 0 ]'
+WS_GC_PR_DONE_MAX_MB=0 gc --only pd_big --apply
+chk "[PD] 보관 상한 초과 → archive_big 보존" '[ -e "$W/pd_big" ] && has "SKIP archive_big repoA/pd_big" && [ "$(rm_calls)" = 0 ]' "$(pdlog pd_big)"
+FAKE_RM_CHECK_DIRTY=1 gc --only pd_dirty --apply
+D=$(ls -d "$ARC"/pd_dirty-* 2>/dev/null | head -1)
+chk "[PD] apply: 보관 폴더 이름 <폴더>-YYYYMMDD-HHMM" '[ -n "$D" ] && basename "$D" | grep -Eq "^pd_dirty-[0-9]{8}-[0-9]{4}$"' "$D"
+chk "[PD] apply: 공간 삭제·미커밋 거부 뒤 재대조 → --force" '[ ! -e "$W/pd_dirty" ] && grep -q "^worktree rm --worktree path:$W/pd_dirty --force" "$FAKE/orca.calls" && has "RM_RETRY_FORCE PR 닫힘·보관본 대조 일치"' "$(pdlog pd_dirty)"
+chk "[PD] apply: tracked.patch 에 추적 수정·스테이징, staged.patch 에 스테이징만" 'grep -q "^+pd-edit" "$D/tracked.patch" && grep -q "^+staged" "$D/tracked.patch" && grep -q "^+staged" "$D/staged.patch" && ! grep -q "pd-edit" "$D/staged.patch"'
+chk "[PD] apply: 미추적·gitignore 코드·Assets 새 파일·결과물을 경로 그대로 보관" '[ -f "$D/files/src/Foo.cs" ] && [ -f "$D/files/Assets/New/a.png" ] && [ -f "$D/files/secret/Foo.cs" ] && [ -f "$D/files/TestResults/a.xml" ] && [ -f "$D/files/docs/out/x.html" ]'
+chk "[PD] apply: 캐시(Library·.dart_tool)는 보관 안 함" '[ ! -e "$D/files/Library" ] && [ ! -e "$D/files/.dart_tool" ]'
+chk "[PD] apply: 상태·메타(경로·브랜치·HEAD·PR) 기록" 'grep -q "^branch	feat/pd_dirty$" "$D/meta.txt" && grep -q "^pr	#90 MERGED$" "$D/meta.txt" && grep -q "src/Foo.cs" "$D/status.txt"'
+chk "[PD] apply: 파일 수·바이트 대조 로그·삭제 로그에 보관 경로" 'has "ARCHIVE_OK 파일 수·바이트 [1-9][0-9]* [1-9][0-9]* 일치" && has "DELETE repoA/pd_dirty pr_done .*보관=$D (브랜치는 유지)"'
+chk "[PD] apply: 허브 색인에 보관 경로 기록" 'grep -q "repoA/pd_dirty	$D	" "$WS_GC_INBOX/_none.tsv"'
+git clone -q "$O/repoA.git" "$SB/restore" 2>/dev/null; git -C "$SB/restore" checkout -q feat/pd_dirty
+chk "[PD] 보관한 tracked.patch 가 브랜치에 그대로 적용됨(되살리기 가능)" 'git -C "$SB/restore" apply --binary "$D/tracked.patch" && grep -q pd-edit "$SB/restore/README.md" && [ -f "$SB/restore/staged.txt" ]'
+FAKE_RM_CHECK_DIRTY=1 gc --only pd_closed --apply
+chk "[PD] apply: 닫힌 PR 도 보관 뒤 삭제" '[ ! -e "$W/pd_closed" ] && [ -f "$(ls -d "$ARC"/pd_closed-* | head -1)/files/notes.cs" ]' "$(pdlog pd_closed)"
+FAKE_RM_CHECK_DIRTY=1 FAKE_RM_ADD_EDIT=1 gc --only pd_late --apply
+chk "[PD] 보관 뒤 새 변경이 생기면 강제 삭제 안 함(rm_fail·보관본 남음·종료 1)" '[ -e "$W/pd_late" ] && ! grep -q -- "pd_late --force" "$FAKE/orca.calls" && has "ARCHIVE_MISMATCH tracked.patch" && has "SKIP rm_fail repoA/pd_late" && [ -n "$(ls -d "$ARC"/pd_late-* 2>/dev/null)" ] && [ "$RC" = 1 ]' "rc=$RC $(pdlog pd_late)"
+FAKE_TAR_CORRUPT=1 FAKE_RM_CHECK_DIRTY=1 gc --only pd_tar --apply
+chk "[PD] 보관본 내용이 다르면 삭제 안 함(archive_fail)" '[ -e "$W/pd_tar" ] && has "SKIP archive_fail repoA/pd_tar" && [ "$(rm_calls)" = 0 ]' "$(pdlog pd_tar)"
+gc --only pd_ --apply --json --no-slack 2>/dev/null
+chk "[PD] 요약: PR 닫힘 즉시 정리 개수" 'has "END .*PR 닫힘 즉시 정리"'
+chk "[PD] 보존 대상은 끝까지 그대로" '[ -e "$W/pd_open" ] && [ -e "$W/pd_newc" ] && [ -e "$W/pd_fresh" ] && [ -e "$W/pd_live" ] && [ -e "$W/pd_nopr" ] && [ -e "$W/pd_sub" ] && [ -e "$W/dev_pd" ]'
+
 bash "$HERE/adopt.sh" || FAIL=$((FAIL + 1))
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
