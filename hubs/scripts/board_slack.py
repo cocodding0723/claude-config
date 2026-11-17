@@ -8,17 +8,24 @@
        직접 입력이 질문이면 코멘트만 남기고 카드는 열어 둠. 작업판 카드가 아닌 결정 번호는 손대지 않음(옛 허브·메인 전달 그대로).
 자동 보내기 스위치: <LRM_HUB_DIR>/.board-slack.on 파일이 있을 때만 board-ask 가 새 결정 카드를 바로 보냄. 기본 꺼짐(봇 꺼짐).
 
+양식 검사: 알림 스크립트(slack_notify.sh)에 건조 경로가 없어, 같은 폴더 slack_notify.sh 안의 양식 A 검사 코드(FORM_PY)를 꺼내 그대로 돌림.
+       push --dry-run 도 이 검사를 거치므로 건조 실행 통과 = 실제 전송 통과. 본문 티켓 번호(LRM-n)·커밋 해시는 맨 아래 '참고:' 줄로 자동 이동하고,
+       제목(첫 줄)이 40자를 넘으면 카드에 '보강 필요: 제목 40자' 코멘트를 남기고 거부. 전송 때 --card 로 slack-sent.jsonl 에 카드 id 를 남김.
+
 사용: board_slack.py push <카드 id> [--dry-run] [--json]
       board_slack.py answer <결정 번호> <답 원문> [--json]      (시험·수동용. 평소엔 slack_socket.py 가 부름)
 환경: LRM_HUB_DIR(기본 ~/.config/lrm-hubs) · LRM_NOTIFY(기본 <LRM_HUB_DIR>/slack_notify.sh) · BOARD_DIR · BOARD_BD
 종료 코드: 0 성공(이미 보냄·작업판 카드 아님 포함), 2 인자·카드 내용 오류(원인·조치 출력), 3 bd·전송 실패, 4 카드 없음"""
 import argparse
+import contextlib
+import fcntl
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import board_cards as cards  # noqa: E402
@@ -32,6 +39,18 @@ ID_HEAD, ID_MAX = "D-B", 16  # slack_notify 결정 번호 규칙: D- 뒤 영문�
 SEND_TIMEOUT = 90
 PREVIEW = os.environ.get("LRM_PREVIEW") or os.path.join(HUB_DIR, "html_preview.sh")  # 390폭 모바일 미리보기 PNG
 PREVIEW_TIMEOUT = 60
+NOTIFY_SRC = os.environ.get("LRM_NOTIFY_SRC") or os.path.join(os.path.dirname(os.path.realpath(__file__)), "slack_notify.sh")  # 양식 검사 코드가 든 파일. NOTIFY 는 시험에서 가짜로 바뀌므로 따로 둠
+FORM_OPEN, FORM_CLOSE = "read -r -d '' FORM_PY <<'PYEOF' || true\n", "\nPYEOF\n"  # slack_notify.sh 의 파이썬 본체를 감싼 heredoc 표식
+FORM_FAIL_LEVELS = ("reject", "hard")  # 실제 전송이 막힐 수 있는 수준(strict 기준). warn 은 통과
+CARD_ID_RE = re.compile(r"^[a-z][a-z0-9]{1,15}-[a-z0-9]{1,12}(\.[0-9]{1,3})*$")  # slack_notify --card 형식. 틀리면 전송이 거부돼 이 경우엔 --card 를 생략
+REF_HEAD = "참고:"
+REF_SEP = " · "
+TICKET_RX = re.compile(r"(?<![0-9A-Za-z_])LRM-\d+(?![0-9A-Za-z_])")  # 알림 스크립트 RX ticket·hex 와 같은 규칙. 어긋나면 위 검사가 잡음
+HEX_RX = re.compile(r"(?<![0-9A-Za-z_])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![0-9A-Za-z_])", re.I)
+REF_WORDS = ((TICKET_RX, "관련 티켓"), (HEX_RX, "관련 커밋"))  # 본문에서는 쉬운 말로 바꾸고 번호는 참고 줄로
+TITLE_NEED = f"보강 필요: 제목 {cards.TITLE_MAX}자"
+LOCK_DIR = os.path.join(HUB_DIR, ".board-slack-locks")  # 카드별 전송 잠금 파일 폴더
+LOCK_WAIT, LOCK_POLL = SEND_TIMEOUT * 2, 0.2  # 앞 전송이 끝나길 기다리는 최대 초(전송+미리보기 시간 여유)·확인 간격
 ATTACH_FAIL = "파일 첨부 실패"  # slack_notify 가 카드는 보내고 파일만 못 붙였을 때 stderr 에 남기는 문구
 
 
@@ -67,6 +86,49 @@ def show(card_id):
     return card
 
 
+def move_refs(lines):
+    """본문 줄의 티켓 번호·커밋 해시를 쉬운 말로 바꾸고 맨 아래 '참고:' 줄로 모음. 번호가 없으면 그대로"""
+    refs = []
+    out = []
+    for ln in lines:
+        for rx, word in REF_WORDS:
+            refs += rx.findall(ln)
+            ln = rx.sub(word, ln)
+        out.append(ln)
+    refs = list(dict.fromkeys(refs))
+    return out + ([REF_HEAD + " " + REF_SEP.join(refs)] if refs else [])
+
+
+def form_problems(text):
+    """알림 스크립트와 같은 양식 A 검사(decide·답 줄 안내 있음)를 돌려 막힐 위반 문구 목록을 돌려줌. 검사 코드를 못 꺼내면 Fail(3)"""
+    try:
+        with open(NOTIFY_SRC, encoding="utf-8") as f:
+            src = f.read()
+        code = src.split(FORM_OPEN, 1)[1].split(FORM_CLOSE, 1)[0]
+    except (OSError, IndexError):
+        raise cards.Fail(3, f"양식 검사 코드를 못 찾음({NOTIFY_SRC}). 조치: slack_notify.sh 가 같은 폴더에 있고 FORM_PY 구간이 그대로인지 확인")
+    env = dict(os.environ, LRM_SCRIPT_DIR=os.path.dirname(NOTIFY_SRC))
+    try:
+        p = subprocess.run([sys.executable, "-I", "-c", code, "check", "decide", "1"], input=text, capture_output=True, text=True,
+                           timeout=SEND_TIMEOUT, env=env)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise cards.Fail(3, f"양식 검사 실행 실패({type(e).__name__}). 조치: python3 동작 확인")
+    if p.returncode != 0:
+        raise cards.Fail(3, f"양식 검사 실패: {p.stderr.strip()[:200]}. 조치: slack_notify.sh 양식 검사 코드 확인")
+    rows = [ln.split("\t", 2) for ln in p.stdout.splitlines() if ln.count("\t") >= 2]
+    return [r[2] for r in rows if r[0] in FORM_FAIL_LEVELS]
+
+
+def need_title(card_id, n, dry_run):
+    """제목 초과 카드: 보강 필요 코멘트(이미 있으면 생략)를 남기고 거부"""
+    msg = f"{card_id} 제목이 {n}자(최대 {cards.TITLE_MAX}). 조치: 뜻을 지켜 줄이고 원래 제목은 설명 첫 줄 '원래 제목: …' 으로 보존(bd update)"
+    if not dry_run:
+        rows = cards.bd_json("comments", card_id) or []
+        if not any(TITLE_NEED in (r.get("text") or "") for r in rows if isinstance(r, dict)):
+            cards.bd("comments", "add", card_id, f"{TITLE_NEED} — 현재 {n}자. Slack 첫 줄 규칙(이모지·공백 제외 {cards.TITLE_MAX}자)에 걸려 보내지 못함")
+    raise cards.Fail(2, msg)
+
+
 def notify_args(card):
     """slack_notify.sh 인자. 번호 카드 필수 칸(배경·용어·선택지 결과)·HTML 설명서가 없으면 Fail(2)"""
     if "kind:decision" not in (card.get("labels") or []):
@@ -88,12 +150,18 @@ def notify_args(card):
     body = [card.get("title", ""), f"배경: {d['background']}", f"용어: {d['terms']}"]
     if d["why"]:
         body.append(f"이유: {d['why']}")
+    body = move_refs(body)
     args = ["--kind", "decide", "--tag", "board", "--options", opts, "--decision-id", decision_id(card["id"])]
+    if CARD_ID_RE.match(card["id"]):
+        args += ["--card", card["id"]]
     if d["recommend"] in names:
         args += ["--recommend", str(names.index(d["recommend"]) + 1)]
     else:
         raise cards.Fail(2, f"{card['id']} 추천 없음. 조치: board-ask --recommend <선택지> 로 다시 만들기")
     text = "\n".join(body)
+    bad = form_problems(text)  # 건조 실행도 실제 전송과 같은 검사를 거치게 함
+    if bad:
+        raise cards.Fail(2, f"{card['id']} Slack 양식 A 위반: {' / '.join(bad)}")
     why = decide_card.problem(text, opts, decision_id(card["id"]))  # 실제 전송 때 막힐 규칙(글자 수 상한 등)을 보내기 전·건조 실행에서 미리 확인
     if why:
         raise cards.Fail(2, f"{card['id']} Slack 카드 규칙 위반: {why}")
@@ -108,12 +176,43 @@ def push(card_id, dry_run=False):
     have = [x for x in card.get("labels") or [] if x.startswith(LABEL)]
     if have:
         return {"id": card_id, "sent": False, "why": "already", "decisionId": have[0][len(LABEL):]}
+    n = cards.title_len(card.get("title", ""))
+    if n > cards.TITLE_MAX:
+        need_title(card_id, n, dry_run)
     args = notify_args(card)
     clash = [r["id"] for r in cards.bd_json("list", "--all", "--label", LABEL + did, "--limit", "0") or [] if r.get("id") != card_id]
     if clash:
         raise cards.Fail(2, f"결정 번호 {did} 를 {clash[0]} 가 이미 씀. 조치: 카드 id 를 확인하고 수동으로 slack_notify.sh 사용")
     if dry_run:
         return {"id": card_id, "sent": False, "why": "dry-run", "decisionId": did, "args": args}
+    with card_lock(card_id):  # 메인·허브가 동시에 push 해 같은 카드가 두 번 가던 문제(11-17). 잠금 안에서 label 을 다시 확인
+        have = [x for x in show(card_id).get("labels") or [] if x.startswith(LABEL)]
+        if have:
+            return {"id": card_id, "sent": False, "why": "already", "decisionId": have[0][len(LABEL):]}
+        return send(card_id, did, args)
+
+
+@contextlib.contextmanager
+def card_lock(card_id):
+    """카드 하나당 파일 잠금(fcntl.flock). 프로세스가 죽으면 OS 가 풀어 줘서 낡은 잠금이 남지 않음. 못 얻으면 Fail(3)"""
+    os.makedirs(LOCK_DIR, exist_ok=True)
+    fd = os.open(os.path.join(LOCK_DIR, re.sub(r"[^A-Za-z0-9._-]", "_", card_id) + ".lock"), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        end = time.monotonic() + LOCK_WAIT
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() > end:
+                    raise cards.Fail(3, f"{card_id} 다른 전송이 {LOCK_WAIT}초째 진행 중. 조치: 잠시 뒤 다시 시도(잠금 파일 {LOCK_DIR} 은 지우지 않아도 됨)")
+                time.sleep(LOCK_POLL)
+        yield
+    finally:
+        os.close(fd)
+
+
+def send(card_id, did, args):
     try:
         p = subprocess.run([NOTIFY, *args], capture_output=True, text=True, timeout=SEND_TIMEOUT, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired) as e:
@@ -151,7 +250,8 @@ def card_for(did):
         return None
     try:
         rows = cards.bd_json("list", "--all", "--label", LABEL + did, "--limit", "0") or []
-    except cards.Fail:
+    except cards.Fail as e:  # 조회 실패를 '작업판 카드 아님'으로 조용히 넘기면 버튼 답이 메인으로 샘. 이유를 로그에 남김
+        print(f"board_slack: 카드 조회 실패 — {e}", file=sys.stderr)
         return None
     ids = [r["id"] for r in rows if isinstance(r, dict) and r.get("id")]
     return ids[0] if len(ids) == 1 else None
