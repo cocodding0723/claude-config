@@ -129,6 +129,10 @@ printf '{"verdict":"fail","reviewer_model":"claude-fable-5","author_model":"gpt-
 expect "검수 불합격 판정 거부" 7 "$BIN" --epic "$e" lead
 printf '{"verdict":"pass","reviewer_model":"claude-fable-5","author_model":"gpt-6-astra"}' > "$SB/ev/rv.json"
 expect "epic 닫힘" 0 "$BIN" --epic "$e" lead
+bd show "$e" --json | grep -q '"stage:review"' && ok "닫힌 epic 은 사용자 검수 대기 label" || ko "검수 대기 label"
+expect "--user-ok 원문 없으면 2" 2 "$BIN" --epic "$e" lead --user-ok ""
+expect "--user-ok 로 검수 대기 해제" 0 "$BIN" --epic "$e" lead --user-ok "좋아 반영해"
+bd show "$e" --json | grep -q '"stage:review"' && ko "검수 대기 해제" || ok "검수 대기 label 떼짐"
 
 # epic 게이트: 직접 닫은 하위 카드·board-merge 기록 없는 병합 거부
 ME=$(git -C "$GR" rev-parse w)

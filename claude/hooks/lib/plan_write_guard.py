@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -316,6 +317,30 @@ def script(path, ctx):
         ctx.hits.append(("code", f"스크립트 {path}"))
 
 
+REASON_DEV = ("계획 승인 직전 dev 기준 재확인 필요(lrm-1ce): 지금 {ref} = {sha}. 계획서의 파일·카드 범위를 이 기준과 다시 대조한 뒤 "
+              "기록에 \"dev_checked\":{{\"ref\":\"{ref}\",\"sha\":\"{sha}\"}} 를 넣어 다시 씀(fetch: git -C {repo} fetch origin)")
+
+
+def dev_recheck(content):
+    """메인의 계획 승인 기록 Write: dev_checked.sha 가 메인 체크아웃의 지금 기준(기본 origin/dev)과 같아야 함. 기준을 못 읽으면 검사 생략"""
+    try:
+        rec = json.loads(content or "")
+    except ValueError:
+        return ""
+    if not isinstance(rec, dict):
+        return ""
+    dc = rec.get("dev_checked") if isinstance(rec.get("dev_checked"), dict) else {}
+    ref, repo = dc.get("ref") or "origin/dev", main_role.main_checkout()
+    try:
+        r = subprocess.run(["git", "-C", repo, "rev-parse", "-q", "--verify", ref + "^{commit}"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    sha = r.stdout.strip()
+    if r.returncode != 0 or not sha:
+        return ""
+    return "" if str(dc.get("sha") or "") and sha.startswith(str(dc["sha"])) and len(str(dc["sha"])) >= 7 else REASON_DEV.format(ref=ref, sha=sha, repo=repo)
+
+
 def decide(ev):
     tool, inp = ev.get("tool_name", ""), ev.get("tool_input") or {}
     main = main_role.is_main(ev)
@@ -325,7 +350,9 @@ def decide(ev):
         if not hit:
             return ""
         if hit[0] == "plan":
-            return "" if main else REASON_PLAN
+            if not main:
+                return REASON_PLAN
+            return dev_recheck(inp.get("content")) if tool == "Write" and p.endswith(".json") else ""
         return REASON_TRANSCRIPT if hit[0] == "transcript" else REASON_LEDGER.format(name=hit[1])
     if tool != "Bash":
         return ""

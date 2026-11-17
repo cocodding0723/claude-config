@@ -386,6 +386,12 @@ wrun2() { local out; out=$(printf '%s' "$1" | HOME="$SB/home" LRM_PUSH_MAIN="$SB
 r=$(wrun2 "$(mw "$SB/home/.claude/projects/$MK/s1.jsonl")"); [ "$r" = pass ] && ok "plan-write: 메인 체크아웃 세션은 ORCA_ROLE 없이 Write 통과" || ko "plan-write: 메인 체크아웃 세션" "$r $(mw x)"
 [ "$(wrun2 "$(mw "$SB/home/.claude/projects/$MK-ws-hub/s2.jsonl")")" = deny ] && ok "plan-write: 다른 작업 공간 세션은 거부" || ko "plan-write: 다른 작업 공간 세션"
 [ "$(wrun2 "$(mw "$SB/home/.claude/projects/$MK/s1.jsonl")" feature)" = deny ] && ok "plan-write: ORCA_ROLE 명시값이 우선" || ko "plan-write: ORCA_ROLE 우선"
+# 계획 승인 직전 dev 기준 재확인: 메인의 기록 Write 는 dev_checked.sha 가 지금 origin/dev 와 같아야 함
+mk "$SB/mainrepo" main; git -C "$SB/mainrepo" update-ref refs/remotes/origin/dev HEAD; DSHA=$(git -C "$SB/mainrepo" rev-parse HEAD)
+dw() { jq -cn --arg f "$WP" --arg c "$1" '{tool_name:"Write",tool_input:{file_path:$f,content:$c}}'; }
+r=$(printf '%s' "$(dw '{"plan_id":"P9"}')" | HOME="$SB/home" LRM_PUSH_MAIN="$SB/mainrepo" ORCA_ROLE=main bash "$H/plan-approval-write-guard.sh" | jq -r '.hookSpecificOutput.permissionDecision // "pass"'); [ "$r" = deny ] && ok "plan-write: dev_checked 없는 메인 기록 Write 거부" || ko "dev_checked 없음" "$r"
+r=$(printf '%s' "$(dw "{\"plan_id\":\"P9\",\"dev_checked\":{\"sha\":\"$DSHA\"}}")" | HOME="$SB/home" LRM_PUSH_MAIN="$SB/mainrepo" ORCA_ROLE=main bash "$H/plan-approval-write-guard.sh" | jq -r '.hookSpecificOutput.permissionDecision // "pass"'); [ "${r:-pass}" = pass ] && ok "plan-write: dev_checked 가 지금 origin/dev 면 통과" || ko "dev_checked 일치" "$r"
+r=$(printf '%s' "$(dw '{"plan_id":"P9","dev_checked":{"sha":"0000000"}}')" | HOME="$SB/home" LRM_PUSH_MAIN="$SB/mainrepo" ORCA_ROLE=main bash "$H/plan-approval-write-guard.sh" | jq -r '.hookSpecificOutput.permissionDecision // "pass"'); [ "$r" = deny ] && ok "plan-write: 낡은 dev_checked 거부" || ko "낡은 dev_checked" "$r"
 # 적대 검수 탐침(11-17): 읽기 오탐 0, 변수·스크립트·rsync 등 쓰기 미탐 0
 bx() { jq -cn --arg c "$1" --arg d "${2:-$SB}" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}'; }
 wexp "plan-write: 원장 tail | json.tool 읽기 통과" "$(bx 'tail -3 ~/.config/lrm-hubs/slack-inbox.jsonl | python3 -m json.tool')"

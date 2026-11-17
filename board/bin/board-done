@@ -27,6 +27,7 @@ board-run 로그는 머리줄 tree= 가 브랜치 끝 커밋의 tree 와 같아�
 해시가 그 브랜치 끝과 같아야 하며 파일은 그 커밋 시각 이후에 만들어져야 함(낡은 증거·다른 커밋 증거 거부).
 게이트 컴파일: <BOARD_DIR>/repos.json 의 그 저장소 "compile"(또는 BOARD_COMPILE_CMD)이 있으면 게이트가 repo 에서 직접 컴파일을 돌려
 compile 증거를 만든다(작업자 로그 대신 씀). 설정이 없으면 경고만 내고 작업자 로그를 검사함. 양식: board/repos.example.json
+epic 이 닫히면 label stage:review(사용자 검수 대기)를 붙임. 사용자 검수 답이 오면 board-done --epic <id> <이름> --user-ok "<원문>" 로 뗌.
 epic 이 닫히고 label feature:<slug> 가 있으면 BOARD_FEATURE_CLOSE(기본 ~/.config/lrm-hubs/feature_close.sh) --slug <slug> --yes 를
 분리 실행해 기능 코디네이터를 정리함(BOARD_FEATURE_CLOSE=off 로 끔).
 같은 종류가 여럿이면 마지막 줄(notes 다음 코멘트 순)만 봄. '<종류>=' 를 생략하면 파일 이름으로 추정함. 모든 파일은 존재·비어 있지 않음·카드 claim 이후 수정이어야 함.
@@ -430,6 +431,7 @@ def main():
     ap.add_argument("actor", help="카드를 집은 작업자 이름(BD_ACTOR 로 씀)")
     ap.add_argument("--epic", action="store_true", help="기능 묶음(epic) 완료. 하위 카드 전부 닫힘 + 화면 촬영·녹화 요구")
     ap.add_argument("--dry-run", action="store_true", help="검사만 하고 닫지 않음")
+    ap.add_argument("--user-ok", default=None, metavar="원문", help="--epic: 사용자 검수 통과 원문. stage:review 를 떼고 원문을 남김")
     ap.add_argument("--json", action="store_true", help="결과를 JSON 한 개로 stdout 에 출력")
     try:
         a = ap.parse_args()
@@ -445,6 +447,16 @@ def main():
             raise Fail(EXIT_ENV, f"작업판 폴더 {board} 없음", "BOARD_DIR=<작업판 경로> board-done <id> <작업자>")
         os.chdir(board)
         card = load_card(a.card_id)
+        if a.user_ok is not None:
+            if not a.epic or not a.user_ok.strip():
+                raise Fail(EXIT_USAGE, "--user-ok 는 --epic 과 사용자 원문이 필요", 'board-done --epic <id> <이름> --user-ok "<원문>"')
+            if "stage:review" not in (card.get("labels") or []):
+                raise Fail(EXIT_STATE, f"{a.card_id} 는 검수 대기(stage:review)가 아님", "board-done --epic 으로 먼저 닫음")
+            bd("comments", "add", a.card_id, f"user-ok: {a.user_ok}", actor=a.actor)
+            bd("label", "remove", a.card_id, "stage:review", actor=a.actor)
+            out.update(ok=True, closed=False, user_ok=True, exit=EXIT_OK)
+            print(json.dumps(out, ensure_ascii=False) if a.json else f"검수 통과 기록: {a.card_id}")
+            sys.exit(EXIT_OK)
         if card.get("status") == "closed":
             out.update(ok=True, closed=False, already=True, exit=EXIT_OK)
             print(json.dumps(out, ensure_ascii=False) if a.json else f"이미 닫힘: {a.card_id}")
@@ -465,6 +477,8 @@ def main():
                 raise Fail(EXIT_CLOSE, f"bd close 실패: {(r.stderr or r.stdout).strip()[:300]}", "메시지 원인 해소 뒤 다시 실행")
         out.update(ok=True, closed=not a.dry_run, exit=EXIT_OK)
         if a.epic and not a.dry_run:
+            # 사용자 최종 검수 대기로 표시(board-claim 의 검수 대기 상한이 셈). 검수 답이 오면 --user-ok 로 뗌
+            bd("label", "add", a.card_id, "stage:review", actor=a.actor)
             out["feature_close"] = spawn_feature_close(card)
     except Fail as f:
         out.update(ok=False, closed=False, exit=f.code, cause=f.cause, fix=f.fix)

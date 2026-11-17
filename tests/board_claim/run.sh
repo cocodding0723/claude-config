@@ -53,6 +53,17 @@ expect "자리표시만 있는 지시 칸은 2" 2 "$BIN" "$e2" w1
 e3=$(new_card e3 "file:/abs/dir3/" '사용자 11-16 원문: "그럼 위 구조 추천대로 반영해줘"')
 expect "사용자 원문 한 줄 형식은 집음" 0 "$BIN" "$e3" w1
 
+# 검수 대기 상한: stage:review 3개면 새 착수만 거부
+for i in 1 2 3; do bd create "rv$i" -t epic --labels stage:review --json >/dev/null; done
+rvp=$(bd list --label stage:review --json | python3 -c 'import json,sys;print(json.load(sys.stdin)[0]["id"])')
+nw=$(new_card nw "file:/abs/new1/")
+expect "검수 대기 3개면 새 착수 14" 14 "$BIN" "$nw" w1
+expect "이미 집은 카드 다시 집기는 계속" 0 "$BIN" "$a" w1
+fx=$(bd create fx --parent "$rvp" --labels "file:/abs/fix1/" -d '사용자 원문: "고쳐"' --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+expect "검수 대기 기능의 수정 카드는 집음" 0 "$BIN" "$fx" w1
+expect "상한을 올리면 집음" 0 env REVIEW_WIP_MAX=4 "$BIN" "$nw" w1
+for id in $(bd list --label stage:review --json | python3 -c 'import json,sys;print(" ".join(x["id"] for x in json.load(sys.stdin) if x.get("issue_type")=="epic"))'); do bd label remove "$id" stage:review >/dev/null; done
+
 n=$(new_card n "")
 expect "file: label 없으면 2" 2 "$BIN" "$n" w1
 expect "--help 0" 0 "$BIN" --help

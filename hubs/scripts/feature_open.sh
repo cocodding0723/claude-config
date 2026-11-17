@@ -32,7 +32,7 @@ usage() {
   --dry-run       아무것도 만들지 않고 할 일만 출력
   --json          결과를 JSON 한 줄로 출력
 환경: REPO, WS_ROOT, LRM_BOARD(작업판 폴더), LRM_CREATE_HUB, LRM_FEATURE_ROLE, LRM_ROLES_DIR
-종료 코드: 0 성공, 1 단계 실패, 2 인자 오류, 3 환경 오류(bd·orca·jq·git 없음, 기준 브랜치 없음)
+종료 코드: 0 성공, 1 단계 실패, 2 인자 오류, 3 환경 오류(bd·orca·jq·git 없음, 기준 브랜치 없음), 5 사용자 검수 대기 상한(REVIEW_WIP_MAX, 기본 3)
 예:
   feature_open.sh --ticket LRM-612 --name "우편함" --base dev --dry-run
   feature_open.sh --ticket LRM-612 --name "우편함" --base dev --slug mailbox --json
@@ -72,10 +72,14 @@ elif git -C "$CFG_REPO" rev-parse -q --verify "$BASE" >/dev/null; then BASE_REF=
 else die "기준 브랜치 없음: $BASE — git -C $CFG_REPO fetch origin 뒤 다시 실행" 3; fi
 BRANCH_STATE=new; git -C "$CFG_REPO" show-ref -q --verify "refs/heads/$BRANCH" && BRANCH_STATE=exists
 
+# 사용자 검수 대기 상한: 새 기능 팀은 검수 대기(label stage:review)가 REVIEW_WIP_MAX(3) 미만일 때만
+WAITING=$(cd "$CFG_BOARD" && bd list --label stage:review --all --limit 0 --json 2>/dev/null | jq -r '[.[] | select(.issue_type == "epic" and ((.labels // []) | index("stage:review")))] | length' 2>/dev/null || echo 0)
+
 # epic: 같은 label 의 열린 epic 이 있으면 재사용
 EPIC=$(cd "$CFG_BOARD" && bd list -t epic -l "$LABEL" --json 2>/dev/null | jq -r '[.[] | select(.status != "closed")][0].id // empty') || EPIC=""
 EPIC_STATE=exists
 if [ -z "$EPIC" ]; then
+  [ "${WAITING:-0}" -lt "${REVIEW_WIP_MAX:-3}" ] || die "사용자 검수 대기 기능 ${WAITING}개(상한 ${REVIEW_WIP_MAX:-3}) — 새 기능 팀을 열지 않음. 검수가 끝난 기능을 board-done --epic <id> <이름> --user-ok \"<원문>\" 로 정리한 뒤 다시 실행" 5
   EPIC_STATE=new
   if [ "$DRY" = 1 ]; then EPIC="(생성 예정)"
   else
