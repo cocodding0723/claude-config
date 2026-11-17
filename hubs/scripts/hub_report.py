@@ -8,6 +8,8 @@ outbox: 한 줄 = 보고 1건(JSON). 쓰기는 flock 아래 추가 전용이라 
 첨부 복사: 전송기는 launchd 백그라운드에서 돌아 macOS 개인정보 보호(TCC)가 ~/Documents·~/Desktop·~/Downloads 읽기를 막음(curl 종료 코드 26).
 이 CLI 는 사용자 터미널·허브 세션에서 돌아 읽을 수 있으므로, add 가 접수 때 첨부를 <outbox 폴더>/outbox-files/<보고 id>/<번호>/<원본 이름> 으로 복사하고
 기록의 staged(원본 경로 → 복사본 경로)에 남김. 전송기는 복사본을 올리고 끝나면 지움.
+카드 주제(--card): 작업판 카드 하나 = Slack 스레드 하나. 같은 카드의 보고는 그 카드 스레드의 답글로 감(전송기가 첫 보고 때 스레드를 열고 카드에 label slack-thread:<ts> 를 붙임).
+작업 공간 카드는 --ws 로 담당 작업 공간 경로를 같이 남김(스레드 답을 그 세션에 전달하는 근거). 봇 토큰은 이 CLI 도 작업자도 보지 않음.
 환경: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs) · LRM_REPORT_OUTBOX outbox 경로(기본 <작업 폴더>/hub-reports.jsonl) · LRM_REPORT_FILES 첨부 복사 폴더(기본 <outbox 폴더>/outbox-files)
 종료 코드: 0 기록(중복 무시 포함), 1 파일 읽기·쓰기 실패, 2 인자·입력 오류(비밀 값 포함)
 """
@@ -42,6 +44,7 @@ THREAD_KINDS = ("info", "done", "warn")  # 기존 스레드에 답글로 올릴 
 DECISION_ID_RE = re.compile(r"D-[0-9A-Za-z]{1,16}", re.A)  # slack_notify.sh 의 decision_id 규칙과 같은 정의. 접수·전송 양쪽이 이걸 씀
 DECISION_ID_ERR = "--decision-id 형식 오류: D-영문·숫자 1~16자 — 예 D-0001"
 TS_RE = re.compile(r"^\d{1,12}\.\d{1,9}$")
+CARD_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$")  # 작업판 카드 id(예 lrm-q5o.4)
 MAX_LINES, MAX_CHARS, MAX_TITLE = 3, 400, 40  # 본문 3줄 이내. decide 첫 줄은 양식 A 제목 상한
 MAX_FILES = 5
 STAGE_NAME = "outbox-files"
@@ -259,10 +262,10 @@ def has_secret(*texts: str) -> bool:
 
 
 def make_report(hub, task, kind, text, files, options=None, recommend=None, decision_id=None, reversible=None,
-                thread=None, no_doc=False) -> dict:
+                thread=None, no_doc=False, card=None, ws=None) -> dict:
     """입력 검증 → 보고 dict(id·at 제외). 잘못되면 ReportError.
     비밀 검사는 모든 입력 필드(hub·task·kind 포함)에 가장 먼저 함. 형식 오류 메시지가 입력을 되비추기 전에 걸러야 비밀이 출력·로그로 새지 않음"""
-    if has_secret(*[str(v) for v in (hub, task, kind, text, options, recommend, decision_id, reversible, thread, *(files or [])) if v]):
+    if has_secret(*[str(v) for v in (hub, task, kind, text, options, recommend, decision_id, reversible, thread, card, ws, *(files or [])) if v]):
         raise ReportError("비밀 값(토큰·키·비밀번호)으로 보이는 내용 포함 — 기록 안 함. 값을 빼고 다시 기록")
     if not hub_status.SLUG_RE.match(hub or "") or len(hub) > 24:
         raise ReportError(f"--hub '{hub}' 형식 오류 — 소문자·숫자·하이픈 24자 이내(예: ui-layer)")
@@ -270,6 +273,8 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
         raise ReportError(f"--task '{task}' 형식 오류 — 작업 번호(예: C0012) 또는 '{NO_TASK}'")
     if kind not in KINDS:
         raise ReportError(f"--kind '{kind}' 오류 — {'|'.join(KINDS)} 중 하나")
+    if card and kind == "decide":
+        raise ReportError("--card 는 --kind decide 와 함께 쓰지 않음 — 결정 버튼 카드는 스레드 밖에 올라감")
     lines = [ln.strip() for ln in (text or "").strip().splitlines() if ln.strip()]
     if not lines:
         raise ReportError("--text 비어 있음 — 보고 내용을 3줄 이내로 지정")
@@ -312,6 +317,18 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
         if not TS_RE.match(thread):
             raise ReportError("--thread 형식 오류 — Slack 메시지 ts(숫자.숫자, 예 1730790000.123456)")
         rep["thread"] = thread
+    if card:
+        if thread:
+            raise ReportError("--card 와 --thread 는 함께 쓰지 않음 — 카드 스레드는 전송기가 정함. 하나만 지정")
+        if not CARD_RE.match(card):
+            raise ReportError("--card 형식 오류 — 작업판 카드 id(예 lrm-q5o.4)")
+        rep["card"] = card
+    if ws:
+        if not card:
+            raise ReportError("--ws 는 --card 와 함께 사용 — 담당 작업 공간은 카드 스레드 답을 전달할 곳")
+        if not os.path.isabs(ws) or "\n" in ws or "," in ws:
+            raise ReportError("--ws 형식 오류 — 한 줄 절대 경로(쉼표 없음). 예 ~/orca/workspaces/claude-config/feat-x")
+        rep["ws"] = ws
     return rep
 
 
@@ -342,6 +359,10 @@ def valid_record(d) -> bool:
     if d.get("reversible") is not None and not isinstance(d["reversible"], str):
         return False
     if d.get("thread") is not None and not (isinstance(d["thread"], str) and TS_RE.match(d["thread"]) and d["kind"] in THREAD_KINDS):
+        return False
+    if d.get("card") is not None and not (isinstance(d["card"], str) and CARD_RE.match(d["card"]) and d["kind"] != "decide" and not d.get("thread")):
+        return False
+    if d.get("ws") is not None and not (isinstance(d["ws"], str) and d["ws"].startswith("/") and d.get("card")):
         return False
     if "channel" in d:  # 알림 스크립트는 봇 DM 에만 게시함. 채널 지정 레코드는 엉뚱한 곳에 게시된 것으로 보이지 않게 격리
         return False
@@ -476,6 +497,7 @@ def build_parser() -> argparse.ArgumentParser:
                "      --options '1=오전 9시 => 출근 전에 도착,2=오전 10시 => 업무 시작 뒤에 도착' --recommend 1 --decision-id D-0101\n"
                "  hub_report.py add --hub ui-layer --task 없음 --kind info --reply-to 1730790000.123456 --text 'Slack 질문 답: 원인은 캐시'\n"
                "  hub_report.py add --hub ci-hub --task 없음 --kind warn --thread 1730790000.123456 --text 'CI 실패 원인: 시험 X' --now\n"
+               "  hub_report.py add --hub feat-mail --task 없음 --kind info --card lrm-q5o.4 --ws ~/orca/workspaces/claude-config/feat-x --text '시작: 작업 공간 열림'\n"
                "환경: LRM_HUB_DIR, LRM_REPORT_OUTBOX\n"
                "종료 코드: 0 기록(중복 무시 포함), 1 파일 읽기·쓰기 실패, 2 인자·입력 오류(비밀 값 포함)")
     sub = p.add_subparsers(dest="cmd", required=True, parser_class=Parser)
@@ -490,6 +512,8 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--decision-id", help="(decide) 결정 번호 D-영문·숫자")
     a.add_argument("--reversible", help="(decide) 쉬움|보통|어려움")
     a.add_argument("--thread", "--reply-to", dest="thread", help="봇 DM 안의 기존 Slack 스레드 ts(숫자.숫자)에 답글로 올림(채널 지정 불가). info·done·warn 만. 하달문 '답할 곳: thread <ts>' 의 ts 를 씀. 진행 스레드 한 줄은 생략")
+    a.add_argument("--card", help="작업판 카드 id. 그 카드의 Slack 스레드 답글로 올라감(스레드는 카드의 첫 보고 때만 열림). decide·--thread 와 함께 쓰지 않음")
+    a.add_argument("--ws", help="(--card 와 함께) 담당 작업 공간 절대 경로. 카드 스레드 답을 그 작업 공간 세션에 전달하는 근거")
     a.add_argument("--no-doc", action="store_true", help="(decide) 근거 문서 없는 결정임을 명시. decide 는 --file 없이는 이게 있어야 기록됨")
     a.add_argument("--now", action="store_true", help="기록 직후 전송기를 1회 실행. 다른 전송기가 돌고 있으면 다음 폴러 회차가 올림")
     a.add_argument("--dry-run", action="store_true", help="쓰지 않고 기록될 보고만 출력")
@@ -514,7 +538,7 @@ def main(argv=None) -> int:
     try:
         if args.cmd == "add":
             rep = make_report(args.hub, args.task, args.kind, args.text, args.files,
-                              args.options, args.recommend, args.decision_id, args.reversible, args.thread, args.no_doc)
+                              args.options, args.recommend, args.decision_id, args.reversible, args.thread, args.no_doc, args.card, os.path.expanduser(args.ws) if args.ws else None)
             rep["files"] = [resolve_file(f) for f in rep["files"]]
             for f in rep["files"]:
                 if why := file_problem(f):

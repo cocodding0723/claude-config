@@ -59,6 +59,7 @@ LINE_MAX = 60
 ERR_MAX = 100
 STAGE_KEEP_S = 24 * 3600  # 남은 복사본 보관 기간
 UNREADABLE = "백그라운드에서 읽을 수 없는 폴더 — 다시 보고"
+WS_THREAD_MAX = 10  # 기능 하나가 동시에 여는 작업 공간 스레드 상한. 넘으면 새 작업 공간 보고는 기능 스레드 답글로 감(환경 LRM_WS_THREAD_MAX)
 
 
 @dataclass
@@ -75,6 +76,7 @@ class Conf:
     max_per_run: int = MAX_PER_RUN
     fail_limit: int = FAIL_LIMIT
     backoff_s: float = BACKOFF_BASE_S
+    ws_thread_max: int = WS_THREAD_MAX
 
     def __post_init__(self) -> None:
         env = os.environ.get
@@ -89,6 +91,10 @@ class Conf:
         self.log = self.log or env("LRM_REPORT_LOG") or join("report-sender.log")
         try:
             self.budget_s = float(env("LRM_REPORT_BUDGET_S", self.budget_s))
+        except ValueError:
+            pass
+        try:
+            self.ws_thread_max = int(env("LRM_WS_THREAD_MAX", self.ws_thread_max))
         except ValueError:
             pass
 
@@ -259,6 +265,8 @@ def request_of(conf: Conf, task: str) -> str:
 def topic_key(rep: dict) -> str:
     if rep.get("thread"):
         return f"thread:{rep['thread']}"  # 지정 스레드별로 순서 유지. 주제 스레드는 만들지 않음
+    if rep.get("card"):
+        return f"card:{rep['card']}"  # 작업판 카드 하나 = 스레드 하나
     return rep["task"] if rep["task"] != hub_report.NO_TASK else f"hub:{rep['hub']}"
 
 
@@ -272,13 +280,14 @@ def topic_text(conf: Conf, rep: dict) -> str:
     return "\n".join(lines)
 
 
-def body_text(rep: dict) -> str:
+def body_text(rep: dict, shared: bool = False) -> str:
+    """shared: 기능 스레드를 같이 쓰는 작업 공간 카드의 보고. 어느 카드 글인지 머리에 카드 id 를 붙임"""
     label = hub_report.KINDS[rep["kind"]][1]
     lines = [ln for ln in rep["text"].splitlines() if ln.strip()]
     if rep["kind"] == "decide":  # 첫 줄이 제목, 나머지가 배경. 선택지·답 줄은 slack_notify.sh 가 붙임
         out = hub_report.bullet_body("\n".join(lines)).splitlines()
     else:
-        out = [f"{label} · {rep['hub']}", ""] + hub_report.bullet_items(lines)
+        out = [f"{label} · {rep['hub']}" + (f" · {rep['card']}" if shared and rep.get("card") else ""), ""] + hub_report.bullet_items(lines)
     return "\n".join(out)
 
 
@@ -434,6 +443,80 @@ def send_files(conf: Conf, rep: dict, rs: dict, st: dict, target: str, deadline:
             save_state(conf.state, st)
 
 
+def card_attach(conf: Conf, topic: dict) -> None:
+    """카드에 스레드 ts(·작업 공간)를 붙임. 실패해도 보고는 계속하고 topic["attached"] 를 비워 둬 다음 회차에 다시 시도.
+    같은 스레드가 다른 카드에 이미 붙어 있으면 feedback_route 가 거부하고 확인 카드를 만듦 → 재시도하지 않음('conflict')"""
+    import board_cards
+    import feedback_route
+    try:
+        feedback_route.attach(topic["card"], topic["ts"], topic.get("ws") or "")
+        topic["attached"] = True
+    except board_cards.Fail as err:
+        topic["attached"] = "conflict" if err.code == feedback_route.EXIT_CONFLICT else False
+        log(conf, f"카드 {topic['card']} 스레드 연결 {'거부' if topic['attached'] else '실패(다음 회차 재시도)'}: {err}")
+
+
+def open_ws_threads(parent: str) -> int:
+    """기능 epic 아래에서 지금 열려 있는 작업 공간 스레드 수(자기 스레드가 붙고 반납 전인 작업 공간 카드). 조회 실패는 0(상한을 못 재도 보고는 올림).
+    bd 가 하위 카드에 물려준 부모의 slack-thread 는 자기 스레드가 아니므로 셈에서 뺌"""
+    import board_cards
+    import feedback_route
+    try:
+        rows = board_cards.bd_json("list", "--all", "--parent", parent, "--limit", "0") or []
+        up = feedback_route.card_row(parent) or {}
+    except board_cards.Fail:
+        return 0
+    inherited = {lb for lb in up.get("labels") or [] if lb.startswith(feedback_route.THREAD)}
+    return sum(1 for r in rows if isinstance(r, dict) and feedback_route.ws_of(r) is not None and feedback_route.is_open(r)
+               and any(lb.startswith(feedback_route.THREAD) and lb not in inherited for lb in r.get("labels") or []))
+
+
+def parent_of(card: str) -> str:
+    import board_cards
+    import feedback_route
+    try:
+        row = feedback_route.card_row(card)
+    except board_cards.Fail:
+        return ""
+    return (row or {}).get("parent") or ""
+
+
+def open_topic(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
+    """주제 스레드 시작 메시지를 올리고 상태에 저장. 카드 주제면 카드에 스레드를 붙임.
+    작업 공간 카드가 기능당 스레드 상한(ws_thread_max)에 걸리면 자기 스레드를 열지 않고 부모 기능 epic 의 스레드를 같이 씀(스레드는 첫 보고 때만 열리므로 이 결정도 한 번만)"""
+    key = topic_key(rep)
+    card = rep.get("card")
+    if card and rep.get("ws"):
+        parent = parent_of(card)
+        if parent and open_ws_threads(parent) >= conf.ws_thread_max:
+            pkey = f"card:{parent}"
+            if pkey not in st["topics"]:
+                open_topic(conf, dict(rep, card=parent, ws=None), st, deadline)
+            st["topics"][key] = {"ts": st["topics"][pkey]["ts"], "channel": st["topics"][pkey].get("channel", ""), "shared": parent}
+            save_state(conf.state, st)
+            log(conf, f"작업 공간 스레드 {conf.ws_thread_max}개 상한: 카드 {card} 보고는 기능 스레드({parent})로")
+            return
+    ts = run_notify(conf, ["--tag", rep["hub"], "--kind", "progress", topic_text(conf, rep)], deadline)
+    st["topics"][key] = {"ts": ts, "channel": channel_of(conf, ts)}
+    if card:
+        st["topics"][key].update(card=card, ws=rep.get("ws") or "", attached=False)
+    save_state(conf.state, st)
+    if card:
+        card_attach(conf, st["topics"][key])
+        save_state(conf.state, st)
+
+
+def retry_attach(conf: Conf, st: dict) -> None:
+    """붙이기에 실패했던 카드 스레드를 회차마다 다시 시도(보고를 더 안 올려도 카드가 스레드를 갖게)"""
+    changed = False
+    for t in st["topics"].values():
+        if t.get("card") and t.get("attached") is False:
+            card_attach(conf, t)
+            changed = True
+    if changed:
+        save_state(conf.state, st)
+
+
 def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
     """보고 1건 전송. 단계(topic·body·line)마다 상태를 저장하고, 끝나면 결과 요약을 돌려줌. 실패는 NotifyError"""
     rs = st["reports"].setdefault(rep["id"], {})
@@ -452,17 +535,16 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
         save_state(conf.state, st)
         return {"topic_ts": rep["thread"], "body_ts": rs["body_ts"], "line_ts": "", "pinned": True}
     if not decide and key not in st["topics"]:
-        ts = run_notify(conf, ["--tag", rep["hub"], "--kind", "progress", topic_text(conf, rep)], deadline)
-        st["topics"][key] = {"ts": ts, "channel": channel_of(conf, ts)}
-        save_state(conf.state, st)
+        open_topic(conf, rep, st, deadline)
     topic = st["topics"].get(key, {})
+    shared = bool(topic.get("shared"))
     if "body_ts" not in rs:
         warn_unattached(conf, rep)
         if decide:
             rs["body_ts"] = run_notify(conf, decide_args(rep) + attached_args(rep) + [body_text(rep)], deadline)
         else:
             _, _, kind = hub_report.KINDS[rep["kind"]]
-            rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind, "--thread", topic["ts"]] + attached_args(rep) + [body_text(rep)], deadline)
+            rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind, "--thread", topic["ts"]] + attached_args(rep) + [body_text(rep, shared)], deadline)
         save_state(conf.state, st)
     send_files(conf, rep, rs, st, rs["body_ts"] if decide else topic["ts"], deadline)
     if "line_ts" not in rs:
@@ -678,6 +760,7 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
                 warn_pending(conf, r, st, deadline)
     if not dry:
         gc_staged(conf)
+        retry_attach(conf, st)
     todo = [r for r in reports if not st["reports"].get(r["id"], {}).get("sent") and r["id"] not in st["bad"]]
     out["pending"] = len(todo)
     if not todo:
