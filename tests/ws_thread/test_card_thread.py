@@ -27,7 +27,7 @@ class Base(unittest.TestCase):
         self.p = lambda n: os.path.join(self.tmp.name, n)
         self.board = self.p("board")
         os.makedirs(self.board)
-        subprocess.run("git init -q && bd init --prefix t -q", shell=True, cwd=self.board, capture_output=True, check=True)
+        subprocess.run("git init -q && bd init --prefix tt -q", shell=True, cwd=self.board, capture_output=True, check=True)
         self.env = dict(os.environ)
         os.environ.update({"BOARD_DIR": self.board, "FAKE_DIR": self.tmp.name, "BOARD_INCIDENTS": self.p("incidents.jsonl")})
         os.environ.pop("BOARD_BD", None)
@@ -118,6 +118,23 @@ class CardThreadTest(Base):
         self.assertIn("ws:/w/a", self.labels(c))
         self.assertTrue(any(f"Slack 스레드 {ts} 연결" in t and "/w/a" in t for t in self.comments(c)))
 
+    def test_ws_thread_parent_uses_easy_format_of_its_own_card(self):
+        """작업 공간 카드의 스레드 첫 메시지도 쉬운 양식. 내부 번호는 참고 줄에만"""
+        c = self.make("내부 제목", "-t", "task", "-d", "쉬운 이름: 개인 작업 공간 스레드\n무엇: 작업 공간 하나를 스레드 하나로 묶는다.\n왜: 사용자 요청: 바로바로 소통")
+        self.report(c, "시작", ws="/w/a")
+        self.run_sender()
+        text = next(a for a in self.calls() if "progress" in a and "--thread" not in a)[-1]
+        self.assertEqual(text.splitlines()[0], "개인 작업 공간 스레드")
+        self.assertIn("- 무엇: 작업 공간 하나를 스레드 하나로 묶는다.", text)
+        self.assertEqual(text.splitlines()[-1], f"참고: {c} · 허브 feat-x")
+        self.assertNotIn(c, "\n".join(text.splitlines()[:-1]))
+
+    def test_card_with_blank_fields_holds_ws_thread_report(self):
+        c = self.make("작업", "-t", "task")  # 설명 칸 없음: 무엇·왜 폴백도 없음
+        self.report(c, "시작", ws="/w/a")
+        self.assertEqual(self.run_sender()["sent"], 0)
+        self.assertNotIn(f"card:{c}", self.topics())
+
     def test_later_reports_reply_in_same_thread_without_new_topic(self):
         c = self.make("작업", "-t", "task")
         self.report(c, "시작", ws="/w/a")
@@ -178,6 +195,15 @@ class CapTest(Base):
         for i, k in enumerate(self.kids[:2]):
             self.report(k, "시작", ws=f"/w/{i}")
         self.run_sender()
+
+    def test_shared_thread_parent_is_not_rewritten_by_child_card(self):
+        """상한 밖 카드 보고가 기능 스레드 부모를 자기 카드 양식으로 고쳐 쓰지 않음"""
+        self.open_first_two()
+        self.report(self.kids[2], "시작", ws="/w/2")
+        self.run_sender()
+        self.report(self.kids[2], "진행", ws="/w/2")
+        self.run_sender()
+        self.assertFalse([a for a in self.calls() if "--update" in a])
 
     def test_over_cap_reports_go_to_feature_thread_as_replies(self):
         self.open_first_two()
