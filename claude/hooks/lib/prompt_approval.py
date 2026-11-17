@@ -1,5 +1,5 @@
 """메인 대화의 사용자 직접 지시를 승인으로 인정(사용자 11-17 "앞으로 내가 PR올리라고하면 올려").
-대상: draft PR 생성(pr_guard), Jira 이슈 생성(jira_guard). ready 전환·병합·상태 변경·라이브 작업은 다루지 않음.
+대상: draft PR 생성(pr_guard). Jira 발급은 11-17 부터 승인 불필요라 대상 아님. ready 전환·병합·상태 변경·라이브 작업은 다루지 않음.
 근거는 훅 입력 transcript_path 의 세션 기록 한 곳뿐이라 별도 원장·명령이 없음:
 - 메인 세션만(main_role.is_main). 허브·작업자 세션의 사용자 줄은 코디네이터가 보낸 지시라 사람 승인이 아님.
 - 사람 줄만: type=user, isSidechain·isMeta 아님, origin.kind=human, 본문이 문자열. 도구 출력·다른 세션 메시지·작업 알림은 제외.
@@ -21,8 +21,6 @@ SKEW = datetime.timedelta(minutes=2)  # 기록 시각이 지금보다 조금 뒤
 RULES = {
     "pr": (re.compile(r"PR|피알|풀\s*리퀘|pull\s*request", re.I),
            re.compile(r"올려|올리자|올리고|만들어|만들고|생성\s*해|생성하고|열어|게시\s*해|띄워")),
-    "jira": (re.compile(r"지라|jira|티켓|이슈|에픽|epic", re.I),
-             re.compile(r"만들어|만들고|발급|생성|등록|올려|따\s*줘|따고|끊어|열어")),
 }
 NEGATIVE = re.compile(r"말고|말아|마라|지\s*마|지\s*말|지\s*않|않|안\s*(올|만들|해|돼)|금지|보류|취소|멈춰|기다려|나중에")
 QUESTION = re.compile(r"\?|(까|나|냐|니|건가|는지|어때|됨|임)\s*[.!]?\s*$")
@@ -94,7 +92,7 @@ def asks(clause, kind):
 
 
 def find(ev, kind, now=None):
-    """메인 세션에서 사람이 TTL 안에 kind(pr|jira) 생성을 직접 지시했으면 'prompt:<시각> <문장>', 아니면 ''.
+    """메인 세션에서 사람이 TTL 안에 kind(pr) 생성을 직접 지시했으면 'prompt:<시각> <문장>', 아니면 ''.
     세션 기록을 못 읽으면 OSError"""
     if kind not in RULES or not main_role.is_main(ev):
         return ""
