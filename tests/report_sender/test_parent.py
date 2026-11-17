@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -38,7 +39,7 @@ class ParentTest(unittest.TestCase):
         self.conf.cards.clear()
 
     def report(self, task="lrm-q5o", text="진행 보고", kind="info"):
-        return hub_report.add(self.conf.outbox, hub_report.make_report("structure-v2", task, kind, text, []), 1.0, False)[0]
+        return hub_report.add(self.conf.outbox, hub_report.make_report("structure-v2", task, kind, text, []), time.time(), False)[0]
 
     def calls(self):
         try:
@@ -76,24 +77,65 @@ class ParentTest(unittest.TestCase):
         self.assertEqual(text.splitlines()[0], "구조 개선")
         self.assertIn("- 지금: 하위 작업 없음", text)
 
-    def test_blank_what_or_why_holds_report_with_fix_hint(self):
-        for desc, gap in (("쉬운 이름: x\n왜: 요청", "무엇"), ("쉬운 이름: x\n무엇: 고친다", "왜"), ("", "무엇·왜")):
-            with self.subTest(gap=gap):
-                self.card(desc, [])
-                rep = self.report(text=f"보고 {gap}")
-                res = self.run_round()
-                self.assertEqual((res["sent"], res.get("stopped"), res.get("held")), (0, None, 1))  # 영구 중단이 아니라 보류
-                warn = self.calls()[-1][-1]
-                self.assertIn(f"설명 칸 비어 있음({gap})", warn)
-                self.assertIn("카드 설명에 '무엇:'·'왜:' 줄 추가(bd update lrm-q5o -d ...). 추가하면 다음 회차에 자동 전송", warn)
-                self.assertNotIn(rep["id"], self.state()["bad"])
-                self.assertEqual(self.topics(), {})  # 부모(주제 스레드)는 만들지 않음
-                os.remove(self.p("state.json"))
-                os.remove(self.conf.outbox)
-                os.remove(self.p("calls.jsonl"))
+    def test_blank_what_after_title_fallback_holds_report_with_fix_hint(self):
+        self.card("쉬운 이름: x\n왜: 요청", [], title="[impl] lrm-q5o.4")  # 설명·제목 모두 무엇 재료 없음
+        rep = self.report(text="보고 무엇")
+        res = self.run_round()
+        self.assertEqual((res["sent"], res.get("stopped"), res.get("held")), (0, None, 1))  # 영구 중단이 아니라 보류
+        warn = self.calls()[-1][-1]
+        self.assertIn("설명 칸 비어 있음(무엇)", warn)
+        self.assertIn("카드 설명에 '무엇:'·'왜:' 줄 추가(bd update lrm-q5o -d ...). 추가하면 다음 회차에 자동 전송", warn)
+        self.assertNotIn(rep["id"], self.state()["bad"])
+        self.assertEqual(self.topics(), {})  # 부모(주제 스레드)는 만들지 않음
+
+    def test_title_only_card_sends_at_once_with_cleaned_title_as_what(self):
+        self.card("", [], title="[impl] 카드 lrm-q5o.4: main 을 브랜치에 합친다")
+        self.report(text="제목만 있는 카드")
+        res = self.run_round()
+        self.assertEqual((res["sent"], res.get("held")), (1, None))
+        text = next(c for c in self.calls() if "progress" in c and "--thread" not in c)[-1]
+        self.assertIn("- 무엇: main 을 브랜치에 합친다", text)  # 머리표·번호·'카드' 머리말 제거
+        self.assertEqual(text.splitlines()[0], "main 을 브랜치에 합친다")
+        self.assertIn("- 왜: " + report_sender.WHY_MISSING, text)
+        self.assertNotIn("lrm-q5o.4", "\n".join(text.splitlines()[:-1]))
+
+    def test_missing_why_sends_with_marker_line_and_warns_once_a_day(self):
+        self.card("쉬운 이름: x\n무엇: 고친다", [])
+        self.report(text="왜 없음")
+        res = self.run_round()
+        self.assertEqual((res["sent"], res.get("held")), (1, None))
+        text = next(c for c in self.calls() if "progress" in c and "--thread" not in c)[-1]
+        self.assertIn("- 왜: 카드에 이유가 안 적혀 있음 — 담당 허브가 채울 예정", text)
+        warns = [c for c in self.calls() if "warn" in c]
+        self.assertEqual(len(warns), 1)  # 보내면서 허브에 알림
+        self.assertIn("설명 칸 비어 있음(왜)", warns[0][-1])
+        self.assertIn("structure-v2", warns[0])
+        self.assertEqual(self.state()["bad"], {})
+        self.card("쉬운 이름: x\n무엇: 고친다", [])
+        self.report(text="둘째", task="lrm-q5o")
+        self.run_round()
+        self.assertEqual(len([c for c in self.calls() if "warn" in c]), 1)  # 열린 스레드·하루 1회라 다시 알리지 않음
+
+    def test_hold_older_than_limit_sends_with_available_fields(self):
+        self.card("", [], title="[impl]")
+        self.report(text="오래 막힌 보고")
+        self.assertEqual(self.run_round()["sent"], 0)
+        with open(self.conf.outbox, encoding="utf-8") as f:
+            rows = [json.loads(ln) for ln in f]
+        for r in rows:
+            r["at"] -= int(self.conf.hold_max_s) + 10  # 접수 뒤 상한 경과
+        with open(self.conf.outbox, "w", encoding="utf-8") as f:
+            f.write("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+        res = self.run_round()
+        self.assertEqual((res["sent"], res.get("held")), (1, None))
+        self.assertIn("lrm-q5o", self.topics())
+
+    def test_title_what_cleans_tag_id_and_prefix(self):
+        for raw, want in (("[impl] 카드 lrm-q5o.4: 합친다", "합친다"), ("[분석][impl] lrm-q5o.13 고친다", "고친다"), ("그냥 제목", "그냥 제목"), ("[impl]", "")):
+            self.assertEqual(report_sender.title_what(raw), want, raw)
 
     def test_held_report_goes_out_next_round_after_card_fixed(self):
-        self.card("", [])
+        self.card("", [], title="[impl]")
         self.report(text="막힌 보고")
         self.assertEqual(self.run_round()["sent"], 0)
         self.assertEqual(self.run_round()["sent"], 0)  # 계속 대기
@@ -105,7 +147,7 @@ class ParentTest(unittest.TestCase):
         self.assertEqual(self.state()["bad"], {})
 
     def test_hold_warns_once_per_day_per_card(self):
-        self.card("", [])
+        self.card("", [], title="[impl]")
         self.report(text="첫 보고")
         for _ in range(3):
             self.run_round()
@@ -160,8 +202,9 @@ class ParentTest(unittest.TestCase):
             return json.load(f)
 
     def test_gaps_judge_is_pure(self):
-        info = {"id": "x-1", "fields": {"무엇": "a", "왜": ""}}
-        self.assertEqual(report_sender.card_gaps(info), ["왜"])
+        info = {"id": "x-1", "fields": {"무엇": "", "왜": "b"}}
+        self.assertEqual(report_sender.card_gaps(info), ["무엇"])
+        self.assertEqual(report_sender.card_gaps({"id": "x-1", "fields": {"무엇": "a", "왜": ""}}), [])  # 왜는 보류 사유가 아님
         self.assertEqual(report_sender.card_gaps({"id": "x-1", "fields": {"무엇": "a", "왜": "b"}}), [])
 
     def test_open_thread_parent_is_updated_only_when_changed(self):
@@ -210,7 +253,7 @@ class ParentTest(unittest.TestCase):
     def test_blank_card_does_not_update_open_thread_but_report_goes(self):
         self.report(text="첫 보고")
         self.run_round()
-        self.card("", [])
+        self.card("", [], title="[impl]")
         self.report(text="둘째 보고")
         res = self.run_round()
         self.assertEqual(res["sent"], 1)

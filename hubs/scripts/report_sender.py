@@ -66,16 +66,21 @@ PARENT_FORMAT = "1"
 PARENT_TITLE_MAX = 38  # 양식 A 제목 40자 한도에서 이모지 여유
 PARENT_FIELD_MAX = 200
 CARD_FIELDS = ("쉬운 이름", "무엇", "왜")
-CARD_REQUIRED = ("무엇", "왜")
+CARD_REQUIRED = ("무엇",)  # 왜는 비어도 보냄(WHY_MISSING). 무엇은 제목 폴백까지 비는 경우만 보류
 CARD_FIELD_RE = re.compile(r"^\s*(?:[-•*]\s*)?(" + "|".join(CARD_FIELDS) + r")\s*:\s*(.*\S)\s*$", re.M)
 CARD_META_KEYS = ("순서", "우선순위", "라벨", "의존")  # 설명 머리의 메타 줄. 무엇 폴백 문장에서 제외
 CARD_SKIP_RE = re.compile(r"\b[a-z]{2,8}-[a-z0-9]*\d[a-z0-9]*(\.\d{1,3})*\b|`")  # 폴백 문장에서 뺄 내부 기호(카드 id·백틱)
 CARD_QUOTE_RE = re.compile(r"원문\(.*?\)\s*:\s*[\"“]?(.+?)[\"”]?\s*$")  # '원문(날짜…): "사용자 말"' 줄
 CARD_ASK_HEAD_RE = re.compile(r"^#+\s*지시")
-CARD_WARN_INTERVAL_S = 24 * 3600  # 같은 카드 보류 경고 간격
+CARD_WARN_INTERVAL_S = 24 * 3600  # 같은 카드 칸 경고 간격
+HOLD_MAX_S = 6 * 3600  # 칸이 비어 보고를 보류하는 최대 시간(접수 시각 기준). 넘으면 있는 칸만으로 보냄(환경 LRM_HOLD_MAX_S)
+WHY_MISSING = "카드에 이유가 안 적혀 있음 — 담당 허브가 채울 예정"  # 왜 칸 끝내 빈 카드의 표시 줄(보류하지 않고 이 줄로 보냄)
+TITLE_TAG_RE = re.compile(r"^\s*(?:\[[^\]]*\]\s*)+")  # 카드 제목 머리표([impl] 등)
+TITLE_CARD_RE = re.compile(r"^\s*카드\s*[:：-]?\s*")  # 머리표·번호를 뺀 뒤 남는 '카드' 머리말
 UPDATE_DEAD_ERRORS = ("message_not_found", "cant_update_message")  # 다시 시도해도 같은 결과인 고쳐 쓰기 실패
 PARENT_HOW_TO = "이 스레드에 진행·질문·결과가 올라옴. 답은 이 스레드에 달면 작업 카드로 감"
 CARD_GAP_FIX = "카드 설명에 '무엇:'·'왜:' 줄 추가(bd update {card} -d ...). 추가하면 다음 회차에 자동 전송"
+WHY_GAP_FIX = "카드 설명에 '왜:' 줄 추가(bd update {card} -d ...). 보고는 이미 '이유 미기재' 표시로 나갔고, 추가하면 스레드 첫 메시지가 고쳐짐"
 BD_FALLBACK = "/opt/homebrew/bin/bd"  # launchd 의 짧은 PATH 에서 bd 를 못 찾을 때
 BD_TIMEOUT_S = 10
 UNREADABLE = "백그라운드에서 읽을 수 없는 폴더 — 다시 보고"
@@ -97,6 +102,7 @@ class Conf:
     fail_limit: int = FAIL_LIMIT
     backoff_s: float = BACKOFF_BASE_S
     ws_thread_max: int = WS_THREAD_MAX
+    hold_max_s: float = HOLD_MAX_S
     bd: str = ""
     board: str = ""
     cards: dict = field(default_factory=dict)  # 한 Conf(회차) 안의 카드 조회 캐시
@@ -120,6 +126,10 @@ class Conf:
             pass
         try:
             self.ws_thread_max = int(env("LRM_WS_THREAD_MAX", self.ws_thread_max))
+        except ValueError:
+            pass
+        try:
+            self.hold_max_s = float(env("LRM_HOLD_MAX_S", self.hold_max_s))
         except ValueError:
             pass
 
@@ -351,6 +361,14 @@ def why_fallback(desc: str) -> str:
     return ""
 
 
+def title_what(title: str) -> str:
+    """'무엇' 마지막 폴백: 카드 제목에서 머리표([impl])·카드 번호·'카드' 머리말을 뺀 것"""
+    t = TITLE_TAG_RE.sub("", title)
+    t = TITLE_CARD_RE.sub("", CARD_SKIP_RE.sub("", t))
+    t = TITLE_CARD_RE.sub("", " ".join(t.split()).lstrip(" :：-·"))
+    return t.strip(" :：-·")
+
+
 def card_info(conf: Conf, card: str) -> "dict | None":
     """카드 제목·설명 줄(쉬운 이름·무엇·왜)·하위 카드 진행률. 카드를 못 읽으면 None. 회차 안에서는 한 번만 조회"""
     if card not in conf.cards:
@@ -362,7 +380,10 @@ def card_info(conf: Conf, card: str) -> "dict | None":
             fields = {m.group(1): m.group(2) for m in reversed(list(CARD_FIELD_RE.finditer(desc)))}  # 같은 칸이 여럿이면 앞 줄
             for name, fallback in (("무엇", what_fallback), ("왜", why_fallback)):
                 fields[name] = fields.get(name) or fallback(desc)
-            conf.cards[card] = {"id": card, "title": str(shown[0].get("title") or ""), "fields": fields,
+            fields["무엇"] = fields["무엇"] or title_what(str(shown[0].get("title") or ""))
+            why_missing = not fields["왜"]
+            fields["왜"] = fields["왜"] or WHY_MISSING  # 이유가 없어도 보고는 보냄(경고는 별도)
+            conf.cards[card] = {"id": card, "title": str(shown[0].get("title") or ""), "fields": fields, "why_missing": why_missing,
                                 "closed": sum(1 for k in kids or [] if isinstance(k, dict) and k.get("status") == "closed"),
                                 "total": len(kids) if kids is not None else None}  # None = 하위 조회 실패(0개와 구분)
     return conf.cards[card]
@@ -384,7 +405,7 @@ def clip(text: str, n: int) -> str:
 def card_parent_text(info: dict, hub: str) -> str:
     """부모 양식 ①~⑥: 제목(쉬운 이름) · 무엇 · 왜 · 진행률 · 답하는 법 · 참고(카드 번호·허브 이름은 여기에만)"""
     f = info["fields"]
-    title = clip(f.get("쉬운 이름") or info["title"], PARENT_TITLE_MAX)
+    title = clip(f.get("쉬운 이름") or title_what(info["title"]) or info["title"], PARENT_TITLE_MAX)
     rows = [f"- 무엇: {clip(f['무엇'], PARENT_FIELD_MAX)}", f"- 왜: {clip(f['왜'], PARENT_FIELD_MAX)}"]
     if info["total"] is not None:  # 하위 조회 실패면 거짓 '없음' 대신 줄을 뺌
         rows.append(f"- 지금: 하위 작업 {info['closed']}/{info['total']} 완료" if info["total"] else "- 지금: 하위 작업 없음")
@@ -398,11 +419,21 @@ def parent_stamp(text: str) -> str:
 
 def card_problem(conf: Conf, rep: dict, st: dict) -> str:
     """주제 스레드를 새로 열어야 하는 카드 보고의 양식 칸 검사(폴백 반영). 문제 없으면 빈 문자열(카드를 못 읽는 경우 포함: 옛 양식으로 보냄).
-    문제는 입력 오류가 아니라 보류 사유: 카드가 고쳐지면 다음 회차에 나감"""
+    문제는 입력 오류가 아니라 보류 사유: 카드가 고쳐지면 다음 회차에 나감. 보류가 hold_max_s 를 넘으면 문제 없음으로 보고 있는 칸만으로 보냄"""
     if rep["kind"] == "decide" or not is_card_topic(rep) or topic_key(rep) in st["topics"]:
+        return ""
+    if time.time() - rep.get("at", time.time()) > conf.hold_max_s:
         return ""
     info = card_info(conf, card_of(rep))
     return card_gap_error(info) if info and card_gaps(info) else ""
+
+
+def why_notice(conf: Conf, rep: dict, st: dict) -> str:
+    """왜 칸이 끝내 빈 카드의 새 스레드 보고: 보내되 허브에 알릴 사유(보류 아님). 없으면 빈 문자열"""
+    if rep["kind"] == "decide" or not is_card_topic(rep) or topic_key(rep) in st["topics"]:
+        return ""
+    info = card_info(conf, card_of(rep))
+    return f"카드 {info['id']} 설명 칸 비어 있음(왜) — " + WHY_GAP_FIX.format(card=info["id"]) if info and info.get("why_missing") else ""
 
 
 def topic_text(conf: Conf, rep: dict) -> str:
@@ -803,15 +834,16 @@ def warn_pending(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
         pass  # 경고 전송 실패는 다음 회차에 다시 시도
 
 
-def hold_report(conf: Conf, rep: dict, st: dict, why: str, deadline: float) -> None:
-    """카드 칸이 비어 보고를 이번 회차 보류. 카드당 하루 1회 그 허브에 원인·조치 경고(실패하면 다음 회차에 다시)"""
+def hold_report(conf: Conf, rep: dict, st: dict, why: str, deadline: float, held: bool = True) -> None:
+    """카드 칸이 비어 보고를 보류(held=False 면 보류 없이 보내면서 알림만). 카드당 하루 1회 그 허브에 원인·조치 경고(실패하면 다음 회차에 다시)"""
     card = card_of(rep)
     if time.time() - st["card_warn"].get(card, 0) < CARD_WARN_INTERVAL_S:
         return
-    msg = (f"허브 보고 대기\n\n- 무엇: {rep['hub']} 보고 {rep['id']} 전송 대기(카드 {card})\n- 원인: {why.split(' — ')[0]}\n"
-           f"- 조치: {why.split(' — ', 1)[-1]}")
+    head, state = ("허브 보고 대기", "held") if held else ("허브 보고 카드 칸 안내", "sent")
+    what = f"{rep['hub']} 보고 {rep['id']} 전송 대기(카드 {card})" if held else f"{rep['hub']} 보고 {rep['id']} 은 칸이 빈 채 전송됨(카드 {card})"
+    msg = f"{head}\n\n- 무엇: {what}\n- 원인: {why.split(' — ')[0]}\n- 조치: {why.split(' — ', 1)[-1]}"
     try:
-        run_notify(conf, ["--tag", rep["hub"], "--kind", "warn", "--from", "report_sender", "--subject", card, "--state", "held", msg], deadline)
+        run_notify(conf, ["--tag", rep["hub"], "--kind", "warn", "--from", "report_sender", "--subject", card, "--state", state, msg], deadline)
     except NotifyError:
         return
     st["card_warn"][card] = int(time.time())
@@ -980,6 +1012,9 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
             out["lines"].append(line)
             log(conf, line)
             continue
+        notice = "" if bad_input else why_notice(conf, rep, st)
+        if notice:
+            hold_report(conf, rep, st, notice, deadline, held=False)
         tried += 1
         if bad_input or fails.get("fails", 0) >= conf.fail_limit:  # 접수 전 쌓인 영구 오류·상한 초과 기록은 호출 없이 중단
             why = bad_input or fails.get("error", "재시도 상한 초과")

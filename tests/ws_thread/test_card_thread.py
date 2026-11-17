@@ -132,7 +132,7 @@ class CardThreadTest(Base):
         self.assertNotIn(c, "\n".join(text.splitlines()[:-1]))
 
     def test_card_with_blank_fields_holds_ws_thread_report(self):
-        c = self.make("작업", "-t", "task", "-d", "#")  # 무엇·왜 칸도 폴백 재료도 없음
+        c = self.make("[impl]", "-t", "task", "-d", "#")  # 설명·제목 모두 무엇 재료 없음(왜만 비면 보류하지 않음)
         self.report(c, "시작", ws="/w/a")
         self.assertEqual(self.run_sender()["sent"], 0)
         self.assertNotIn(f"card:{c}", self.topics())
