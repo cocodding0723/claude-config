@@ -54,7 +54,10 @@ WAKE_GAP_S = actions.BLOCK_GAP_S
 WAKE_MAX_AGE_S = 3600           # 대기열 항목 나이 상한. 넘으면 세션 알림 대신 부모 상자로 넘김(스위치를 오래 꺼 뒀다 켠 경우 등)
 ROUTE_FAIL_MAX = 3               # 한 답글의 전달(bd 쓰기)이 이 횟수만큼 실패하면 확인 카드로 넘기고 다음 답글로 진행
 ROUTE_FAILS = "feedback-route.fails.json"
-HANDOFF_TEXT = "작업 공간 카드 {card} 에 Slack 답 도착, 세션에 알리지 못함({why}). 답 원문: bd show {card}"
+HANDOFF_TEXT = "작업 공간 카드 {card} 에 Slack 답 도착, 세션에 알리지 못함({why}). 답 첫 줄: {head}. 원문: bd show {card}"
+HEAD_MAX = 80                   # 넘기는 줄에 넣는 답 첫 줄 요약 길이 상한
+EMPTY_BODY = "(본문 없음)"        # 본문·첨부가 모두 빈 답글의 대체 본문(상자 쓰기가 본문 필요 오류를 내지 않게)
+HANDOFF_FAIL_MAX = ROUTE_FAIL_MAX  # 부모로 넘기기가 이 횟수 실패하면 포기(대기열에서 뺌)
 HANDOFF_NOTE = "세션에 알리지 못해({why}) {to} 로 넘김"
 HANDOFF_TRIAGE_TITLE = "📥 작업 공간 답 전달 확인 필요: {card}"
 TRIAGE_LABELS = "hub:main,feedback:triage"
@@ -144,6 +147,8 @@ def body(rec):
     """원문 + 첨부 저장 경로. 내용은 바꾸지 않음"""
     text = str(rec.get("text") or "")
     files = [str(p) for p in rec.get("files") or []]
+    if not text.strip() and not files:
+        text = EMPTY_BODY
     if files:
         text += "\n첨부: " + " ".join(files)
     if rec.get("files_failed"):
@@ -166,9 +171,9 @@ def triage_card(ts, dry_run):
 def to_feature(epic, rec, text, dry_run, note=""):
     """열린 기능 epic 으로: epic 코멘트 + 기능 코디네이터 상자. note 는 코멘트 머리 보충(끝난 작업 공간 카드에서 온 답 등)"""
     box = BOX_HEAD + slug_of(epic)
-    if not dry_run:
-        cards.bd("comments", "add", epic["id"], f"Slack 피드백(원문{note}): {text}")
+    if not dry_run:  # 상자 먼저: 중복 판정이 있어 재시도해도 줄이 겹치지 않고, 코멘트는 상자가 된 뒤에 한 번만
         main_inbox.append("feedback", text, SOURCE, ref=f"{epic['id']} slack:{rec.get('ts')}", box=box)
+        cards.bd("comments", "add", epic["id"], f"Slack 피드백(원문{note}): {text}")
     return {"ts": str(rec.get("ts")), "parent_ts": str(rec.get("parent_ts") or ""), "to": "feature", "epic": epic["id"], "box": box}
 
 
@@ -183,9 +188,9 @@ def to_triage(rec, hits, why, text, dry_run):
 def to_ws(card, rec, text, dry_run):
     """열린 작업 공간 카드로: 카드 코멘트 + 세션 받은 편지함 한 줄. 입력창 알림은 호출한 쪽이 once() 끝에서 처리"""
     box = box_of(card["id"])
-    if not dry_run:
-        cards.bd("comments", "add", card["id"], f"Slack 피드백(원문): {text}")
+    if not dry_run:  # 상자 먼저(to_feature 와 같은 이유)
         main_inbox.append("feedback", text, SOURCE, ref=f"{card['id']} slack:{rec.get('ts')}", box=box)
+        cards.bd("comments", "add", card["id"], f"Slack 피드백(원문): {text}")
     return {"ts": str(rec.get("ts")), "parent_ts": str(rec.get("parent_ts") or ""), "to": "ws", "card": card["id"], "box": box}
 
 
@@ -194,7 +199,7 @@ def route_guarded(rec, by_ts, dry_run):
     ROUTE_FAIL_MAX 회째에 확인 카드로 넘기고 진행(확인 카드 쓰기도 실패하면 그대로 오류). 일시 오류는 이전처럼 다음 회차에 같은 답글부터 다시"""
     try:
         return route(rec, by_ts, dry_run)
-    except cards.Fail as err:
+    except (cards.Fail, OSError, ValueError) as err:  # 상자 쓰기 실패(OSError)·상자가 거부한 본문(ValueError)도 bd 실패와 같이 셈
         if dry_run:
             raise
         path, ts = os.path.join(hub_dir(), ROUTE_FAILS), str(rec.get("ts"))
@@ -268,35 +273,49 @@ def save_wake(items):
     os.replace(tmp, path)
 
 
-def queue_wake(card_id, ws, now=None):
-    """입력창 알림 대기열에 추가. 같은 카드의 알림이 이미 대기 중이면 합침(문구가 같고 카드 코멘트에 답이 다 있음)"""
+def queue_wake(card_id, ws, ts="", text="", now=None):
+    """입력창 알림 대기열에 추가. 같은 카드의 알림이 이미 대기 중이면 한 항목으로 합침(입력창 문구는 같고 카드 코멘트에 답이 다 있음).
+    항목은 묶인 답글의 (ts, 첫 줄)을 모두 가져, 부모로 넘길 때 답마다 한 줄씩 냄"""
     items = load_wake()
-    if any(x["card"] == card_id for x in items):
-        return False
-    items.append({"card": card_id, "ws": ws, "tries": 0, "next_at": 0, "at": int(time.time() if now is None else now)})
+    reply = {"ts": str(ts), "head": head_of(text)}
+    for x in items:
+        if x["card"] == card_id:
+            x.setdefault("replies", []).append(reply)
+            save_wake(items)
+            return False
+    items.append({"card": card_id, "ws": ws, "tries": 0, "next_at": 0, "at": int(time.time() if now is None else now), "replies": [reply]})
     save_wake(items)
     return True
 
 
-def hand_off(card_id, why):
+def head_of(text):
+    """답 본문의 첫 줄(앞뒤 공백 제외) 요약. 비면 EMPTY_BODY"""
+    first = next((ln.strip() for ln in str(text or "").splitlines() if ln.strip()), EMPTY_BODY)
+    return first if len(first) <= HEAD_MAX else first[: HEAD_MAX - 1] + "…"
+
+
+def hand_off(card_id, why, replies=None):
     """세션에 닿지 못한 작업 공간 카드 답을 부모로 넘김: 열린 기능 epic 의 코디네이터 상자(기존 기능 스레드 경로, to_feature 와 같은 상자)에 한 줄,
-    기능이 없거나 끝났으면 확인 카드. 넘긴 사실은 작업 공간 카드 코멘트 한 줄. 반환 = 넘긴 곳 이름, 실패는 None(대기열에 남겨 다음 회차 재시도)"""
+    기능이 없거나 끝났으면 확인 카드. 줄은 묶인 답글마다 하나(ref 에 답글 ts·본문에 첫 줄이 있어 받은 편지함 중복 판정에 걸리지 않음). 넘긴 사실은 작업 공간 카드 코멘트 한 줄. 반환 = 넘긴 곳 이름, 실패는 None(대기열에 남겨 다음 회차 재시도)"""
     try:
         row = card_row(card_id)
         up = card_row(row["parent"]) if row and row.get("parent") else None
-        text = HANDOFF_TEXT.format(card=card_id, why=why)
+        items = replies or [{"ts": "", "head": EMPTY_BODY}]  # 답글 정보가 없는 옛 대기열 항목은 한 줄로
+        lines = [(f"{card_id} handoff slack:{r.get('ts') or 'unknown'}", HANDOFF_TEXT.format(card=card_id, why=why, head=r.get("head") or EMPTY_BODY)) for r in items]
         if up and up.get("status") != "closed" and is_feature(up):
             box = BOX_HEAD + slug_of(up)
-            main_inbox.append("feedback", text, SOURCE, ref=f"{card_id} handoff", box=box)
+            for ref, line in lines:
+                main_inbox.append("feedback", line, SOURCE, ref=ref, box=box)
             to = f"기능 코디네이터 상자 {box}"
         else:
             title = HANDOFF_TRIAGE_TITLE.format(card=card_id)
             hit = next((r["id"] for r in cards.bd_json("list", "--label", "feedback:triage", "--limit", "0") or []
                         if isinstance(r, dict) and r.get("title") == title and r.get("status") != "closed"), None)
             if hit:
-                cards.bd("comments", "add", hit, text)
+                for _ref, line in lines:
+                    cards.bd("comments", "add", hit, line)
             else:
-                made = cards.bd_json("create", title, "-t", "task", "-p", "1", "-l", TRIAGE_LABELS, "-d", text)
+                made = cards.bd_json("create", title, "-t", "task", "-p", "1", "-l", TRIAGE_LABELS, "-d", "\n".join(line for _ref, line in lines))
                 made = made[0] if isinstance(made, list) else made
                 hit = made["id"]
             to = f"확인 카드 {hit}"
@@ -319,10 +338,14 @@ def run_wakes(now=None):
     start, sent = time.monotonic(), 0
 
     def give(it, row, why):
-        to = hand_off(it["card"], why)
+        to = hand_off(it["card"], why, it.get("replies"))
         if to is None:
-            keep.append(it)
-            row["wake"] = "handoff_failed"
+            it["handoff_fails"] = it.get("handoff_fails", 0) + 1
+            if it["handoff_fails"] >= HANDOFF_FAIL_MAX:  # 카드가 지워진 경우 등 끝없는 재시도 방지. 답은 카드 코멘트·ws 상자에 이미 있음
+                row.update(wake="handoff_dropped", why=why)
+            else:
+                keep.append(it)
+                row["wake"] = "handoff_failed"
         else:
             row.update(wake="handed_off", why=why, to=to)
         out.append(row)
@@ -391,7 +414,7 @@ def once(dry_run=False):
                     os.close(fd)
                 done.add(got["ts"])
                 if got["to"] == "ws":
-                    queue_wake(got["card"], ws_of(next(c for c in by_ts[got["parent_ts"]] if c["id"] == got["card"])))
+                    queue_wake(got["card"], ws_of(next(c for c in by_ts[got["parent_ts"]] if c["id"] == got["card"])), r.get("ts"), body(r))
         if not dry_run:
             main_inbox.save_offset(opath, st.st_ino, end)
     if not dry_run:

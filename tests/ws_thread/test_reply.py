@@ -263,7 +263,78 @@ class ReplyToSessionTest(ReplyBase):
         self.assertFalse(os.path.exists(os.path.join(self.hub, "feedback-routed.jsonl")))
 
 
+class HandoffLinesTest(ReplyBase):
+    """부모 상자로 넘기는 줄은 답마다 달라야 받은 편지함 중복 판정에 걸리지 않음"""
+
+    def test_three_replies_in_separate_rounds_give_three_parent_box_lines(self):
+        for i in range(3):  # 스위치 꺼짐: 회차마다 그 회차의 답이 바로 부모로 넘어감
+            self.reply(f"1794383300.00000{i + 1}", PARENT_TS, f"{i + 1}번째 답\n둘째 줄은 요약에 안 들어감")
+            self.assertEqual([w["wake"] for w in self.route()["wake"]], ["handed_off"])
+        rows = self.box("feat-x")
+        self.assertEqual(len(rows), 3)
+        for i, r in enumerate(rows):
+            self.assertIn(f"답 첫 줄: {i + 1}번째 답.", r["text"])
+            self.assertNotIn("둘째 줄", r["text"])
+            self.assertTrue(r["ref"].endswith(f"slack:1794383300.00000{i + 1}"))
+        self.assertEqual(len([t for t in self.comments(self.ws_card) if "세션에 알리지 못해" in t]), 3)
+
+    def test_three_replies_in_one_round_give_three_lines(self):
+        for i in range(3):
+            self.reply(f"1794383300.00000{i + 1}", PARENT_TS, f"한꺼번에 {i + 1}")
+        self.route()
+        self.assertEqual([r["text"].split("답 첫 줄: ")[1].split(".")[0] for r in self.box("feat-x")], ["한꺼번에 1", "한꺼번에 2", "한꺼번에 3"])
+
+    def test_same_reason_again_after_gap_is_not_deduplicated(self):
+        self.use_show_orca()
+        self.write(os.path.join(self.fake, f"preview_{TERM}.txt"), "> 쓰던 글\n")
+        self.wake_on()
+        for i in range(2):  # 막힘 5회로 넘어가는 일을 두 번(사유 문구 같음)
+            self.reply(f"1794383300.00000{i + 1}", PARENT_TS, f"답 {i + 1}")
+            state = os.path.join(self.hub, "thread-wake.json")
+            for _ in range(5):
+                self.route()
+                if os.path.exists(state) and json.load(open(state))["items"]:
+                    d = json.load(open(state))
+                    d["items"][0]["next_at"] = 0
+                    self.write(state, json.dumps(d))
+        self.assertEqual(len(self.box("feat-x")), 2)
+
+    def test_handoff_that_keeps_failing_is_dropped_after_limit(self):
+        """작업 카드가 지워지는 등으로 넘기기가 계속 실패하면 끝없이 반복하지 않고 3회째에 포기"""
+        ghost = "t-ghost"
+        self.write(os.path.join(self.hub, "thread-wake.json"), json.dumps({"items": [{"card": ghost, "ws": WS, "tries": 0, "next_at": 0, "at": 9999999999}]}))
+        seen = [self.route()["wake"][0]["wake"] for _ in range(3)]
+        self.assertEqual(seen, ["handoff_failed", "handoff_failed", "handoff_dropped"])
+        self.assertEqual(json.load(open(os.path.join(self.hub, "thread-wake.json")))["items"], [])
+
+
 class ReplyFailureTest(ReplyBase):
+    def test_empty_body_reply_is_routed_with_placeholder_and_does_not_block(self):
+        self.reply("1794383300.000001", PARENT_TS, "")
+        self.reply("1794383300.000002", EPIC_TS, "뒤 답글")
+        out = self.route()
+        self.assertEqual([r["to"] for r in out["routed"]], ["ws", "feature"])
+        self.assertEqual(self.comments(self.ws_card)[0], "Slack 피드백(원문): (본문 없음)")
+        texts = [r["text"] for r in self.box("feat-x")]
+        self.assertEqual(texts[0], "뒤 답글")  # 이어서 스위치 꺼짐 넘김 줄(빈 답은 '(본문 없음)' 요약)
+        self.assertIn("답 첫 줄: (본문 없음).", texts[1])
+
+    def test_inbox_write_failure_is_counted_and_does_not_duplicate_comments(self):
+        """코멘트는 상자 쓰기가 된 뒤에만 달고, 상자 쓰기 실패도 3회 제한에 잡힘"""
+        os.makedirs(os.path.join(self.hub, "hub-inbox"), exist_ok=True)
+        os.makedirs(os.path.join(self.hub, "hub-inbox", "ws-" + self.ws_card.replace(".", "-") + ".jsonl"))  # 파일 자리에 폴더 → 쓰기 실패
+        self.reply("1794383300.000001", PARENT_TS, "상자에 못 쓰는 답")
+        self.reply("1794383300.000002", EPIC_TS, "뒤 답글")
+        for _ in range(2):
+            p = subprocess.run([sys.executable, "-I", SCRIPT, "--once", "--json"], capture_output=True, text=True, env=self.env)
+            self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
+        self.assertEqual(self.comments(self.ws_card), [], "상자 쓰기가 실패한 회차에는 코멘트를 달지 않음")
+        out = self.route()
+        self.assertEqual([r["to"] for r in out["routed"]], ["triage", "feature"])
+        self.assertEqual([r["text"] for r in self.box("feat-x")], ["뒤 답글"])
+        self.assertEqual(self.comments(self.ws_card), [])
+
+
     def test_reply_failing_repeatedly_goes_to_confirm_card_and_next_reply_proceeds(self):
         """한 답글에서 bd 쓰기가 계속 실패해도 뒤 답글이 막히지 않음: 3회째에 확인 카드로 넘기고 진행"""
         wrapper = os.path.join(self.bin, "bd-fail")
