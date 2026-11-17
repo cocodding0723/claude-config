@@ -224,3 +224,4 @@ hubs/scripts/gh-watch	.config/lrm-hubs/gh-watch	link
 hubs/gh-watch.env.example	.config/lrm-hubs/gh-watch.env.example	link
 hubs/gh-watch-actions.example.json	.config/lrm-hubs/gh-watch-actions.example.json	link
 hubs/launchd/ai.lrm.ghwatch.plist	Library/LaunchAgents/ai.lrm.ghwatch.plist	copy
+hubs/docs/gh-watch.md	.config/lrm-hubs/docs/gh-watch.md	link
