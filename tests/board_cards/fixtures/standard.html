@@ -1,0 +1,40 @@
+<!doctype html><html lang="ko"><meta charset="utf-8">
+<meta name="doc-kit-kind" content="결정">
+<title>답할 것 설명서(시험용 표준 형식 사본)</title>
+<h1>답할 것 설명서</h1>
+<p class="meta">기준 시각 2026-11-17 12시 30분 · 대상: 열린 결정 카드 · 게임 코드: 개발 기준 브랜치 최신본</p>
+<div class="summary" data-check="summary"><b>3줄 요약</b><ol><li>답을 기다리는 카드는 두 장이다.</li></ol></div>
+<h2 data-check="decision">급한 순 목차</h2>
+
+<h2 id="g1"><span class="num">1</span>첫째 주제</h2>
+<div class="bg">
+<h4>무엇</h4>
+<ul class="facts"><li>화면 색을 두 시안 중 하나로 맞추는 일이다. 지금은 화면마다 색이 달라 QA 가 매번 헷갈린다.</li><li>시안 기준이 정해지면 이후 화면은 그 기준만 따르면 된다.</li></ul>
+<h4>왜 지금 정하나</h4>
+<ul class="facts"><li>다음 화면 작업이 이 결정에 막혀 있다.</li></ul>
+<h4>안 정하면 멈추는 것</h4>
+<ul class="facts"><li>색 작업이 멈춘다.</li></ul>
+</div>
+<div class="diagram" data-check="problem"><svg viewBox="0 0 100 40"><rect x="0" y="0" width="30" height="30"/><rect x="40" y="0" width="30" height="30"/><path d="M30 15 L40 15"/></svg><div class="cap">빨강 칸이 문제 위치다 · 초록 칸이 추천을 고른 뒤다 · 회색은 그대로다 · 점선은 새 흐름이다</div></div>
+<section class="decision-card" data-check="dcard">
+<h3>lrm-x.1 · 색을 어느 쪽으로 맞출까?</h3>
+<p><b>지금 문제:</b> 화면마다 색이 다르다.</p>
+<table class="opts"><tr><th>선택지</th><th>고르면</th><th>되돌리기</th></tr>
+<tr data-check="opt"><td><b>A. 파랑</b></td><td>차분한 색으로 통일된다.</td><td>쉬움</td></tr>
+<tr class="rec" data-check="opt"><td><b>B. 빨강 ✅</b></td><td>강렬한 색으로 통일된다.</td><td>쉬움</td></tr>
+</table>
+<div data-check="why-rec"><p><b>추천 이유</b></p><ul><li>시안 기준이 빨강이라 되돌릴 일이 적다.</li></ul></div>
+<p class="answer">답: <code>lrm-x.1 B</code></p>
+<p class="term">용어: 시안 = 디자이너가 그린 화면 예시.</p>
+</section>
+
+<h2 id="g2"><span class="num">2</span>둘째 주제</h2>
+<div class="bg"><h4>무엇</h4><ul><li>글꼴을 정하는 일이다.</li></ul></div>
+<section class="decision-card" data-check="dcard">
+<h3>lrm-x.2 · 글꼴을 정할까?</h3>
+<table class="opts"><tr><th>선택지</th><th>고르면</th></tr>
+<tr data-check="opt"><td>A</td><td>둥근 글꼴</td></tr>
+<tr data-check="opt"><td>B</td><td>각진 글꼴</td></tr>
+</table>
+<p>가 · 나 · 다 를 한 번에 고르면 모든 화면에서 같은 값으로 통일되고 이후 변경은 한 곳에서만 한다</p>
+</section>

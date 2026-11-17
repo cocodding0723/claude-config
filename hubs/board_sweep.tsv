@@ -1,6 +1,6 @@
 # 작업판 주기 정리기(hubs/scripts/board_sweep.py) 규칙 표. 형식: 키<TAB>값<TAB>설명. 코드에 숫자·라벨 이름을 두지 않고 여기서만 바꿈
 # 목록 값은 쉼표 구분. 규칙을 끄려면 rules 에서 이름을 뺌
-rules	pr_done,expired,stale,duplicate,orphan	실행할 규칙(순서대로). pr_done=PR 끝난 카드 닫기, expired=만료 라벨 닫기, stale=오래된 결정 라벨, duplicate=같은 제목 닫기 후보, orphan=담당 없는 진행 중 되돌리기
+rules	pr_done,slack_answered,expired,stale,duplicate,orphan	실행할 규칙(순서대로). pr_done=PR 끝난 카드 닫기, slack_answered=Slack 버튼으로 답한 결정 닫기,expired=만료 라벨 닫기, stale=오래된 결정 라벨, duplicate=같은 제목 닫기 후보, orphan=담당 없는 진행 중 되돌리기
 kinds	decision,user-todo,approval	pr_done·expired 대상 kind:<값>. approval 은 11-17 폐지된 옛 종류(남은 카드 정리용)
 kind_prefix	kind:	종류 라벨 접두
 pr_repo	Basakansoft/LoveRevolutionMaker	PR 번호를 조회할 저장소
@@ -10,6 +10,10 @@ pr_min_digits	3	#번호 최소 자릿수(#1·#12 같은 목록 번호 오인 방
 gh_calls_max	20	실행 1회의 gh 호출 상한. 넘으면 남은 PR 은 다음 회차로
 gh_timeout_sec	20	gh 호출 1회 제한 시간(초)
 expires_label_prefix	expires:	만료 라벨 접두(expires:2026-11-18 또는 expires:2026-11-18T10:00+09:00). 날짜만 쓰면 그날 끝(로컬 시각)
+slack_kinds	decision	slack_answered 대상 kind:<값>
+slack_id_pattern	D-[0-9A-Za-z]{1,16}	결정 번호 정규식(Slack 번호 카드 규칙과 같음). 앞뒤 낱말 경계는 코드가 붙임
+slack_label_prefix	slack:,decision:	카드 자신의 결정 번호 라벨 접두(쉼표 구분). slack: 은 board_slack 이 보낸 카드에 붙임
+slack_body_line	결정 번호:	본문에서 결정 번호를 인정하는 전용 줄 머리. 이 줄 밖의 본문 번호는 인용으로 보고 무시
 stale_kinds	decision	오래됨 라벨을 붙일 종류
 stale_hours	24	만든 뒤 이 시간이 지나면 오래됨
 stale_label	stale	오래됨 라벨(패널이 '오래됨' 표시에 씀)

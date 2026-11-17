@@ -272,21 +272,22 @@ jrun() { local out; out=$(printf '%s' "$1" | HOME="$SB/home" bash "$H/jira-appro
 jexp() { local got; got=$(jrun "$2"); [ "$got" = "${3:-pass}" ] && ok "$1" || ko "$1" "기대 ${3:-pass}, 실제 ${got:-빈 출력}"; }
 JC='{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"projectKey":"LRM","summary":"  버튼  안 눌림 ","issueTypeName":"버그"}}'
 JID="D-JIRA$(printf '버튼 안 눌림' | shasum | cut -c1-8)"
-jexp "jira: 승인 없는 생성 거부" "$JC" deny
-jexp "jira: executeWrite 경유 생성도 거부" '{"tool_name":"mcp__atlassian__executeWrite","tool_input":{"name":"createJiraIssue","cloudId":"c","inputs":{"summary":"버튼 안 눌림"}}}' deny
+jexp "jira: 승인 없는 생성도 통과(11-17)" "$JC"
+jexp "jira: executeWrite 경유 생성도 통과(11-17)" '{"tool_name":"mcp__atlassian__executeWrite","tool_input":{"name":"createJiraIssue","cloudId":"c","inputs":{"summary":"버튼 안 눌림"}}}'
 jexp "jira: 상태 변경 승인 없음 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","transition":{"id":"31"}}}' deny
 jexp "jira: edit 의 status 필드 거부" '{"tool_name":"mcp__atlassian__editJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","fields":{"status":{"name":"완료"}}}}' deny
 jexp "jira: edit 의 일반 필드는 통과" '{"tool_name":"mcp__atlassian__editJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","fields":{"summary":"x"}}}'
 jexp "jira: 읽기 도구는 통과" '{"tool_name":"mcp__atlassian__getJiraIssue","tool_input":{"issueIdOrKey":"LRM-12"}}'
-jexp "jira: 요약 없는 생성은 ask" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"projectKey":"LRM"}}' ask
+jexp "jira: 요약 없는 생성도 통과(11-17)" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"projectKey":"LRM"}}'
 cardrow 300.1 "Jira 이슈 발급 승인" "$JID" 1 >> "$HUB/slack-inbox.jsonl"
 cardrow 300.2 "Jira LRM-12 상태 변경 승인" D-JSTLRM12 1 >> "$HUB/slack-inbox.jsonl"
 jexp "jira: D-JIRA 카드 1번 답이면 생성 통과(공백 정리 후 같은 번호)" "$JC"
-jexp "jira: 다른 요약은 거부" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"다른 버그"}}' deny
+jexp "jira: 다른 요약도 통과(11-17)" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"다른 버그"}}'
 jexp "jira: D-JST 카드 1번 답이면 상태 변경 통과" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","transition":{"id":"31"}}}'
 jexp "jira: 다른 이슈 상태 변경은 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-13","transition":{"id":"31"}}}' deny
 chmod 000 "$HUB/slack-inbox.jsonl"
-jexp "jira: 승인 기록을 못 읽으면 ask" "$JC" ask
+jexp "jira: 승인 기록을 못 읽어도 발급은 통과(기록을 안 읽음)" "$JC"
+jexp "jira: 승인 기록을 못 읽으면 상태 변경은 ask" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","transition":{"id":"31"}}}' ask
 chmod 600 "$HUB/slack-inbox.jsonl"
 
 # ---- 계획 승인 기록(사용자 11-16 "전부 추천대로"): 계획서 컨펌 1회가 적힌 발급·draft PR·상태 전환을 함께 승인 ----
@@ -306,12 +307,12 @@ exp "plan: 계획 승인은 gh api draft 해제를 허용하지 않음" $PD 'gh 
 jq -e '.permissions.deny | index("Bash(gh pr merge:*)")' "$HERE/../../claude/settings.base.json" >/dev/null \
   && ! grep -q 'merge' "$H/lib/plan_approval.py" && ok "plan: gh pr merge 는 권한 deny 고정·계획 승인 모듈이 병합을 다루지 않음" || ko "plan: 병합 고정" "settings deny 또는 plan_approval.py 확인"
 jexp "plan: 계획에 적힌 요약은 Jira 발급 통과(공백 정리)" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":" 계획  티켓 하나"}}'
-jexp "plan: 계획에 없는 요약은 거부" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 밖 티켓"}}' deny
+jexp "plan: 계획에 없는 요약도 Jira 발급 통과(11-17)" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 밖 티켓"}}'
 jexp "plan: 계획에 적힌 이슈 상태 전환 통과" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-77","transition":{"id":"21"}}}'
 jexp "plan: 대상 상태가 다르면 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-77","transition":{"id":"31","name":"완료"}}}' deny
 jexp "plan: 계획에 없는 이슈 전환은 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-78","transition":{"id":"21"}}}' deny
-jmsg=$(printf '%s' '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 밖 티켓"}}' | HOME="$SB/home" bash "$H/jira-approval-guard.sh" | jq -r '.hookSpecificOutput.permissionDecisionReason')
-case "$jmsg" in *"계획서에 추가한 뒤 컨펌"*) ok "plan: Jira 거부 메시지에 계획서 추가 조치";; *) ko "plan: Jira 거부 메시지" "$jmsg";; esac
+jmsg=$(printf '%s' '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-78","transition":{"id":"21"}}}' | HOME="$SB/home" bash "$H/jira-approval-guard.sh" | jq -r '.hookSpecificOutput.permissionDecisionReason')
+case "$jmsg" in *"계획서에 추가한 뒤 컨펌"*"D-JSTLRM78"*) ok "plan: Jira 상태 변경 거부 메시지에 계획서 추가 조치·D-JST 번호";; *) ko "plan: Jira 거부 메시지" "$jmsg";; esac
 plan P2 '{"plan_id":"P2","approved_at":"@NOW@","approver_quote":"  ","tickets":[{"summary":"인용 없는 티켓"}],"prs":[{"repo":"Org/RepoA","branch":"feat/noquote"}]}'
 plan P3 '{"plan_id":"다른이름","approved_at":"x","approver_quote":"좋아","prs":[{"repo":"Org/RepoA","branch":"feat/badid"}]}'
 plan P4 '{"plan_id":"P4","approver_quote":"좋아","prs":[{"repo":"Org/RepoA","branch":"feat/notime"}]}'
@@ -323,7 +324,7 @@ plan PS4 '{"plan_id":"PS4","approved_at":"@NOW@","approver_quote":"전부 추천
 plan P6 "{\"plan_id\":\"P6\",\"approved_at\":\"$OLD\",\"approver_quote\":\"전부 추천대로\",\"source\":{\"slack_ts\":\"900.1\"},\"prs\":[{\"repo\":\"Org/RepoA\",\"branch\":\"feat/old\"}]}"
 plan P7 '{"plan_id":"P7","approved_at":"2026-11-16T10:00:00","approver_quote":"전부 추천대로","source":{"slack_ts":"900.1"},"prs":[{"repo":"Org/RepoA","branch":"feat/notz"}]}'
 plan P8 '{"plan_id":"P8","approved_at":"2999-01-01T00:00:00+00:00","approver_quote":"전부 추천대로","source":{"slack_ts":"900.1"},"prs":[{"repo":"Org/RepoA","branch":"feat/future"}]}'
-jexp "plan: 사용자 원문 인용 없는 기록은 무효" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"인용 없는 티켓"}}' deny
+jexp "plan: 사용자 원문 인용 없는 기록은 무효(상태 전환)" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-79","transition":{"id":"21"}}}' deny
 exp "plan: 인용 없는 기록의 PR 은 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/noquote -t t' "$PR" deny
 exp "plan: plan_id 가 파일 이름과 다르면 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/badid -t t' "$PR" deny
 exp "plan: approved_at 없으면 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/notime -t t' "$PR" deny
@@ -436,14 +437,15 @@ uexp "said: 지시가 있어도 --draft 없으면 거부" "$(uline 'PR 올려')"
 uexp "said: 지시가 있어도 ready 는 거부" "$(uline 'PR 올려. ready 도 해')" deny 'gh pr ready 40 -R Org/RepoA'
 uexp "said: Jira 지시는 PR 승인이 아님" "$(uline '에픽 만들어')" deny
 JS='{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"projectKey":"LRM","summary":"공통 작업 에픽"}}'
-uexp "said: Jira 지시 없으면 발급 거부" "$(uline 'PR 올려')" deny "$JS" main jira
+uexp "said: Jira 지시 없어도 발급 통과(11-17)" "$(uline 'PR 올려')" pass "$JS" main jira
 uexp "said: 메인 대화의 '에픽 만들어' 는 Jira 발급 통과" "$(uline '공통 작업으로 묶어서 에픽 만들어')" pass "$JS" main jira
-uexp "said: Jira 도 허브·작업자 세션은 거부" "$(uline '에픽 만들어')" deny "$JS" worker jira
-uexp "said: '티켓 발급하지 마' 는 거부" "$(uline '티켓 발급하지 마')" deny "$JS" main jira
+uexp "said: Jira 발급은 허브·작업자 세션도 통과(11-17)" "$(uline '에픽 만들어')" pass "$JS" worker jira
+uexp "said: '티켓 발급하지 마' 여도 발급 훅은 막지 않음(11-17)" "$(uline '티켓 발급하지 마')" pass "$JS" main jira
 uexp "said: 사용자 지시로 Jira 상태 변경은 허용 안 함" "$(uline '티켓 만들어')" deny '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-90","transition":{"id":"31"}}}' main jira
 chmod 000 "$PA/P1.json"
 exp "plan: 계획 기록을 못 읽으면 ask" $PD 'gh pr create --draft -R Org/RepoA --head feat/plan -t t' "$PR" ask
-jexp "plan: Jira 도 계획 기록을 못 읽으면 ask" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 티켓 하나"}}' ask
+jexp "plan: Jira 상태 전환도 계획 기록을 못 읽으면 ask" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-77","transition":{"id":"21"}}}' ask
+jexp "plan: 계획 기록을 못 읽어도 Jira 발급은 통과(11-17)" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 티켓 하나"}}'
 chmod 600 "$PA/P1.json"
 
 # ---- 계획 승인 기록 쓰기는 메인만 ----
@@ -601,6 +603,83 @@ git -C "$PG" config push.default upstream
 exp "protected: push.default=upstream·upstream dev 면 인자 없는 push 거부" $GG 'git push' "$PG" deny
 exp "protected: origin HEAD 는 push.default 무관 같은 이름이라 통과" $GG 'git push origin HEAD' "$PG"
 git -C "$PG" config --unset push.default; git -C "$PG" config --unset branch.feat/w.merge
+
+# ---- ws-token-guard: 작업 공간 직접 생성·봇 토큰·slack_notify.sh ----
+WG="$H/lib/ws_token_guard.py"
+# trun <JSON> [ORCA_ROLE] → pass|deny
+trun() { local out; out=$(printf '%s' "$1" | HOME="$SB/home" ORCA_ROLE="${2:-}" LRM_PUSH_MAIN=/x/main python3 -I "$WG" 2>/dev/null); [ -z "$out" ] && echo pass || printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision'; }
+texp() { local got; got=$(trun "$2" "${4:-}"); [ "$got" = "${3:-pass}" ] && ok "$1" || ko "$1" "기대 ${3:-pass}, 실제 ${got:-빈 출력}"; }
+bj() { jq -cn --arg c "$1" --arg d "${2:-$SB}" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}'; }
+TM="$SB/tg-main"; mk "$TM" main; git -C "$TM" worktree add -q -b feat/tg-w "$SB/tg-worker"; git -C "$TM" worktree add -q -b feat/tg-h "$SB/coord-x-hub"
+texp "ws-guard: git worktree add 거부" "$(bj 'git worktree add ../x -b feat/x' "$TM")" deny
+texp "ws-guard: git -C <경로> worktree add 거부" "$(bj "git -C $TM worktree add /tmp/x" "$TM")" deny
+texp "ws-guard: -c 옵션·여분 공백 worktree  add 거부" "$(bj 'git -c core.x=1   worktree   add /tmp/x' "$TM")" deny
+texp "ws-guard: 연결 명령 안 worktree add 거부" "$(bj 'cd /tmp && git worktree add x' "$TM")" deny
+texp "ws-guard: bash -c 안 worktree add 거부" "$(bj 'bash -c "git worktree add x"' "$TM")" deny
+texp "ws-guard: create_worker_ws.sh 실행은 허용" "$(bj 'bash ~/.claude/skills/orca-hub-create/scripts/create_worker_ws.sh --repo r --name w' "$TM")"
+texp "ws-guard: create_worker_ws.sh 뒤에 붙인 worktree add 는 거부" "$(bj 'create_worker_ws.sh --name w; git worktree add x' "$TM")" deny
+texp "ws-guard: worktree list·remove 는 통과" "$(bj 'git worktree list && git worktree remove x' "$TM")"
+texp "ws-guard: 커밋 메시지 속 worktree add 문구는 통과" "$(bj 'git commit -m "git worktree add 막는 훅"' "$TM")"
+texp "ws-guard: 무관 명령 통과" "$(bj 'ls -la && git status' "$TM")"
+texp "ws-guard: 토큰 Read 거부" '{"tool_name":"Read","tool_input":{"file_path":"/h/.config/lrm-hubs/slack-bot.env"}}' deny
+texp "ws-guard: 토큰 Grep 경로 거부" '{"tool_name":"Grep","tool_input":{"pattern":"TOKEN","path":"/h/.config/lrm-hubs/slack-bot.env"}}' deny
+texp "ws-guard: 양식 파일(.example) Read 통과" '{"tool_name":"Read","tool_input":{"file_path":"/h/hubs/slack-bot.env.example"}}'
+texp "ws-guard: 무관 파일 Read 통과" '{"tool_name":"Read","tool_input":{"file_path":"/h/README.md"}}'
+texp "ws-guard: Bash 의 slack-bot.env 거부(cat)" "$(bj 'cat ~/.config/lrm-hubs/slack-bot.env' "$TM")" deny
+texp "ws-guard: 따옴표 경로도 거부" "$(bj 'cat "$HOME/.config/lrm-hubs/slack-bot.env"' "$TM")" deny
+texp "ws-guard: 메인(ORCA_ROLE=main)도 토큰 Bash 거부" "$(bj 'source ~/.config/lrm-hubs/slack-bot.env' "$TM")" deny main
+NS='~/.config/lrm-hubs/slack_notify.sh --kind done x'
+texp "ws-guard: 작업자(연결 작업 공간) slack_notify.sh 거부" "$(bj "$NS" "$SB/tg-worker")" deny
+texp "ws-guard: 작업자 bash <경로>/slack_notify.sh 거부" "$(bj "bash $NS" "$SB/tg-worker")" deny
+texp "ws-guard: 작업자 환경변수 접두 실행 거부" "$(bj "FOO=1 $NS" "$SB/tg-worker")" deny
+texp "ws-guard: ORCA_ROLE=worker 면 어디서든 거부" "$(bj "$NS" "$TM")" deny worker
+texp "ws-guard: 작업자의 slack_notify.sh 편집·검색은 통과" "$(bj 'grep -n kind lrm-hubs/slack_notify.sh && git add lrm-hubs/slack_notify.sh' "$SB/tg-worker")"
+texp "ws-guard: 작업자 hub_report.py 는 통과" "$(bj '~/.config/lrm-hubs/hub_report.py add --kind done x' "$SB/tg-worker")"
+texp "ws-guard: 허브(coord-*) 세션 slack_notify.sh 통과" "$(bj "$NS" "$SB/coord-x-hub")"
+texp "ws-guard: 메인 체크아웃 세션 slack_notify.sh 통과" "$(bj "$NS" "$TM")"
+texp "ws-guard: ORCA_ROLE=main 이면 작업 공간에서도 통과" "$(bj "$NS" "$SB/tg-worker")" pass main
+texp "ws-guard: 깨진 입력은 통과" '{깨진'
+# 11-17 검수(q5o5): 파일을 읽지 않는 이름 언급은 통과
+HD="~/.config/lrm-hubs"
+texp "ws-guard: 문서 검색 grep -rn '<이름>' docs/ 통과" "$(bj "grep -rn 'slack-bot.env' docs/" "$TM")"
+texp "ws-guard: rg -n <이름> hubs/scripts 통과" "$(bj 'rg -n slack-bot.env hubs/scripts' "$TM")"
+texp "ws-guard: grep -e <이름> 파일 통과" "$(bj 'grep -e slack-bot.env README.md' "$TM")"
+texp "ws-guard: sed 패턴 속 이름 통과" "$(bj "sed -n 's/slack-bot.env/x/p' README.md" "$TM")"
+texp "ws-guard: git commit 메시지 속 이름 통과" "$(bj 'git commit -m "slack-bot.env 읽기 차단 훅"' "$TM")"
+texp "ws-guard: heredoc 커밋 메시지 속 이름·worktree add 통과" "$(bj $'git commit -F - <<\'EOF\'\ngit worktree add x\ncat ~/.config/lrm-hubs/slack-bot.env\nEOF' "$TM")"
+texp "ws-guard: bd comments add 속 이름 통과" "$(bj 'bd comments add lrm-1 "slack-bot.env 접근 차단 완료"' "$TM")"
+texp "ws-guard: test -f 통과" "$(bj "test -f $HD/slack-bot.env && echo ok" "$TM")"
+texp "ws-guard: ls -l 통과" "$(bj "ls -l $HD/slack-bot.env" "$TM")"
+texp "ws-guard: stat 통과" "$(bj "stat -f %Lp $HD/slack-bot.env" "$TM")"
+texp "ws-guard: 양식 복사 cp <이름>.example <이름> 통과" "$(bj "cp hubs/slack-bot.env.example $HD/slack-bot.env" "$TM")"
+texp "ws-guard: cat <이름>.example 통과" "$(bj 'cat hubs/slack-bot.env.example' "$TM")"
+texp "ws-guard: echo 로 이름 출력 통과" "$(bj 'echo "토큰은 slack-bot.env 에 둠"' "$TM")"
+texp "ws-guard: bash -c grep 속 worktree add 문구 통과" "$(bj "bash -c 'grep -rn \"git worktree add\" .'" "$TM")"
+texp "ws-guard: 커밋 메시지의 \$( ) 포함 worktree add 문구 통과" "$(bj 'git commit -m "git worktree add 차단 $(date +%F)"' "$TM")"
+texp "ws-guard: echo git worktree add 문구 통과" "$(bj 'echo git worktree add x' "$TM")"
+texp "ws-guard: 작업자 bash -n slack_notify.sh 통과" "$(bj 'bash -n hubs/scripts/slack_notify.sh' "$SB/tg-worker")"
+texp "ws-guard: 작업자 slack_notify.sh --help 통과" "$(bj 'bash hubs/scripts/slack_notify.sh --help' "$SB/tg-worker")"
+texp "ws-guard: 작업자 slack_notify.sh --dry-run 통과" "$(bj 'hubs/scripts/slack_notify.sh --dry-run' "$SB/tg-worker")"
+texp "ws-guard: Grep 패턴에 이름(무관 경로) 통과" '{"tool_name":"Grep","tool_input":{"pattern":"slack-bot.env","path":"/h/docs"}}'
+texp "ws-guard: 설정 폴더 Grep 이라도 glob 이 토큰 제외 통과" "{\"tool_name\":\"Grep\",\"tool_input\":{\"pattern\":\"x\",\"path\":\"$SB/home/.config/lrm-hubs\",\"glob\":\"*.jsonl\"}}"
+# 같은 검수: 누락 보강
+texp "ws-guard: /usr/bin/git worktree add 거부" "$(bj '/usr/bin/git worktree add x' "$TM")" deny
+texp "ws-guard: 줄 이음 git \\ worktree add 거부" "$(bj $'git \\\n worktree add x' "$TM")" deny
+texp "ws-guard: sudo env 래퍼 worktree add 거부" "$(bj 'env A=1 git worktree add x' "$TM")" deny
+texp "ws-guard: 와일드카드 cat slack-bot.e* 거부" "$(bj "cat $HD/slack-bot.e*" "$TM")" deny
+texp "ws-guard: 설정 폴더 *.env 와일드카드 거부" "$(bj "cat $HD/*.env" "$TM")" deny
+texp "ws-guard: 설정 폴더 재귀 grep 거부" "$(bj "grep -r xoxb $HD/" "$TM")" deny
+texp "ws-guard: head <이름> 거부" "$(bj "head -1 $HD/slack-bot.env" "$TM")" deny
+texp "ws-guard: grep 패턴 뒤 파일 인자가 토큰이면 거부" "$(bj "grep TOKEN $HD/slack-bot.env" "$TM")" deny
+texp "ws-guard: 리디렉션 입력 jq . < <이름> 거부" "$(bj "jq . < $HD/slack-bot.env" "$TM")" deny
+texp "ws-guard: cp 원본이 토큰이면 거부" "$(bj "cp $HD/slack-bot.env /tmp/x" "$TM")" deny
+texp "ws-guard: python 인라인 open 거부" "$(bj "python3 -c \"print(open('$SB/home/.config/lrm-hubs/slack-bot.env').read())\"" "$TM")" deny
+texp "ws-guard: python heredoc 의 open 거부" "$(bj $'python3 - <<\'EOF\'\nprint(open("/h/.config/lrm-hubs/slack-bot.env").read())\nEOF' "$TM")" deny
+texp "ws-guard: bash -c 안 cat <이름> 거부" "$(bj "bash -c 'cat $HD/slack-bot.env'" "$TM")" deny
+texp "ws-guard: \$( ) 안 cat <이름> 거부" "$(bj "echo \$(cat $HD/slack-bot.env)" "$TM")" deny
+texp "ws-guard: 작업자 timeout 래퍼 slack_notify.sh 거부" "$(bj 'timeout 5 hubs/scripts/slack_notify.sh --kind done x' "$SB/tg-worker")" deny
+texp "ws-guard: 설정 폴더 통째 Grep 거부" "{\"tool_name\":\"Grep\",\"tool_input\":{\"pattern\":\"xoxb\",\"path\":\"$SB/home/.config/lrm-hubs\"}}" deny
+texp "ws-guard: 설정 폴더 Grep glob=*.env 거부" "{\"tool_name\":\"Grep\",\"tool_input\":{\"pattern\":\"x\",\"path\":\"$SB/home/.config/lrm-hubs\",\"glob\":\"*.env\"}}" deny
 
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]

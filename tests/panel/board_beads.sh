@@ -20,23 +20,27 @@ DONE=$(b create "끝난 일" --parent "$EPIC" --json | id_of); b close "$DONE" -
 WORK=$(b create "진행 일" --parent "$EPIC" --json | id_of); BD_ACTOR=worker-1 b update "$WORK" --claim >/dev/null
 STUCK=$(b create "막힌 일" --json | id_of); b update "$STUCK" --status blocked >/dev/null
 
-# board-ask
-D=$("$SCRIPTS/board-ask" --runnable no "패널 정본 옮길까?" --options "옮김|유지" --recommend 옮김 --why "손 칸 낡음" --parent "$EPIC" --priority 0); rc=$?
+# board-ask. 결정 카드는 배경·용어·선택지 결과·추천·HTML 설명서가 필수라 시험용 설명서와 공통 칸을 둠
+DOC="$SB/doc.html"
+printf '<h2>배경</h2><p>%s</p><svg><rect/><rect/><rect/></svg><h2>선택지별 결과</h2><ul><li>가</li><li>나</li></ul><h2>추천 이유</h2><p>%s</p>' "$(printf '배경설명입니다%.0s' 1 2 3 4 5 6 7 8 9 10 11 12)" "$(printf '추천이유입니다%.0s' 1 2 3 4)" > "$DOC"
+FILL=(--background "패널 칸이 손 입력과 카드 두 곳이라 어긋남" --terms 없음 --doc "$DOC")
+OPTS="옮김 => 카드 하나로 관리|유지 => 손 칸을 같이 둠"
+D=$("$SCRIPTS/board-ask" --runnable no "패널 정본 옮길까?" --options "$OPTS" --recommend 옮김 --why "손 칸 낡음" --parent "$EPIC" --priority 0 "${FILL[@]}"); rc=$?
 [ "$rc" = 0 ] && [ -n "$D" ] && ok "board-ask: 결정 카드 생성, id 출력" || ko "board-ask 생성" "rc=$rc"
-D2=$("$SCRIPTS/board-ask" --runnable no "패널 정본 옮길까?" --options "옮김|유지" --json)
+D2=$("$SCRIPTS/board-ask" --runnable no "패널 정본 옮길까?" --options "$OPTS" --recommend 옮김 "${FILL[@]}" --json)
 [ "$(echo "$D2" | jq -r '.id + "/" + (.created|tostring)')" = "$D/false" ] && ok "board-ask: 같은 제목 열린 카드면 새로 안 만듦" || ko "board-ask 반복" "$D2"
 "$SCRIPTS/board-ask" --runnable no "선택지 하나" --options "A" >/dev/null 2>"$SB/err"; [ $? = 2 ] && grep -q '조치' "$SB/err" && ok "board-ask: 선택지 1개 → 종료 2, 원인·조치" || ko "선택지 검사" ""
 "$SCRIPTS/board-ask" --runnable no "x" --options "A|B" --recommend C >/dev/null 2>&1; [ $? = 2 ] && ok "board-ask: 추천이 선택지 밖 → 종료 2" || ko "추천 검사" ""
 "$SCRIPTS/board-ask" --help >/dev/null; [ $? = 0 ] && ok "board-ask --help 종료 0" || ko "--help" ""
-DRY=$("$SCRIPTS/board-ask" --runnable no "건조" --options "A|B" --dry-run); [ "$(b list --json --limit 0 | jq '[.[]|select(.title=="건조")]|length')" = 0 ] && ok "board-ask --dry-run: 작업판 그대로" || ko "dry-run" "$DRY"
+DRY=$("$SCRIPTS/board-ask" --runnable no "건조" --options "A => 가|B => 나" --recommend A "${FILL[@]}" --dry-run); [ "$(b list --json --limit 0 | jq '[.[]|select(.title=="건조")]|length')" = 0 ] && ok "board-ask --dry-run: 작업판 그대로" || ko "dry-run" "$DRY"
 "$SCRIPTS/board-ask" "칸 없는 결정" --options "A|B" >/dev/null 2>"$SB/err"; [ $? = 2 ] && grep -q '돌려 보면 알 수 있나' "$SB/err" && grep -q '조치' "$SB/err" && ok "board-ask: 결정 카드에 '돌려 보면 알 수 있나' 칸 없으면 종료 2" || ko "runnable 필수" "$(cat "$SB/err")"
 "$SCRIPTS/board-ask" "버튼 위치 어디가 잘 보일까?" --options "위|아래" --runnable yes >/dev/null 2>"$SB/err"; rc=$?
 [ "$rc" = 5 ] && grep -q '시제품' "$SB/err" && [ "$(b list --json --limit 0 | jq '[.[]|select(.title=="버튼 위치 어디가 잘 보일까?")]|length')" = 0 ] && ok "board-ask --runnable yes → 종료 5, 카드 안 만듦, 시제품으로 판정 안내" || ko "runnable yes" "rc=$rc $(cat "$SB/err")"
 b show "$D" --json | jq -r 'if type=="array" then .[0] else . end | .description' | grep -qx '돌려 보면 알 수 있나: 아니오' && ok "board-ask --runnable no → 카드 설명에 판정 기록" || ko "runnable 기록" ""
 T=$("$SCRIPTS/board-ask" "키스토어 만들기" --kind user-todo)
-A=$("$SCRIPTS/board-ask" "PR 게시" --gate approval)
+A=$("$SCRIPTS/board-ask" "PR 게시" --gate approval --recommend 승인 "${FILL[@]}")
 [ "$(b show "$A" --json | jq -r 'if type=="array" then .[0] else . end | (.labels|sort|join(","))')" = "gate:approval,kind:decision" ] && b show "$A" --json | jq -r 'if type=="array" then .[0] else . end | .description' | grep -q -- '- 승인' && ok "board-ask --gate approval: kind:decision + gate:approval, 선택지 기본 승인|보류" || ko "gate approval" "$(b show "$A" --json | jq -c 'if type=="array" then .[0] else . end | .labels')"
-L=$("$SCRIPTS/board-ask" "옛 승인 호출" --kind approval 2>"$SB/err")
+L=$("$SCRIPTS/board-ask" "옛 승인 호출" --kind approval --recommend 승인 "${FILL[@]}" 2>"$SB/err")
 grep -q '폐지' "$SB/err" && [ "$(b show "$L" --json | jq -r 'if type=="array" then .[0] else . end | (.labels|sort|join(","))')" = "gate:approval,kind:decision" ] && ok "board-ask --kind approval(옛 호출): 폐지 안내 + 결정 카드로" || ko "옛 approval" "$(cat "$SB/err")"
 "$SCRIPTS/board-ask" "할 일에 게이트" --kind user-todo --gate approval >/dev/null 2>&1; [ $? = 2 ] && ok "board-ask: --gate 는 결정 카드에만(종료 2)" || ko "gate todo" ""
 O=$(b create "예전 승인 카드" -l kind:approval --json | id_of)
