@@ -35,7 +35,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import hub_report  # noqa: E402
@@ -58,6 +58,18 @@ MAX_PER_RUN = 10
 LINE_MAX = 60
 ERR_MAX = 100
 STAGE_KEEP_S = 24 * 3600  # 남은 복사본 보관 기간
+# 카드 주제 부모 메시지(양식 ①~⑥). 양식 문구는 이 블록 한 곳. 버전을 올리면 열린 스레드 부모가 새 양식으로 다시 고쳐짐
+CARD_RE = re.compile(r"[a-z][a-z0-9]{1,15}-[a-z0-9]{1,12}(\.[0-9]{1,3})*")  # slack_notify.sh CARD_ID_RE 와 같은 카드 id
+PARENT_FORMAT = "1"
+PARENT_TITLE_MAX = 38  # 양식 A 제목 40자 한도에서 이모지 여유
+PARENT_FIELD_MAX = 200
+CARD_FIELDS = ("쉬운 이름", "무엇", "왜")
+CARD_REQUIRED = ("무엇", "왜")
+CARD_FIELD_RE = re.compile(r"^\s*(?:[-•*]\s*)?(" + "|".join(CARD_FIELDS) + r")\s*:\s*(.*\S)\s*$", re.M)
+PARENT_HOW_TO = "이 스레드에 진행·질문·결과가 올라옴. 답은 이 스레드에 달면 작업 카드로 감"
+CARD_GAP_FIX = "카드 설명에 '무엇:'·'왜:' 줄 추가(bd update {card} -d ...)"
+BD_FALLBACK = "/opt/homebrew/bin/bd"  # launchd 의 짧은 PATH 에서 bd 를 못 찾을 때
+BD_TIMEOUT_S = 10
 UNREADABLE = "백그라운드에서 읽을 수 없는 폴더 — 다시 보고"
 
 
@@ -75,6 +87,9 @@ class Conf:
     max_per_run: int = MAX_PER_RUN
     fail_limit: int = FAIL_LIMIT
     backoff_s: float = BACKOFF_BASE_S
+    bd: str = ""
+    board: str = ""
+    cards: dict = field(default_factory=dict)  # 한 Conf(회차) 안의 카드 조회 캐시
 
     def __post_init__(self) -> None:
         env = os.environ.get
@@ -87,6 +102,8 @@ class Conf:
         self.sync_state = self.sync_state or env("LRM_LEDGER_STATE") or join("ledger-sync.state.json")
         self.sent = self.sent or env("LRM_REPORT_SENT") or join("slack-sent.jsonl")
         self.log = self.log or env("LRM_REPORT_LOG") or join("report-sender.log")
+        self.bd = self.bd or env("LRM_REPORT_BD") or shutil.which("bd") or BD_FALLBACK
+        self.board = self.board or env("BOARD_DIR") or os.path.expanduser("~/orca/board")
         try:
             self.budget_s = float(env("LRM_REPORT_BUDGET_S", self.budget_s))
         except ValueError:
@@ -262,14 +279,107 @@ def topic_key(rep: dict) -> str:
     return rep["task"] if rep["task"] != hub_report.NO_TASK else f"hub:{rep['hub']}"
 
 
+def is_card_topic(rep: dict) -> bool:
+    return not rep.get("thread") and rep["task"] != hub_report.NO_TASK and bool(CARD_RE.fullmatch(rep["task"]))
+
+
+def bd_json(conf: Conf, *args: str) -> "list | None":
+    """작업판 bd 조회 → JSON 목록. 실패·시간 초과·JSON 아님은 None(stderr 경고 줄은 무시)"""
+    try:
+        p = subprocess.run([conf.bd, "-C", conf.board, *args, "--json"], capture_output=True, text=True, timeout=BD_TIMEOUT_S)
+        d = json.loads(p.stdout) if p.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    return d if isinstance(d, list) else None
+
+
+def card_info(conf: Conf, card: str) -> "dict | None":
+    """카드 제목·설명 줄(쉬운 이름·무엇·왜)·하위 카드 진행률. 카드를 못 읽으면 None. 회차 안에서는 한 번만 조회"""
+    if card not in conf.cards:
+        conf.cards[card] = None
+        shown = bd_json(conf, "show", card)
+        kids = bd_json(conf, "list", "--parent", card, "--all", "-n", "0", "--brief")
+        if shown and isinstance(shown[0], dict):
+            fields = {m.group(1): m.group(2) for m in reversed(list(CARD_FIELD_RE.finditer(shown[0].get("description") or "")))}  # 같은 칸이 여럿이면 앞 줄
+            conf.cards[card] = {"id": card, "title": str(shown[0].get("title") or ""), "fields": fields,
+                                "closed": sum(1 for k in kids or [] if isinstance(k, dict) and k.get("status") == "closed"), "total": len(kids or [])}
+    return conf.cards[card]
+
+
+def card_gaps(info: dict) -> list:
+    """양식 필수 칸 중 빈 것. 비어 있으면 부모를 보내지 않음(순수 판정)"""
+    return [f for f in CARD_REQUIRED if not info["fields"].get(f)]
+
+
+def card_gap_error(info: dict) -> str:
+    return f"카드 {info['id']} 설명 칸 비어 있음({'·'.join(card_gaps(info))}) — " + CARD_GAP_FIX.format(card=info["id"])
+
+
+def clip(text: str, n: int) -> str:
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def card_parent_text(info: dict, hub: str) -> str:
+    """부모 양식 ①~⑥: 제목(쉬운 이름) · 무엇 · 왜 · 진행률 · 답하는 법 · 참고(카드 번호·허브 이름은 여기에만)"""
+    f = info["fields"]
+    title = clip(f.get("쉬운 이름") or info["title"], PARENT_TITLE_MAX)
+    now = f"하위 작업 {info['closed']}/{info['total']} 완료" if info["total"] else "하위 작업 없음"
+    return "\n".join([title, "", f"- 무엇: {clip(f['무엇'], PARENT_FIELD_MAX)}", f"- 왜: {clip(f['왜'], PARENT_FIELD_MAX)}", f"- 지금: {now}",
+                      f"- 답하는 법: {PARENT_HOW_TO}", "", f"참고: {info['id']} · 허브 {hub}"])
+
+
+def parent_stamp(text: str) -> str:
+    """상태에 남기는 양식 버전 + 내용 해시. 달라졌을 때만 부모를 고쳐 씀"""
+    return f"{PARENT_FORMAT}:{hashlib.sha1(text.encode('utf-8')).hexdigest()[:12]}"
+
+
+def card_problem(conf: Conf, rep: dict, st: dict) -> str:
+    """주제 스레드를 새로 열어야 하는 카드 보고의 양식 칸 검사. 문제 없으면 빈 문자열(카드를 못 읽는 경우 포함: 옛 양식으로 보냄)"""
+    if rep["kind"] == "decide" or not is_card_topic(rep) or topic_key(rep) in st["topics"]:
+        return ""
+    info = card_info(conf, rep["task"])
+    return card_gap_error(info) if info and card_gaps(info) else ""
+
+
 def topic_text(conf: Conf, rep: dict) -> str:
     key = topic_key(rep)
+    info = card_info(conf, rep["task"]) if is_card_topic(rep) else None
+    if info and not card_gaps(info):
+        return card_parent_text(info, rep["hub"])
     title = f"{rep['task']} 보고 스레드" if rep["task"] != hub_report.NO_TASK else f"{rep['hub']} 보고 스레드"
     lines = [title, "", f"- 허브: {rep['hub']}"]
     ask = request_of(conf, rep["task"]) if not key.startswith("hub:") else ""
     if ask:
         lines.append(f"- 요청: {ask[:LINE_MAX]}")
+    elif not key.startswith("hub:"):
+        log(conf, f"경고: 주제 {key} 시작 메시지에 '무엇' 줄 없음(장부·카드에 요청이 비어 있음)")
     return "\n".join(lines)
+
+
+def refresh_parent(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
+    """열린 카드 주제 스레드의 부모를 현재 양식·진행률로 고쳐 씀. 칸이 비었거나 카드를 못 읽으면 건너뜀. 전송 실패는 보고를 막지 않고 다음 보고에서 다시 시도"""
+    key = topic_key(rep)
+    topic = st["topics"].get(key)
+    if rep["kind"] == "decide" or not topic or not is_card_topic(rep):
+        return
+    info = card_info(conf, rep["task"])
+    if not info:
+        return
+    if card_gaps(info):
+        log(conf, f"경고: 열린 스레드 {key} 부모를 고치지 못함 — {card_gap_error(info)}")
+        return
+    text = card_parent_text(info, rep["hub"])
+    stamp = parent_stamp(text)
+    if topic.get("fmt") == stamp:
+        return
+    try:
+        run_notify(conf, ["--tag", rep["hub"], "--kind", "progress", "--update", topic["ts"], text], deadline)
+    except NotifyError as err:
+        log(conf, f"경고: 스레드 {key} 부모 고쳐 쓰기 실패 — {err}")
+        return
+    topic["fmt"] = stamp
+    save_state(conf.state, st)
+    log(conf, f"부모 고쳐 씀 {key} {topic['ts']} {stamp}")
 
 
 def body_text(rep: dict) -> str:
@@ -452,9 +562,14 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
         save_state(conf.state, st)
         return {"topic_ts": rep["thread"], "body_ts": rs["body_ts"], "line_ts": "", "pinned": True}
     if not decide and key not in st["topics"]:
-        ts = run_notify(conf, ["--tag", rep["hub"], "--kind", "progress", topic_text(conf, rep)], deadline)
+        text = topic_text(conf, rep)
+        ts = run_notify(conf, ["--tag", rep["hub"], "--kind", "progress", text], deadline)
         st["topics"][key] = {"ts": ts, "channel": channel_of(conf, ts)}
+        if is_card_topic(rep) and text.endswith(f"참고: {rep['task']} · 허브 {rep['hub']}"):
+            st["topics"][key]["fmt"] = parent_stamp(text)  # 새 양식으로 열림. 옛 양식 대체 문구는 기록하지 않아 나중에 고쳐 쓰기 대상으로 남음
         save_state(conf.state, st)
+    elif not decide:
+        refresh_parent(conf, rep, st, deadline)
     topic = st["topics"].get(key, {})
     if "body_ts" not in rs:
         warn_unattached(conf, rep)
@@ -699,7 +814,7 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
             blocked.add(key)  # 대기 중. 같은 주제의 뒤 보고도 순서 유지를 위해 함께 대기
             continue
         tried += 1
-        bad_input = input_error(rep)
+        bad_input = input_error(rep) or card_problem(conf, rep, st)
         if bad_input or fails.get("fails", 0) >= conf.fail_limit:  # 접수 전 쌓인 영구 오류·상한 초과 기록은 호출 없이 중단
             why = bad_input or fails.get("error", "재시도 상한 초과")
             stop_report(conf, rep, st, why, bool(bad_input), deadline)

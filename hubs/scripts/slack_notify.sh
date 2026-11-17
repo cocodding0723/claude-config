@@ -16,6 +16,8 @@ usage() {
   --tag        관련 허브 태그(기록용)
   --title      기록용 제목(기본: 메시지 첫 줄)
   --thread     해당 ts 메시지의 스레드 답글로 게시
+  --update     해당 ts 메시지(이 봇이 보낸 최상위 글)의 본문을 새 본문으로 고쳐 씀(chat.update). 새 글을 만들지 않고 sent 기록도 남기지 않음.
+               --thread·파일·--options·--to-user 와 함께 못 씀. 출력 'ok <ts>'. 같은 본문으로 다시 불러도 결과가 같음
   --kind       decide|todo|done|progress|warn|doc. 첫 줄에 종류 이모지가 없으면 붙이고 양식 A 를 검사.
                종류별 색 띠(decide·todo 주황, warn 빨강, progress 파랑, done·doc 초록)에 본문을 담고 첫 줄을 굵게 함(이미 굵으면 그대로)
   --choices    2~4(--kind decide 전용). 메시지 끝에 '👉 답:' 이모지 안내 줄을 붙임(본문에 👉 줄이 있으면 생략)
@@ -65,13 +67,14 @@ die() { echo "$1" >&2; exit 2; }
 CARD="" CARD_SET=0
 ATTACHED=() LINK_TO="" QUOTE="" NO_DOC=0 TO_USER=""
 FROM="" SUBJECT="" STATE="" DEDUP_RID=""
-TAG="" TITLE="" THREAD="" KIND="" NOCHECK=0 ALIVE=0CHOICES="" CHOICES_SET=0 EMOJISET=custom
+TAG="" TITLE="" THREAD="" UPDATE="" KIND="" NOCHECK=0 ALIVE=0CHOICES="" CHOICES_SET=0 EMOJISET=custom
 # 번호 카드 인자. 값 검증은 FORM_PY opts 가 함. *_SET 은 빈 값으로 준 경우도 '준 것'으로 보기 위함
 OPTIONS="" OPT_SET=0 RECOMMEND="" REC_SET=0 REVERSIBLE="" REV_SET=0 DECISION_ID="" DID_SET=0 SEQ="" SEQ_SET=0 TODO_ID="" TID_SET=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --tag) TAG="${2:?--tag 값 필요}"; shift 2 ;;
+    --update) UPDATE="${2:?--update 값 필요 — 고칠 메시지 ts}"; shift 2 ;;
     --title) TITLE="${2:?--title 값 필요}"; shift 2 ;;
     --thread) THREAD="${2:?--thread 값 필요}"; shift 2 ;;
     --kind) [ $# -ge 2 ] || die "--kind 값 필요 — decide|todo|done|progress|warn|doc 중 하나"; KIND="$2"; shift 2 ;;
@@ -102,6 +105,10 @@ done
 [ $# -ge 1 ] || { usage >&2; exit 2; }
 if [ "$CARD_SET" = 1 ]; then printf '%s' "$CARD" | grep -Eq "$CARD_ID_RE" || die "--card 형식 오류: $CARD — 작업판 카드 id(예 lrm-q5o.2)로 지정"; fi
 export LRM_CARD="$CARD"
+if [ -n "$UPDATE" ]; then
+  printf '%s' "$UPDATE" | grep -Eq '^[0-9]{1,12}\.[0-9]{1,9}$' || die "--update 형식 오류 — Slack 메시지 ts(숫자.숫자)"
+  [ -z "$THREAD$TO_USER" ] && [ "$OPT_SET" = 0 ] && [ $# -lt 2 ] || die "--update 는 본문만 고침 — --thread·--to-user·--options·파일 인자를 빼고 다시 부르세요"
+fi
 case "$KIND" in
   ""|decide|todo|done|progress|warn|doc) ;;
   *) die "알 수 없는 --kind: $KIND — decide|todo|done|progress|warn|doc 중 하나로 지정" ;;
@@ -760,7 +767,19 @@ print(json.dumps(b))' "$ID" "$N" "$CH" "$BODY" "$TH")" \
   printf '%s' "$DONE" | record file "$REC"
 }
 
-if [ $# -ge 2 ] && [ "$OPT_SET" = 1 ]; then
+# 기존 글 본문 교체. 같은 채널(DM)의 최상위 글만 대상. 기록은 새로 남기지 않음(ts 는 그대로)
+update_text() {
+  PAYLOAD="$(printf '%s' "$MSG" | "$PY" -c "$FORM_PY" payload "$KIND" "$CH" "" "$CARD_JSON" "$UNFURL" | "$PY" -c 'import sys,json;b=json.load(sys.stdin);b["ts"]=sys.argv[1];print(json.dumps(b))' "$UPDATE")" \
+    || die "페이로드 생성 실패(전송 안 함) — python3 동작 확인 뒤 다시 보내세요"
+  curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H 'Content-Type: application/json' -d "$PAYLOAD" $API/chat.update \
+    | "$PY" -c 'import sys,json;d=json.load(sys.stdin)
+if not d.get("ok"): print(d.get("error")); sys.exit(1)
+print("ok " + d.get("ts", ""))'
+}
+
+if [ -n "$UPDATE" ]; then
+  update_text
+elif [ $# -ge 2 ] && [ "$OPT_SET" = 1 ]; then
   # 파일 업로드 메시지에는 버튼 블록을 달 수 없음(Slack API 한계). 버튼 카드를 먼저 올리고 파일은 그 스레드에 붙임.
   # 카드가 최상위 메시지라 버튼·반응·스레드 글 답이 모두 카드 ts 에 묶임
   OUT="$(post_text)" || { echo "$OUT"; exit 1; }

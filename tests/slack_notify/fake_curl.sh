@@ -7,6 +7,7 @@
 #   fail.link   내용이 있으면 chat.getPermalink 가 실패 응답
 #   history.text 내용이 있으면 conversations.history 가 그 글을 가진 메시지 1건으로 응답(없으면 not_found)
 #   fail.ts     내용이 있으면 files.info 가 shares 없는 응답(파일 공유 지연 흉내). 없으면 shares.private.Dfake 에 ts 1700000009.000200
+#   update.json 마지막 chat.update 본문 · fail.upd 내용이 있으면 chat.update 가 그 오류로 응답
 #   fail.api    내용이 있으면 chat.postMessage 가 {"ok":false,"error":"<파일 내용>"} 로 응답
 set -u
 LOG="${FAKE_CURL_LOG:?}"
@@ -33,6 +34,10 @@ case "$method" in
     if [ -s "$LOG/fail.api" ]; then printf '{"ok":false,"error":"%s"}' "$(cat "$LOG/fail.api")"; exit 0; fi
     printf '%s' "$body" > "$LOG/post.json"; printf '%s\n' "$body" >> "$LOG/posts.log"
     printf '{"ok":true,"ts":"1700000000.000100"}' ;;
+  chat.update)
+    if [ -s "$LOG/fail.upd" ]; then printf '{"ok":false,"error":"%s"}' "$(cat "$LOG/fail.upd")"; exit 0; fi
+    printf '%s' "$body" > "$LOG/update.json"
+    printf '{"ok":true,"ts":"%s"}' "$(printf '%s' "$body" | jq -r .ts)" ;;
   chat.getPermalink)
     if [ -s "$LOG/fail.link" ]; then printf '{"ok":false,"error":"message_not_found"}'; exit 0; fi
     printf '{"ok":true,"permalink":"https://example.slack.com/archives/Dfake/p1700000000000100"}' ;;

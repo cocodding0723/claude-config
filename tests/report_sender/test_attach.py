@@ -236,7 +236,7 @@ class AttachTest(unittest.TestCase):
     def test_sender_no_warning_when_attached(self):
         self.report(text="결과는 docs/a.png 참고", files=[self.png])
         report_sender.run(self.conf)
-        self.assertNotIn("경고:", self.log_text())
+        self.assertNotIn("로컬 경로", self.log_text())  # 첨부 경고만 본다(주제 '무엇' 줄 경고와 구분)
 
     def test_preview_retry_does_not_reupload_original_or_preview(self):
         """미리보기 임시 경로가 회차마다 바뀌어도 키는 원본 경로+내용 해시라 이미 올린 파일을 다시 올리지 않음"""
