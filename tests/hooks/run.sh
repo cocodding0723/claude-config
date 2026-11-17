@@ -637,6 +637,47 @@ texp "ws-guard: 허브(coord-*) 세션 slack_notify.sh 통과" "$(bj "$NS" "$SB/
 texp "ws-guard: 메인 체크아웃 세션 slack_notify.sh 통과" "$(bj "$NS" "$TM")"
 texp "ws-guard: ORCA_ROLE=main 이면 작업 공간에서도 통과" "$(bj "$NS" "$SB/tg-worker")" pass main
 texp "ws-guard: 깨진 입력은 통과" '{깨진'
+# 11-17 검수(q5o5): 파일을 읽지 않는 이름 언급은 통과
+HD="~/.config/lrm-hubs"
+texp "ws-guard: 문서 검색 grep -rn '<이름>' docs/ 통과" "$(bj "grep -rn 'slack-bot.env' docs/" "$TM")"
+texp "ws-guard: rg -n <이름> hubs/scripts 통과" "$(bj 'rg -n slack-bot.env hubs/scripts' "$TM")"
+texp "ws-guard: grep -e <이름> 파일 통과" "$(bj 'grep -e slack-bot.env README.md' "$TM")"
+texp "ws-guard: sed 패턴 속 이름 통과" "$(bj "sed -n 's/slack-bot.env/x/p' README.md" "$TM")"
+texp "ws-guard: git commit 메시지 속 이름 통과" "$(bj 'git commit -m "slack-bot.env 읽기 차단 훅"' "$TM")"
+texp "ws-guard: heredoc 커밋 메시지 속 이름·worktree add 통과" "$(bj $'git commit -F - <<\'EOF\'\ngit worktree add x\ncat ~/.config/lrm-hubs/slack-bot.env\nEOF' "$TM")"
+texp "ws-guard: bd comments add 속 이름 통과" "$(bj 'bd comments add lrm-1 "slack-bot.env 접근 차단 완료"' "$TM")"
+texp "ws-guard: test -f 통과" "$(bj "test -f $HD/slack-bot.env && echo ok" "$TM")"
+texp "ws-guard: ls -l 통과" "$(bj "ls -l $HD/slack-bot.env" "$TM")"
+texp "ws-guard: stat 통과" "$(bj "stat -f %Lp $HD/slack-bot.env" "$TM")"
+texp "ws-guard: 양식 복사 cp <이름>.example <이름> 통과" "$(bj "cp hubs/slack-bot.env.example $HD/slack-bot.env" "$TM")"
+texp "ws-guard: cat <이름>.example 통과" "$(bj 'cat hubs/slack-bot.env.example' "$TM")"
+texp "ws-guard: echo 로 이름 출력 통과" "$(bj 'echo "토큰은 slack-bot.env 에 둠"' "$TM")"
+texp "ws-guard: bash -c grep 속 worktree add 문구 통과" "$(bj "bash -c 'grep -rn \"git worktree add\" .'" "$TM")"
+texp "ws-guard: 커밋 메시지의 \$( ) 포함 worktree add 문구 통과" "$(bj 'git commit -m "git worktree add 차단 $(date +%F)"' "$TM")"
+texp "ws-guard: echo git worktree add 문구 통과" "$(bj 'echo git worktree add x' "$TM")"
+texp "ws-guard: 작업자 bash -n slack_notify.sh 통과" "$(bj 'bash -n hubs/scripts/slack_notify.sh' "$SB/tg-worker")"
+texp "ws-guard: 작업자 slack_notify.sh --help 통과" "$(bj 'bash hubs/scripts/slack_notify.sh --help' "$SB/tg-worker")"
+texp "ws-guard: 작업자 slack_notify.sh --dry-run 통과" "$(bj 'hubs/scripts/slack_notify.sh --dry-run' "$SB/tg-worker")"
+texp "ws-guard: Grep 패턴에 이름(무관 경로) 통과" '{"tool_name":"Grep","tool_input":{"pattern":"slack-bot.env","path":"/h/docs"}}'
+texp "ws-guard: 설정 폴더 Grep 이라도 glob 이 토큰 제외 통과" "{\"tool_name\":\"Grep\",\"tool_input\":{\"pattern\":\"x\",\"path\":\"$SB/home/.config/lrm-hubs\",\"glob\":\"*.jsonl\"}}"
+# 같은 검수: 누락 보강
+texp "ws-guard: /usr/bin/git worktree add 거부" "$(bj '/usr/bin/git worktree add x' "$TM")" deny
+texp "ws-guard: 줄 이음 git \\ worktree add 거부" "$(bj $'git \\\n worktree add x' "$TM")" deny
+texp "ws-guard: sudo env 래퍼 worktree add 거부" "$(bj 'env A=1 git worktree add x' "$TM")" deny
+texp "ws-guard: 와일드카드 cat slack-bot.e* 거부" "$(bj "cat $HD/slack-bot.e*" "$TM")" deny
+texp "ws-guard: 설정 폴더 *.env 와일드카드 거부" "$(bj "cat $HD/*.env" "$TM")" deny
+texp "ws-guard: 설정 폴더 재귀 grep 거부" "$(bj "grep -r xoxb $HD/" "$TM")" deny
+texp "ws-guard: head <이름> 거부" "$(bj "head -1 $HD/slack-bot.env" "$TM")" deny
+texp "ws-guard: grep 패턴 뒤 파일 인자가 토큰이면 거부" "$(bj "grep TOKEN $HD/slack-bot.env" "$TM")" deny
+texp "ws-guard: 리디렉션 입력 jq . < <이름> 거부" "$(bj "jq . < $HD/slack-bot.env" "$TM")" deny
+texp "ws-guard: cp 원본이 토큰이면 거부" "$(bj "cp $HD/slack-bot.env /tmp/x" "$TM")" deny
+texp "ws-guard: python 인라인 open 거부" "$(bj "python3 -c \"print(open('$SB/home/.config/lrm-hubs/slack-bot.env').read())\"" "$TM")" deny
+texp "ws-guard: python heredoc 의 open 거부" "$(bj $'python3 - <<\'EOF\'\nprint(open("/h/.config/lrm-hubs/slack-bot.env").read())\nEOF' "$TM")" deny
+texp "ws-guard: bash -c 안 cat <이름> 거부" "$(bj "bash -c 'cat $HD/slack-bot.env'" "$TM")" deny
+texp "ws-guard: \$( ) 안 cat <이름> 거부" "$(bj "echo \$(cat $HD/slack-bot.env)" "$TM")" deny
+texp "ws-guard: 작업자 timeout 래퍼 slack_notify.sh 거부" "$(bj 'timeout 5 hubs/scripts/slack_notify.sh --kind done x' "$SB/tg-worker")" deny
+texp "ws-guard: 설정 폴더 통째 Grep 거부" "{\"tool_name\":\"Grep\",\"tool_input\":{\"pattern\":\"xoxb\",\"path\":\"$SB/home/.config/lrm-hubs\"}}" deny
+texp "ws-guard: 설정 폴더 Grep glob=*.env 거부" "{\"tool_name\":\"Grep\",\"tool_input\":{\"pattern\":\"x\",\"path\":\"$SB/home/.config/lrm-hubs\",\"glob\":\"*.env\"}}" deny
 
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
