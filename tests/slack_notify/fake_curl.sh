@@ -6,6 +6,7 @@
 #   posts.log   위 두 호출의 본문 전체(한 줄씩, 순서 보존)
 #   fail.link   내용이 있으면 chat.getPermalink 가 실패 응답
 #   history.text 내용이 있으면 conversations.history 가 그 글을 가진 메시지 1건으로 응답(없으면 not_found)
+#   fail.ts     내용이 있으면 files.info 가 shares 없는 응답(파일 공유 지연 흉내). 없으면 shares.private.Dfake 에 ts 1700000009.000200
 #   fail.api    내용이 있으면 chat.postMessage 가 {"ok":false,"error":"<파일 내용>"} 로 응답
 set -u
 LOG="${FAKE_CURL_LOG:?}"
@@ -42,5 +43,8 @@ case "$method" in
   files.completeUploadExternal)
     printf '%s' "$body" > "$LOG/post.json"; printf '%s\n' "$body" >> "$LOG/posts.log"
     printf '{"ok":true,"files":[{"id":"Ffake1"}]}' ;;
+  files.info)
+    if [ -s "$LOG/fail.ts" ]; then printf '{"ok":true,"file":{"id":"Ffake1","shares":{}}}'; exit 0; fi
+    printf '{"ok":true,"file":{"id":"Ffake1","shares":{"private":{"Dfake":[{"ts":"1700000009.000200"}]}}}}' ;;
   *) printf '{"ok":false,"error":"no_fixture"}' ;;
 esac
