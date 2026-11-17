@@ -145,7 +145,7 @@
 ## 6. 메인 코디네이터가 할 일
 
 - 패널 파일(`panel.json`·`panel-auto.json`)은 쓰지 않는다. 카드만 다룬다.
-- 결정 올리기: `~/.config/lrm-hubs/board-ask "<질문>" --options "A|B" --recommend A --runnable no [--why "<이유>"] [--parent <epic>]` → `kind:decision` 카드. `--runnable`(돌려 보면 알 수 있나)은 필수다. `yes` 면 카드를 만들지 않고 종료 5 — 동작·배치·시간처럼 실행하면 아는 사실은 시제품·실측으로 정하고 근거를 작업 카드 코멘트에 남긴다. 승인 성격은 `--gate approval`(옛 `--kind approval` 도 받아 바꿈), 사용자 할 일은 `--kind user-todo`. Slack 카드로도 보낼 결정은 `--background`·`--terms`·`--options "A => 결과|B => 결과"` 를 함께 준다.
+- 결정 올리기: `~/.config/lrm-hubs/board-ask "<질문>" --options "A => 결과|B => 결과" --recommend A --runnable no --background "<배경>" --terms "<용어>" --doc <설명서.html> [--why "<이유>"] [--parent <epic>]` → `kind:decision` 카드. `--runnable`(돌려 보면 알 수 있나)은 필수다. `yes` 면 카드를 만들지 않고 종료 5 — 동작·배치·시간처럼 실행하면 아는 사실은 시제품·실측으로 정하고 근거를 작업 카드 코멘트에 남긴다. 승인 성격은 `--gate approval`(옛 `--kind approval` 도 받아 바꿈), 사용자 할 일은 `--kind user-todo`. 결정 카드는 배경·용어·추천·선택지별 결과·HTML 설명서(`--doc`)가 모두 필수이고 하나라도 없으면 종료 2 다. 설명서는 배경(상세) 절·도식(도형 3개 이상 SVG)·선택지별 결과·추천 이유를 갖추고, 한 줄에 사실 하나만 쓴다(` / `·가운뎃점 나열 금지). 검사는 `board_cards.doc_gaps` 한 곳이고 Slack 전송 직전에 같은 검사를 다시 한다.
 - 사용자 답 받기: `~/.config/lrm-hubs/board-answer <id> "<사용자 원문>"` → 원문 코멘트 + 닫기(보류면 `--keep-open`). 같은 답을 두 번 넣어도 이미 닫힌 카드는 그대로다.
 - 헤드라인은 열린 epic 중 우선순위가 가장 높은(같으면 오래된) 것이다. 바꾸려면 epic 우선순위를 고친다.
 - 진행 줄의 "신호"는 카드의 마지막 갱신 시각이다. 30분 넘으면 ⚠ 가 붙는다. 워커는 진행 중 카드를 `bd update`(메모·상태)로 갱신한다.

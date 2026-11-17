@@ -65,8 +65,8 @@ bd list --status blocked                         # 막힌 카드
 
 | 할 일 | 명령 |
 |---|---|
-| 결정 올리기 | `$HUB_SCRIPTS/board-ask "<질문>" --options "A => 결과\|B => 결과" --recommend A --runnable no --background "<배경>" --terms "<용어>" [--parent <epic>]` |
-| 승인 성격 | `board-ask "<무엇>" --gate approval [--parent <epic>]` (패널에 ✋ 승인 배지) |
+| 결정 올리기 | `$HUB_SCRIPTS/board-ask "<질문>" --options "A => 결과\|B => 결과" --recommend A --runnable no --background "<배경>" --terms "<용어>" --doc <설명서.html> [--parent <epic>]` — 설명서 요건: 배경 상세 절·도식 SVG·선택지별 결과·추천 이유, 한 줄 한 사실. 하나라도 없으면 종료 2 |
+| 승인 성격 | `board-ask "<무엇>" --gate approval --recommend 승인 --background "<배경>" --terms "<용어>" --doc <설명서.html> [--parent <epic>]` (패널에 ✋ 승인 배지) |
 | 사용자 할 일 | `board-ask "<할 일>" --kind user-todo --why "<이유>"`, 끝나면 `bd close <id>` |
 | 사용자 답 기록 | `$HUB_SCRIPTS/board-answer <id> "<사용자 원문>"` (보류면 `--keep-open`) |
 
