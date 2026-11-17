@@ -3,6 +3,7 @@
 
 보내기: 열린 kind:decision 카드 → slack_notify.sh --kind decide 번호 카드. 결정 번호는 카드 id 에서 만들고(D-B + 영문·숫자),
        보낸 뒤 카드에 label slack:<결정 번호> 를 붙여 다시 보내지 않음.
+설명서: 카드 설명의 '설명서: <html>' 줄을 보내기 직전에 다시 검사해(board_cards.doc_gaps) 카드 스레드에 첨부하고, 모바일 미리보기 PNG 도 붙임(실패해도 카드는 유지).
 답 받기: 버튼 답(slack_socket.py) → 결정 번호로 카드를 찾아 board-answer 와 같은 처리(원문 코멘트 + 닫기).
        직접 입력이 질문이면 코멘트만 남기고 카드는 열어 둠. 작업판 카드가 아닌 결정 번호는 손대지 않음(옛 허브·메인 전달 그대로).
 자동 보내기 스위치: <LRM_HUB_DIR>/.board-slack.on 파일이 있을 때만 board-ask 가 새 결정 카드를 바로 보냄. 기본 꺼짐(봇 꺼짐).
@@ -17,6 +18,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import board_cards as cards  # noqa: E402
@@ -28,6 +30,8 @@ SWITCH = os.path.join(HUB_DIR, ".board-slack.on")
 LABEL = "slack:"
 ID_HEAD, ID_MAX = "D-B", 16  # slack_notify 결정 번호 규칙: D- 뒤 영문·숫자 1~16자
 SEND_TIMEOUT = 90
+PREVIEW = os.environ.get("LRM_PREVIEW") or os.path.join(HUB_DIR, "html_preview.sh")  # 390폭 모바일 미리보기 PNG
+PREVIEW_TIMEOUT = 60
 
 
 def decision_id(card_id):
@@ -37,7 +41,7 @@ def decision_id(card_id):
 
 def parse_desc(desc):
     """board-ask 가 쓴 설명(선택지:·추천:·이유:·배경:·용어:) → dict"""
-    out = {"options": [], "recommend": None, "why": None, "background": None, "terms": None}
+    out = {"options": [], "recommend": None, "why": None, "background": None, "terms": None, "doc": None}
     in_opts = False
     for raw in (desc or "").splitlines():
         ln = raw.strip()
@@ -48,7 +52,7 @@ def parse_desc(desc):
             out["options"].append(ln[2:].strip())
             continue
         in_opts = False
-        for key, head in (("recommend", "추천:"), ("why", "이유:"), ("background", "배경:"), ("terms", "용어:")):
+        for key, head in (("recommend", "추천:"), ("why", "이유:"), ("background", "배경:"), ("terms", "용어:"), ("doc", cards.DOC_LINE + ":")):
             if ln.startswith(head):
                 out[key] = ln[len(head):].strip()
     return out
@@ -63,7 +67,7 @@ def show(card_id):
 
 
 def notify_args(card):
-    """slack_notify.sh 인자. 번호 카드 필수 칸(배경·용어·선택지 결과)이 없으면 Fail(2)"""
+    """slack_notify.sh 인자. 번호 카드 필수 칸(배경·용어·선택지 결과)·HTML 설명서가 없으면 Fail(2)"""
     if "kind:decision" not in (card.get("labels") or []):
         raise cards.Fail(2, f"{card['id']} 는 결정 카드가 아님. 조치: kind:decision 카드만 보냄")
     d = parse_desc(card.get("description"))
@@ -71,12 +75,17 @@ def notify_args(card):
     if miss:
         raise cards.Fail(2, f"{card['id']} Slack 카드 필수 칸 없음: {', '.join(miss)}. "
                             "조치: board-ask 를 --background·--terms·--options \"A => 결과|B => 결과\" 로 다시 만들거나 bd update -d 로 설명 보강")
+    doc = d["doc"]
+    doc_miss = cards.doc_gaps(doc, len(d["options"]))  # 카드가 나중에 바뀌었어도 보내기 직전에 다시 검사
+    if doc_miss:
+        raise cards.Fail(2, f"{card['id']} 설명서 부족: {', '.join(doc_miss)}. "
+                            f"조치: HTML 설명서를 보강하고 카드 설명에 '{cards.DOC_LINE}: <html 절대 경로>' 줄을 둠(bd update -d)")
     names = [cards.option_name(o) for o in d["options"]]
     opts = ",".join(f"{i}={o.split('=>', 1)[0].strip()} => {o.split('=>', 1)[1].strip()}" for i, o in enumerate(d["options"], 1))
     body = [card.get("title", ""), f"배경: {d['background']}", f"용어: {d['terms']}"]
     if d["why"]:
         body.append(f"이유: {d['why']}")
-    args = ["--kind", "decide", "--no-doc", "--tag", "board", "--options", opts, "--decision-id", decision_id(card["id"])]
+    args = ["--kind", "decide", "--tag", "board", "--options", opts, "--decision-id", decision_id(card["id"])]
     if d["recommend"] in names:
         args += ["--recommend", str(names.index(d["recommend"]) + 1)]
     else:
@@ -85,7 +94,7 @@ def notify_args(card):
     why = decide_card.problem(text, opts, decision_id(card["id"]))  # 실제 전송 때 막힐 규칙(글자 수 상한 등)을 보내기 전·건조 실행에서 미리 확인
     if why:
         raise cards.Fail(2, f"{card['id']} Slack 카드 규칙 위반: {why}")
-    return args + [text]
+    return args + [text, doc]  # 마지막 인자 파일은 slack_notify 가 카드 스레드에 첨부함
 
 
 def push(card_id, dry_run=False):
@@ -109,7 +118,25 @@ def push(card_id, dry_run=False):
     if p.returncode != 0:
         raise cards.Fail(3 if p.returncode == 1 else 2, f"slack_notify 종료 {p.returncode}: {(p.stderr or p.stdout).strip()[:200]}")
     cards.bd("label", "add", card_id, LABEL + did)
-    return {"id": card_id, "sent": True, "decisionId": did}
+    ts = next((ln[3:].strip() for ln in p.stdout.splitlines() if ln.startswith("ok ")), "")
+    return {"id": card_id, "sent": True, "decisionId": did, "preview": attach_preview(args[-1], ts)}
+
+
+def attach_preview(doc, ts):
+    """설명서 모바일 미리보기 PNG 를 카드 스레드에 붙임(slack_notify --thread 재사용). 실패해도 카드 전송은 유지하고 이유만 돌려줌"""
+    if not ts:
+        return "카드 ts 없음"
+    with tempfile.TemporaryDirectory() as tmp:
+        png = os.path.join(tmp, "preview.png")
+        try:
+            r = subprocess.run([PREVIEW, doc, png], capture_output=True, text=True, timeout=PREVIEW_TIMEOUT, stdin=subprocess.DEVNULL)
+            if r.returncode != 0 or not os.path.isfile(png):
+                return f"미리보기 생성 실패({(r.stderr or r.stdout).strip()[:80]})"
+            s = subprocess.run([NOTIFY, "--thread", ts, "--tag", "board", "설명서 모바일 미리보기(390폭)", png],
+                               capture_output=True, text=True, timeout=SEND_TIMEOUT, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return f"미리보기 실패({type(e).__name__})"
+        return "attached" if s.returncode == 0 else f"미리보기 전송 실패({(s.stderr or s.stdout).strip()[:80]})"
 
 
 def card_for(did):
