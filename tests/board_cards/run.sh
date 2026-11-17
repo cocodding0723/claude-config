@@ -47,6 +47,10 @@ ID=$("$ASK" --runnable no "다 채운 결정" "${FULL[@]}"); rc=$?
 [ "$rc" = 0 ] && [ -n "$ID" ] && b show "$ID" --json | jq -r 'if type=="array" then .[0] else . end | .description' | grep -q '^배경: 시안 두 벌' && ok "다 채우면 카드 생성, 배경·용어 기록" || ko "생성" "rc=$rc"
 python3 -I "$SCR/board_slack.py" push "$ID" --dry-run >/dev/null 2>"$SB/err" && ok "만든 카드는 board_slack push --dry-run 통과" || ko "slack 건조" "$(cat "$SB/err")"
 [ "$("$ASK" --runnable no "다 채운 결정" "${FULL[@]}" --json | jq -r .created)" = false ] && ok "같은 제목 열린 카드는 새로 안 만듦(반복 안전)" || ko "반복" ""
+TL="제목이 사십 글자를 넘어 슬랙 첫 줄 규칙에 걸리는 아주 긴 결정 카드 이름입니다 정말로 매우 많이 깁니다 계속 이어집니다"
+refuse "$TL" '40자' "${FULL[@]}"
+"$ASK" --runnable no "🙋 $(printf '가%.0s' $(seq 40))" "${FULL[@]}" --dry-run >/dev/null 2>"$SB/err" && ok "제목 40자 이하(이모지·공백 제외)는 통과" || ko "제목 40자 경계" "$(cat "$SB/err")"
+"$ASK" --runnable no "$(printf '가%.0s' $(seq 41))" "${FULL[@]}" --dry-run >/dev/null 2>"$SB/err"; [ $? = 2 ] && ok "제목 41자는 거부" || ko "제목 41자" ""
 "$ASK" --runnable no "건조 결정" "${FULL[@]}" --dry-run >/dev/null && [ "$(count "건조 결정")" = 0 ] && ok "--dry-run 은 카드 안 만듦" || ko "dry-run" ""
 "$ASK" "PR 게시" --gate approval >/dev/null 2>"$SB/err"; rc=$?
 [ "$rc" = 2 ] && grep -q '배경' "$SB/err" && ok "승인 성격 결정도 배경·용어·추천 필수(기본 선택지는 결과 있음)" || ko "승인 거부" "rc=$rc $(cat "$SB/err")"
@@ -60,9 +64,10 @@ for gap in "bg:배경(상세)" "svg:도식" "opt:선택지별 결과" "why:추�
   "$ASK" --runnable no "설명서 ${gap%%:*} 없음" --doc "$SB/bad-${gap%%:*}.html" "${FULL[@]:0:8}" >/dev/null 2>"$SB/err"; rc=$?
   [ "$rc" = 2 ] && grep -q "${gap#*:}" "$SB/err" && grep -q '조치' "$SB/err" && ok "설명서에 ${gap#*:} 없으면 종료 2" || ko "설명서 검사 ${gap%%:*}" "rc=$rc $(cat "$SB/err")"
 done
+RI=0
 for bad in '<p>배경은 A / B 두 갈래다</p>' '<ul><li>가 · 나 · 다 를 한 번에 고르면 모든 화면에서 같은 값으로 통일되고 이후 변경은 한 곳에서만 한다</li></ul>' '<ul><li>가·나·다·라·마 를 한 번에 고르면 모든 화면에서 같은 값으로 통일되고 이후 변경은 한 곳에서만 한다</li></ul>'; do
   { cat "$DOC"; echo "$bad"; } > "$SB/bad-read.html"
-  "$ASK" --runnable no "읽기 위반 $bad" --doc "$SB/bad-read.html" "${FULL[@]:0:8}" >/dev/null 2>"$SB/err"; rc=$?
+  "$ASK" --runnable no "읽기 위반 $((RI += 1))" --doc "$SB/bad-read.html" "${FULL[@]:0:8}" >/dev/null 2>"$SB/err"; rc=$?
   [ "$rc" = 2 ] && grep -q '가독성' "$SB/err" && ok "가독성 위반 줄 거부: $bad" || ko "가독성 $bad" "rc=$rc $(cat "$SB/err")"
 done
 { cat "$DOC"; echo '<p>주소는 <code>a / b</code> 와 https://x.test/a/b 와 ~/Documents/a/b 다. 구독·취소 묶음</p><pre>x / y · z · w</pre>'; } > "$SB/ok-read.html"
