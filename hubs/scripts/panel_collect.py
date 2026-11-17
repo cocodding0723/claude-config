@@ -854,11 +854,17 @@ def board_gate(r):
     return None
 
 
+def beat_time(r):
+    """마지막 생존 신호 = heartbeat_at 과 updated_at 중 늦은 쪽(heartbeat 는 updated_at 을 안 바꿈). 둘 다 없으면 None"""
+    ts = [t for t in (board_time(r.get("heartbeat_at")), board_time(r.get("updated_at"))) if t is not None]
+    return max(ts) if ts else None
+
+
 def board_card(r, desc=False):
     out = {"id": str(r.get("id", ""))[:20], "title": str(r.get("title", ""))[:TITLE_MAX * 2],
            "p": r.get("priority") if isinstance(r.get("priority"), int) else 2,
            "who": str(r.get("assignee") or "")[:40] or None,
-           "createdAt": board_time(r.get("created_at")), "beatAt": board_time(r.get("updated_at")),
+           "createdAt": board_time(r.get("created_at")), "beatAt": beat_time(r),
            "startedAt": board_time(r.get("started_at")), "comments": r.get("comment_count") or 0}
     if desc:
         out["desc"] = str(r.get("description") or "")[:DESC_MAX] or None
@@ -883,12 +889,53 @@ EPIC_KIDS_MAX = 30             # 에픽당 싣는 하위 카드 상한. 화면 �
 KID_STATE = {"closed": "done", "in_progress": "doing", "blocked": "blocked"}   # 그 밖(open 등)은 todo
 
 
+EVIDENCE_PREFIX = "evidence_"   # board-beat 가 카드 metadata 에 남기는 칸 이름(board/lib/board_beat.py 와 같은 값)
+
+
+def label_value(r, key):
+    p = key + ":"
+    return next((str(lb)[len(p):] for lb in reversed(r.get("labels") or []) if str(lb).startswith(p)), "")
+
+
+def branch_tip(r, cache):
+    """카드 label repo:·branch: 의 브랜치 끝 커밋. 같은 (저장소, 브랜치)는 한 번만 물음. 알 수 없으면 None"""
+    repo, branch = os.path.expanduser(label_value(r, "repo")), label_value(r, "branch")
+    if not repo or not branch:
+        return None
+    key = (repo, branch)
+    if key not in cache:
+        try:
+            p = subprocess.run([os.environ.get("PANEL_GIT", "git"), "-C", repo, "rev-parse", "--verify", "-q", f"refs/heads/{branch}"],
+                               capture_output=True, text=True, timeout=GIT_TIMEOUT, stdin=subprocess.DEVNULL)
+            cache[key] = p.stdout.strip() if p.returncode == 0 else None
+        except (subprocess.TimeoutExpired, OSError):
+            cache[key] = None
+    return cache[key]
+
+
+def kid_evidence(r, cache):
+    """진행 중 카드의 완료 증거 상태: none(없음)·ok(브랜치 끝과 맞음)·stale(커밋이 달라짐)·unk(브랜치 끝을 몰라 비교 불가).
+    증거 원료는 board-run --card 가 남긴 metadata evidence_<종류>=<커밋>. 카드마다 bd 를 부르지 않고 목록 JSON 안의 값만 봄"""
+    meta = r.get("metadata") if isinstance(r.get("metadata"), dict) else {}
+    commits = [str(v).lower() for k, v in meta.items() if str(k).startswith(EVIDENCE_PREFIX) and isinstance(v, str) and v]
+    if not commits:
+        return "none"
+    tip = branch_tip(r, cache)
+    if not tip:
+        return "unk"
+    return "ok" if any(tip.startswith(c) or c.startswith(tip) for c in commits) else "stale"
+
+
 def board_kids(work, rows_kids, now):
-    """에픽 하위 카드 1단 목록(진행 중 → 막힘 → 열림 → 닫힘, 최근 갱신 먼저). 그 아래는 개수(subs)만"""
+    """에픽 하위 카드 1단 목록(진행 중 → 막힘 → 열림 → 닫힘, 최근 갱신 먼저). 그 아래는 개수(subs)만.
+    진행 중 카드는 마지막 heartbeat(beatAt)와 증거 상태(ev)도 실음. 오래됨 판정은 화면(PANEL_CONFIG.beatStaleMin)이 함"""
     order = {"doing": 0, "blocked": 1, "todo": 2, "done": 3}
+    tips = {}
     out = [{"id": str(k.get("id", ""))[:20], "title": str(k.get("title", ""))[:TITLE_MAX * 2],
             "st": KID_STATE.get(k.get("status"), "todo"), "who": str(k.get("assignee") or "")[:40] or None,
-            "at": board_time(k.get("updated_at")), "subs": len(rows_kids.get(k.get("id"), []))} for k in work]
+            "at": board_time(k.get("updated_at")), "subs": len(rows_kids.get(k.get("id"), [])),
+            **({"beatAt": beat_time(k), "ev": kid_evidence(k, tips)}
+               if k.get("status") == "in_progress" else {})} for k in work]
     out.sort(key=lambda x: (order[x["st"]], -(x["at"] or 0)))
     return out[:EPIC_KIDS_MAX]
 
@@ -914,7 +961,7 @@ def board_features(rows, now):
         out.append({"id": str(e.get("id", ""))[:20], "title": str(e.get("title", ""))[:TITLE_MAX * 2], "slug": slug,
                     "done": sum(1 for k in work if k.get("status") == "closed"), "total": len(work),
                     "doing": [{"title": str(k.get("title", ""))[:TITLE_MAX * 2], "who": str(k.get("assignee") or "")[:40] or None,
-                               "beatAt": board_time(k.get("updated_at"))} for k in doing[:FEATURE_DOING_MAX]],
+                               "beatAt": beat_time(k)} for k in doing[:FEATURE_DOING_MAX]],
                     "doingCount": len(doing), "kids": board_kids(work, kids, now) if e.get("status") != "closed" else [],
                     "blocked": sum(1 for k in work if k.get("status") == "blocked"),
                     "asks": sum(1 for k in ks if board_kind(k) == "decision" and k.get("status") != "closed"),
