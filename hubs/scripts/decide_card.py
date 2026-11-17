@@ -25,6 +25,11 @@ TITLE_MAX = 40
 TITLE_DROP = ("So", "Sk", "Cf", "Mn", "Me")  # 글자 수에서 빼는 이모지·결합 문자 범주
 TITLE_EMOJI = re.compile(r"(?<!\w):[\w+\-]{1,40}:(?!\w)")  # :이름: 이모지 코드도 제외
 
+# 양식 A 규칙 2: 본문에 있으면 안 되는 번호(맨 아래 '참고:' 줄로 이동). 알림 스크립트 검사와 board_slack 의 번호 이동이 같은 식을 씀
+TICKET_RX = re.compile(r"(?<![0-9A-Za-z_])LRM-\d+(?![0-9A-Za-z_])")
+# 커밋 해시: 숫자·a~f 가 섞인 7~40자. 앞뒤가 '#'·'-' 이면 색 값(#F2994A80)·세션 번호 조각(5660c10e-1211-…)이라 커밋으로 보지 않음
+HEX_RX = re.compile(r"(?<![0-9A-Za-z_#\-])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![0-9A-Za-z_\-])", re.I)
+
 # D-RDY<PR번호>(draft 해제 요청) 카드는 본문에 '로컬 QA:' 줄 필수(사용자 11-13 D-LOCALQA)
 QA, RDY_ID = "로컬 QA", re.compile(r"D-RDY[0-9]+$")
 QA_NONE = "해당 없음(도구·CI·문서)"

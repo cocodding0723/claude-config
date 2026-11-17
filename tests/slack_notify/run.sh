@@ -98,6 +98,10 @@ run_n --kind done $'✅ 완료\n\n• 무엇: ABC1234 반영'
 grep -q 'ABC1234' "$SB/err" && ok "B 대문자 hex 도 위반" || ko "B 대문자 hex" "$(cat "$SB/err")"
 run_n --kind done $'✅ 완료\n\n• 무엇: deadbeef 와 1234567 과 abcdef 는 단어·숫자라 통과'
 [ "$(errn)" = 0 ] && ok "B 영단어형 hex(deadbeef)·순수 숫자 7자리·6자 hex 는 통과" || ko "B 영단어·숫자" "$(cat "$SB/err")"
+run_n --kind done $'✅ 완료\n\n• 무엇: 색 #F2994A80 과 세션 5660c10e-1211-4b22-b38a-affae9f647ad 는 커밋이 아님'
+[ "$(errn)" = 0 ] && ok "B 색 값(#F2994A80)·세션 번호 조각(하이픈 사이 hex)은 커밋으로 보지 않음" || ko "B 색·세션 번호" "$(cat "$SB/err")"
+run_n --kind done $'✅ 완료\n\n• 무엇: 커밋 a1b2c3d4e 반영'
+grep -q 'a1b2c3d4e' "$SB/err" && ok "B 하이픈·# 없는 hex 는 여전히 위반(보정이 판정을 풀지 않음)" || ko "B hex 유지" "$(cat "$SB/err")"
 run_n --kind decide --no-doc $'주제\n\n• 무엇: 정할 것'
 grep -q "경고: 결정·할 일인데 '👉 답:' 줄이 없음" "$SB/err" && ok "B decide 에 👉 줄 없음 → 위반" || ko "B 👉 없음" "$(cat "$SB/err")"
 run_n --kind todo $'주제\n\n• 무엇: 할 일'

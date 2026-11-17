@@ -46,8 +46,7 @@ FORM_FAIL_LEVELS = ("reject", "hard")  # 실제 전송이 막힐 수 있는 수�
 CARD_ID_RE = re.compile(r"^[a-z][a-z0-9]{1,15}-[a-z0-9]{1,12}(\.[0-9]{1,3})*$")  # slack_notify --card 형식. 틀리면 전송이 거부돼 이 경우엔 --card 를 생략
 REF_HEAD = "참고:"
 REF_SEP = " · "
-TICKET_RX = re.compile(r"(?<![0-9A-Za-z_])LRM-\d+(?![0-9A-Za-z_])")  # 알림 스크립트 RX ticket·hex 와 같은 규칙. 어긋나면 위 검사가 잡음
-HEX_RX = re.compile(r"(?<![0-9A-Za-z_])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![0-9A-Za-z_])", re.I)
+TICKET_RX, HEX_RX = decide_card.TICKET_RX, decide_card.HEX_RX  # 알림 스크립트 양식 A 규칙 2 와 같은 식(decide_card 한 곳)
 REF_WORDS = ((TICKET_RX, "관련 티켓"), (HEX_RX, "관련 커밋"))  # 본문에서는 쉬운 말로 바꾸고 번호는 참고 줄로
 TITLE_NEED = f"보강 필요: 제목 {cards.TITLE_MAX}자"
 LOCK_DIR = os.path.join(HUB_DIR, ".board-slack-locks")  # 카드별 전송 잠금 파일 폴더

@@ -235,8 +235,8 @@ RX = {
     "url": re.compile(r"https?://\S+"),
     "ref": re.compile(r"^[ \t]*(?:[•\-*][ \t]*)?참고[ \t]*:", re.M),
     "code": re.compile(r"(?<!\w):[\w+\-]{1,40}:(?!\w)"),
-    "ticket": re.compile(r"(?<![0-9A-Za-z_])LRM-\d+(?![0-9A-Za-z_])"),
-    "hex": re.compile(r"(?<![0-9A-Za-z_])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![0-9A-Za-z_])", re.I),
+    "ticket": decide_card.TICKET_RX,  # 번호 판정식은 decide_card 한 곳(board_slack 번호 이동과 공유)
+    "hex": decide_card.HEX_RX,
     "bold": re.compile(r"(?<![\w*])\*(?!\s)[^*\n]+?(?<!\s)\*(?![0-9A-Za-z_*])"),
     "answer": re.compile(r"^[ \t]*(?:👉|:point_right:)[ \t]*답[ \t]*:", re.M),
     # 결정 제목 줄 판정(규칙 고정). 줄머리 접두 = 인용 >·불릿 •-*·· 반복(굵게 * 포함)·머리글 #·대괄호 [. 번호 = ①-⑳·1.·1)·(1)·1️⃣·1번
