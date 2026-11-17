@@ -712,8 +712,10 @@ def run_source(fn, prev, now):
 BOARD_DIR = os.environ.get("PANEL_BOARD_DIR") or os.path.expanduser("~/orca/board")
 BOARD_TIMEOUT, BOARD_DOING_MAX, BOARD_LIST_MAX, BOARD_RECENT = 10, 8, 10, 5
 BOARD_STATUSES = ("in_progress", "open", "blocked")
-# 사람 손이 필요한 카드 종류. 라벨 kind:<값>
-BOARD_KINDS = {"decision": "decisions", "user-todo": "todos", "approval": "approvals"}
+# 사람 손이 필요한 카드 종류. 라벨 kind:<값>. 승인 성격은 결정 카드의 label gate:approval(배지), 옛 kind:approval 카드도 결정으로 읽음
+BOARD_KINDS = {"decision": "decisions", "user-todo": "todos"}
+LEGACY_KINDS = {"approval": "decision"}
+GATE_PREFIX = "gate:"
 DESC_MAX = 600
 
 
@@ -729,8 +731,21 @@ def board_time(v):
 
 def board_kind(r):
     for label in r.get("labels") or []:
-        if isinstance(label, str) and label.startswith("kind:") and label[5:] in BOARD_KINDS:
-            return label[5:]
+        if isinstance(label, str) and label.startswith("kind:"):
+            k = LEGACY_KINDS.get(label[5:], label[5:])
+            if k in BOARD_KINDS:
+                return k
+    return None
+
+
+def board_gate(r):
+    """승인 성격 배지 이름. label gate:<값> 또는 옛 kind:approval 이면 'approval', 없으면 None"""
+    for label in r.get("labels") or []:
+        if isinstance(label, str):
+            if label.startswith(GATE_PREFIX):
+                return label[len(GATE_PREFIX):][:20] or None
+            if label == "kind:approval":
+                return "approval"
     return None
 
 
@@ -742,6 +757,7 @@ def board_card(r, desc=False):
            "startedAt": board_time(r.get("started_at")), "comments": r.get("comment_count") or 0}
     if desc:
         out["desc"] = str(r.get("description") or "")[:DESC_MAX] or None
+        out["gate"] = board_gate(r)
     return out
 
 
@@ -757,7 +773,7 @@ def board_headline(rows):
 
 
 def collect_board():
-    """작업판(beads) = 패널의 정본(11-16). 결정·할 일·승인은 kind 라벨, 진행·막힘은 상태, 헤드라인은 열린 epic"""
+    """작업판(beads) = 패널의 정본(11-16). 결정·할 일은 kind 라벨(승인은 결정 + gate 배지), 진행·막힘은 상태, 헤드라인은 열린 epic"""
     if not os.path.isdir(BOARD_DIR):
         raise SourceError("missing")
     try:

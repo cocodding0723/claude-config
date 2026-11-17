@@ -63,11 +63,8 @@ test('hubLine: 상태·출력 없음·중복·끊김', () => {
   assert.equal(b.hubLine({ hub: 'coord-a-hub', name: 'a', agent: 'claude', state: 'approval', quietMin: 12, connected: false, dup: true }), '승인창 · 12분 출력 없음 · 👥중복 · 🔌끊김')
 })
 
-test('pendingLine: 옛 카드는 제목·나이만, 번호 카드는 결정 번호·보류·충돌', () => {
-  assert.equal(b.pendingLine({ title: '🙋 결정 A', ageMin: 3 }), '🙋 결정 A  · 3분 전')
-  assert.equal(b.pendingLine({ title: '배포 순서', ageMin: null, id: 'D-0002', state: 'hold' }), '배포 순서 · D-0002 — 보류')
-  assert.equal(b.pendingLine({ title: '문서 위치', ageMin: 0, id: 'D-0003', state: 'conflict' }), '문서 위치 · D-0003 — 선택이 여러 개, 확인 필요  · 방금')
-  assert.equal(b.pendingLine({ title: '알림', ageMin: null, id: 'D-0004', state: null }), '알림 · D-0004')
+test('pendingLine 없음: Slack 칸은 패널에서 뺐음(결정 대기 한 칸)', () => {
+  assert.equal(b.pendingLine, undefined)
 })
 
 test('ghLine: --limit 만큼 꽉 차면 숫자 뒤에 +', () => {
@@ -160,7 +157,7 @@ test('hubLine: 하위 작업 공간 수, 10개 넘으면 경고', () => {
   assert.equal(b.hubLine(h), '작업 중')
 })
 
-test('confirmApprovals: 확인 목록 항목을 승인 칸 모양으로, 원료가 없으면 undefined(작업판 카드으로 복귀)', () => {
+test('confirmApprovals: 확인 목록 항목을 결정 대기 칸 항목(승인 배지)으로, 원료가 없으면 undefined(작업판 카드로 복귀)', () => {
   assert.equal(b.confirmApprovals(undefined), undefined)
   assert.equal(b.confirmApprovals(null), undefined)
   const v = b.confirmApprovals({ todo: 2, done: 0, items: [
@@ -168,8 +165,8 @@ test('confirmApprovals: 확인 목록 항목을 승인 칸 모양으로, 원료�
     { key: 'b', kind: 'merge', kind_label: '🔀 PR 병합', title: '#7 머지', hub: '미상', urgency: 1, how: '머지 버튼' },
   ] })
   assert.deepEqual(v, [
-    { key: 'a', p: 1, title: 'D-1 결정 (alpha)', why: '🙋 결정 카드', how: '카드에 답' },
-    { key: 'b', p: 3, title: '#7 머지', why: '🔀 PR 병합', how: '머지 버튼' },
+    { key: 'a', p: 1, title: '✋ 승인 D-1 결정 (alpha)', why: '🙋 결정 카드', how: '카드에 답' },
+    { key: 'b', p: 3, title: '✋ 승인 #7 머지', why: '🔀 PR 병합', how: '머지 버튼' },
   ])
   assert.deepEqual(b.confirmApprovals({ todo: 0, done: 0, items: [] }), [])
 })
@@ -188,14 +185,14 @@ test('mergeApprovals: 원료 항목 + 겹치지 않는 작업판 카드 항목',
   const hand = [{ p: 1, title: '손으로 적은 승인', why: '메인 메모' }]
   const r = b.mergeApprovals(conf([ci('k1', '창 승인 대기', 'alpha')]), hand, NOW)
   assert.equal(r.stale, false)
-  assert.deepEqual(r.items.map(i => i.title), ['창 승인 대기 (alpha)', '손으로 적은 승인'])
+  assert.deepEqual(r.items.map(i => i.title), ['✋ 승인 창 승인 대기 (alpha)', '손으로 적은 승인'])
 })
 
 test('mergeApprovals: 제목이 겹치면 원료 항목에 작업판 카드 why·detail 을 붙이고 중복은 하나', () => {
   const hand = [{ p: 1, title: '창 승인 대기', why: '배포 막힘', detail: ['3번째 요청'] }]
   const r = b.mergeApprovals(conf([ci('k1', '창 승인 대기', 'alpha')]), hand, NOW)
   assert.equal(r.items.length, 1)
-  assert.deepEqual(r.items[0], { key: 'k1', p: 2, title: '창 승인 대기 (alpha)', why: '🪟 창 승인 · 배포 막힘', how: '창에서 승인', detail: ['3번째 요청'] })
+  assert.deepEqual(r.items[0], { key: 'k1', p: 2, title: '✋ 승인 창 승인 대기 (alpha)', why: '🪟 창 승인 · 배포 막힘', how: '창에서 승인', detail: ['3번째 요청'] })
 })
 
 test('mergeApprovals: 키가 같으면 제목이 달라도 겹침', () => {
@@ -208,7 +205,7 @@ test('mergeApprovals: 원료가 낡으면 작업판 카드 우선·낡음 표시
   const old = conf([ci('k1', '창 승인 대기'), ci('k2', '원료 전용')], NOW / 1000 - (b.CONFIRM_STALE_MIN + 5) * 60)
   const r = b.mergeApprovals(old, hand, NOW)
   assert.equal(r.stale, true)
-  assert.deepEqual(r.items.map(i => i.title), ['창 승인 대기', '손 전용', '원료 전용'])
+  assert.deepEqual(r.items.map(i => i.title), ['창 승인 대기', '손 전용', '✋ 승인 원료 전용'])
   assert.match(r.items[2].why, /⚠ 낡음/)
   assert.equal(b.mergeApprovals(conf([ci('k2', 'x')], null), hand, NOW).stale, true)  // 시각 모르면 낡음
 })
@@ -243,6 +240,20 @@ test('cardItems: 결정 카드 → 항목(우선순위+1·설명 줄·답법)', 
   assert.equal(it.how, 'board-answer a-1 "<답 원문>"')
   assert.equal(it.why, 'a-1 · u · 5분 전 · 코멘트 2')
   assert.deepEqual(b.cardItems(undefined, 'todo', NOW), [])
+})
+
+test('cardItems: gate:approval 결정은 승인 배지·승인 답법, ANSWER_HOW 에 승인 종류 없음', () => {
+  const [it] = b.cardItems([card({ gate: 'approval', desc: '선택지:\n- 승인\n- 보류' })], 'decision', NOW)
+  assert.equal(it.title, `${b.APPROVAL_BADGE} T`)
+  assert.equal(it.how, 'board-answer a-1 "<승인·보류 원문>"')
+  assert.equal(b.ANSWER_HOW.approval, undefined)
+  const [plain] = b.cardItems([card({ gate: null })], 'decision', NOW)
+  assert.equal(plain.title, 'T')
+})
+
+test('mergeApprovals: 배지 붙은 작업판 카드와 확인 목록 항목은 제목으로 겹침 판정', () => {
+  const hand = b.cardItems([card({ title: '창 승인 대기', gate: 'approval' })], 'decision', NOW)
+  assert.equal(b.mergeApprovals(conf([ci('k1', '창 승인 대기', 'alpha')]), hand, NOW).items.length, 1)
 })
 
 test('headlineText·recentLines·blockedLines', () => {

@@ -21,10 +21,10 @@ import {
   sourceNote,
 } from './board'
 
-// Slack 원료(결정 카드 전송·Slack→메인 전달)는 봇이 꺼져 숨김. 수집기는 그대로 모음
+// Slack 칸 없음: 봇이 켜져도 Slack 결정 카드의 원천은 작업판 결정 카드라 결정 대기 한 칸이면 됨
 const PANE = 'lrm-board'
 const TITLE = 'LRM 현황'
-// 수집기(launchd ai.lrm.panelcollect)가 60초마다·작업판 변경 때 쓰는 자동 칸. 결정·할 일·승인·헤드라인의 정본은 작업판(bd)
+// 수집기(launchd ai.lrm.panelcollect)가 60초마다·작업판 변경 때 쓰는 자동 칸. 결정·할 일·헤드라인의 정본은 작업판(bd). 승인은 결정 대기 칸의 배지
 const AUTO_SOURCE = '__HOME__/.config/lrm-hubs/panel-auto.json'
 const POLL_MS = 5000
 const MAIN_CWD = '__HOME__/orca/LoveRevolutionMaker'
@@ -40,7 +40,6 @@ const byPriority = (items: BoardItem[] | undefined) =>
   [...(items ?? [])].sort((a, b) => a.p - b.p)
 
 const C = {
-  approve: '#F5A623',
   todo: '#4FC3F7',
   hub: '#B39DDB',
   pending: '#FF8A65',
@@ -124,9 +123,8 @@ export const register: Register = on => {
     const src = auto?.sources
     const workBoard = src?.board?.value ?? undefined
 
-    const approvalMerge = mergeApprovals(src?.confirm, cardItems(workBoard?.approvals, 'approval', nowMs), nowMs)
-    const approvals = byPriority(approvalMerge.items)
-    const decisions = byPriority(cardItems(workBoard?.decisions, 'decision', nowMs))
+    const decisionMerge = mergeApprovals(src?.confirm, cardItems(workBoard?.decisions, 'decision', nowMs), nowMs)
+    const decisions = byPriority(decisionMerge.items)
     const todos = byPriority(cardItems(workBoard?.todos, 'todo', nowMs))
 
     // 줄바꿈돼도 둘째 줄이 글머리표 뒤에 맞춰지도록 머리·본문을 따로 둠
@@ -188,13 +186,9 @@ export const register: Register = on => {
         {counts !== undefined && <Text dimColor>{`허브 작업 중 ${counts.busy} · 승인창 ${counts.blocked}`}</Text>}
         {headline !== undefined && <Text bold wrap="wrap">{headline}</Text>}
 
-        {section(`🙋 결정 대기 (${decisions.length})`, C.pending, boardNote)}
+        {section(`🙋 결정 대기 (${decisions.length})`, C.pending, decisionMerge.stale ? `${boardNote} · ⚠ 확인 목록이 낡음 — 작업판 카드 우선` : boardNote)}
         {decisions.length === 0 && <Text dimColor>없음</Text>}
         {itemRows(decisions, C.pending)}
-
-        {section(`✋ 승인 대기 (${approvals.length})`, C.approve, approvalMerge.stale ? '⚠ 확인 목록이 낡음 — 작업판 카드 우선' : undefined)}
-        {approvals.length === 0 && <Text dimColor>없음</Text>}
-        {itemRows(approvals, C.approve)}
 
         {section(`🛠️ 내가 할 일 (${todos.length})`, C.todo, boardNote)}
         {todos.length === 0 && <Text dimColor>없음</Text>}

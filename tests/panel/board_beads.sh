@@ -30,14 +30,21 @@ D2=$("$SCRIPTS/board-ask" "패널 정본 옮길까?" --options "옮김|유지" -
 "$SCRIPTS/board-ask" --help >/dev/null; [ $? = 0 ] && ok "board-ask --help 종료 0" || ko "--help" ""
 DRY=$("$SCRIPTS/board-ask" "건조" --options "A|B" --dry-run); [ "$(b list --json --limit 0 | jq '[.[]|select(.title=="건조")]|length')" = 0 ] && ok "board-ask --dry-run: 작업판 그대로" || ko "dry-run" "$DRY"
 T=$("$SCRIPTS/board-ask" "키스토어 만들기" --kind user-todo)
-A=$("$SCRIPTS/board-ask" "PR 게시" --kind approval)
+A=$("$SCRIPTS/board-ask" "PR 게시" --gate approval)
+[ "$(b show "$A" --json | jq -r 'if type=="array" then .[0] else . end | (.labels|sort|join(","))')" = "gate:approval,kind:decision" ] && b show "$A" --json | jq -r 'if type=="array" then .[0] else . end | .description' | grep -q -- '- 승인' && ok "board-ask --gate approval: kind:decision + gate:approval, 선택지 기본 승인|보류" || ko "gate approval" "$(b show "$A" --json | jq -c 'if type=="array" then .[0] else . end | .labels')"
+L=$("$SCRIPTS/board-ask" "옛 승인 호출" --kind approval 2>"$SB/err")
+grep -q '폐지' "$SB/err" && [ "$(b show "$L" --json | jq -r 'if type=="array" then .[0] else . end | (.labels|sort|join(","))')" = "gate:approval,kind:decision" ] && ok "board-ask --kind approval(옛 호출): 폐지 안내 + 결정 카드로" || ko "옛 approval" "$(cat "$SB/err")"
+"$SCRIPTS/board-ask" "할 일에 게이트" --kind user-todo --gate approval >/dev/null 2>&1; [ $? = 2 ] && ok "board-ask: --gate 는 결정 카드에만(종료 2)" || ko "gate todo" ""
+O=$(b create "예전 승인 카드" -l kind:approval --json | id_of)
 
 # 수집기 원료
 P=$(env -u PANEL_GH_REPOS PANEL_ORCA=/usr/bin/false LRM_HUB_DIR="$SB/hub" bash "$SCRIPTS/panel_collect.sh" --print 2>/dev/null)
 v() { echo "$P" | jq -r ".sources.board.value$1"; }
 [ "$(echo "$P" | jq -r .sources.board.ok)" = true ] && ok "수집기: board 원료 ok" || ko "board ok" "$(echo "$P" | jq -c .sources.board | head -c 200)"
 [ "$(v '.decisions[0].id')" = "$D" ] && v '.decisions[0].desc' | grep -q '추천: 옮김' && ok "결정 대기 = kind:decision 열린 카드, 설명에 선택지·추천" || ko "decisions" "$(v '.decisions' | head -c 200)"
-[ "$(v '.todos[0].id')" = "$T" ] && [ "$(v '.approvals[0].id')" = "$A" ] && ok "할 일 = kind:user-todo, 승인 = kind:approval" || ko "todos/approvals" ""
+[ "$(v '.todos[0].id')" = "$T" ] && ok "할 일 = kind:user-todo" || ko "todos" ""
+[ "$(v '.approvals')" = null ] && [ "$(echo "$P" | jq -r --arg a "$A" --arg o "$O" '[.sources.board.value.decisions[] | select(.id==$a or .id==$o) | .gate] | join(",")')" = "approval,approval" ] && ok "승인 칸 없음: gate:approval·옛 kind:approval 카드도 결정 대기에 gate 배지로" || ko "gate 결정" "$(v '.decisions' | head -c 300)"
+[ "$(v '.decisions[0].gate')" = null ] && ok "일반 결정 카드는 gate null" || ko "gate null" "$(v '.decisions[0]')"
 [ "$(v '.doing[0].id')" = "$WORK" ] && [ "$(v '.doing[0].who')" = worker-1 ] && [ "$(v '.doing[0].beatAt|type')" = number ] && [ "$(v '.doing[0].startedAt|type')" = number ] && ok "진행 = in_progress 카드, 담당·시작·마지막 신호" || ko "doing" "$(v '.doing' | head -c 200)"
 [ "$(v '.blocked[0].id')" = "$STUCK" ] && ok "막힘 = blocked 카드" || ko "blocked" ""
 [ "$(v '.headline.id')/$(v '.headline.done')/$(v '.headline.total')" = "$EPIC/1/3" ] && ok "헤드라인 = 열린 epic, 진척 닫힌/전체" || ko "headline" "$(v '.headline')"

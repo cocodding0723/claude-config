@@ -94,8 +94,10 @@ export type AutoCard = {
   beatAt: number | null
   startedAt: number | null
   comments: number
-  /** 결정·할 일·승인 카드만. 선택지·추천 */
+  /** 결정·할 일 카드만. 선택지·추천 */
   desc?: string | null
+  /** 결정 카드의 승인 성격 배지(label gate:approval, 옛 kind:approval). 없으면 null */
+  gate?: string | null
 }
 
 /** 작업판(beads, ~/orca/board) 요약. 패널의 정본. 옛 파일은 doing·counts 만 있음 */
@@ -106,7 +108,6 @@ export type AutoWorkBoard = {
   blocked?: AutoCard[]
   decisions?: AutoCard[]
   todos?: AutoCard[]
-  approvals?: AutoCard[]
   headline?: { id: string; title: string; done: number; total: number; epics: number } | null
   recent?: Array<{ id: string; title: string; at: number | null; reason: string | null }>
 }

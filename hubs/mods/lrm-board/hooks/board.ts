@@ -3,7 +3,7 @@ import type { AutoBoard, AutoCard, AutoConfirm, AutoHub, AutoIdle, AutoProgress,
 
 /** 자동 칸이 이만큼 넘게 갱신되지 않으면 맨 위 ⚠️. 수집 주기 60초 + 한 회차 시간의 여유 */
 export const AUTO_STALE_MIN = 3
-/** 확인 목록 원료가 이만큼 갱신되지 않으면 낡은 것으로 보고 작업판 승인 카드를 앞세움 */
+/** 확인 목록 원료가 이만큼 갱신되지 않으면 낡은 것으로 보고 작업판 결정 카드를 앞세움 */
 export const CONFIRM_STALE_MIN = 10
 /** 파일 안 시각이 지금보다 이만큼 앞서면 시계가 틀린 것으로 보고 수정 시각을 씀 */
 const FUTURE_SLACK_MS = 2 * 60 * 1000
@@ -92,15 +92,6 @@ export const hubLine = (h: AutoHub, ws?: { children: number; active: number; war
   return parts.join(' · ')
 }
 
-const PENDING_STATE: Record<string, string> = { hold: '보류', conflict: '선택이 여러 개, 확인 필요' }
-
-/** ⏳ 결정 대기 한 줄. 번호 카드는 결정 번호와 보류·충돌 상태를 붙임 */
-export const pendingLine = (p: import('../types').AutoPendingItem): string => {
-  const head = p.id ? `${p.title} · ${p.id}` : p.title
-  const state = p.state ? ` — ${PENDING_STATE[p.state] ?? p.state}` : ''
-  return `${head}${state}${p.ageMin !== null ? `  · ${fmtAge(p.ageMin)}` : ''}`
-}
-
 /** 🔀 PR 줄. gh 가 --limit 만큼 꽉 차서 더 있을 수 있으면 숫자 뒤에 + */
 export const ghLine = (g: { open: number; ciFail: number; capped?: boolean }): string =>
   `열린 PR ${g.open}${g.capped === true ? '+' : ''} · CI 실패 ${g.ciFail}`
@@ -183,28 +174,31 @@ export const progressGroups = (v: AutoProgress | null | undefined): ProgressGrou
   return groups
 }
 
+/** 승인 성격 결정 앞에 붙는 배지. 승인 칸을 따로 두지 않고 결정 대기 한 칸에서 이 배지로만 구분(11-17) */
+export const APPROVAL_BADGE = '✋ 승인'
+
 /**
- * '내가 승인할 것' 칸: 확인 목록(수집기의 confirm 원료) 안 함 항목. 급함 3 → p 1.
- * 원료가 없으면 undefined. 작업판 승인 카드와의 합치기는 mergeApprovals
+ * 확인 목록(수집기의 confirm 원료) 안 함 항목 → 결정 대기 칸 항목(승인 배지). 급함 3 → p 1.
+ * 원료가 없으면 undefined. 작업판 결정 카드와의 합치기는 mergeApprovals
  */
 export const confirmApprovals = (v: AutoConfirm | null | undefined): BoardItem[] | undefined => {
   if (v === null || v === undefined || !Array.isArray(v.items)) return undefined
   return v.items.map(i => ({
     key: i.key,
     p: Math.max(1, 4 - (Number.isFinite(i.urgency) ? i.urgency : 1)),
-    title: i.hub !== '' && i.hub !== '미상' ? `${i.title} (${i.hub})` : i.title,
+    title: `${APPROVAL_BADGE} ${i.hub !== '' && i.hub !== '미상' ? `${i.title} (${i.hub})` : i.title}`,
     why: i.kind_label,
     how: i.how,
   }))
 }
 
-/** 제목 비교용: 공백 정리, 끝의 ' (허브)' 꼬리표 제거 */
-const titleKey = (t: string) => t.replace(/\s+/g, ' ').trim().replace(/ \([^()]*\)$/, '')
+/** 제목 비교용: 공백 정리, 앞의 승인 배지·끝의 ' (허브)' 꼬리표 제거 */
+const titleKey = (t: string) => t.replace(/\s+/g, ' ').trim().replace(APPROVAL_BADGE, '').trim().replace(/ \([^()]*\)$/, '')
 
 export type ApprovalMerge = { items: BoardItem[]; /** 확인 목록 원료가 낡음 → 작업판 카드를 앞세웠음 */ stale: boolean }
 
 /**
- * '내가 승인할 것' 칸 합치기: 확인 목록 원료 항목 + 제목·키가 겹치지 않는 작업판 승인 카드(hand).
+ * 결정 대기 칸 합치기: 확인 목록 원료 항목 + 제목·키가 겹치지 않는 작업판 결정 카드(hand).
  * 겹치면 원료 항목에 카드의 why·detail 을 붙임. 원료가 없거나 빈 배열이면 카드만.
  * 원료가 낡았으면(CONFIRM_STALE_MIN 초과·시각 없음) 카드를 앞세우고 겹치는 건 카드 것을 씀. 낡은 원료 항목에는 ⚠ 표시
  */
@@ -266,10 +260,10 @@ export const blockedLines = (v: AutoWorkBoard | null | undefined): string[] =>
 export const ANSWER_HOW: Record<string, string> = {
   decision: 'board-answer <id> "<답 원문>"',
   todo: '끝나면 bd close <id>',
-  approval: 'board-answer <id> "<승인·거절 원문>"',
 }
+const APPROVAL_HOW = 'board-answer <id> "<승인·보류 원문>"'
 
-/** 결정·할 일·승인 카드 → 카드 칸 항목. p 는 bd 우선순위(0 최우선)+1, 설명은 줄마다 detail */
+/** 결정·할 일 카드 → 카드 칸 항목. p 는 bd 우선순위(0 최우선)+1, 설명은 줄마다 detail. gate:approval 결정은 제목 앞에 승인 배지 */
 export const cardItems = (cards: AutoCard[] | undefined, kind: keyof typeof ANSWER_HOW, nowMs: number): BoardItem[] =>
   (cards ?? []).map(c => {
     const age = ageOf(c.createdAt, nowMs)
@@ -278,10 +272,10 @@ export const cardItems = (cards: AutoCard[] | undefined, kind: keyof typeof ANSW
     return {
       key: `board:${c.id}`,
       p: (Number.isFinite(c.p) ? c.p : 2) + 1,
-      title: c.title,
+      title: c.gate === 'approval' ? `${APPROVAL_BADGE} ${c.title}` : c.title,
       why,
       detail: (c.desc ?? '').split(/\n+/).map(l => l.trim()).filter(l => l !== ''),
-      how: (ANSWER_HOW[kind] ?? '').replace('<id>', c.id),
+      how: (c.gate === 'approval' ? APPROVAL_HOW : ANSWER_HOW[kind] ?? '').replace('<id>', c.id),
     }
   })
 
