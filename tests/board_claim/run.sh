@@ -109,6 +109,10 @@ assert m.age_hours({"updated_at": f(5), "heartbeat_at": f(0.1)}) < 0.2
 assert 4.9 < m.age_hours({"updated_at": f(5)}) < 5.1
 assert m.age_hours({}) == 0.0
 PY
+# 설치 목록: board/bin·board/lib 의 모든 파일이 links.tsv 에 있어야 ~/orca/board 에 걸림(빠지면 양식이 안내한 명령이 안 생김)
+REPO_TOP=$(cd "$HERE/../.." && pwd -P); miss=""
+for f in "$REPO_TOP"/board/bin/* "$REPO_TOP"/board/lib/*.py; do [ -f "$f" ] || continue; r=${f#"$REPO_TOP"/}; grep -q "^$r	orca/$r	link$" "$REPO_TOP/links.tsv" || miss="$miss $r"; done
+[ -z "$miss" ] && ok "board/bin·board/lib 파일이 모두 links.tsv 에 있음" || ko "links.tsv 누락" "$miss"
 
 printf '통과 %d · 실패 %d\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
