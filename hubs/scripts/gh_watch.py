@@ -17,6 +17,9 @@ import sys
 import tempfile
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # 설치 링크로 불려도 같은 폴더 모듈을 찾게
+import gh_watch_sinks as sinks  # noqa: E402
+
 DIR = os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
 GH = os.environ.get("LRM_GH", "gh")
 EVENTS = os.path.join(DIR, "gh-events.jsonl")
@@ -27,6 +30,7 @@ PIDFILE = os.path.join(DIR, "gh-watch.pid")
 LOG = os.path.join(DIR, "gh-watch.log")
 CONF = os.path.join(DIR, "gh-watch.env")
 PANEL_CONF = os.path.join(DIR, "panel.env")
+ACTIONS = os.path.join(DIR, "gh-watch-actions.json")
 
 # 조절값은 여기 한 곳. gh-watch.env(KEY=값)·같은 이름 환경 변수로 덮어씀
 DEFAULTS = {
@@ -432,6 +436,7 @@ def run_once(conf):
         state["errors"] = state.get("errors", 0) + 1
         log(conf, "cycle error=shape detail=%s" % type(e).__name__)
     append_events(conf, w.events)
+    sinks.dispatch(w.events, state, conf, ACTIONS, lambda m: log(conf, m))
     if err:
         interval = min(conf["GH_WATCH_ERROR_MAX"], conf["GH_WATCH_IDLE"] * 2 ** min(state["errors"], 6))
     elif busy(state):

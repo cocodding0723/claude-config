@@ -311,5 +311,63 @@ ok("Bearer" not in log_text and "token" not in log_text.lower() and "If-None-Mat
    "로그에 토큰·헤더 없음(결과 코드만)")
 e.close()
 
+# ---- 처리기: 작업판 카드·알림 상한·후속 명령 ----
+e = Env(GH_WATCH_NOTIFY_PER_HOUR=2)
+os.makedirs(e.env["BOARD_DIR"])
+json.dump([{"id": "c-a", "labels": ["branch:feat/b3"]},
+           {"id": "c-b", "labels": [], "description": "작업 메모\n브랜치: `feat/b4`"},
+           {"id": "c-c", "labels": [], "description": "branch: feat/b4-extra"},
+           {"id": "c-d", "labels": ["file:x"]}], open(os.path.join(e.fake, "cards.json"), "w"))
+out_file = os.path.join(e.d, "action.out")
+json.dump({"actions": [
+    {"on": "ci_done:failure", "mine": True, "enabled": True,
+     "cmd": ["/bin/sh", "-c", 'echo "$GH_WATCH_KIND $GH_WATCH_PR $GH_WATCH_RESULT" >> "$0"', out_file]},
+    {"on": "pr_merged", "cmd": ["/bin/sh", "-c", 'echo off >> "$0"', out_file]}]},
+    open(os.path.join(e.hub, "gh-watch-actions.json"), "w"))
+e.pr(1, ME)
+e.pr(9, ME, branch="feat/none")
+e.flush()
+e.cli("once")
+e.pr(3, "other", created=0)
+e.pr(4, ME, created=0)
+e.flush()
+e.cli("once")
+e.pr(3, "other", state="closed", created=5, updated=0, merged=0, merged_by="boss")
+e.pr(4, ME, state="closed", created=5, updated=0, merged=0, merged_by=ME)
+e.pr(1, ME, created=60, updated=0, sha="s1b")
+e.run(301, 1, conclusion="success", name="CI")
+e.run(302, 9, conclusion="failure", name="CI", jobs=[("build", "failure")])
+e.run(303, 9, conclusion="failure", name="Lint", jobs=[("lint", "failure")])
+e.flush()
+e.cli("once")
+
+
+def lines(name):
+    try:
+        return open(os.path.join(e.fake, name)).read().splitlines()
+    except OSError:
+        return []
+
+
+bc = lines("bd-comments.log")
+ok(sorted(x.split("\t")[0] for x in bc) == ["c-a", "c-a", "c-b", "c-b"], "카드 매칭: label·본문 브랜치 정확히, 비슷한 이름 제외", bc)
+ok(any("병합됨(병합 boss)" in x for x in bc) and all(x.endswith("\tgh-watch") for x in bc), "카드 코멘트: 병합자·작성자 gh-watch", bc)
+ok("board sent=" in open(os.path.join(e.hub, "gh-watch.log")).read() and "skip=2" in open(os.path.join(e.hub, "gh-watch.log")).read(),
+   "맞는 카드 없는 이벤트는 건너뜀(CI 실패 2건, 브랜치 feat/none)")
+nl = lines("notify.log")
+ok(len(nl) == 2 and nl[0].startswith("PR #3 병합됨"), "알림: 남이 병합한 것·내 CI 실패만, 시간당 상한 2", nl)
+ok("capped=1" in open(os.path.join(e.hub, "gh-watch.log")).read(), "알림 상한 넘은 건은 capped 로 기록")
+e.run(304, 9, conclusion="failure", name="Docs", jobs=[("docs", "failure")])
+e.flush()
+e.cli("once")
+ok(len(lines("notify.log")) == 2, "상한은 재시작(다음 회차)에도 유지", lines("notify.log"))
+act = open(out_file).read().splitlines() if os.path.exists(out_file) else []
+ok(act == ["ci_done 9 failure"] * 3, "후속 명령: 켠 규칙만, 이벤트는 환경 변수로", act)
+n_bc, n_act = len(lines("bd-comments.log")), len(act)
+e.cli("once")
+ok(len(lines("bd-comments.log")) == n_bc and len(open(out_file).read().splitlines()) == n_act, "같은 이벤트 처리기 1회")
+os.unlink(os.path.join(e.hub, "gh-watch-actions.json"))
+e.close()
+
 print("\n결과: 통과 %d, 실패 %d" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
