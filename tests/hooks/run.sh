@@ -36,6 +36,11 @@ exp "git-guard: 작업 브랜치 merge 로컬 브랜치는 확인" $GG 'git merg
 exp "git-guard: merge origin/dev 와 다른 대상 섞으면 확인" $GG 'git merge origin/dev feat/other' "$R" ask
 exp "git-guard: 연결 명령 안의 merge 는 확인" $GG 'git merge origin/dev && git push' "$R" ask
 exp "git-guard: --squash 는 확인" $GG 'git merge --squash origin/dev' "$R" ask
+export BOARD_DIR="$SB/gg-board"; mkdir -p "$BOARD_DIR"; (cd "$BOARD_DIR" && git init -q && bd init --quiet >/dev/null 2>&1 && bd create e -t epic --labels branch:feature/mail --json >/dev/null && bd create c -t epic --labels branch:feature/done --json | jq -r .id | xargs -I{} bd close {} --force >/dev/null 2>&1)
+exp "git-guard: 열린 기능 epic 통합 브랜치 받기는 허용(충돌 해결)" $GG 'git merge feature/mail' "$R" allow
+exp "git-guard: 닫힌 epic 브랜치는 확인" $GG 'git merge feature/done' "$R" ask
+exp "git-guard: epic 브랜치라도 --squash 는 확인" $GG 'git merge --squash feature/mail' "$R" ask
+unset BOARD_DIR
 git -C "$R" checkout -q -b sprint-20261113/b
 exp "git-guard: sprint 브랜치에서 merge origin/dev 허용" $GG 'git merge origin/dev' "$R" allow
 mk "$SB/sh" main

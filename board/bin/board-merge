@@ -138,7 +138,7 @@ fi
 # 4 시험 병합 + 검증
 if ! git -C "$REPO" merge --no-ff --no-commit "$BRANCH" >/dev/null 2>&1; then
   git -C "$REPO" merge --abort 2>/dev/null
-  die "$BRANCH → $INTO 충돌. 작업자가 $INTO 를 받아 해결한 뒤 다시 실행" 7
+  die "$BRANCH → $INTO 충돌. 작업자가 자기 작업 공간($BRANCH)에서 git merge $INTO 로 받아 해결·커밋(확인 창 없이 허용)하고 증거를 다시 만든 뒤 재실행" 7
 fi
 if [ -n "$VERIFY" ]; then
   if ! (cd "$REPO" && bash -c "$VERIFY"); then

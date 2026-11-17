@@ -90,7 +90,14 @@ if printf '%s' "$cmd" | grep -Eq '(^|[[:space:];&|(`])git[[:space:]]([^|;&]*[[:s
     while IFS= read -r piece; do
       d=$(printf '%s' "$piece" | jq -r '.dir // empty')
       [ -z "$MERGE_DIR" ] && MERGE_DIR=$d
-      printf '%s' "$piece" | jq -e --arg re "$MERGE_FLAG_RE" '(.flags | all(test($re))) and (.targets | length > 0) and (.targets | all(test("'"$SYNC_RE"'")))' >/dev/null 2>&1 || { allow=0; break; }
+      if ! printf '%s' "$piece" | jq -e --arg re "$MERGE_FLAG_RE" '(.flags | all(test($re))) and (.targets | length > 0) and (.targets | all(test("'"$SYNC_RE"'")))' >/dev/null 2>&1; then
+        # 작업판의 열린 기능 epic 통합 브랜치(label branch:)를 작업 브랜치로 받는 것도 허용: board-merge 종료 7(충돌) 해결 경로
+        [ -n "${EPIC_BRANCHES+x}" ] || EPIC_BRANCHES=$(cd "${BOARD_DIR:-$HOME/orca/board}" 2>/dev/null && bd list --type epic --limit 0 --json 2>/dev/null \
+          | jq -c '[.[] | select(.status != "closed") | (.labels // [])[] | select(startswith("branch:")) | .[7:]]' 2>/dev/null)
+        printf '%s' "$piece" | jq -e --arg re "$MERGE_FLAG_RE" --argjson eb "${EPIC_BRANCHES:-[]}" \
+          '(.flags | all(test($re))) and (.targets | length > 0) and (.targets | all(. as $t | $eb | index($t)))' >/dev/null 2>&1 || { allow=0; break; }
+        why_epic=1
+      fi
       if [ -n "$d" ]; then
         pb=$(git -C "$d" symbolic-ref --short -q HEAD 2>/dev/null)
         { printf '%s' "$pb" | grep -Eq "$WORK_RE" && ! is_shared "$pb"; } || { allow=0; break; }
@@ -101,7 +108,7 @@ if printf '%s' "$cmd" | grep -Eq '(^|[[:space:];&|(`])git[[:space:]]([^|;&]*[[:s
       fi
     done < <(printf '%s' "$scope" | jq -c '.pieces[]')
     if [ "$allow" = 1 ]; then
-      jq -cn --arg r "$why 로 원격 기준 브랜치 받아오기: 확인 없이 허용" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",permissionDecisionReason:$r}}'; exit 0
+      jq -cn --arg r "$why 로 ${why_epic:+기능 통합 브랜치·}원격 기준 브랜치 받아오기: 확인 없이 허용" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow",permissionDecisionReason:$r}}'; exit 0
     fi
   fi
 fi
@@ -123,7 +130,7 @@ if [ -n "$newbr" ] && ! printf '%s' "$newbr" | grep -Eq "$PREFIX_RE|$SHARED_RE";
 fi
 
 # ---- ask 승격 ----
-printf '%s' "$cmd" | grep -Eq '(^|[[:space:];&|(`])git[[:space:]]([^|;&]*[[:space:]])?merge([[:space:]]|$)' && ask "git merge 확인 필요 (작업 브랜치로 origin/dev·origin/main 받아오기만 확인 없이 허용됩니다)."
+printf '%s' "$cmd" | grep -Eq '(^|[[:space:];&|(`])git[[:space:]]([^|;&]*[[:space:]])?merge([[:space:]]|$)' && ask "git merge 확인 필요 (작업 브랜치로 origin/dev·origin/main·열린 기능 epic 통합 브랜치 받아오기만 확인 없이 허용됩니다)."
 printf '%s' "$cmd" | grep -Eq -- '--force-with-lease' && ask "force-with-lease push — 원격 히스토리가 바뀝니다. 확인 필요."
 printf '%s' "$cmd" | grep -Eq "${G}(commit)[^|;&]*--no-verify" && ask "--no-verify는 pre-commit 훅을 건너뜁니다. 확인 필요."
 printf '%s' "$cmd" | grep -Eq "${G}(pull)\b" && ! printf '%s' "$cmd" | grep -Eq "${G}(pull)[^|;&]*--rebase" \
