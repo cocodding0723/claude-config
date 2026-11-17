@@ -1,0 +1,20 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName "Apple SD Gothic Neo"
+left to right direction
+rectangle "사용자" as user
+rectangle "메인 세션\n(게임 저장소 체크아웃에서 시작)" as main
+rectangle "main-work-guard 훅\n(PreToolUse)" as guard
+rectangle "기능 코디네이터\n(feature_open.sh)" as coord
+rectangle "하위 에이전트\n(Agent 도구)" as sub
+rectangle "게임 저장소 파일" as repo
+rectangle "워커" as worker
+user --> main : 요청
+main --> guard : 모든 도구 호출
+guard --> coord : 통과 feature_open.sh·bd·읽기
+guard ..> sub : 거부 + 안내
+guard ..> repo : 거부 + 안내
+guard ..> worker : 거부 + 안내
+coord --> worker
+worker --> repo
+@enduml

@@ -1,0 +1,19 @@
+@startuml
+skinparam shadowing false
+skinparam defaultFontName "Apple SD Gothic Neo"
+left to right direction
+rectangle "사용자" as user
+rectangle "메인 세션\n(게임 저장소 체크아웃에서 시작)" as main
+rectangle "기능 코디네이터\n(feature_open.sh)" as coord
+rectangle "하위 에이전트\n(Agent 도구)" as sub
+rectangle "게임 저장소 파일" as repo
+rectangle "워커" as worker
+user --> main : 요청
+main --> coord : 의도한 길
+main --> sub : 막는 장치 없음
+main --> repo : Edit·Write·Bash 직접 수정
+main --> worker : orca worker-start 직접 사용
+coord --> worker
+worker --> repo
+sub --> repo
+@enduml
