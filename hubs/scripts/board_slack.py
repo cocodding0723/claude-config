@@ -8,8 +8,8 @@
        직접 입력이 질문이면 코멘트만 남기고 카드는 열어 둠. 작업판 카드가 아닌 결정 번호는 손대지 않음(옛 허브·메인 전달 그대로).
 자동 보내기 스위치: <LRM_HUB_DIR>/.board-slack.on 파일이 있을 때만 board-ask 가 새 결정 카드를 바로 보냄. 기본 꺼짐(봇 꺼짐).
 
-양식 검사: 알림 스크립트(slack_notify.sh)에 건조 경로가 없어, 같은 폴더 slack_notify.sh 안의 양식 A 검사 코드(FORM_PY)를 꺼내 그대로 돌림.
-       push --dry-run 도 이 검사를 거치므로 건조 실행 통과 = 실제 전송 통과. 본문 티켓 번호(LRM-n)·커밋 해시는 맨 아래 '참고:' 줄로 자동 이동하고,
+양식 검사: 알림 스크립트(slack_notify.sh)에 건조 경로가 없어, 같은 폴더 slack_notify.sh 안의 양식 A 검사 코드(FORM_PY: 양식 A·선택지 80자·이모지 이름)와
+       hub_report.py check-text(본문 로컬 경로·비밀 첨부)를 꺼내 그대로 돌림. push --dry-run 도 이 검사를 거치므로 건조 실행 통과 = 실제 전송 통과. 본문 티켓 번호(LRM-n)·커밋 해시는 맨 아래 '참고:' 줄로 자동 이동하고,
        제목(첫 줄)이 40자를 넘으면 카드에 '보강 필요: 제목 40자' 코멘트를 남기고 거부. 전송 때 --card 로 slack-sent.jsonl 에 카드 id 를 남김.
 
 사용: board_slack.py push <카드 id> [--dry-run] [--json]
@@ -41,6 +41,7 @@ PREVIEW = os.environ.get("LRM_PREVIEW") or os.path.join(HUB_DIR, "html_preview.s
 PREVIEW_TIMEOUT = 60
 NOTIFY_SRC = os.environ.get("LRM_NOTIFY_SRC") or os.path.join(os.path.dirname(os.path.realpath(__file__)), "slack_notify.sh")  # 양식 검사 코드가 든 파일. NOTIFY 는 시험에서 가짜로 바뀌므로 따로 둠
 FORM_OPEN, FORM_CLOSE = "read -r -d '' FORM_PY <<'PYEOF' || true\n", "\nPYEOF\n"  # slack_notify.sh 의 파이썬 본체를 감싼 heredoc 표식
+HUB_REPORT = os.environ.get("LRM_HUB_REPORT") or os.path.join(os.path.dirname(NOTIFY_SRC), "hub_report.py")  # 경로·비밀 파일 검사. 알림 스크립트와 같은 폴더·같은 환경 변수
 FORM_FAIL_LEVELS = ("reject", "hard")  # 실제 전송이 막힐 수 있는 수준(strict 기준). warn 은 통과
 CARD_ID_RE = re.compile(r"^[a-z][a-z0-9]{1,15}-[a-z0-9]{1,12}(\.[0-9]{1,3})*$")  # slack_notify --card 형식. 틀리면 전송이 거부돼 이 경우엔 --card 를 생략
 REF_HEAD = "참고:"
@@ -99,24 +100,51 @@ def move_refs(lines):
     return out + ([REF_HEAD + " " + REF_SEP.join(refs)] if refs else [])
 
 
-def form_problems(text):
-    """알림 스크립트와 같은 양식 A 검사(decide·답 줄 안내 있음)를 돌려 막힐 위반 문구 목록을 돌려줌. 검사 코드를 못 꺼내면 Fail(3)"""
+def form_code():
+    """slack_notify.sh 안의 양식 검사 코드(FORM_PY) 본문. 못 꺼내면 Fail(3)"""
     try:
         with open(NOTIFY_SRC, encoding="utf-8") as f:
             src = f.read()
-        code = src.split(FORM_OPEN, 1)[1].split(FORM_CLOSE, 1)[0]
+        return src.split(FORM_OPEN, 1)[1].split(FORM_CLOSE, 1)[0]
     except (OSError, IndexError):
         raise cards.Fail(3, f"양식 검사 코드를 못 찾음({NOTIFY_SRC}). 조치: slack_notify.sh 가 같은 폴더에 있고 FORM_PY 구간이 그대로인지 확인")
+
+
+def run_form(args, text):
+    """FORM_PY 를 알림 스크립트와 같은 방식(-I, LRM_SCRIPT_DIR)으로 돌려 CompletedProcess 반환. 실행 자체가 실패하면 Fail(3)"""
     env = dict(os.environ, LRM_SCRIPT_DIR=os.path.dirname(NOTIFY_SRC))
     try:
-        p = subprocess.run([sys.executable, "-I", "-c", code, "check", "decide", "1"], input=text, capture_output=True, text=True,
-                           timeout=SEND_TIMEOUT, env=env)
+        return subprocess.run([sys.executable, "-I", "-c", form_code(), *args], input=text, capture_output=True, text=True,
+                              timeout=SEND_TIMEOUT, env=env)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise cards.Fail(3, f"양식 검사 실행 실패({type(e).__name__}). 조치: python3 동작 확인")
+
+
+def form_problems(text):
+    """알림 스크립트와 같은 양식 A 검사(decide·답 줄 안내 있음)를 돌려 막힐 위반 문구 목록을 돌려줌. 검사 코드를 못 꺼내면 Fail(3)"""
+    p = run_form(["check", "decide", "1"], text)
     if p.returncode != 0:
         raise cards.Fail(3, f"양식 검사 실패: {p.stderr.strip()[:200]}. 조치: slack_notify.sh 양식 검사 코드 확인")
     rows = [ln.split("\t", 2) for ln in p.stdout.splitlines() if ln.count("\t") >= 2]
     return [r[2] for r in rows if r[0] in FORM_FAIL_LEVELS]
+
+
+def option_problem(opts, rec, did):
+    """선택지 문구 검사(80자·이모지 이름·제어 문자 등). 알림 스크립트가 FORM_PY opts 로 막는 것과 같은 코드. 문제 없으면 빈 문자열"""
+    p = run_form(["opts", f"={rec}", "", f"={did}", "", ""], opts)
+    return p.stderr.strip() if p.returncode == 2 else ""
+
+
+def path_problem(text, doc):
+    """본문에 첨부 아닌 로컬 문서 경로·비밀 파일 첨부가 있는지. 알림 스크립트가 hub_report.py check-text 로 막는 것과 같은 검사. 문제 없으면 빈 문자열"""
+    if not os.path.isfile(HUB_REPORT):
+        raise cards.Fail(3, f"경로 검사 도구를 못 찾음({HUB_REPORT}). 조치: hub_report.py 가 slack_notify.sh 와 같은 폴더에 있는지 확인")
+    try:
+        p = subprocess.run([sys.executable, "-I", HUB_REPORT, "check-text", "--kind", "decide", "--hub-dir", HUB_DIR, "--attached", doc],
+                           input=text, capture_output=True, text=True, timeout=SEND_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise cards.Fail(3, f"경로 검사 실행 실패({type(e).__name__}). 조치: python3 동작 확인")
+    return (p.stderr or p.stdout).strip().removeprefix("오류: ") if p.returncode != 0 else ""
 
 
 def need_title(card_id, n, dry_run):
@@ -155,13 +183,18 @@ def notify_args(card):
     if CARD_ID_RE.match(card["id"]):
         args += ["--card", card["id"]]
     if d["recommend"] in names:
-        args += ["--recommend", str(names.index(d["recommend"]) + 1)]
+        rec_no = names.index(d["recommend"]) + 1
+        args += ["--recommend", str(rec_no)]
     else:
         raise cards.Fail(2, f"{card['id']} 추천 없음. 조치: board-ask --recommend <선택지> 로 다시 만들기")
     text = "\n".join(body)
     bad = form_problems(text)  # 건조 실행도 실제 전송과 같은 검사를 거치게 함
     if bad:
         raise cards.Fail(2, f"{card['id']} Slack 양식 A 위반: {' / '.join(bad)}")
+    for check in (lambda: option_problem(opts, rec_no, decision_id(card["id"])), lambda: path_problem(text, doc)):  # 알림 스크립트가 따로 막는 나머지 검사
+        why = check()
+        if why:
+            raise cards.Fail(2, f"{card['id']} Slack 전송 검사 위반: {why}")
     why = decide_card.problem(text, opts, decision_id(card["id"]))  # 실제 전송 때 막힐 규칙(글자 수 상한 등)을 보내기 전·건조 실행에서 미리 확인
     if why:
         raise cards.Fail(2, f"{card['id']} Slack 카드 규칙 위반: {why}")

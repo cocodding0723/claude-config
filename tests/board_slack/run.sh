@@ -157,6 +157,24 @@ LRM_NOTIFY_SRC="$SB/notify_src.sh" python3 -I "$BS" push "$G1" --dry-run 2>"$SB/
 [ "$rc" = 2 ] && grep -q '양식 A 위반' "$SB/err" && ok "건조 실행이 slack_notify 양식 검사 코드를 그대로 돌림(검사가 바뀌면 결과도 바뀜)" || ko "양식 검사 연동" "rc=$rc $(cat "$SB/err")"
 LRM_NOTIFY_SRC="$SB/없음.sh" python3 -I "$BS" push "$G1" --dry-run 2>"$SB/err" >/dev/null; rc=$?
 [ "$rc" = 3 ] && grep -q '조치' "$SB/err" && ok "양식 검사 코드를 못 찾으면 통과시키지 않고 거부(종료 3)" || ko "검사 코드 없음" "rc=$rc"
+# 알림 스크립트가 따로 막는 나머지 3종도 건조 실행에서 거부(건조 통과 = 실제 통과)
+mkcard3() {  # mkcard3 <제목> <배경> <선택지 목록> [추천 이름=A]
+  b create "$1" -l kind:decision -p 1 -d "$(printf '선택지:\n%s\n추천: %s\n배경: %s\n용어: 없음\n설명서: %s' "$3" "${4:-A}" "$2" "$DOC")" --json | jq -r 'if type=="array" then .[0].id else .id end'
+}
+OKOPT=$'- A => 가 됨\n- B => 나 됨'
+X0=$(mkcard3 "검사 3종 통과 카드" "시안이 두 벌이라 하나로 맞춰야 화면 작업을 이어 갈 수 있음" "$OKOPT")
+python3 -I "$BS" push "$X0" --dry-run >/dev/null 2>"$SB/err"; rc=$?
+[ "$rc" = 0 ] && ok "대조군: 문제 없는 카드는 건조 실행 통과" || ko "대조군" "rc=$rc $(cat "$SB/err")"
+X1=$(mkcard3 "로컬 경로 든 카드" "시안이 두 벌이라 ~/Documents/spec/plan.html 을 보고 하나로 맞춰야 함" "$OKOPT")
+python3 -I "$BS" push "$X1" --dry-run 2>"$SB/err" >/dev/null; rc=$?
+[ "$rc" = 2 ] && grep -q 'plan.html' "$SB/err" && ok "건조 실행: 본문에 첨부 아닌 로컬 문서 경로가 있으면 거부" || ko "로컬 경로" "rc=$rc $(cat "$SB/err")"
+L80=$(printf '가%.0s' $(seq 1 81))
+X2=$(mkcard3 "선택지 80자 카드" "시안이 두 벌이라 하나로 맞춰야 화면 작업을 이어 갈 수 있음" $'- '"$L80"$' => 가 됨\n- B => 나 됨' B)
+python3 -I "$BS" push "$X2" --dry-run 2>"$SB/err" >/dev/null; rc=$?
+[ "$rc" = 2 ] && grep -q '81자' "$SB/err" && grep -q '1번' "$SB/err" && ok "건조 실행: 선택지 문구가 80자를 넘으면 거부" || ko "선택지 80자" "rc=$rc $(cat "$SB/err")"
+X3=$(mkcard3 "선택지 이모지 카드" "시안이 두 벌이라 하나로 맞춰야 화면 작업을 이어 갈 수 있음" $'- 로켓 :rocket: 발사 => 가 됨\n- B => 나 됨' B)
+python3 -I "$BS" push "$X3" --dry-run 2>"$SB/err" >/dev/null; rc=$?
+[ "$rc" = 2 ] && grep -q '이모지 이름' "$SB/err" && ok "건조 실행: 선택지 문구에 :이름: 이모지가 있으면 거부" || ko "선택지 이모지" "rc=$rc $(cat "$SB/err")"
 # 동시 push 2개 → 전송 1번
 H1=$("$SCR/board-ask" --runnable no "동시에 보낼 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "시안이 두 벌이라 하나로 맞춤" --terms 없음 --doc "$DOC")
 rm -f "$SB/notify.args"* "$SB/notify.n"; touch "$SB/slow"
