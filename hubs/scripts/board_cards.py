@@ -1,7 +1,7 @@
 """작업판(bd) 사람 손 카드 도우미. 진입점은 board-ask·board-answer(같은 폴더).
 패널(lrm-board)은 kind:decision·kind:user-todo 열린 카드를 결정 대기·할 일 칸으로 그림.
 승인 성격(PR 게시·병합 허락 등)은 따로 종류를 두지 않고 결정 카드에 label gate:approval 을 붙여 배지로만 구분(11-17, kind:approval 폐지).
-환경: BOARD_DIR(기본 ~/orca/board), BOARD_BD(기본 bd).
+환경: BOARD_DIR(기본 ~/orca/board), BOARD_BD(기본: PATH 의 bd, 없으면 /opt/homebrew/bin·/usr/local/bin).
 결정 카드는 '돌려 보면 알 수 있나'(--runnable) 칸이 필수. yes 면 카드를 만들지 않음 — 동작·시간·배치·출력처럼 실행해 보면 아는 사실은
 사람에게 묻지 않고 시제품·실측으로 판정함(제품 방향·취향만 묻는다). 승인 성격(--gate approval)은 사실 질문이 아니라 제외.
 결정 카드는 Slack 번호 카드로 그대로 보낼 수 있는 칸(배경·용어·추천·선택지 2~4개와 각 결과)과 HTML 설명서(--doc)가 필수. 없으면 종료 2 —
@@ -11,19 +11,25 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import unicodedata
 from html.parser import HTMLParser
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # -I 실행에서도 같은 폴더의 board_slack 을 찾음
 
 KINDS = ("decision", "user-todo")
+BD_CANDIDATES = ("/opt/homebrew/bin/bd", "/usr/local/bin/bd")  # launchd 기본 PATH(/usr/bin:/bin)에는 bd 가 없어 버튼 답이 카드로 못 갔음(11-17)
 LEGACY_APPROVAL = "approval"  # 옛 --kind approval. decision + gate:approval 로 바꿔 받음
 GATES = ("approval",)
 APPROVAL_OPTIONS = ("승인 => 이대로 진행", "보류 => 진행하지 않고 카드를 열어 둠")
 REASON_MAX = 80
 OPTION_MAX = 4  # Slack 번호 카드 선택지 상한(board_slack 도 이 값을 씀)
 RESULT_SEP = "=>"  # 선택지 '문구 => 고르면 달라지는 점'
+TITLE_MAX = 40  # 결정 카드 제목(Slack 첫 줄) 상한. slack_notify 양식 A 규칙 1 과 같은 값이라 board_slack 도 이 값을 씀
+TITLE_DROP = ("So", "Sk", "Cf", "Mn", "Me")  # 알림 스크립트가 글자 수에서 빼는 이모지·결합 문자 범주
+TITLE_EMOJI = re.compile(r"(?<!\w):[\w+\-]{1,40}:(?!\w)")  # :이름: 이모지 코드도 제외
 # 결정 카드 HTML 설명서 검사 기준(검사는 doc_gaps 한 함수). board-ask 와 board_slack 전송 직전이 같이 씀
 DOC_LINE = "설명서"  # 카드 설명의 '설명서: <html 절대 경로>' 줄 머리
 DOC_EXT = ".html"
@@ -64,6 +70,7 @@ Slack 자동 보내기 스위치(~/.config/lrm-hubs/.board-slack.on)가 켜져 �
   board-ask "릴리스 키스토어 만들기" --kind user-todo --why "출시 전 Google 로그인 필요"
 
 결정 카드 필수 칸: --options(2~4개, 각 '문구 => 결과') · --recommend · --background · --terms(없으면 '없음') · --doc(HTML 설명서) · --runnable no
+결정 카드 제목은 40자 이내(이모지·공백 제외). 넘으면 종료 2. 티켓·커밋 번호는 보낼 때 맨 아래 '참고:' 줄로 자동 이동
 
 출력: 카드 id 한 줄(--json 이면 {"id","created","kind"})"""
 
@@ -82,8 +89,13 @@ class Fail(Exception):
         self.code = code
 
 
+def find_bd():
+    """bd 실행 파일. BOARD_BD → PATH → 알려진 설치 위치 순. 못 찾으면 맨 'bd'"""
+    return os.environ.get("BOARD_BD") or shutil.which("bd") or next((p for p in BD_CANDIDATES if os.path.exists(p)), "bd")
+
+
 def bd(*args):
-    cmd = [os.environ.get("BOARD_BD", "bd"), *args]
+    cmd = [find_bd(), *args]
     try:
         p = subprocess.run(cmd, cwd=os.environ.get("BOARD_DIR") or os.path.expanduser("~/orca/board"),
                            capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
@@ -99,6 +111,12 @@ def bd_json(*args):
         return json.loads(bd(*args, "--json") or "null")
     except ValueError:
         raise Fail(3, f"bd {args[0]} 출력이 JSON 아님. 조치: bd 버전 확인")
+
+
+def title_len(title):
+    """알림 스크립트(slack_notify 양식 A 규칙 1)와 같은 방식의 제목 글자 수: 이모지·공백 제외"""
+    t = TITLE_EMOJI.sub("", unicodedata.normalize("NFC", title.split("\n", 1)[0]))
+    return sum(1 for c in t if unicodedata.category(c) not in TITLE_DROP and not c.isspace())
 
 
 def option_name(opt):
@@ -290,6 +308,9 @@ def ask(a):
     title = a.question.strip()
     if not title:
         raise Fail(2, "질문이 비었음. 조치: 첫 인자에 질문 한 문장")
+    if a.kind in ("decision", LEGACY_APPROVAL) and title_len(title) > TITLE_MAX:
+        raise Fail(2, f"결정 카드 제목이 {title_len(title)}자(최대 {TITLE_MAX}). Slack 첫 줄 규칙에 걸려 못 보냄. "
+                      "조치: 제목을 40자 안으로 줄이고 세부는 --background 로 옮김")
     if a.kind == LEGACY_APPROVAL:
         print("board-ask: --kind approval 은 폐지됨 → 결정 카드 + gate:approval 로 만듦. 조치: --gate approval 사용", file=sys.stderr)
         a.kind, a.gate = "decision", "approval"

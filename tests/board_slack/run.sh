@@ -9,13 +9,14 @@ ko() { FAIL=$((FAIL + 1)); printf 'FAIL  %s — %s\n' "$1" "${2:-}"; }
 SB=$(mktemp -d "${TMPDIR:-/tmp}/board-slack.XXXXXX"); trap 'rm -rf "${SB:?}"' EXIT
 export BOARD_DIR="$SB/board" LRM_HUB_DIR="$SB/hub" LRM_NOTIFY="$SB/notify.sh" LRM_PREVIEW="$SB/preview.sh"
 mkdir -p "$BOARD_DIR" "$LRM_HUB_DIR"
-(cd "$BOARD_DIR" && git init -q && bd init --prefix t -q >/dev/null 2>&1) || { echo "임시 작업판 준비 실패"; exit 1; }
+(cd "$BOARD_DIR" && git init -q && bd init --prefix tst -q >/dev/null 2>&1) || { echo "임시 작업판 준비 실패"; exit 1; }
 cat > "$LRM_NOTIFY" <<'SH'
 #!/bin/bash
 D=$(dirname "$0"); N=$(cat "$D/notify.n" 2>/dev/null || echo 0); N=$((N + 1)); echo "$N" > "$D/notify.n"
 F=notify.args; [ "$N" = 1 ] || F=notify.args$N
 for a in "$@"; do printf '%s\n' "$a"; done > "$D/$F"
 [ -f "$D/attachfail" ] && echo "경고: 카드는 보냈지만 파일 첨부 실패(시험)" >&2
+[ -f "$D/slow" ] && sleep 1  # 동시 전송 시험: 앞 전송이 끝나기 전에 뒤 전송이 시작될 틈
 echo "ok 1794383274.123456"
 SH
 cat > "$LRM_PREVIEW" <<'SH'
@@ -128,5 +129,45 @@ F1=$("$SCR/board-ask" --runnable no "첨부 실패 결정" --options "A => 가 �
 touch "$SB/attachfail"
 [ "$(python3 -I "$BS" push "$F1" --json 2>/dev/null | jq -r .doc)" = failed ] && b comments "$F1" --json | jq -r '.[].text' | grep -q '설명서 첨부에 실패' && ok "설명서 첨부 실패는 결과 doc=failed 와 카드 코멘트로 남김" || ko "첨부 실패" ""
 rm -f "$SB/attachfail"
+
+# ── 양식 검사(건조 실행=실제)·참고 줄·제목 40자·--card·잠금·launchd 환경 ──
+rm -f "$SB/notify.args"* "$SB/notify.n"
+G1=$("$SCR/board-ask" --runnable no "번호 옮길 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "LRM-462 에서 시작했고 커밋 3856f0998 이 원인임" --terms "LRM-7 은 티켓" --doc "$DOC")
+OUT=$(python3 -I "$BS" push "$G1" --dry-run --json 2>"$SB/err"); rc=$?
+TXT=$(echo "$OUT" | jq -r '.args | .[(index("--decision-id")+2):-1] | .[]')
+[ "$rc" = 0 ] && echo "$TXT" | tail -1 | grep -qx '참고: LRM-462 · 3856f0998 · LRM-7' && ! echo "$TXT" | sed '$d' | grep -Eq 'LRM-[0-9]|3856f0998' && echo "$TXT" | grep -q '관련 티켓 에서 시작했고 커밋 관련 커밋 이' && ok "본문 티켓·커밋 번호를 맨 아래 '참고:' 줄로 옮기고 본문은 쉬운 말로 바꿈(건조 실행 통과)" || ko "참고 줄" "rc=$rc $OUT $(cat "$SB/err")"
+echo "$OUT" | jq -e '.args | index("--card") as $i | .[$i+1] == "'"$G1"'"' >/dev/null && ok "알림 스크립트 호출에 --card <카드 id>" || ko "--card" "$OUT"
+LONG="제목이 사십 글자를 넘어 슬랙 첫 줄 규칙에 걸리는 아주 긴 결정 카드 이름입니다 정말로 매우 많이 깁니다 계속 이어집니다"
+L1=$(b create "$LONG" -l kind:decision -p 1 -d "$(printf '선택지:\n- A => 가 됨\n- B => 나 됨\n추천: A\n배경: 시안이 두 벌이라 하나로 맞춤\n용어: 없음\n설명서: %s' "$DOC")" --json | jq -r 'if type=="array" then .[0].id else .id end')
+python3 -I "$BS" push "$L1" --dry-run 2>"$SB/err" >/dev/null; rc=$?
+[ "$rc" = 2 ] && grep -q '제목이' "$SB/err" && grep -q '조치' "$SB/err" && ! b comments "$L1" --json | grep -q '보강 필요' && ok "제목 40자 초과: 건조 실행은 거부만(코멘트 없음)" || ko "긴 제목 dry" "rc=$rc $(cat "$SB/err")"
+rm -f "$SB/notify.args"*
+python3 -I "$BS" push "$L1" 2>/dev/null >&2; python3 -I "$BS" push "$L1" 2>/dev/null >&2; rc=$?
+[ "$rc" = 2 ] && [ ! -f "$SB/notify.args" ] && [ "$(b comments "$L1" --json | jq '[.[]|select(.text|startswith("보강 필요: 제목 40자"))]|length')" = 1 ] && ok "실제 push 는 거부하고 '보강 필요: 제목 40자' 코멘트를 한 번만 남김" || ko "긴 제목 push" "rc=$rc"
+"$SCR/board-ask" --runnable no "$LONG" --options "A => 가 됨|B => 나 됨" --recommend A --background "배경" --terms 없음 --doc "$DOC" >/dev/null 2>"$SB/err"; rc=$?
+[ "$rc" = 2 ] && grep -q '40자' "$SB/err" && grep -q '조치' "$SB/err" && [ -z "$(b list --json --limit 0 | jq -r --arg t "$LONG" '.[]|select(.title==$t and (.labels|index("kind:decision")) and (.id!="'"$L1"'"))|.id')" ] && ok "board-ask 가 제목 40자 초과를 거부(원인·조치)" || ko "board-ask 제목" "rc=$rc $(cat "$SB/err")"
+# 건조 실행이 알림 스크립트의 양식 검사를 실제로 돌리는지: 검사 코드를 바꾼 사본으로 가리키면 그 결과를 따라야 함
+python3 - "$SCR/slack_notify.sh" "$SB/notify_src.sh" <<'PY'
+import sys
+s = open(sys.argv[1], encoding="utf-8").read()
+open(sys.argv[2], "w", encoding="utf-8").write(s.replace("len(head) > 40", "len(head) > 3", 1))
+PY
+cp "$SCR/decide_card.py" "$SB/"
+LRM_NOTIFY_SRC="$SB/notify_src.sh" python3 -I "$BS" push "$G1" --dry-run 2>"$SB/err" >/dev/null; rc=$?
+[ "$rc" = 2 ] && grep -q '양식 A 위반' "$SB/err" && ok "건조 실행이 slack_notify 양식 검사 코드를 그대로 돌림(검사가 바뀌면 결과도 바뀜)" || ko "양식 검사 연동" "rc=$rc $(cat "$SB/err")"
+LRM_NOTIFY_SRC="$SB/없음.sh" python3 -I "$BS" push "$G1" --dry-run 2>"$SB/err" >/dev/null; rc=$?
+[ "$rc" = 3 ] && grep -q '조치' "$SB/err" && ok "양식 검사 코드를 못 찾으면 통과시키지 않고 거부(종료 3)" || ko "검사 코드 없음" "rc=$rc"
+# 동시 push 2개 → 전송 1번
+H1=$("$SCR/board-ask" --runnable no "동시에 보낼 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "시안이 두 벌이라 하나로 맞춤" --terms 없음 --doc "$DOC")
+rm -f "$SB/notify.args"* "$SB/notify.n"; touch "$SB/slow"
+python3 -I "$BS" push "$H1" --json >"$SB/o1" 2>&1 & P1=$!
+python3 -I "$BS" push "$H1" --json >"$SB/o2" 2>&1 & P2=$!
+wait $P1 $P2; rm -f "$SB/slow"
+SENT=$(cat "$SB/o1" "$SB/o2" | jq -r 'select(.sent==true)|.id' | wc -l | tr -d ' ')
+[ "$SENT" = 1 ] && [ "$(cat "$SB/o1" "$SB/o2" | jq -r 'select(.why=="already")|.id' | wc -l | tr -d ' ')" = 1 ] && [ ! -f "$SB/notify.args3" ] && ok "동시 push 2개 → 카드 전송 1번(나머지는 already)" || ko "동시 push" "sent=$SENT $(cat "$SB/o1" "$SB/o2")"
+# launchd 최소 환경에서 결정 번호 → 카드 조회
+DIDH=$(python3 -I "$BS" push "$H1" --json | jq -r .decisionId)
+OUT=$(env -i PATH=/usr/bin:/bin HOME="$HOME" BOARD_DIR="$BOARD_DIR" LRM_HUB_DIR="$LRM_HUB_DIR" python3 -I -c 'import sys;sys.path.insert(0,sys.argv[1]);import board_slack;print(board_slack.card_for(sys.argv[2]))' "$SCR" "$DIDH" 2>&1)
+[ "$OUT" = "$H1" ] && ok "launchd 최소 환경(PATH=/usr/bin:/bin)에서도 결정 번호로 작업판 카드를 찾음" || ko "launchd 환경 card_for" "$OUT"
 printf '통과 %d · 실패 %d\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
