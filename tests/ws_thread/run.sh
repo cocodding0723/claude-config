@@ -5,4 +5,7 @@ set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 export BOARD_INCIDENTS="${TMPDIR:-/tmp}/ws-thread-incidents.$$.jsonl"   # 실제 작업판 사건 기록 보호
 trap 'rm -f "$BOARD_INCIDENTS"' EXIT
-cd "$HERE" && python3 -m unittest discover -v -s . -p 'test_*.py' "$@"
+rc=0
+(cd "$HERE" && python3 -m unittest discover -v -s . -p 'test_*.py' "$@") || rc=1
+[ $# -gt 0 ] || bash "$HERE/lifecycle.sh" || rc=1   # 인자(-k 등)로 일부만 돌릴 때는 셸 시험을 건너뜀
+exit "$rc"

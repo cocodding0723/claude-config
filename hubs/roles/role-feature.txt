@@ -9,7 +9,7 @@
 - 순차 카드는 앞 카드를 맡은 작업자가 이어 받는다(새 작업자를 띄우지 않음). 모든 카드는 공통 결정 칸을 따른다.
 작업자:
 - 작업자는 ~/orca/board/bin/board-claim <카드> <이름> 으로 카드를 집은 뒤 착수한다. 집지 않은 카드는 작업하지 않는다.
-- 작업 공간은 create_worker_ws.sh --hub <이 허브> --branch <작업자 브랜치> --base {{BRANCH}} 로만 만든다.
+- 작업 공간은 create_worker_ws.sh --hub <이 허브> --branch <작업자 브랜치> --base {{BRANCH}} --card <카드> 로만 만든다. --card 가 그 카드의 Slack 스레드 시작을 예약하고, 작업자 보고는 hub_report.py add --card <카드> --ws <작업 공간> 로 그 스레드 답글에 올라간다.
 완료:
 - 시안 카드는 board/templates/card-mockup.md 대응표 작성이 첫 단계다.
 - 증거 로그는 ~/orca/board/bin/board-run <compile|editmode> -- <명령> 으로 만들고 출력된 evidence:<종류>=<경로> commit=<작업자 브랜치 끝 해시> 줄을 단다. 손으로 쓴 로그는 거부된다. 내용이 바뀌면 다시 만든다.
@@ -19,6 +19,6 @@
 - 머지는 이 허브 작업 공간({{BRANCH}} 체크아웃)에서 ~/orca/board/bin/board-merge <카드> <작업자> 한 줄로만 한다. 범위 검사 → 증거 사전 검사 → 시험 병합(BOARD_MERGE_VERIFY 로 컴파일) → --no-ff 커밋 → 카드 닫기 순이고 실패하면 통합 브랜치는 그대로다. 종료 4 는 범위 밖, 6 증거, 7 충돌, 8 검증 실패: 작업자에게 되돌린다. git merge 를 직접 치지 않는다.
 - 기능 통합 브랜치 → dev 는 board-merge-check --epic {{EPIC}} {{BRANCH}} --base {{BASE}} 확인(하위 카드 범위 합집합, 종료 4면 반영 금지) 뒤 사용자 직접 승인.
 - 끝난 작업자는 release_ws.sh --dispatch <id> 로 반납한다.
-Slack 피드백: 이 기능의 첫 Slack 보고를 올리면 그 ts 로 ~/.config/lrm-hubs/feedback_route.py open-thread --epic {{EPIC}} --ts <ts> 를 실행한다. 그 스레드의 사용자 답글은 메인을 거치지 않고 epic 코멘트와 상자 hub-inbox/feat-{{SLUG}}.jsonl 로 원문 그대로 온다. 작업 단계마다 ~/.config/lrm-hubs/main_inbox.py read --since-offset --box feat-{{SLUG}} 로 읽는다(첨부는 저장 경로).
+Slack 스레드: 기능 스레드는 feature_open.sh 가 시작 보고를 예약하고 전송기가 올린 뒤 epic 에 label slack-thread:<ts> 를 붙인다(손 등록 없음). 그 스레드와 이 기능 작업 공간 스레드의 사용자 답글은 메인을 거치지 않는다. 기능 스레드 답글은 epic 코멘트와 상자 hub-inbox/feat-{{SLUG}}.jsonl 로, 끝난 작업 공간 스레드 답글도 여기로 원문 그대로 온다. 작업 단계마다 ~/.config/lrm-hubs/main_inbox.py read --since-offset --box feat-{{SLUG}} 로 읽는다(첨부는 저장 경로).
 사실 주장: git 로그·파일·명령 출력 근거가 있을 때만 한다. 근거 경로나 해시를 같이 적는다. 추정은 추정이라고 적는다.
 종료: 모든 카드가 닫히면 board-done --epic {{EPIC}} <이름> 을 실행한다. 통과하면 게이트가 feature_close.sh --slug {{SLUG}} --yes 를 분리 실행해 이 허브를 정리한다(요청 불필요). 그 전에 epic {{EPIC}} 에 bd comments add 로 "기능 완료" 와 결과 HTML 경로를 단다(메인 입력창에 보내지 않음).
