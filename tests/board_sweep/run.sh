@@ -56,6 +56,7 @@ check "pr_done: 닫기 전에 근거 댓글" 'grep -q "\"comment\", \"a\", \"정
 check "pr_done: 같은 PR 은 실행당 1번만 조회" '[ "$(grep -c "pr view 101 " "$FAKE_GH_LOG")" = 1 ]'
 check "sweep.log 에 닫은 카드마다 한 줄" '[ "$(grep -c "	apply	pr_done	.	close	" "$SB/sweep.log")" = 2 ]' "$(cat "$SB/sweep.log")"
 check "정상 종료 0" '[ "$(rc)" = 0 ]'
+check "sweep.log 회차 끝 요약 한 줄" '[ "$(grep -c "	apply	run	-	summary	cards=6 close=2 " "$SB/sweep.log")" = 1 ]' "$(cat "$SB/sweep.log")"
 
 # ── expired ──
 reset "[$(card x1 open kind:task,expires:2026-11-17T10:00:00+09:00 $NEW),$(card x2 open kind:task,expires:2026-11-18 $NEW),
@@ -111,7 +112,7 @@ cp "$FAKE_BD_STATE" "$SB/before.json"
 sweep --dry-run
 check "dry-run: 작업판 상태를 바꾸지 않음" 'cmp -s "$FAKE_BD_STATE" "$SB/before.json"'
 check "dry-run: 쓰기 명령을 bd 에 보내지 않음" '! grep -qE "^\[\"(comment|close|label|update)\"" "$FAKE_BD_LOG"' "$(cat "$FAKE_BD_LOG")"
-check "dry-run: 바뀔 동작을 mode=dry 로 기록(닫기·라벨·되돌림)" '[ "$(grep -cE "	dry	(pr_done|stale|orphan)	" "$SB/sweep.log")" = 3 ]' "$(cat "$SB/sweep.log")"
+check "dry-run: 바뀔 동작을 mode=dry 로 기록(닫기·라벨·되돌림)" '[ "$(grep -cE "	dry	(pr_done|stale|orphan)	" "$SB/sweep.log")" = 3 ] && grep -q "	dry	run	-	summary	" "$SB/sweep.log"' "$(cat "$SB/sweep.log")"
 
 # ── gh 호출 상한·실패 격리 ──
 reset "[$(card p1 open kind:decision,pr:201 $OLD),$(card p2 open kind:decision,pr:202 $OLD),$(card p3 open kind:decision,pr:203 $OLD),$(card p4 open kind:decision,pr:204 $OLD)]" \

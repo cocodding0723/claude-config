@@ -10,7 +10,7 @@
   orphan     담당(assignee) 없는 진행 중 카드가 orphan_hours 넘게 갱신·댓글이 없으면 open 으로 되돌리고 댓글
 닫기가 bd 훅·게이트로 막히면 우회(--force)하지 않고 닫기 후보 라벨만 붙임.
 규칙 하나가 실패해도 다른 규칙은 계속함. gh 호출은 실행당 gh_calls_max 까지(넘으면 남은 PR 은 다음 회차).
-동작마다 sweep.log 에 한 줄(시각·모드·규칙·카드·동작·근거, 탭 구분). --dry-run 은 쓰기 없이 같은 줄을 mode=dry 로 남김.
+동작마다 sweep.log 에 한 줄(시각·모드·규칙·카드·동작·근거, 탭 구분), 회차 끝에 요약 한 줄. --dry-run 은 쓰기 없이 같은 줄을 mode=dry 로 남김.
 
 환경: BOARD_DIR 작업판(기본 ~/orca/board) · BOARD_BD bd 실행 파일 · BOARD_GH gh 실행 파일
       LRM_HUB_DIR 설정 폴더(기본 ~/.config/lrm-hubs) · LRM_BOARD_SWEEP_POLICY 규칙 표 · LRM_BOARD_SWEEP_LOCAL 로컬 덮어쓰기 표
@@ -378,8 +378,11 @@ class Sweeper:
             except Exception as e:  # 규칙 하나의 실패가 다른 규칙을 막지 않게 함
                 self.count("error")
                 self.log(name, "-", "rule-error", f"{type(e).__name__}: {e}"[:200])
-        return {"mode": "dry" if self.dry else "apply", "cards": len(cards), **self.counts,
-                "gh_calls": self.gh_calls, "gh_calls_max": int(self.cfg["gh_calls_max"])}
+        summary = {"mode": "dry" if self.dry else "apply", "cards": len(cards), **self.counts,
+                   "gh_calls": self.gh_calls, "gh_calls_max": int(self.cfg["gh_calls_max"])}
+        # 동작이 없는 회차도 한 줄 남김. 주기 실행이 살아 있는지 기록만 보고 판단
+        self.log("run", "-", "summary", " ".join(f"{k}={v}" for k, v in summary.items() if k != "mode"))
+        return summary
 
 
 def main(argv=None):
