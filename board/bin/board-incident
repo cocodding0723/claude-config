@@ -1,46 +1,17 @@
 #!/usr/bin/env python3
-"""사건 자동 기록. <BOARD_DIR>/incidents.jsonl(또는 BOARD_INCIDENTS)에 한 줄 추가. 실패해도 호출한 쪽 흐름을 막지 않게 늘 종료 0.
-작업판 폴더가 없으면(임시 HOME 시험 등) 쓰지 않음.
-종류: revert(되돌림 커밋) · merge_reject(머지 검사·병합 거부) · direct_merge(board-merge 없이 병합) · report_stopped(보고 전송 중단) · unity_wait(Unity 대기 초과)
+"""사건 자동 기록 CLI(셸 스크립트용). 늘 종료 0.
 사용: board-incident <종류> <원인> [키=값 …]
-예:  board-incident merge_reject "범위 밖 파일 2개" card=lrm-12 branch=feat/x"""
-import datetime
-import fcntl
-import json
+예:  board-incident merge_reject "범위 밖 파일 2개" card=lrm-12 branch=feat/x source=board-merge
+종류·기록 위치: board/lib/incident.py"""
 import os
 import sys
 
-
-def target():
-    p = os.environ.get("BOARD_INCIDENTS")
-    if p:
-        return p
-    board = os.environ.get("BOARD_DIR", os.path.expanduser("~/orca/board"))
-    return os.path.join(board, "incidents.jsonl") if os.path.isdir(board) else ""
-
-
-def record(kind, cause, **fields):
-    path = target()
-    if not path:
-        return False
-    rec = {"at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"), "kind": kind, "cause": cause,
-           "source": fields.pop("source", os.path.basename(sys.argv[0])), **fields}
-    try:
-        with open(path, "a", encoding="utf-8") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        return True
-    except OSError:
-        return False
-
-
-def main():
-    if len(sys.argv) < 3 or sys.argv[1] in ("-h", "--help"):
-        print(__doc__)
-        sys.exit(0 if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help") else 0)
-    extra = dict(a.split("=", 1) for a in sys.argv[3:] if "=" in a)
-    record(sys.argv[1], sys.argv[2], source=extra.pop("source", "board-incident"), **extra)
-
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
+import incident  # noqa: E402
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) < 3 or sys.argv[1] in ("-h", "--help"):
+        print(__doc__)
+        sys.exit(0)
+    extra = dict(a.split("=", 1) for a in sys.argv[3:] if "=" in a)
+    incident.record(sys.argv[1], sys.argv[2], source=extra.pop("source", "board-incident"), **extra)

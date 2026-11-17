@@ -34,6 +34,8 @@ while [ $# -gt 0 ]; do
 done
 [ $# -gt 0 ] || { echo "오류: 실행할 명령 없음. 예: unity-run --name a:b -- \"\$UNITY\" -batchmode …" >&2; exit 2; }
 
+incident() { local b="${BOARD_DIR:-$HOME/orca/board}/bin/board-incident"; [ -x "$b" ] && "$b" unity_wait "$1" source=unity-run "name=$NAME" >/dev/null 2>&1; :; }
+
 load1() {
   if [ -n "${LRM_LOADAVG_CMD:-}" ]; then sh -c "$LRM_LOADAVG_CMD"; else sysctl -n vm.loadavg | awk '{print $2}'; fi
 }
@@ -45,9 +47,11 @@ while :; do
   if [ "$waited" -ge "$LOAD_TIMEOUT" ]; then
     if [ "$KEEP" != 1 ]; then
       echo "오류: 부하 $L > $LOAD_MAX 상태가 ${LOAD_TIMEOUT}초 지속. 다른 Unity·빌드 종료 후 재실행하거나 --keep-waiting·--load-timeout 사용" >&2
+      incident "부하 $L > $LOAD_MAX 가 ${LOAD_TIMEOUT}초 지속(대기 초과로 실패)"
       exit 3
     fi
     echo "경고: 부하 $L > $LOAD_MAX 상태가 ${LOAD_TIMEOUT}초 지속. 계속 기다림(--keep-waiting)" >&2
+    incident "부하 $L > $LOAD_MAX 가 ${LOAD_TIMEOUT}초 지속(계속 대기)"
     waited=0
   fi
   echo "부하 $L > $LOAD_MAX, ${LOAD_POLL}초 뒤 재확인 (${waited}/${LOAD_TIMEOUT}초)" >&2
@@ -70,7 +74,7 @@ stop() {
 trap release EXIT
 trap stop INT TERM
 
-S=$(bash "$SLOT_SH" acquire "$NAME") || { echo "오류: 슬롯 획득 실패. 'bash $SLOT_SH status' 로 확인" >&2; S=""; exit 3; }
+S=$(bash "$SLOT_SH" acquire "$NAME") || { echo "오류: 슬롯 획득 실패. 'bash $SLOT_SH status' 로 확인" >&2; S=""; incident "Unity 슬롯 획득 실패"; exit 3; }
 echo "slot-$S 획득: $NAME" >&2
 "$@" &
 CHILD=$!

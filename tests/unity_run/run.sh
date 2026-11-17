@@ -9,6 +9,7 @@ ko() { FAIL=$((FAIL + 1)); printf 'FAIL  %s — %s\n' "$1" "${2:-}"; }
 SB=$(mktemp -d "${TMPDIR:-/tmp}/cc-unity-run.XXXXXX"); trap 'rm -rf "${SB:?}"' EXIT
 export LRM_UNITY_SLOT_DIR="$SB/slots" LRM_LOADAVG_CMD='echo 1' LRM_UNITY_SLOT_SH="$US"
 unset LRM_UNITY_SLOTS
+export BOARD_DIR="$SB/board"; mkdir -p "$BOARD_DIR/bin"; ln -s "$HERE/../../board/bin/board-incident" "$BOARD_DIR/bin/board-incident"
 
 bash "$UR" --name t:rc -- sh -c 'exit 7' 2>/dev/null; rc=$?
 [ "$rc" = 7 ] && ok "명령 종료 코드 그대로 전달" || ko "종료 코드" "$rc"
@@ -19,6 +20,7 @@ bash "$UR" --bogus -- true 2>/dev/null; [ $? = 2 ] && ok "모르는 인자는 �
 bash "$UR" --help | grep -q '사용: unity-run' && ok "--help 사용법 출력" || ko "--help"
 
 LRM_LOADAVG_CMD='echo 99' LRM_LOAD_POLL=1 bash "$UR" --name t:load --load-timeout 1 -- true 2>"$SB/err"; rc=$?
+grep -q '"kind": "unity_wait"' "$BOARD_DIR/incidents.jsonl" 2>/dev/null && ok "Unity 대기 초과는 사건 기록(원인 포함)" || ko "Unity 대기 사건 기록" "$(cat "$BOARD_DIR/incidents.jsonl" 2>/dev/null)"
 [ "$rc" = 3 ] && grep -q '부하' "$SB/err" && ok "부하 대기 초과는 종료 3·원인 안내" || ko "부하 초과" "$rc $(cat "$SB/err")"
 
 LRM_LOADAVG_CMD='echo 99' LRM_LOAD_POLL=1 bash "$UR" --name t:keep --load-timeout 1 --keep-waiting -- true 2>"$SB/err" & kp=$!

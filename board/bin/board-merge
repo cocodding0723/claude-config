@@ -31,7 +31,11 @@ usage() {
 H
 }
 
-die() { echo "오류: $1" >&2; exit "${2:-3}"; }
+# 거부(6 증거·7 충돌·8 검증)는 사건으로 기록. 4(범위)는 board-merge-check 가 기록
+die() {
+  case "${2:-3}" in 6|7|8) "$HERE/board-incident" merge_reject "$1" source=board-merge "card=${CARD:-}" "branch=${BRANCH:-}" "exit=$2" >/dev/null 2>&1 || : ;; esac
+  echo "오류: $1" >&2; exit "${2:-3}"
+}
 
 CARD="" ACTOR="" REPO="." BRANCH=""
 while [ $# -gt 0 ]; do
@@ -114,6 +118,7 @@ if git -C "$REPO" merge-base --is-ancestor "$BRANCH" HEAD; then
     die "$BRANCH 가 board-merge 없이 fast-forward 로 $INTO 에 들어가 범위를 확인할 수 없음. 그 커밋을 되돌린 뒤 board-merge 로 다시 실행" 4
   fi
   BASE=$(git -C "$REPO" rev-parse "$intro^1")
+  "$HERE/board-incident" direct_merge "board-merge 없이 git merge 로 들어감(${intro:0:12})" source=board-merge "card=$CARD" "branch=$BRANCH" >/dev/null 2>&1 || :
   echo "경고: $BRANCH 는 board-merge 없이 병합됨(${intro:0:12}). 그 병합 전($INTO 첫 부모 ${BASE:0:12}) 대비로 검사" >&2
 fi
 
@@ -122,7 +127,7 @@ fi
 [ "$rc" = 0 ] || { echo "중단: 범위 검사 종료 $rc" >&2; exit "$([ "$rc" = 4 ] && echo 4 || echo 3)"; }
 
 # 3 증거 사전 검사(병합 전에 거르기)
-"$DONE" "$CARD" "$ACTOR" --dry-run || { echo "중단: 완료 증거 불합격. 증거 보완 뒤 다시 실행" >&2; exit 6; }
+"$DONE" "$CARD" "$ACTOR" --dry-run || die "중단: 완료 증거 불합격. 증거 보완 뒤 다시 실행" 6
 
 record() { (cd "$BOARD" && bd comments add "$CARD" "board-merge: $1 $BRANCH → $INTO" >/dev/null 2>&1) || echo "경고: 카드 $CARD 에 병합 기록 실패" >&2; }
 

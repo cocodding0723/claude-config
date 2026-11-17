@@ -8,6 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
 import board_scope as bs  # noqa: E402
+import incident  # noqa: E402
 
 HELP_EPILOG = """\
 기준(--base) 생략 시: 카드 label base:<ref> → 상위 epic label branch:<ref>(기능 통합 브랜치) 순. 둘 다 없으면 종료 2.
@@ -154,6 +155,12 @@ def main():
             warnings.append({"kind": "revert", "commit": sha[:12], "subject": subj})
 
     code = 4 if outside else (5 if a.strict and warnings else 0)
+    if outside:
+        incident.record("merge_reject", f"범위 밖 파일 {len(outside)}개: {', '.join(outside[:5])}", source="board-merge-check",
+                        card=a.card, branch=a.branch, base=a.base)
+    for w in warnings:
+        if w["kind"] == "revert":
+            incident.record("revert", f"되돌림 커밋 {w['commit']} {w['subject']}", source="board-merge-check", card=a.card, branch=a.branch)
     result = {
         "card": a.card, "branch": a.branch, "base": a.base, "scope": mine,
         "files": files, "outside": outside, "warnings": warnings,

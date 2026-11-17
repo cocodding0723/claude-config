@@ -45,6 +45,7 @@ expect "폴더 meta(src/a.meta) 통과" 0 "$CHK" c1 meta --repo "$R"
 
 git checkout -q -b out dev; mkdir -p src/b; echo 1 > src/b/y.cs; git add .; c commit -m out
 expect "범위 밖 거부" 4 "$CHK" c1 out --repo "$R"
+grep -q '"kind": "merge_reject".*src/b/y.cs' "$T/board/incidents.jsonl" && { PASS=$((PASS+1)); echo "ok  범위 밖 거부는 사건 기록(원인 칸)"; } || { FAIL=$((FAIL+1)); echo "FAIL 범위 밖 사건 기록"; }
 "$CHK" c1 out --repo "$R" --json | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["outside"]==["src/b/y.cs"]' \
   && { PASS=$((PASS+1)); echo "ok  JSON outside 목록"; } || { FAIL=$((FAIL+1)); echo "FAIL JSON outside 목록"; }
 

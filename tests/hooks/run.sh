@@ -421,6 +421,13 @@ cm() { # cm <저장소> <메시지> → 커밋 뒤 메시지 본문, stderr 는 
   git -C "$1" -c core.hooksPath="$GH_HOOKS" commit -q --allow-empty -m "$2" 2> "$SB/cm.err" <<< "" || return 1
   git -C "$1" log -1 --format=%B | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}'
 }
+
+# post-commit: 되돌림 커밋은 작업판 사건 기록
+RV="$SB/rv"; mk "$RV" feat/rv; INC="$SB/inc.jsonl"
+BOARD_INCIDENTS="$INC" BOARD_DIR="$SB/rvboard" bash -c 'mkdir -p "$BOARD_DIR/bin"; ln -sf "'"$HERE"'/../../board/bin/board-incident" "$BOARD_DIR/bin/board-incident"; git -C "'"$RV"'" -c core.hooksPath="'"$GH_HOOKS"'" commit -q --allow-empty -m "revert: y"' 2>/dev/null
+grep -q '"kind": "revert".*revert: y' "$INC" 2>/dev/null && ok "post-commit: 되돌림 커밋은 사건 기록" || ko "post-commit 되돌림 사건" "$(cat "$INC" 2>/dev/null)"
+BOARD_DIR="$SB/rvboard" BOARD_INCIDENTS="$INC" git -C "$RV" -c core.hooksPath="$GH_HOOKS" commit -q --allow-empty -m "feat: z" 2>/dev/null
+[ "$(grep -c . "$INC")" = 1 ] && ok "post-commit: 일반 커밋은 기록 안 함" || ko "post-commit 일반 커밋" "$(cat "$INC")"
 export CLAUDE_HOOKS_DIR="$H"
 mk "$SB/game" main; git -C "$SB/game" config hooks.localGate on
 MSG=$'기능 추가\n\n본문 한 줄\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>\n🤖 Generated with [Claude Code](https://claude.com/claude-code)'
