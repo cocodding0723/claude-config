@@ -5,9 +5,12 @@
 # --kind 없는 기존 호출은 검사·출력·페이로드 모두 불변. 파일 첨부 호출은 Slack API 한계로 색 띠 없음.
 set -eu
 . "$(dirname "$0")/lib/py.sh"  # PY = 3.10 이상 python3 (launchd 짧은 PATH 의 3.9 방지)
+# 설정: 파일 메시지 ts 조회(files.info). 파일 공유는 비동기라 바로 안 나올 수 있어 짧게 재시도. 환경 변수는 시험용 재정의
+FILE_TS_TRIES="${LRM_FILE_TS_TRIES:-5}" FILE_TS_WAIT="${LRM_FILE_TS_WAIT:-1}"
+CARD_ID_RE='^[a-z][a-z0-9]{1,15}-[a-z0-9]{1,12}(\.[0-9]{1,3})*$'  # 작업판 카드 id(예 lrm-q5o.2)
 usage() {
   cat <<'EOF'
-사용: slack_notify.sh [--tag 허브] [--title 제목] [--thread TS] [--kind 종류 [--choices N] [--emoji-set 종류]] [--no-check] "메시지" [파일경로]
+사용: slack_notify.sh [--tag 허브] [--title 제목] [--thread TS] [--kind 종류 [--choices N] [--emoji-set 종류]] [--card 카드id] [--no-check] "메시지" [파일경로]
       slack_notify.sh --kind decide --options '1=문구 => 고르면 달라지는 점,2=문구 => …' --recommend N --decision-id D-xxxx [--reversible 쉬움|보통|어려움] [--seq 3/9] $'제목\n배경: …\n용어: …'
       slack_notify.sh --kind todo --todo-id T-xxxx "할 일"
   --tag        관련 허브 태그(기록용)
@@ -40,6 +43,7 @@ usage() {
                --thread·파일 첨부·--to-user·--todo-id 호출은 --from 이 있어도 제한하지 않음(사용자가 요청한 전송)
   --subject    (--from 전용) 같은 제목 안에서 대상을 가르는 값(예 pr-733). 기본은 제목
   --state      (--from 전용) 상태 이름(예 fail|pass). 같은 키에서 상태가 바뀌면 하루 안에도 다시 보냄. 기본은 --kind 값
+  --card       작업판 카드 id(예 lrm-q5o.2). slack-sent.jsonl 기록에 "card" 칸으로 남김(답글을 카드에 붙이는 근거). 형식이 틀리면 미전송·종료 코드 2
   --no-check   양식 검사 생략(slack-sent.jsonl 에 unchecked:true 기록)
 환경 변수: LRM_BTN_WARN=off 는 '버튼 없음' 경고를 끔(시험용). LRM_FORMAT=warn|strict|off (기본 warn). warn 은 위반해도 전송하고 stderr 경고, strict 는 위반 시 미전송·종료 코드 2
   --kind decide 는 본문 '배경:'·'용어:' 줄(낯선 말이 없으면 '용어: 없음')이 없거나 --options 에 선택지 결과가 없으면 --no-check·LRM_FORMAT 과 무관하게 미전송·종료 코드 2.
@@ -52,11 +56,13 @@ usage() {
   slack_notify.sh --kind decide --no-doc --choices 3 $'알림 시각 정하기\n배경: 알림 개편 중, 시각이 화면마다 달라 하나로 맞추려 함\n용어: 푸시 — 앱 밖 알림'
   slack_notify.sh --kind decide --no-doc --options '1=오전 9시 => 출근 전에 도착,2=오전 10시 => 업무 시작 뒤에 도착' --recommend 1 --decision-id D-0001 --seq 1/3 $'알림 시각\n배경: 알림 개편 중, 시각이 화면마다 달라 하나로 맞추려 함\n용어: 푸시 — 앱 밖 알림\n이유: 출근 시간대 열람률이 높음'
 종료 코드: 0 성공, 1 API 실패, 2 설정·인자·양식 오류
+파일 첨부 전송은 files.info 로 메시지 ts 를 조회해 기록함. 끝내 못 얻으면 ts 는 빈 값, "ts_pending":true 를 남기고 stderr 경고(전송은 성공).
 본문·참고에 로컬 문서·이미지 경로(.html .png .jpg .gif .mp4 .pdf, 폴더 포함)가 있는데 같은 파일이 첨부로 오지 않거나 첨부가 비밀 파일(.env·키·인증서·~/.ssh 등)이면 미전송·종료 코드 2(--no-check 로도 못 풀림).
 판정은 hub_report.py check-text 가 함(환경 변수 LRM_HUB_REPORT 로 경로 재정의). decide 카드(--options) 본문은 전송기와 같은 '- ' 줄 양식으로 정리함(hub_report.bullet_body).
 EOF
 }
 die() { echo "$1" >&2; exit 2; }
+CARD="" CARD_SET=0
 ATTACHED=() LINK_TO="" QUOTE="" NO_DOC=0 TO_USER=""
 FROM="" SUBJECT="" STATE="" DEDUP_RID=""
 TAG="" TITLE="" THREAD="" KIND="" NOCHECK=0 ALIVE=0CHOICES="" CHOICES_SET=0 EMOJISET=custom
@@ -86,6 +92,7 @@ while [ $# -gt 0 ]; do
     --subject) [ $# -ge 2 ] || die "--subject 값 필요 — 예 pr-733"; SUBJECT="$2"; shift 2 ;;
     --state) [ $# -ge 2 ] || die "--state 값 필요 — 예 fail"; STATE="$2"; shift 2 ;;
     --alive) ALIVE=1; shift ;;
+    --card) [ $# -ge 2 ] || die "--card 값 필요 — 작업판 카드 id(예 lrm-q5o.2)"; CARD="$2" CARD_SET=1; shift 2 ;;
     --to-user) [ $# -ge 2 ] || die "--to-user 값 필요 — 받는 사람 Slack ID"; TO_USER="$2"; shift 2 ;;
     --) shift; break ;;
     -*) echo "알 수 없는 옵션: $1 — --help 참고" >&2; exit 2 ;;
@@ -93,6 +100,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ $# -ge 1 ] || { usage >&2; exit 2; }
+if [ "$CARD_SET" = 1 ]; then printf '%s' "$CARD" | grep -Eq "$CARD_ID_RE" || die "--card 형식 오류: $CARD — 작업판 카드 id(예 lrm-q5o.2)로 지정"; fi
+export LRM_CARD="$CARD"
 case "$KIND" in
   ""|decide|todo|done|progress|warn|doc) ;;
   *) die "알 수 없는 --kind: $KIND — decide|todo|done|progress|warn|doc 중 하나로 지정" ;;
@@ -693,8 +702,11 @@ rec={"at":int(time.time()),"channel":ch,"ts":d.get("ts",""),"thread_ts":thread,"
 if fkind: rec["form_kind"]=fkind
 if unchecked=="1": rec["unchecked"]=True
 if os.environ.get("LRM_TO_USER"): rec["to_user"]=os.environ["LRM_TO_USER"]
+if os.environ.get("LRM_CARD"): rec["card"]=os.environ["LRM_CARD"]
 if card: rec.update(json.loads(card))
 if kind=="file":
+    rec["ts"]=os.environ.get("LRM_FILE_TS","")
+    if not rec["ts"]: rec["ts_pending"]=True
     rec["file_id"]=(d.get("files") or [{}])[0].get("id","")
     rec["path"]=os.environ.get("LRM_FILE_PATH","")
 with open(sent,"a",encoding="utf-8") as f: f.write(json.dumps(rec,ensure_ascii=False)+"\n")
@@ -709,20 +721,43 @@ post_text() {
   curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H 'Content-Type: application/json' \
     -d "$PAYLOAD" $API/chat.postMessage | record text
 }
+# 파일 공유 메시지 ts 조회. completeUploadExternal 응답에는 ts 가 없어 files.info 의 shares 에서 해당 채널 것을 읽음
+file_ts() {
+  local i R T
+  for ((i = 1; i <= FILE_TS_TRIES; i++)); do
+    R=$(curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -d "file=$1" $API/files.info) || R=""
+    T=$(printf '%s' "$R" | "$PY" -c '
+import sys,json
+try: d=json.load(sys.stdin)
+except ValueError: sys.exit(0)
+sh=d.get("file",{}).get("shares",{}) if d.get("ok") else {}
+for kind in ("private","public"):
+    for m in sh.get(kind,{}).get(sys.argv[1],[]):
+        if m.get("ts"): print(m["ts"]); sys.exit(0)' "$CH" 2>/dev/null) || T=""
+    [ -z "$T" ] || { echo "$T"; return 0; }
+    [ "$i" -ge "$FILE_TS_TRIES" ] || sleep "$FILE_TS_WAIT"
+  done
+  return 1
+}
 # 파일 업로드. 인자: 경로, 본문, 스레드 ts, 기록에 붙일 카드 필드(카드 본체가 따로 있으면 빈 값)
 upload_file() {
-  local F="$1" BODY="$2" TH="$3" REC="$4" R U ID N L
+  local F="$1" BODY="$2" TH="$3" REC="$4" R U ID N L DONE
   export LRM_FILE_PATH="$F"; N=$(basename "$F"); L=$(stat -f %z "$F")
   R=$(curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" --data-urlencode "filename=$N" -d "length=$L" $API/files.getUploadURLExternal)
   U=$(echo "$R" | "$PY" -c 'import sys,json;print(json.load(sys.stdin)["upload_url"])'); ID=$(echo "$R" | "$PY" -c 'import sys,json;print(json.load(sys.stdin)["file_id"])')
   curl -s -o /dev/null -F "file=@$F" "$U"
-  curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H 'Content-Type: application/json' \
+  DONE=$(curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H 'Content-Type: application/json' \
     -d "$("$PY" -c '
 import json,sys
 b={"files":[{"id":sys.argv[1],"title":sys.argv[2]}],"channel_id":sys.argv[3],"initial_comment":sys.argv[4]}
 if sys.argv[5]: b["thread_ts"]=sys.argv[5]
 print(json.dumps(b))' "$ID" "$N" "$CH" "$BODY" "$TH")" \
-    $API/files.completeUploadExternal | record file "$REC"
+    $API/files.completeUploadExternal) || DONE=""
+  LRM_FILE_TS=""; export LRM_FILE_TS
+  if printf '%s' "$DONE" | grep -q '"ok" *: *true'; then
+    LRM_FILE_TS="$(file_ts "$ID")" || echo "경고: 파일 메시지 ts 조회 실패 — 기록에 ts_pending 표시(스레드 답글을 카드에 못 붙일 수 있음)" >&2
+  fi
+  printf '%s' "$DONE" | record file "$REC"
 }
 
 if [ $# -ge 2 ] && [ "$OPT_SET" = 1 ]; then
