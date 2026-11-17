@@ -20,6 +20,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import board_cards as cards  # noqa: E402
+import decide_card  # noqa: E402
 
 HUB_DIR = os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
 NOTIFY = os.environ.get("LRM_NOTIFY") or os.path.join(HUB_DIR, "slack_notify.sh")
@@ -80,7 +81,11 @@ def notify_args(card):
         args += ["--recommend", str(names.index(d["recommend"]) + 1)]
     else:
         raise cards.Fail(2, f"{card['id']} 추천 없음. 조치: board-ask --recommend <선택지> 로 다시 만들기")
-    return args + ["\n".join(body)]
+    text = "\n".join(body)
+    why = decide_card.problem(text, opts, decision_id(card["id"]))  # 실제 전송 때 막힐 규칙(글자 수 상한 등)을 보내기 전·건조 실행에서 미리 확인
+    if why:
+        raise cards.Fail(2, f"{card['id']} Slack 카드 규칙 위반: {why}")
+    return args + [text]
 
 
 def push(card_id, dry_run=False):

@@ -137,6 +137,12 @@ def ask(a):
         lines.append(f"배경: {a.background}")
     if a.terms:
         lines.append(f"용어: {a.terms}")
+    if a.kind == "decision":
+        import board_slack  # 서로 참조라 호출 때 불러옴. 만든 뒤 Slack 에서 거부될 카드(글자 수 상한 등)를 만들기 전에 막음
+        try:
+            board_slack.notify_args({"id": "new", "title": title, "labels": [label], "description": "\n".join(lines)})
+        except board_slack.cards.Fail as e:  # board_slack 이 따로 불러온 board_cards 의 Fail 이라 여기서 다시 감쌈
+            raise Fail(e.code, str(e).replace("new Slack 카드 규칙 위반: ", "Slack 카드 규칙 위반: "))
     labels = label + (f",gate:{a.gate}" if a.gate else "")
     args = ["create", title, "-l", labels, "-p", str(a.priority)]
     if lines:
