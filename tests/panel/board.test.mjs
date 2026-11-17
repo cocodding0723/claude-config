@@ -399,3 +399,75 @@ test('detailText: 워커 줄은 상한 없이 전부', () => {
   assert.match(t, /## 워커 \(워커 실행 8 · 60분 안 끝남 0\)/)
   assert.match(t, /- ▶ w7 · bugfix · opus-5-5 · 경과 방금/)
 })
+
+// ---- 11-17 에픽 하위 작업 펼치기 ----
+test('parseEpicView: 없음·깨짐·모양 다름은 기본값(전체 펼침), 정상 값은 그대로', () => {
+  assert.deepEqual(b.parseEpicView(undefined), { all: true, epics: {} })
+  assert.deepEqual(b.parseEpicView('{broken'), { all: true, epics: {} })
+  assert.deepEqual(b.parseEpicView('null'), { all: true, epics: {} })
+  assert.deepEqual(b.parseEpicView('{"all":false,"epics":{"a":true,"b":"x"}}'), { all: false, epics: { a: true } })
+})
+
+test('applyEpicToggle: on·off·반전·에픽별 반전·모호/없는 id 오류, 반복 실행 안전', () => {
+  const v0 = b.DEFAULT_EPIC_VIEW
+  const ids = ['lrm-q5o', 'lrm-abc']
+  assert.deepEqual(b.applyEpicToggle(v0, 'off', ids).view, { all: false, epics: {} })
+  assert.deepEqual(b.applyEpicToggle(b.applyEpicToggle(v0, 'off', ids).view, 'off', ids).view, { all: false, epics: {} })
+  assert.deepEqual(b.applyEpicToggle(v0, '', ids).view, { all: false, epics: {} })
+  const one = b.applyEpicToggle(v0, 'lrm-q5o', ids).view
+  assert.equal(b.epicOpen(one, 'lrm-q5o'), false)
+  assert.equal(b.epicOpen(one, 'lrm-abc'), true)
+  assert.equal(b.epicOpen(b.applyEpicToggle(one, 'q5o', ids).view, 'lrm-q5o'), true) // 접미어로도 지정
+  assert.match(b.applyEpicToggle(v0, 'zzz', ids).error, /없음/)
+  assert.match(b.applyEpicToggle(v0, 'lrm', ids).error, /여러/)
+  assert.deepEqual(b.applyEpicToggle(b.applyEpicToggle(v0, 'lrm-q5o', ids).view, 'on', ids).view, { all: true, epics: {} })
+})
+
+test('epicBar: 비율·0 전체는 빈 문자열(n/m 은 제목 끝에만)·초과 보정', () => {
+  assert.equal(b.epicBar(2, 4, 8), '▰▰▰▰▱▱▱▱')
+  assert.equal(b.epicBar(0, 0, 4), '')
+  assert.equal(b.epicBar(9, 4, 4), '▰▰▰▰')
+})
+
+test('kidLines: 상태 표시·담당·하위 개수, 상한 넘으면 외 N개, 없으면 빈 배열', () => {
+  const kid = (i, st, extra = {}) => ({ id: `k${i}`, title: `일${i}`, st, who: null, at: sec(NOW - 5 * 60000), subs: 0, ...extra })
+  const ls = b.kidLines([kid(1, 'doing', { who: 'w-1', subs: 2 }), kid(2, 'done'), kid(3, 'todo')], NOW)
+  assert.deepEqual(ls.map(l => l.mark), ['◐', '✓', '○'])
+  assert.equal(b.kidLines([kid(9, 'blocked')], NOW)[0].mark, '✕') // 2칸 폭 이모지 대신 1칸 기호
+  assert.equal(b.kidLines([kid(8, 'todo', { title: '가'.repeat(40) })], NOW)[0].text, `${'가'.repeat(16)}…`)
+  assert.equal(ls[0].text, '일1 · w-1 · 하위 2')
+  assert.equal(ls[0].age, '5분')
+  const many = Array.from({ length: 11 }, (_, i) => kid(i, 'todo'))
+  const cut = b.kidLines(many, NOW, { ...b.PANEL_CONFIG, epicKidsMax: 3 })
+  assert.equal(cut.length, 4)
+  assert.equal(cut[3].text, '외 8개')
+  assert.deepEqual(b.kidLines(undefined, NOW), [])
+})
+
+// 패널 폭별 줄 수: row 와 같은 배치(기호 3칸 + 제목 칸 + 1칸 여백 + 꼬리). 한글·기호 2칸 폭으로 셈
+const cells = t => [...t].reduce((n, c) => n + (c.codePointAt(0) > 0x2e80 ? 2 : 1), 0)
+const wrapRows = (text, col) => Math.max(1, Math.ceil(cells(text) / col))
+const rowCount = (text, tail, width) => wrapRows(text, width - 3 - (tail === '' ? 0 : cells(tail) + 1))
+const longEpic = { id: 'e1', title: '구조 개선: 기능 팀 구조 전환과 결정 카드 정리', slug: null, done: 13, total: 22, doing: [], doingCount: 0, blocked: 0, asks: 0, lastAt: 0, closedAt: null, p: 0,
+  kids: Array.from({ length: 12 }, (_, i) => ({ id: `k${i}`, title: `하위 작업 제목이 꽤 길어서 한 줄을 넘는 경우 ${i}`, st: 'todo', who: 'w-epicview', at: 0, subs: 0 })) }
+
+for (const width of [40, 60, 100]) {
+  test(`에픽 줄 폭 ${width}: 막대·n/m 이 꼬리에 없어 제목 줄 수가 기존과 같고, 막대는 한 줄·하위는 상한`, () => {
+    const [line] = b.featureLines([longEpic], { sessions: [] }, NOW)
+    assert.equal((line.text.match(/\(13\/22\)/g) ?? []).length, 1) // n/m 한 곳
+    const rows = b.epicRows(longEpic, true, NOW)
+    assert.ok(!/\d+\/\d+/.test(rows.bar))
+    assert.equal(rowCount(rows.bar, '', width), 1)
+    assert.equal(rows.kids.length, b.PANEL_CONFIG.epicKidsMax + 1) // 상한 + 외 N개
+    assert.equal(rows.kids.at(-1).text, `외 ${12 - b.PANEL_CONFIG.epicKidsMax}개`)
+    // 제목 16자(한글 32칸) 한도: 폭 60 이상 한 줄, 폭 40 은 두 줄 이내(기존 무제한 제목은 3줄 이상)
+    for (const k of rows.kids) assert.ok(rowCount(`  ${k.text}`, k.age, width) <= (width >= 60 ? 1 : 2))
+  })
+}
+
+test('epicRows: 하위 0 이면 막대·표식 없음(기존 한 줄 유지), 접힘이면 막대만', () => {
+  assert.equal(b.epicRows({ ...longEpic, total: 0, kids: [] }, true, NOW).bar, undefined)
+  const folded = b.epicRows(longEpic, false, NOW)
+  assert.match(folded.bar, /^▸ /)
+  assert.deepEqual(folded.kids, [])
+})
