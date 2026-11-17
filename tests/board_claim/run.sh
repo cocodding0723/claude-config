@@ -3,6 +3,7 @@
 set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 BIN="$HERE/../../board/bin/board-claim"
+BEAT="$HERE/../../board/bin/board-beat"
 PASS=0 FAIL=0
 ok() { PASS=$((PASS + 1)); printf 'PASS  %s\n' "$1"; }
 ko() { FAIL=$((FAIL + 1)); printf 'FAIL  %s — %s\n' "$1" "${2:-}"; }
@@ -73,6 +74,41 @@ p=$(new_card p "file:/abs/race/"); q=$(new_card q "file:/abs/race/f.cs")
 "$BIN" "$p" r1 >/dev/null 2>&1 & p1=$!; "$BIN" "$q" r2 >/dev/null 2>&1 & p2=$!
 wait "$p1"; r1=$?; wait "$p2"; r2=$?
 [ $(( (r1 == 0) + (r2 == 0) )) = 1 ] && ok "동시 집기 중 하나만 성공" || ko "동시 집기" "rc $r1 $r2"
+
+# heartbeat: board-beat 는 담당만 갱신하고 메모는 metadata 에 남김(코멘트 안 늘림). 집기·다시 집기도 갱신 시각을 찍음
+meta() { bd show "$1" --json | python3 -c 'import json,sys;d=json.load(sys.stdin);d=d[0] if isinstance(d,list) else d;print((d.get("metadata") or {}).get(sys.argv[1],""))' "$2"; }
+field() { bd show "$1" --json | python3 -c 'import json,sys;d=json.load(sys.stdin);d=d[0] if isinstance(d,list) else d;print(d.get(sys.argv[1],""))' "$2"; }
+h=$(new_card h "file:/abs/beat/")
+expect "집지 않은 카드 heartbeat 는 13" 13 "$BEAT" "$h" w1
+expect "집기" 0 "$BIN" "$h" w1
+t0=$(field "$h" heartbeat_at); sleep 1
+expect "담당 heartbeat 는 0" 0 "$BEAT" "$h" w1 "시험 작성 중"
+t1=$(field "$h" heartbeat_at)
+[ -n "$t0" ] && [ "$t1" \> "$t0" ] && ok "heartbeat 가 갱신 시각을 앞으로 보냄" || ko "heartbeat 시각" "$t0 → $t1"
+[ "$(meta "$h" beat_note)" = "시험 작성 중" ] && [ "$(bd show "$h" --json | python3 -c 'import json,sys;d=json.load(sys.stdin);d=d[0] if isinstance(d,list) else d;print(d.get("comment_count",0))')" = 0 ] && ok "한 줄 메모는 metadata 에, 코멘트는 안 만듦" || ko "메모 저장" "$(meta "$h" beat_note)"
+expect "다른 작업자 heartbeat 는 13" 13 "$BEAT" "$h" w2
+$BEAT "$h" w2 >/dev/null 2>"$SB/err"; grep -q '조치' "$SB/err" && ok "heartbeat 거부 문구에 조치" || ko "거부 문구" "$(cat "$SB/err")"
+expect "반복 실행 안전(메모 없이도 0)" 0 "$BEAT" "$h" w1
+$BEAT "$h" w1 "$(printf 'a%.0s' $(seq 1 200))
+둘째 줄" >/dev/null; nl=$(meta "$h" beat_note); [ "$(printf %s "$nl" | python3 -c 'import sys;print(len(sys.stdin.read()))')" = 80 ] && [ "$(printf %s "$nl" | wc -l | tr -d ' ')" = 0 ] && ok "메모는 한 줄 80자로 자름" || ko "메모 길이" ""
+expect "증거 형식 오류는 2" 2 "$BEAT" "$h" w1 --evidence "te st=zzz"
+expect "카드 없음은 2" 2 "$BEAT" no-such-card w1
+expect "--help 0" 0 "$BEAT" --help
+expect "인자 없음 2" 2 "$BEAT"
+t2=$(field "$h" heartbeat_at); sleep 1
+expect "이미 집은 카드 다시 집기도 성공" 0 "$BIN" "$h" w1
+t3=$(field "$h" heartbeat_at)
+[ "$t3" \> "$t2" ] && ok "다시 집기가 heartbeat 를 갱신" || ko "다시 집기 갱신" "$t2 → $t3"
+# 해제 후보 판정: updated_at 이 오래돼도 heartbeat 가 최근이면 낡지 않음
+python3 - "$HERE/../../board/bin/board-claim" <<'PY' && ok "age_hours 는 heartbeat_at 을 반영" || ko "age_hours" ""
+import importlib.machinery, importlib.util, sys
+from datetime import datetime, timedelta, timezone
+m = importlib.machinery.SourceFileLoader("bc", sys.argv[1]).load_module()
+f = lambda d: (datetime.now(timezone.utc) - timedelta(hours=d)).strftime("%Y-%m-%dT%H:%M:%SZ")
+assert m.age_hours({"updated_at": f(5), "heartbeat_at": f(0.1)}) < 0.2
+assert 4.9 < m.age_hours({"updated_at": f(5)}) < 5.1
+assert m.age_hours({}) == 0.0
+PY
 
 printf '통과 %d · 실패 %d\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
