@@ -753,5 +753,72 @@ ESB="$LRM_BOARD_SAVE"
 eexp "epic-scope: 깨진 입력은 통과" "" "$HA"
 out=$(printf '{깨진' | python3 -I "$EG" 2>/dev/null); [ -z "$out" ] && ok "epic-scope: 깨진 JSON 통과" || ko "epic-scope: 깨진 JSON 통과" "$out"
 
+# ---- main-work-guard: 메인은 게임 작업을 직접 하지 않음 ----
+MG="$H/lib/main_work_guard.py"
+GR="$SB/mg-game"; mkdir -p "$GR/Assets" "$SB/mg-other"; MALLOW="$SB/mg-home/main-work.allow"; mkdir -p "$SB/mg-home"
+# mrun <도구> <입력값(명령·경로)> [ORCA_ROLE] → pass|ask|deny
+mrun() { local key=command out; case "$1" in Write|Edit|MultiEdit) key=file_path ;; NotebookEdit) key=notebook_path ;; esac
+  out=$(printf '%s' "$(jq -cn --arg t "$1" --arg k "$key" --arg v "$2" --arg d "${MCWD:-$SB/mg-other}" '{tool_name:$t,tool_input:{($k):$v},cwd:$d}')" | HOME="$SB/home" ORCA_ROLE="${3:-main}" LRM_GAME_ROOTS="$GR" LRM_MAIN_ALLOW="$MALLOW" python3 -I "$MG" 2>/dev/null)
+  [ -z "$out" ] && echo pass || printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision'; }
+mexp() { local got; got=$(mrun "$2" "$3" "${5:-main}"); [ "$got" = "${4:-pass}" ] && ok "main-work: $1" || ko "main-work: $1" "기대 ${4:-pass}, 실제 $got"; }
+mexp "Agent 거부" Agent x deny
+mexp "Task 거부" Task x deny
+mexp "작업자 세션 Agent 통과" Agent x pass worker
+mexp "코디네이터 세션 Agent 통과" Agent x pass coordinator
+mexp "작업자 세션 게임 저장소 Edit 통과" Edit "$GR/Assets/a.cs" pass worker
+mexp "게임 저장소 Edit 거부" Edit "$GR/Assets/a.cs" deny
+mexp "게임 저장소 Write 거부" Write "$GR/new.cs" deny
+mexp "게임 저장소 .. 우회 거부" Write "$SB/mg-other/../mg-game/x.cs" deny
+mexp "게임 저장소 밖 Write 통과(메모리·문서)" Write "$SB/mg-other/memo.md" pass
+mexp "작업판 문서 Edit 통과" Edit "$HOME/orca/board/x.md" pass
+mexp "bd list 통과" Bash "bd list --status open"
+mexp "bd -C 카드 조작 통과" Bash "bd -C ~/orca/board update lrm-1 --status open"
+mexp "feature_open.sh 통과" Bash "bash ~/.config/lrm-hubs/feature_open.sh --ticket LRM-1 --name x --base dev --dry-run"
+mexp "board-ask 통과" Bash "board-ask --card lrm-1 'q'"
+mexp "읽기 파이프 통과" Bash "ls $GR/Assets | head -3; cat $GR/a | jq ."
+mexp "rg 게임 저장소 읽기 통과" Bash "rg foo $GR"
+mexp "git status·log·diff 통과" Bash "git -C $GR status && git -C $GR log --oneline -3 && git -C $GR diff"
+mexp "git branch 목록 통과" Bash "git -C $GR branch -a"
+mexp "git commit 게임 저장소 거부" Bash "git -C $GR commit -m x" deny
+mexp "cd 뒤 git add 거부" Bash "cd $GR && git add -A" deny
+mexp "git branch 생성 거부" Bash "git -C $GR branch feat/x" deny
+mexp "git commit 저장소 밖은 통과" Bash "git -C $SB/mg-other commit -m x"
+mexp "orca worker-start 거부" Bash "orca orchestration worker-start --spec x --agent claude" deny
+mexp "orca orchestration check 통과" Bash "orca orchestration check --terminal t"
+mexp "리다이렉트 게임 저장소 거부" Bash "echo x > $GR/Assets/a.txt" deny
+mexp "리다이렉트 저장소 밖 통과" Bash "echo x > $SB/mg-other/a.txt"
+mexp "/dev/null 리다이렉트 통과" Bash "ls $GR 2>/dev/null"
+mexp "rm 게임 저장소 거부" Bash "rm -rf $GR/Assets" deny
+mexp "sed -i 게임 저장소 거부" Bash "sed -i s/a/b/ $GR/Assets/a.cs" deny
+mexp "sed 읽기 통과" Bash "sed -n 1,5p $GR/Assets/a.cs"
+mexp "cp 목적지 게임 저장소 거부" Bash "cp x $GR/Assets/" deny
+mexp "cp 원본이 게임 저장소면 통과" Bash "cp $GR/Assets/a $SB/mg-other/"
+mexp "bash -c 안의 쓰기 거부" Bash "bash -c 'touch $GR/x'" deny
+mexp "저장소 밖 cwd 의 빌드는 확인" Bash "dotnet build" ask
+MCWD="$GR" mexp "게임 저장소 cwd 의 빌드 거부" Bash "dotnet build" deny
+MCWD="$GR" mexp "게임 저장소 cwd 의 상대 경로 쓰기 거부" Bash "touch Assets/x" deny
+mexp "모르는 명령은 확인" Bash "curl -O http://x/y" ask
+mexp "인라인 파이썬은 확인" Bash "python3 -c 'print(1)'" ask
+mexp "변수 경로 쓰기는 확인" Bash 'touch "$X/a"' ask
+mexp "연결 명령 중 거부가 있으면 거부" Bash "bd list; touch $GR/x" deny
+mexp "연결 명령 중 모르는 것만 있으면 확인" Bash "bd list; foo-bar" ask
+mexp "작업자 세션 쓰기·빌드 통과" Bash "touch $GR/x; dotnet build" pass worker
+mexp "대상 아닌 도구 통과" Glob "x"
+out=$(printf '{깨진' | python3 -I "$MG" 2>/dev/null); [ -z "$out" ] && ok "main-work: 깨진 JSON 통과" || ko "main-work: 깨진 JSON 통과" "$out"
+# 임시 허용 파일
+touch "$MALLOW"
+mexp "허용 파일 있으면 Agent 통과" Agent x pass
+mexp "허용 파일 있으면 게임 저장소 Edit 통과" Edit "$GR/a.cs" pass
+mexp "허용 파일 있으면 git commit 통과" Bash "git -C $GR commit -m x" pass
+mexp "허용 파일 있어도 허용 파일 Write 거부" Write "$MALLOW" deny
+mexp "허용 파일 있어도 허용 파일 rm 거부" Bash "rm $MALLOW" deny
+mexp "허용 파일 있어도 허용 파일 touch 거부" Bash "touch $MALLOW" deny
+mexp "허용 파일 읽기(ls)는 통과" Bash "ls -l $MALLOW"
+touch -t 202001010000 "$MALLOW"
+mexp "허용 파일 1시간 지나면 Agent 거부" Agent x deny
+mexp "허용 파일 만료 시 Edit 거부" Edit "$GR/a.cs" deny
+rm -f "$MALLOW"
+mexp "허용 파일 없으면 허용 파일 Write 거부" Write "$MALLOW" deny
+
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]

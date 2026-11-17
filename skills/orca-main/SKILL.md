@@ -46,6 +46,7 @@ bd list --status blocked                         # 막힌 카드
 4. 계획 카드·승인 기록까지 쓰면 **세션을 끝낸다.** 다음 요청은 새 세션에서.
 
 직접 하지 않는 것: 코드·로그 조사, 구현, 워커 배정, 허브 화면 읽고 옮기기, 허브 사이 메시지 전달.
+훅(`main_work_guard.py`)이 메인의 Agent·Task, 게임 저장소 수정·빌드, `worker-start` 를 거부하고 `feature_open.sh` 로 안내한다. 읽기·`bd`·`feature_open.sh` 는 통과. 급할 때는 사용자가 `! touch ~/.config/lrm-hubs/main-work.allow` 로 1시간 푼다(모델은 이 파일을 쓰지 못함).
 
 ## 2-1. 계획 승인 기록
 
