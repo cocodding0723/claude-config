@@ -4,4 +4,5 @@ cd "$(dirname "$0")/.." || exit 2
 rc=0
 for f in lrm-hubs/*.sh tests/*.sh; do bash -n "$f" || rc=1; done
 for t in tests/test_*.sh; do echo "== $t"; bash "$t" || rc=1; done
+for t in tests/gh_watch/run.sh; do echo "== $t"; bash "$t" || rc=1; done
 exit "$rc"

@@ -1,0 +1,17 @@
+{
+  "_comment": "예시. 쓰려면 ~/.config/lrm-hubs/gh-watch-actions.json 으로 복사하고 쓸 규칙만 enabled 를 true 로. 기본은 전부 꺼짐",
+  "actions": [
+    {
+      "on": "ci_done:failure",
+      "mine": true,
+      "enabled": false,
+      "cmd": ["/bin/sh", "-c", "bd create \"CI 실패 조사: PR #$GH_WATCH_PR\" -d \"$GH_WATCH_URL\""]
+    },
+    {
+      "on": "pr_merged",
+      "repo": "Basakansoft/LoveRevolutionMaker",
+      "enabled": false,
+      "cmd": ["/bin/echo", "병합 뒤 빌드 자리"]
+    }
+  ]
+}
