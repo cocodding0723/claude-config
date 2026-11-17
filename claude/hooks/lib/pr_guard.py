@@ -1,5 +1,6 @@
 """gh 명령 해석 + PR 규칙 판정(pr-draft-guard.sh 가 부름). 인자: 시작 cwd. stdin: 원본 명령.
-규칙: 새 PR 은 draft 로만(11-13 D-PRDRAFT) + 생성 자체도 사용자 승인 기록 D-PR<해시> 뒤에만(11-16) /
+규칙: 새 PR 은 draft 로만(11-13 D-PRDRAFT) + 생성 자체도 사용자 승인 뒤에만(11-16). 승인 = Orca 하위 작업 공간의 자기 브랜치(11-17, workspace_pr)
+·D-PR<해시> 카드·계획 기록·터미널 승인·메인 대화의 사용자 직접 지시(11-17, 인자 2·3 = 훅 입력 transcript_path·session_id) /
 draft 해제(ready)는 그 PR 에 대한 사용자 승인 기록이 있을 때만.
 출력: 판정 있으면 hook JSON 한 줄(deny|ask), 통과면 빈 출력. 따옴표 안·heredoc 본문의 글자는 명령이 아니라 무시하되
 bash -c·eval 문자열은 다시 해석함. 판정 불가(PR 번호·저장소 해석 실패, 기록 읽기 실패)는 deny 가 아니라 ask."""
@@ -15,8 +16,11 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import push_targets as pt  # noqa: E402  따옴표·heredoc·cd 해석 재사용
 import plan_approval as pa  # noqa: E402
+import prompt_approval as ua  # noqa: E402  메인 대화의 사용자 직접 지시
+import workspace_pr as ws  # noqa: E402  Orca 하위 작업 공간 상시 허용
 
 HOME = os.path.expanduser("~")
+EV = {}  # 훅 입력의 세션 정보(transcript_path·session_id). main() 이 채움
 WRAPPERS = {"env", "command", "nohup", "time", "exec", "builtin"}
 KEYWORDS = {"do", "then", "else", "elif", "if", "while", "until", "!", "{"}
 SHELLS = {"bash", "sh", "zsh", "dash"}
@@ -30,9 +34,12 @@ CARD_REPO_RE = re.compile(r"([\w.\-]+/[\w.\-]+)#\d+")
 RDY_PREFIX = "D-RDY"
 PR_PREFIX = "D-PR"
 API_CREATE_REASON = "gh api 로 새 PR 생성 — 승인 기록을 확인할 수 없음. gh pr create --draft 로 다시 실행(D-PR 승인 검사)하거나 사용자 승인 확인"
-CREATE_APPROVAL_REASON = ("새 PR 생성은 사용자 승인 뒤에만(사용자 11-16) — [{repo} {branch}] 결정 카드 {did} 의 1번 답 필요. 예: "
+CREATE_APPROVAL_REASON = ("새 PR 생성은 사용자 승인 뒤에만(사용자 11-16) — [{repo} {branch}]. Orca 하위 작업 공간(부모 있음)에서 그 공간의 "
+                          "작업 브랜치(sprint-YYYYMMDD/…·feature/…·fix/… 등)로 여는 draft PR 은 승인 없이 통과하므로 그 공간 폴더에서 다시 실행. "
+                          "그 밖에는 결정 카드 {did} 의 1번 답 필요. 예: "
                           "slack_notify.sh --kind decide --decision-id {did} --options '1=PR 올리기 => draft PR 생성,2=보류 => 로컬 유지' "
-                          "--recommend 1 --no-doc $'{repo} {branch} PR 생성 승인\\n배경: …\\n용어: 없음'. 또는 계획서에 이 PR 을 추가한 뒤 컨펌 "
+                          "--recommend 1 --no-doc $'{repo} {branch} PR 생성 승인\\n배경: …\\n용어: 없음'. 또는 메인 세션이면 사용자가 메인 대화에서 "
+                          "직접 'PR 올려' 처럼 지시한 뒤 60분 안(세션 기록 대조, 모델이 문장을 지어내지 않음). 또는 계획서에 이 PR 을 추가한 뒤 컨펌 "
                           "→ plan-approvals/<plan-id>.json 의 prs 에 {{repo, branch}} 기록. Slack 봇이 꺼져 있으면 사용자에게 프롬프트에서 "
                           "'! ~/orca/board/bin/board-approve {repo} {branch} \"<원문>\"' 한 줄을 직접 치도록 안내(모델은 실행하지 않음)")
 
@@ -93,6 +100,14 @@ def card_ok(store, did, repo=""):
             continue  # 다른 저장소의 같은 번호 카드
         last = rec
     return bool(last) and (last.get("action") == "approve" or str(last.get("pick")) == "1")
+
+
+def prompt_ok(kind):
+    """메인 대화의 사용자 직접 지시(prompt_approval). 세션 기록을 못 읽으면 Unknown"""
+    try:
+        return bool(ua.find(EV, kind))
+    except OSError as e:
+        raise Unknown(f"세션 기록을 읽지 못함: {e}")
 
 
 def plan_ok(find, *args):
@@ -200,7 +215,7 @@ def check_create(toks, flags, repo, here):
     head = head or current_branch(here)
     if not REPO_RE.fullmatch(repo or "") or not head:
         raise Unknown("새 PR 의 저장소·브랜치를 알 수 없음(-R·--head 로 지정)")
-    if plan_ok(pa.find_pr, repo, head, base):
+    if ws.allowed(here, repo, head, origin_repo) or plan_ok(pa.find_pr, repo, head, base) or prompt_ok("pr"):
         return None
     did = pr_create_id(repo, head)
     if not decided(did, repo):
@@ -289,6 +304,7 @@ def check_cmd(cmd, here, depth=0):
 
 def main():
     cwd = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] else os.getcwd()
+    EV.update(transcript_path=sys.argv[2] if len(sys.argv) > 2 else "", session_id=sys.argv[3] if len(sys.argv) > 3 else "")
     try:
         res = check_cmd(sys.stdin.read(), cwd)
     except Unknown as e:
