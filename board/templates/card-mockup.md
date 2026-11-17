@@ -18,8 +18,8 @@ labels: `kind:mockup` · `file:<고칠 경로 접두>`
 - [ ] 프리팹 배치·값 반영
 - [ ] 연결 기능 코드 연결
 - [ ] 프리팹 값 비교 실행 → `evidence:prefab-diff=<경로>` (불일치 0)
-- [ ] 컴파일 → `evidence:compile=<로그 경로>`
-- [ ] 관련 EditMode → `evidence:editmode=<결과 xml 경로>`
+- [ ] 컴파일 → `~/orca/board/bin/board-run compile -- <컴파일 명령>` 이 출력한 `evidence:compile=… commit=…` 줄
+- [ ] 관련 EditMode → `board-run editmode --result <xml> -- <EditMode 명령>` 이 출력한 `evidence:editmode=…` 줄(통과 1개 이상, 전부 건너뜀 거부)
 
 ## 3. 완료
 

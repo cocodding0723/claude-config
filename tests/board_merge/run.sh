@@ -23,8 +23,8 @@ card() { # card <제목> <브랜치> <file label>
 claim() { (cd "$BOARD_DIR" && BD_ACTOR="$2" bd update "$1" --claim --json >/dev/null); sleep 1; }
 evidence() { # evidence <카드> <브랜치>
   local h; h=$(git -C "$R" rev-parse "$2")
-  printf 'Compilation succeeded\n' > "$SB/ev/$1.log"
   printf '<test-run total="1" passed="1" failed="0" result="Passed"></test-run>\n' > "$SB/ev/$1.xml"
+  git -C "$R" checkout -q "$2"; (cd "$R" && "$HERE/../../board/bin/board-run" compile --out "$SB/ev/$1.log" -- echo ok >/dev/null 2>&1); git -C "$R" checkout -q feat
   (cd "$BOARD_DIR" && bd comments add "$1" "evidence:compile=$SB/ev/$1.log commit=$h" >/dev/null && bd comments add "$1" "evidence:editmode=$SB/ev/$1.xml commit=$h" >/dev/null)
 }
 branch() { # branch <이름> <파일> <내용>
@@ -72,6 +72,13 @@ before=$(into); expect "bd close 로 먼저 닫은 카드는 6" 6 "$BIN" "$c6" w
 branch w-lab src/a/la.cs 1; branch w-oth src/a/ot.cs 1; c7=$(card 다른브랜치 w-lab src/a/); claim "$c7" w1; evidence "$c7" w-lab
 before=$(into); expect "--branch 가 카드 label 과 다르면 2" 2 "$BIN" "$c7" w1 --repo "$R" --branch w-oth; unchanged "$before" "--branch 불일치"
 expect "--branch 가 label 과 같으면 0" 0 "$BIN" "$c7" w1 --repo "$R" --branch w-lab
+
+# 저장소별 설정 repos.json 의 merge_verify 가 시험 병합을 검증
+branch w-cfg src/a/cfg.cs 1; kc=$(card 설정검증 w-cfg src/a/cfg.cs); claim "$kc" w1; evidence "$kc" w-cfg
+printf '{"%s": {"merge_verify": "exit 1"}}\n' "$R" > "$BOARD_DIR/repos.json"
+before=$(into); expect "repos.json merge_verify 실패면 8" 8 "$BIN" "$kc" w1 --repo "$R"; unchanged "$before" "설정 검증 실패"
+rm -f "$BOARD_DIR/repos.json"
+"$BIN" "$kc" w1 --repo "$R" >"$SB/out" 2>&1; grep -q '병합 검증 설정 없음' "$SB/out" && ok "설정 없으면 경고" || ko "설정 없음 경고" "$(tail -3 "$SB/out")"
 
 # 동시 병합: 뒤 병합은 앞 병합(시험 병합 중)이 끝날 때까지 잠금에서 기다림
 branch w-c1 src/a/c1.cs 1; branch w-c2 src/a/c2.cs 1

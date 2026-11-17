@@ -1,0 +1,6 @@
+{
+  "github.com/basakansoft/loverevolutionmaker": {
+    "compile": "bash <저장소 안 컴파일 스크립트 경로>",
+    "merge_verify": "bash <저장소 안 컴파일 스크립트 경로>"
+  }
+}

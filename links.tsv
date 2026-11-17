@@ -207,6 +207,8 @@ board/bin/board-claim	orca/board/bin/board-claim	link
 board/lib/board_scope.py	orca/board/lib/board_scope.py	link
 board/bin/board-merge-check	orca/board/bin/board-merge-check	link
 board/bin/board-merge	orca/board/bin/board-merge	link
+board/bin/board-run	orca/board/bin/board-run	link
+board/lib/board_config.py	orca/board/lib/board_config.py	link
 board/templates/card-mockup.md	orca/board/templates/card-mockup.md	link
 board/templates/card-task.md	orca/board/templates/card-task.md	link
 hubs/tools/HudRenderer.cs	.config/lrm-hubs/tools/HudRenderer.cs	link
