@@ -20,7 +20,7 @@ usage() {
 기능 하나를 맡을 코디네이터를 만든다. 다시 실행해도 있는 것은 재사용하고 빠진 것만 만든다.
   1 기능 통합 브랜치 feature/<slug> (없으면 --base 에서 생성)
   2 허브 작업 공간 <WS_ROOT>/coord-feat-<slug>-hub (그 브랜치 체크아웃)
-  3 작업판 epic 카드 (bd create -t epic, label feature:<slug>·branch:<통합 브랜치>·repo:<저장소>. 범위 검사 기준·완료 증거 커밋 묶기에 씀)
+  3 작업판 epic 카드 (bd create -t epic, label feature:<slug>·branch:<통합 브랜치>·repo:<저장소>·base:<기준>. 범위 검사 기준·완료 증거 커밋 묶기·병합 기록 대조에 씀)
   4 역할 파일 ~/.config/lrm-hubs/roles/role-feat-<slug>.txt 와 Opus 코디네이터 기동
     (살아 있는 코디네이터가 있으면 기동하지 않음)
 
@@ -79,7 +79,7 @@ if [ -z "$EPIC" ]; then
   EPIC_STATE=new
   if [ "$DRY" = 1 ]; then EPIC="(생성 예정)"
   else
-    EPIC=$(cd "$CFG_BOARD" && bd create "[$TICKET] $NAME" -t epic -l "$LABEL,branch:$BRANCH,repo:$CFG_REPO" --external-ref "jira-$TICKET" \
+    EPIC=$(cd "$CFG_BOARD" && bd create "[$TICKET] $NAME" -t epic -l "$LABEL,branch:$BRANCH,repo:$CFG_REPO,base:$BASE_REF" --external-ref "jira-$TICKET" \
       -d "기능 코디네이터 허브: $HUB / 통합 브랜치: $BRANCH" --json | jq -r '.id // empty') || true
     [ -n "$EPIC" ] || die "epic 생성 실패 — cd $CFG_BOARD && bd create ... 를 직접 실행해 오류 확인" 1
   fi

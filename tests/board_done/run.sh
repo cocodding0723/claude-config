@@ -97,6 +97,25 @@ expect "검수 불합격 판정 거부" 7 "$BIN" --epic "$e" lead
 printf '{"verdict":"pass","reviewer_model":"claude-fable-5","author_model":"gpt-6-astra"}' > "$SB/ev/rv.json"
 expect "epic 닫힘" 0 "$BIN" --epic "$e" lead
 
+# epic 게이트: 직접 닫은 하위 카드·board-merge 기록 없는 병합 거부
+ME=$(git -C "$GR" rev-parse w)
+de=$(bd create "직접 우회" -t epic --labels "branch:w,repo:$GR,base:main" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+dk=$(bd create "하위" --parent "$de" --labels "$BL" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+BD_ACTOR=w1 bd close "$dk" --reason 직접 --force >/dev/null 2>&1
+printf 'png' > "$SB/ev/ds.png"; printf 'mp4' > "$SB/ev/dr.mp4"; cp "$SB/ev/rv.json" "$SB/ev/drv.json"; ev "$de" "$SB/ev/ds.png"; ev "$de" "$SB/ev/dr.mp4"; ev "$de" "review=$SB/ev/drv.json"
+expect "bd close 로 직접 닫은 하위 카드가 있으면 epic 거부" 4 "$BIN" --epic "$de" lead --dry-run
+bd reopen "$dk" >/dev/null 2>&1; claim "$dk" w1; good_compile "$SB/ev/dkc.log"; ev "$dk" "compile=$SB/ev/dkc.log"; good_xml "$SB/ev/dkx.xml"; ev "$dk" "editmode=$SB/ev/dkx.xml"
+"$BIN" "$dk" w1 >/dev/null 2>&1
+git -C "$GR" checkout -q -b side main; git -C "$GR" -c user.name=t -c user.email=t@t commit -q --allow-empty -m side
+git -C "$GR" checkout -q w; git -C "$GR" -c user.name=t -c user.email=t@t merge -q --no-ff -m direct side; git -C "$GR" checkout -q main
+HEAD_W=$(git -C "$GR" rev-parse w)
+for f in ds.png dr.mp4; do touch "$SB/ev/$f"; done; touch "$SB/ev/drv.json"
+ev "$de" "$SB/ev/ds.png"; ev "$de" "$SB/ev/dr.mp4"; ev "$de" "review=$SB/ev/drv.json"
+expect "통합 브랜치에 board-merge 기록 없는 병합이 있으면 epic 거부" 4 "$BIN" --epic "$de" lead --dry-run
+bd comments add "$dk" "board-merge: $HEAD_W side → w" >/dev/null
+expect "병합이 board-merge 로 기록돼 있으면 epic 통과" 0 "$BIN" --epic "$de" lead --dry-run
+git -C "$GR" branch -f w "$ME"; HEAD_W=$ME
+
 # 커밋 묶기
 g=$(new_card "커밋"); claim "$g" w1
 good_compile "$SB/ev/g.log"; good_xml "$SB/ev/g.xml"

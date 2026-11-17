@@ -11,7 +11,7 @@ import board_scope as bs  # noqa: E402
 
 HELP_EPILOG = """\
 기준(--base) 생략 시: 카드 label base:<ref> → 상위 epic label branch:<ref>(기능 통합 브랜치) 순. 둘 다 없으면 종료 2.
---epic <epic> 이면 하위 카드 전부의 file: 범위 합집합으로 검사함(기능 통합 브랜치 → dev 반영 전 검사). 기준은 --base 필수.
+--epic <epic> 이면 하위 카드 전부의 file: 범위 합집합으로 검사함(기능 통합 브랜치 → dev 반영 전 검사). 기준은 --base → epic label base:.
 file: 범위는 ~/·저장소 상대·./ 표기를 (저장소, 저장소 안 경로)로 맞춘 뒤 '/' 경계로 비교함.
 이름 바꾸기는 지운 파일 + 새 파일 두 줄로 봄(--no-renames). 범위 밖 파일을 범위 안으로 옮겨 지우는 것도 거부.
 
@@ -110,8 +110,9 @@ def main():
         mine = [p for k in kids for p in file_labels(k)]
         mine_loc = [loc for k in kids for loc in scope(k, repo)]
         family = {a.card} | {k["id"] for k in kids}
+        a.base = a.base or bs.label(card, "base")
         if not a.base:
-            fail("거부: --epic 은 --base 필수(예: --base origin/dev)")
+            fail(f"거부: --epic 기준 없음. 조치: --base origin/dev 를 주거나 bd label add {a.card} base:<ref>")
     else:
         mine = file_labels(card)
         if not mine:

@@ -4,21 +4,25 @@
 set -uo pipefail
 
 HERE=$(cd "$(dirname "$(perl -MCwd=realpath -e 'print realpath shift' "${BASH_SOURCE[0]}")")" && pwd -P)
-CHECK="${BOARD_MERGE_CHECK:-$HERE/board-merge-check}"
-DONE="${BOARD_DONE:-$HERE/board-done}"
+CHECK="$HERE/board-merge-check"
+DONE="$HERE/board-done"
 
 usage() {
   cat <<'H'
 사용: board-merge <카드> <작업자> [--repo <통합 작업 공간>] [--branch <카드 브랜치>]
   통합 작업 공간(기본 현재 폴더)은 기능 통합 브랜치가 체크아웃돼 있고 깨끗해야 함.
-  카드 브랜치 기본값은 카드 label branch:<브랜치>. 범위 검사 기준은 현재 통합 브랜치.
+  카드 브랜치는 카드 label branch:<브랜치>. --branch 는 같은 값일 때만 받음(다르면 종료 2).
+  범위 검사 기준은 현재 통합 브랜치.
 순서:
   1 잠금(<저장소 .git>/board-merge.lock, 다른 병합이 끝날 때까지 대기)
   2 board-merge-check <카드> <브랜치> --base <통합 브랜치>     종료 4면 중단
   3 board-done <카드> <작업자> --dry-run                         증거 불합격이면 중단
   4 git merge --no-ff --no-commit <브랜치> → BOARD_MERGE_VERIFY(있으면) 실행 → 실패면 merge --abort
-  5 git commit → board-done <카드> <작업자>
-종료: 0 병합·완료 / 2 사용법 / 3 환경(저장소 더러움·브랜치 없음) / 4 범위 밖 / 6 증거 불합격 / 7 충돌 / 8 검증 실패 / 9 병합 뒤 완료 실패(병합은 남음, board-done 다시 실행)
+  5 git commit → 카드에 'board-merge: <병합 커밋>' 기록 → board-done <카드> <작업자>
+우회 막기:
+  - bd close 로 먼저 닫은 카드(닫힌 사유가 board-done: 이 아님)는 거부(종료 6). bd reopen 뒤 다시 실행
+  - git merge 로 먼저 들어간 브랜치는 그 병합 커밋의 첫 부모 대비로 범위를 검사(fast-forward 면 확인 불가로 종료 4)
+종료: 0 병합·완료 / 2 사용법·branch: 불일치 / 3 환경(저장소 더러움·브랜치 없음) / 4 범위 밖 / 6 증거 불합격·직접 닫힌 카드 / 7 충돌 / 8 검증 실패 / 9 병합 뒤 완료 실패(병합은 남음, board-merge 다시 실행)
 환경: BOARD_DIR(작업판) BOARD_MERGE_VERIFY(시험 병합 상태에서 돌릴 검증 명령, 예: Roslyn 컴파일) BOARD_MERGE_WAIT(잠금 대기 초, 600)
 예:
   board-merge lrm-12 ui-worker --repo ~/orca/workspaces/LoveRevolutionMaker/coord-feat-store
@@ -39,19 +43,38 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$CARD" ] && [ -n "$ACTOR" ] || { usage >&2; exit 2; }
+BOARD="${BOARD_DIR:-$HOME/orca/board}"
 
 REPO=$(cd "$REPO" 2>/dev/null && pwd -P) || die "저장소 폴더 없음"
 git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || die "$REPO 는 git 저장소가 아님"
 INTO=$(git -C "$REPO" symbolic-ref --short -q HEAD) || die "$REPO 가 브랜치에 있지 않음(detached). 통합 브랜치를 체크아웃"
 [ -z "$(git -C "$REPO" status --porcelain --untracked-files=no)" ] || die "$REPO 에 커밋 안 된 변경 있음. 정리 뒤 다시 실행"
 
-if [ -z "$BRANCH" ]; then
-  BRANCH=$(cd "${BOARD_DIR:-$HOME/orca/board}" && bd show "$CARD" --json 2>/dev/null \
-    | python3 -c 'import json,sys;d=json.load(sys.stdin);d=d[0] if isinstance(d,list) else d;print(([l[7:] for l in d.get("labels") or [] if l.startswith("branch:")] or [""])[-1])') \
-    || die "카드 $CARD 를 못 읽음. BOARD_DIR·카드 id 확인"
-  [ -n "$BRANCH" ] || die "카드 $CARD 에 branch: label 없음. --branch 를 주거나 bd label add $CARD branch:<브랜치>" 2
-fi
+# 카드: 상태·닫힌 사유·branch: label·board-merge 기록
+CARD_INFO=$(cd "$BOARD" && { bd show "$CARD" --json; echo; bd comments "$CARD" --json 2>/dev/null; } | python3 -c '
+import json, sys
+docs, dec, s = [], json.JSONDecoder(), sys.stdin.read().strip()
+while s:
+    v, i = dec.raw_decode(s); docs.append(v); s = s[i:].strip()
+d = docs[0][0] if isinstance(docs[0], list) else docs[0]
+br = ([l[7:] for l in d.get("labels") or [] if l.startswith("branch:")] or [""])[-1]
+rec = [c.get("text", "").split()[1] for c in (docs[1] if len(docs) > 1 else []) or [] if (c.get("text") or "").startswith("board-merge: ")]
+print(d.get("status", ""), br or "-", (rec or ["-"])[-1], (d.get("close_reason") or "-").replace(" ", "_")[:40])
+' 2>/dev/null) || die "카드 $CARD 를 못 읽음. BOARD_DIR·카드 id 확인"
+read -r STATUS LABEL_BRANCH RECORDED CLOSE_REASON <<<"$CARD_INFO"
+[ "$LABEL_BRANCH" != - ] || die "카드 $CARD 에 branch: label 없음. bd label add $CARD branch:<브랜치> 뒤 다시 실행" 2
+[ -z "$BRANCH" ] || [ "$BRANCH" = "$LABEL_BRANCH" ] \
+  || die "--branch $BRANCH 가 카드 label branch:$LABEL_BRANCH 와 다름(증거는 label 브랜치 것). 브랜치가 바뀌었으면 label 을 고치고 증거를 다시 만듦" 2
+BRANCH=$LABEL_BRANCH
 git -C "$REPO" rev-parse -q --verify "$BRANCH^{commit}" >/dev/null || die "브랜치 $BRANCH 없음"
+
+if [ "$STATUS" = closed ]; then
+  case "$CLOSE_REASON" in
+    board-done:*) git -C "$REPO" merge-base --is-ancestor "$BRANCH" HEAD && { echo "이미 완료: $CARD ($BRANCH → $INTO)"; exit 0; }
+      die "$CARD 는 board-done 으로 닫혔지만 $BRANCH 가 $INTO 에 없음. bd reopen $CARD 뒤 다시 실행" 6 ;;
+    *) die "$CARD 는 완료 게이트 없이 닫힘(사유: ${CLOSE_REASON//_/ }). bd reopen $CARD 뒤 board-merge 로 다시 실행" 6 ;;
+  esac
+fi
 
 # 1 잠금: mkdir 은 원자적. 소유 pid 가 죽었으면 회수
 LOCK="$(git -C "$REPO" rev-parse --absolute-git-dir)/board-merge.lock"
@@ -65,16 +88,42 @@ done
 echo $$ > "$LOCK/pid"
 trap 'rm -rf -- "${LOCK:?}"' EXIT
 
+# 이미 들어간 브랜치: board-merge 기록이 있으면 완료만(종료 9 재실행), 없으면 git merge 직접 병합 → 들인 병합 커밋의 첫 부모 대비로 검사
+BASE=$INTO ALREADY=0
+if git -C "$REPO" merge-base --is-ancestor "$BRANCH" HEAD; then
+  ALREADY=1
+  if [ "$RECORDED" != - ] && git -C "$REPO" merge-base --is-ancestor "$RECORDED" HEAD 2>/dev/null; then
+    echo "이미 병합됨(board-merge $RECORDED): $BRANCH → $INTO"
+    "$DONE" "$CARD" "$ACTOR" || exit 9
+    exit 0
+  fi
+  intro=""
+  for c in $(git -C "$REPO" rev-list --first-parent -n 2000 HEAD); do
+    git -C "$REPO" merge-base --is-ancestor "$BRANCH" "$c" || break
+    intro=$c
+  done
+  if [ -z "$intro" ] || [ "$(git -C "$REPO" rev-list --parents -n1 "$intro" | wc -w)" -lt 3 ] \
+     || git -C "$REPO" merge-base --is-ancestor "$BRANCH" "$intro^1"; then
+    die "$BRANCH 가 board-merge 없이 fast-forward 로 $INTO 에 들어가 범위를 확인할 수 없음. 그 커밋을 되돌린 뒤 board-merge 로 다시 실행" 4
+  fi
+  BASE=$(git -C "$REPO" rev-parse "$intro^1")
+  echo "경고: $BRANCH 는 board-merge 없이 병합됨(${intro:0:12}). 그 병합 전($INTO 첫 부모 ${BASE:0:12}) 대비로 검사" >&2
+fi
+
 # 2 범위 검사
-"$CHECK" "$CARD" "$BRANCH" --base "$INTO" --repo "$REPO"; rc=$?
+"$CHECK" "$CARD" "$BRANCH" --base "$BASE" --repo "$REPO"; rc=$?
 [ "$rc" = 0 ] || { echo "중단: 범위 검사 종료 $rc" >&2; exit "$([ "$rc" = 4 ] && echo 4 || echo 3)"; }
 
 # 3 증거 사전 검사(병합 전에 거르기)
 "$DONE" "$CARD" "$ACTOR" --dry-run || { echo "중단: 완료 증거 불합격. 증거 보완 뒤 다시 실행" >&2; exit 6; }
 
-# 이미 들어간 브랜치는 병합 없이 완료만(반복 실행 안전)
-if git -C "$REPO" merge-base --is-ancestor "$BRANCH" HEAD; then
-  echo "이미 병합됨: $BRANCH → $INTO"
+record() { (cd "$BOARD" && bd comments add "$CARD" "board-merge: $1 $BRANCH → $INTO" >/dev/null 2>&1) || echo "경고: 카드 $CARD 에 병합 기록 실패" >&2; }
+
+if [ "$ALREADY" = 1 ]; then
+  if [ -n "${BOARD_MERGE_VERIFY:-}" ] && ! (cd "$REPO" && bash -c "$BOARD_MERGE_VERIFY"); then
+    die "검증 실패(BOARD_MERGE_VERIFY). 이미 들어간 병합 ${intro:0:12} 을 확인" 8
+  fi
+  record "$intro"
   "$DONE" "$CARD" "$ACTOR" || exit 9
   exit 0
 fi
@@ -91,7 +140,9 @@ if [ -n "${BOARD_MERGE_VERIFY:-}" ]; then
   fi
 fi
 
-# 5 커밋 → 카드 완료
+# 5 커밋 → 기록 → 카드 완료
 git -C "$REPO" commit -q --no-edit || { git -C "$REPO" merge --abort 2>/dev/null; die "병합 커밋 실패(훅 거부 등). 병합 취소" 3; }
-echo "병합: $BRANCH → $INTO ($(git -C "$REPO" rev-parse --short HEAD))"
-"$DONE" "$CARD" "$ACTOR" || { echo "오류: 병합은 됐지만 카드 완료 실패. board-done $CARD $ACTOR 다시 실행" >&2; exit 9; }
+MERGED=$(git -C "$REPO" rev-parse HEAD)
+echo "병합: $BRANCH → $INTO (${MERGED:0:7})"
+record "$MERGED"
+"$DONE" "$CARD" "$ACTOR" || { echo "오류: 병합은 됐지만 카드 완료 실패. 원인 해소 뒤 board-merge $CARD $ACTOR 다시 실행" >&2; exit 9; }

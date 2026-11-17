@@ -124,6 +124,28 @@ def branch_head(card):
     return repo, branch, head, float(git(repo, "show", "-s", "--format=%ct", head) or 0)
 
 
+def unrecorded_merges(epic, kids):
+    """epic 통합 브랜치(base:..branch:)의 첫 부모 병합 중 board-merge 기록이 없는 것. 기준 브랜치 받아오기 병합은 제외.
+    epic 에 base: label 이 없으면 검사 못 함(빈 목록)"""
+    repo, branch, base = os.path.expanduser(bs.label(epic, "repo")), bs.label(epic, "branch"), bs.label(epic, "base")
+    if not (repo and branch and base) or not git(repo, "rev-parse", "--verify", "-q", base):
+        return []
+    recorded = set()
+    for k in kids:
+        for c in bd_json("comments", k["id"]) or []:
+            t = (c.get("text") or "").split()
+            if len(t) >= 2 and t[0] == "board-merge:":
+                recorded.add(t[1])
+    out = []
+    for m in git(repo, "rev-list", "--first-parent", "--merges", f"{base}..{branch}").split():
+        side = git(repo, "rev-parse", m + "^2")
+        if not side or subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", side, base]).returncode == 0:
+            continue
+        if not any(m.startswith(r) or r.startswith(m) for r in recorded):
+            out.append(m)
+    return out
+
+
 def check_commit(sha, head, branch):
     if not sha:
         return "증거 줄에 commit=<해시> 없음"
@@ -267,7 +289,15 @@ def gate(card, actor, epic):
         kids = bd_json("children", card["id"]) or []
         open_kids = [k["id"] for k in kids if k.get("status") != "closed"]
         if open_kids:
-            raise Fail(EXIT_STATE, f"하위 카드 {len(open_kids)}개 안 닫힘: {', '.join(open_kids[:5])}", "하위 카드를 board-done 으로 먼저 닫음")
+            raise Fail(EXIT_STATE, f"하위 카드 {len(open_kids)}개 안 닫힘: {', '.join(open_kids[:5])}", "하위 카드를 board-merge 로 먼저 닫음")
+        direct = [k["id"] for k in kids if not str(k.get("close_reason") or "").startswith("board-done:")]
+        if direct:
+            raise Fail(EXIT_STATE, f"하위 카드 {len(direct)}개가 완료 게이트 없이 닫힘(bd close 직접): {', '.join(direct[:5])}",
+                       "bd reopen <id> 뒤 board-merge <id> <작업자> 로 다시 닫음")
+        stray = unrecorded_merges(card, kids)
+        if stray:
+            raise Fail(EXIT_STATE, f"통합 브랜치에 board-merge 기록 없는 병합 {len(stray)}개: {', '.join(m[:12] for m in stray[:5])}",
+                       "직접 git merge 한 카드 브랜치를 board-merge <카드> <작업자> 로 다시 실행(범위·증거 검사 뒤 기록됨)")
         kind = "epic"
     else:
         kind = "mockup" if "kind:mockup" in (card.get("labels") or []) else "task"

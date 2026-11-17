@@ -32,6 +32,7 @@ branch() { # branch <이름> <파일> <내용>
   git -C "$R" add .; git -C "$R" commit -q -m "$1"; git -C "$R" checkout -q feat
 }
 expect() { local name=$1 want=$2; shift 2; "$@" >"$SB/out" 2>&1; local got=$?; [ "$got" = "$want" ] && ok "$name" || ko "$name" "종료 $got(기대 $want): $(tail -c 300 "$SB/out")"; }
+st() { (cd "$BOARD_DIR" && bd show "$1" --json | python3 -c 'import json,sys;d=json.load(sys.stdin);print((d[0] if isinstance(d,list) else d)["status"])'); }
 unchanged() { [ "$(into)" = "$1" ] && ok "$2: 통합 브랜치 그대로" || ko "$2: 통합 브랜치 바뀜"; }
 
 branch w-out src/b/x.cs 1; c1=$(card 범위밖 w-out src/a/); claim "$c1" w1; evidence "$c1" w-out
@@ -57,6 +58,21 @@ before=$(into); expect "충돌은 7" 7 "$BIN" "$c4" w1 --repo "$R"; unchanged "$
 echo dirty > "$R/base.txt"; expect "더러운 작업 공간은 3" 3 "$BIN" "$c4" w1 --repo "$R"; git -C "$R" checkout -q base.txt
 mkdir "$R/.git/board-merge.lock"; echo 999999 > "$R/.git/board-merge.lock/pid"
 expect "죽은 pid 의 잠금은 회수" 7 "$BIN" "$c4" w1 --repo "$R"
+# 병합 단일 경로 우회 3가지
+branch w-direct src/b/d.cs 1; c5=$(card 직접병합 w-direct src/a/); claim "$c5" w1; evidence "$c5" w-direct
+git -C "$R" merge -q --no-ff -m direct w-direct
+expect "git merge 를 먼저 했어도 범위 밖이면 4" 4 "$BIN" "$c5" w1 --repo "$R"
+[ "$(st "$c5")" = in_progress ] && ok "직접 병합 범위 밖: 카드 안 닫힘" || ko "직접 병합 범위 밖 카드" "$(st "$c5")"
+branch w-direct2 src/a/d2.cs 1; c5b=$(card 직접병합범위안 w-direct2 src/a/); claim "$c5b" w1; evidence "$c5b" w-direct2
+git -C "$R" merge -q --no-ff -m direct2 w-direct2
+expect "git merge 를 먼저 했어도 범위 안·증거 통과면 0" 0 "$BIN" "$c5b" w1 --repo "$R"
+branch w-closed src/a/cl.cs 1; c6=$(card 직접닫음 w-closed src/a/); claim "$c6" w1
+(cd "$BOARD_DIR" && BD_ACTOR=w1 bd close "$c6" --reason 직접 --force >/dev/null 2>&1)
+before=$(into); expect "bd close 로 먼저 닫은 카드는 6" 6 "$BIN" "$c6" w1 --repo "$R"; unchanged "$before" "직접 닫은 카드"
+branch w-lab src/a/la.cs 1; branch w-oth src/a/ot.cs 1; c7=$(card 다른브랜치 w-lab src/a/); claim "$c7" w1; evidence "$c7" w-lab
+before=$(into); expect "--branch 가 카드 label 과 다르면 2" 2 "$BIN" "$c7" w1 --repo "$R" --branch w-oth; unchanged "$before" "--branch 불일치"
+expect "--branch 가 label 과 같으면 0" 0 "$BIN" "$c7" w1 --repo "$R" --branch w-lab
+
 expect "--help 0" 0 "$BIN" --help
 expect "인자 부족 2" 2 "$BIN" onlycard
 
