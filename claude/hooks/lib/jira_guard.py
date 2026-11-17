@@ -1,6 +1,7 @@
 """Jira 쓰기 승인 판정(jira-approval-guard.sh 가 부름). stdin: hook JSON.
 규칙(사용자 11-16): 이슈 생성·상태 변경(transition, edit 의 status 필드)은 사용자 승인 기록 뒤에만.
 승인 기록 = 결정 카드의 가장 최근 답이 1번 또는 approve. 생성 D-JIRA<요약 sha1 8자>, 상태 변경 D-JST<이슈 키 영숫자>.
+이슈 생성만 메인 대화의 사용자 직접 지시도 인정(11-17, prompt_approval). 상태 변경은 카드·계획 기록만.
 출력: deny|ask hook JSON 한 줄, 통과면 빈 출력. 기록을 못 읽으면 ask."""
 import hashlib
 import json
@@ -63,8 +64,12 @@ def main():
         did, what, title, (find, *args), field = t
         if pg.plan_ok(find, *args) or pg.decided(did):
             return
+        if what == "이슈 발급":
+            pg.EV.update(transcript_path=h.get("transcript_path") or "", session_id=h.get("session_id") or "")
+            if pg.prompt_ok("jira"):
+                return
         res = ("deny", f"Jira {what}는 사용자 승인 뒤에만(사용자 11-16) — 계획서에 추가한 뒤 컨펌(plan-approvals/<plan-id>.json 의 {field} 기록) "
-               f"또는 결정 카드 {did} 의 1번 답 필요. 예: " + CARD.format(did=did, what=what, title=title))
+               f"또는 결정 카드 {did} 의 1번 답 필요" + (" 또는 메인 세션이면 사용자가 메인 대화에서 직접 '티켓·에픽 만들어' 처럼 지시한 뒤 60분 안" if what == "이슈 발급" else "") + ". 예: " + CARD.format(did=did, what=what, title=title))
     except pg.Unknown as e:
         res = ("ask", f"Jira 승인 판정 불가: {e}. 사용자 승인된 작업인지 확인 필요")
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": res[0], "permissionDecisionReason": res[1]}}, ensure_ascii=False))
