@@ -55,6 +55,11 @@ GIT_TIMEOUT, DF_TIMEOUT = 5, 10
 LIST_LIMIT = "1000"              # terminal·worktree list 기본 개수에서 잘림(실측 워크스페이스 226개)
 # worker-list 는 한 쪽 최대 100건, 최신이 앞(실측 2034건). nextCursor 로 끝까지 넘기되 쪽 수·시간에 상한(실측 21쪽 4.4초)
 WORKER_PAGE, WORKER_PAGES_MAX, WORKER_BUDGET = "100", 60, 40
+# 지금 도는 워커·최근 끝난 워커(AI 진행 칸). 시작·종료 시각·모델은 worker-show 에만 있어 부르는 수에 상한(실측 1회 0.15초)
+AGENT_WINDOW_MIN = 60            # 끝난 워커를 이 분까지 실음
+AGENT_SHOW_MAX = 12              # 회차당 worker-show 상한. 넘으면 시각·모델만 비움(줄은 남김)
+AGENT_SCAN_ROWS = 40             # 해제 시각이 없는 종료 행은 최신 이만큼만 worker-show 로 종료 시각 확인(옛 retained 행 수백 건 방지)
+AGENT_LIST_MAX = 20
 
 # 허브 화면 분류. preview 는 Orca 가 주는 화면 끝 300자 안팎이라 위쪽 질문은 못 봄
 SCREEN_TAIL = 8
@@ -96,7 +101,8 @@ def usage():
         "  --print  1회 수집해 표준출력으로만 냄. 파일·로그·gh 간격 표식은 쓰지 않음",
         "원료: orca terminal list(허브 상태 분류만 저장, 화면 본문 없음), slack-sent/inbox/done(결정 대기),",
         "      slack-push.log(최근 결과 코드), orca orchestration worker-list·task-list(최근 종료 작업 제목·상태·시각),",
-        "      gh pr list(PANEL_GH_REPOS 가 있을 때만, PANEL_GH_INTERVAL 초마다)",
+        "      gh pr list(PANEL_GH_REPOS 가 있을 때만, PANEL_GH_INTERVAL 초마다),",
+        "      orca orchestration worker-show·worktree list(지금 도는 워커·60분 안에 끝난 워커의 작업 공간·허브·모델·시각)",
         "설정: 환경 변수 또는 작업 폴더의 panel.env(KEY=값, 아래 키만 읽음. 양식 hubs/panel.env.example)",
         "  PANEL_GH_REPOS 공백·쉼표로 구분한 owner/repo 목록(비면 gh 건너뜀), PANEL_GH_INTERVAL gh 간격 초(기본 300, 60~86400)",
         "  PANEL_HUB_ROOT 허브 폴더 상위 경로(비면 폴더 이름 coord-* 만 봄), PANEL_RECENT 최근 기록 건수(기본 5, 1~20)",
@@ -518,6 +524,104 @@ def collect_workers(conf, get):
     return {"live": live, "recent": items}
 
 
+def utc_any(text):
+    """Orca 시각 문자열(UTC) → epoch 초. 'YYYY-MM-DD HH:MM:SS' 와 ISO 'YYYY-MM-DDTHH:MM:SS(.fff)Z' 둘 다. 못 읽으면 None"""
+    t = str(text or "").strip()
+    if not t:
+        return None
+    t = re.sub(r"\.\d+", "", t.replace("T", " ").rstrip("Z"))
+    return utc_epoch(t)
+
+
+def ws_path(w):
+    """워커 행의 작업 공간 경로. worktreeId 는 '<저장소 id>::<경로>'"""
+    res = w.get("resource") if isinstance(w.get("resource"), dict) else {}
+    proj = w.get("projection") if isinstance(w.get("projection"), dict) else {}
+    wid = res.get("worktreeId") or ((proj.get("workspace") or {}).get("id") if isinstance(proj.get("workspace"), dict) else None)
+    return str(wid).split("::")[-1] if wid else ""
+
+
+def collect_agents(get, now):
+    """AI 진행 칸의 워커 줄: 지금 도는 워커(liveness live·아직 안 끝남)와 AGENT_WINDOW_MIN 분 안에 끝난 워커.
+    작업 공간 표시 이름·허브는 worktree list, 시작·종료 시각·모델은 worker-show(상한 AGENT_SHOW_MAX). 조회 실패한 칸만 비움"""
+    rows = workers_raw(get)
+    wts = get("worktree", "list", "--limit", LIST_LIMIT).get("worktrees")
+    if not isinstance(wts, list):
+        raise SourceError("parse")
+    by_path = {str(w.get("path") or ""): w for w in wts if isinstance(w, dict)}
+    by_id = {str(w.get("id") or ""): w for w in wts if isinstance(w, dict)}
+    import progress_collect  # 지연 가져오기(순환 방지)
+    slugs = progress_collect.load_slugs()
+    shown = [0]
+
+    def show(d):
+        """worker-show --full 결과(dict). 상한·실패면 빈 dict"""
+        if not d or shown[0] >= AGENT_SHOW_MAX:
+            return {}
+        shown[0] += 1
+        try:
+            return get("orchestration", "worker-show", "--dispatch", d, "--full")
+        except SourceError:
+            return {}
+
+    def place(w):
+        path = ws_path(w)
+        wt = by_path.get(path) or {}
+        parent = by_id.get(str(wt.get("parentWorktreeId") or "")) or {}
+        pbase = os.path.basename(str(parent.get("path") or "").rstrip("/"))
+        hub = hub_name(pbase, slugs) if pbase.startswith("coord-") else (str(parent.get("displayName") or pbase) or None)
+        return {"name": str(wt.get("displayName") or os.path.basename(path) or "?")[:TITLE_MAX], "hub": (hub or None) and hub[:24]}
+
+    def launch(w, sh):
+        proj = w.get("projection") if isinstance(w.get("projection"), dict) else {}
+        prov = proj.get("provider") if isinstance(proj.get("provider"), dict) else {}
+        eff = ((((sh.get("worker") or {}).get("startOptions") or {}).get("launch") or {}).get("effective") or {}) if isinstance(sh, dict) else {}
+        eff = eff if isinstance(eff, dict) else {}
+        agent, model = prov.get("id") or eff.get("agent"), prov.get("model") or eff.get("model")
+        return {"agent": str(agent)[:16] if agent else None, "model": str(model)[:32] if model else None}
+
+    def disp(sh):
+        d = sh.get("dispatch") if isinstance(sh, dict) else None
+        return d if isinstance(d, dict) else {}
+
+    running, finished = [], []
+    for w in rows:
+        if not isinstance(w, dict):
+            continue
+        proj = w.get("projection") if isinstance(w.get("projection"), dict) else {}
+        verdict = (proj.get("liveness") or {}).get("verdict") if isinstance(proj.get("liveness"), dict) else None
+        if str(w.get("workerState") or "") not in ENDED and verdict == "live":
+            running.append(w)
+    run_items = []
+    for w in running[:AGENT_LIST_MAX]:
+        d = str(w.get("dispatchId") or "")
+        sh = show(d)
+        dd = disp(sh)
+        start = utc_any(dd.get("dispatchedAt") or dd.get("createdAt") or (sh.get("worker") or {}).get("createdAt") if isinstance(sh, dict) else None)
+        run_items.append({"dispatch": d[:24], **place(w), **launch(w, sh), "startedAt": start})
+    cutoff = now - AGENT_WINDOW_MIN * 60
+    for i, w in enumerate(rows):
+        if not isinstance(w, dict) or str(w.get("workerState") or "") not in ENDED or len(finished) >= AGENT_LIST_MAX:
+            continue
+        res = w.get("resource") if isinstance(w.get("resource"), dict) else {}
+        at = utc_epoch(res.get("releaseCompletedAt"))
+        sh = {}
+        if at is None:
+            if i >= AGENT_SCAN_ROWS:
+                continue
+            sh = show(str(w.get("dispatchId") or ""))
+            at = utc_any(disp(sh).get("completedAt"))
+        if at is None or at < cutoff:
+            continue
+        if not sh:
+            sh = show(str(w.get("dispatchId") or ""))
+        finished.append({"dispatch": str(w.get("dispatchId") or "")[:24], **place(w), **launch(w, sh),
+                         "status": str(w.get("workerState")), "finishedAt": at})
+    finished.sort(key=lambda x: -x["finishedAt"])
+    return {"running": run_items, "runningMore": max(0, len(running) - AGENT_LIST_MAX), "finished": finished,
+            "windowMin": AGENT_WINDOW_MIN, "complete": worker_pages(get)["complete"]}
+
+
 # ---- 원료: 쉬는 자원 --------------------------------------------------------------------------
 def tilde(path):
     home = os.path.expanduser("~")
@@ -905,6 +1009,7 @@ def collect(conf, repos, interval, prev, now, mark_gh):
         "pending": run_source(lambda: collect_pending(now), prev.get("pending"), now),
         "push": run_source(collect_push, prev.get("push"), now),
         "workers": run_source(lambda: collect_workers(conf, get), prev.get("workers"), now),
+        "agents": run_source(lambda: collect_agents(get, now), prev.get("agents"), now),
         "idle": collect_idle(conf, get, prev.get("idle"), now, mark_gh),
         "board": run_source(collect_board, prev.get("board"), now),
         "ai": run_source(lambda: collect_ai(now), prev.get("ai"), now),

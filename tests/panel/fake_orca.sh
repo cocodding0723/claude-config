@@ -1,6 +1,6 @@
 #!/bin/bash
 # 가짜 orca. FAKE_ORCA_DIR 의 JSON 을 그대로 돌려줌. 호출 인자와 Slack 토큰 상속 여부만 기록
-# worker-list 는 실제처럼 쪽으로 나눔: 첫 쪽 workers.json, --cursor <c> 면 workers_<c>.json
+# worker-list 는 실제처럼 쪽으로 나눔: 첫 쪽 workers.json, --cursor <c> 면 workers_<c>.json. worker-show --dispatch <d> 는 show_<d>.json
 # FAKE_ORCA_FAIL="terms workers_c2 …" 그 파일 실패, FAKE_ORCA_ALT="terms tasks …" 그 파일 대신 <이름>_alt.json
 D="${FAKE_ORCA_DIR:?}"
 echo "$* tok=${SLACK_BOT_TOKEN:-none}" >> "$D/orca.calls"
@@ -11,6 +11,7 @@ case "$*" in
   "orchestration worker-list --full --limit 100 --json"|"orchestration worker-list --full --json") f=workers ;;
   "orchestration worker-list --full --limit 100 --cursor "*" --json") a="$*"; c="${a#*--cursor }"; f="workers_${c% --json}" ;;
   "orchestration task-list --run "*" --json") f=tasks ;;
+  "orchestration worker-show --dispatch "*" --full --json") a="$*"; a="${a#*--dispatch }"; f="show_${a%% *}" ;;
   "worktree list --limit 1000 --json") f=worktrees ;;
   "terminal read --terminal "*" --screen --limit 40 --json") [ -f "$D/screen.json" ] && cat "$D/screen.json" || echo '{"ok":true,"result":{"terminal":{"tail":[]}}}'; exit 0 ;;
   *) echo '{"ok":false}'; exit 1 ;;
