@@ -77,27 +77,27 @@ setlist 10; run w2 FAKE_GC_DROP=4
 chk "상한 도달(10): 허브 하위만 정리 1회" '[ "$(wc -l < "$F/gc.calls" | tr -d " ")" = 1 ] && grep -q -- "--parent $HUBP --apply" "$F/gc.calls"' "$(cat "$F/gc.calls")"
 chk "정리로 줄면(6): 경고·기록 없이 생성" '[ "$RC" = 0 ] && made w2 && [ ! -s "$F/report.calls" ] && ! grep -q "⚠️" "$SB/err"'
 setlist 10; run w3
-chk "정리 뒤에도 10: stderr 경고" '[ "$RC" = 0 ] && grep -q "정리 뒤에도 하위 작업 공간 10개(상한 10)" "$SB/err"'
+chk "정리 뒤에도 10: 종료 4·원인+조치 문구" '[ "$RC" = 4 ] && grep -q "10개(상한 10)" "$SB/err" && grep -q "release_ws.sh --dispatch" "$SB/err" && grep -q "ws_gc.log" "$SB/err"' "rc=$RC $(cat "$SB/err")"
 chk "정리 뒤에도 10: 허브 보고 block 기록" 'grep -q -- "add --hub q --task 없음 --kind block --text 하위 작업 공간 10개, 남길 것만으로 10개 초과" "$F/report.calls"' "$(cat "$F/report.calls")"
-chk "정리 뒤에도 10: 생성은 계속, 경로 출력" 'made w3 && grep -q "$WSR/w3" "$SB/out"'
+chk "정리 뒤에도 10: 폴더 안 만들고 부모 연결 없음" '[ ! -e "$WSR/w3" ] && ! grep -q "^worktree set" "$F/orca.calls"'
 setlist 3; run w4 LRM_HUB_MAX_CHILDREN=3
 chk "상한 환경 변수(3): 3개에서 정리 시작" '[ "$(wc -l < "$F/gc.calls" | tr -d " ")" = 1 ] && grep -q "상한 3" "$SB/err"'
 setlist 10; run w5 FAKE_REPORT_FAIL=1
-chk "보고 기록 실패해도 생성 계속(종료 0)" '[ "$RC" = 0 ] && made w5 && grep -q "허브 보고 기록 실패" "$SB/err"'
+chk "보고 기록 실패해도 거부는 유지(종료 4)" '[ "$RC" = 4 ] && [ ! -e "$WSR/w5" ] && grep -q "허브 보고 기록 실패" "$SB/err"'
 setlist 10; run w6 FAKE_LIST_FAIL=1
-chk "orca 목록 조회 실패: 정리 없이 생성" '[ "$RC" = 0 ] && made w6 && [ ! -s "$F/gc.calls" ]' "rc=$RC"
+chk "orca 목록 조회 실패: 정리 없이 경고 뒤 생성" '[ "$RC" = 0 ] && made w6 && [ ! -s "$F/gc.calls" ] && grep -q "수 조회 실패" "$SB/err"' "rc=$RC"
 
 # [8] 정리가 멈추면 제한 시간 뒤 끊고 생성을 계속함
 setlist 10; rm -f "$F/gc.finished"; t0=$(date +%s); run w7 FAKE_GC_SLEEP=3 LRM_HUB_GC_TIMEOUT=1; t1=$(date +%s)
-chk "[8] 정리가 멈춰도 제한 시간(1초) 뒤 끊고 생성 계속(종료 0, 10초 안에 끝남)" '[ "$RC" = 0 ] && made w7 && [ $((t1 - t0)) -lt 10 ] && grep -q "1초 안에 끝나지 않아 중단" "$SB/err"' "rc=$RC took=$((t1 - t0)) $(cat "$SB/err")"
+chk "[8] 정리가 멈춰도 제한 시간(1초) 뒤 끊고 판정(상한 초과면 종료 4, 10초 안에 끝남)" '[ "$RC" = 4 ] && [ ! -e "$WSR/w7" ] && [ $((t1 - t0)) -lt 10 ] && grep -q "1초 안에 끝나지 않아 중단" "$SB/err"' "rc=$RC took=$((t1 - t0)) $(cat "$SB/err")"
 sleep 4
 chk "[8] 끊긴 정리기는 남아 돌지 않음(3초 뒤에도 끝 표시 없음)" '[ ! -e "$F/gc.finished" ]'
 setlist 10; run w8 FAKE_GC_FAIL=1
-chk "[8] 정리기 실패(종료 7): 경고 뒤 생성 계속" '[ "$RC" = 0 ] && made w8 && grep -q "정리기 실행 실패(종료 7)" "$SB/err"'
+chk "[8] 정리기 실패(종료 7): 경고 뒤 다시 세어 판정(초과면 종료 4)" '[ "$RC" = 4 ] && [ ! -e "$WSR/w8" ] && grep -q "정리기 실행 실패(종료 7)" "$SB/err"'
 
 # [P2] TERM 을 무시하는 자식이 시간 초과 뒤에도 남지 않음(유예 1초 뒤 그룹 KILL)
 setlist 10; rm -f "$F/gc.stray"; run w9 FAKE_GC_STUBBORN=1 LRM_HUB_GC_TIMEOUT=1 LRM_HUB_GC_GRACE=1
-chk "[P2] TERM 무시 자식이 있어도 시간 초과 뒤 생성 계속" '[ "$RC" = 0 ] && made w9 && grep -q "1초 안에 끝나지 않아 중단" "$SB/err"' "rc=$RC $(cat "$SB/err")"
+chk "[P2] TERM 무시 자식이 있어도 시간 초과 뒤 판정까지 도달(종료 4)" '[ "$RC" = 4 ] && [ ! -e "$WSR/w9" ] && grep -q "1초 안에 끝나지 않아 중단" "$SB/err"' "rc=$RC $(cat "$SB/err")"
 sleep 5
 chk "[P2] TERM 무시 자식이 그룹 KILL 로 종료됨(4초 뒤 표시 없음)" '[ ! -e "$F/gc.stray" ]'
 # ---- 한글 이름·--json·중복 거부 ----
