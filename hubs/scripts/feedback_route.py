@@ -52,6 +52,8 @@ WAKE_BUDGET_S = 60              # 회차당 입력창 전송에 쓰는 시간 �
 WAKE_MAX_TRIES = actions.BLOCK_RETRIES  # 막힘 재시도 횟수 = 결정 답 전달 경로와 같은 값
 WAKE_GAP_S = actions.BLOCK_GAP_S
 WAKE_MAX_AGE_S = 3600           # 대기열 항목 나이 상한. 넘으면 세션 알림 대신 부모 상자로 넘김(스위치를 오래 꺼 뒀다 켠 경우 등)
+ROUTE_FAIL_MAX = 3               # 한 답글의 전달(bd 쓰기)이 이 횟수만큼 실패하면 확인 카드로 넘기고 다음 답글로 진행
+ROUTE_FAILS = "feedback-route.fails.json"
 HANDOFF_TEXT = "작업 공간 카드 {card} 에 Slack 답 도착, 세션에 알리지 못함({why}). 답 원문: bd show {card}"
 HANDOFF_NOTE = "세션에 알리지 못해({why}) {to} 로 넘김"
 HANDOFF_TRIAGE_TITLE = "📥 작업 공간 답 전달 확인 필요: {card}"
@@ -185,6 +187,32 @@ def to_ws(card, rec, text, dry_run):
         cards.bd("comments", "add", card["id"], f"Slack 피드백(원문): {text}")
         main_inbox.append("feedback", text, SOURCE, ref=f"{card['id']} slack:{rec.get('ts')}", box=box)
     return {"ts": str(rec.get("ts")), "parent_ts": str(rec.get("parent_ts") or ""), "to": "ws", "card": card["id"], "box": box}
+
+
+def route_guarded(rec, by_ts, dry_run):
+    """route 에 답글별 실패 횟수 제한을 건 것. bd 오류가 한 답글에서만 계속 나면 뒤 답글이 영원히 막히므로
+    ROUTE_FAIL_MAX 회째에 확인 카드로 넘기고 진행(확인 카드 쓰기도 실패하면 그대로 오류). 일시 오류는 이전처럼 다음 회차에 같은 답글부터 다시"""
+    try:
+        return route(rec, by_ts, dry_run)
+    except cards.Fail as err:
+        if dry_run:
+            raise
+        path, ts = os.path.join(hub_dir(), ROUTE_FAILS), str(rec.get("ts"))
+        try:
+            with open(path, encoding="utf-8") as f:
+                fails = json.load(f)
+        except (OSError, ValueError):
+            fails = {}
+        fails[ts] = fails.get(ts, 0) + 1
+        if fails[ts] < ROUTE_FAIL_MAX:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(fails, f)
+            raise
+        got = to_triage(rec, by_ts.get(str(rec.get("parent_ts") or "")) or [], f"전달 {fails[ts]}회 실패({str(err)[:80]})", body(rec), False)
+        fails.pop(ts, None)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(fails, f)
+        return got
 
 
 def route(rec, by_ts, dry_run):
@@ -350,7 +378,7 @@ def once(dry_run=False):
         for r in replies:
             if str(r.get("ts")) in done:
                 continue
-            got = route(r, by_ts, dry_run)
+            got = route_guarded(r, by_ts, dry_run)
             if got is None:
                 continue
             res["routed"].append(got)

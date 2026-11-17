@@ -263,6 +263,30 @@ class ReplyToSessionTest(ReplyBase):
         self.assertFalse(os.path.exists(os.path.join(self.hub, "feedback-routed.jsonl")))
 
 
+class ReplyFailureTest(ReplyBase):
+    def test_reply_failing_repeatedly_goes_to_confirm_card_and_next_reply_proceeds(self):
+        """한 답글에서 bd 쓰기가 계속 실패해도 뒤 답글이 막히지 않음: 3회째에 확인 카드로 넘기고 진행"""
+        wrapper = os.path.join(self.bin, "bd-fail")
+        self.write(wrapper, f'#!/bin/bash\n[ "$1" = comments ] && [ "$2" = add ] && [ "$3" = "{self.ws_card}" ] && exit 1\nexec bd "$@"\n')
+        os.chmod(wrapper, 0o755)
+        env = dict(self.env, BOARD_BD=wrapper)
+        self.reply("1794383300.000001", PARENT_TS, "계속 실패하는 답")
+        self.reply("1794383300.000002", EPIC_TS, "뒤 답글")
+        run = lambda: subprocess.run([sys.executable, "-I", SCRIPT, "--once", "--json"], capture_output=True, text=True, env=env)  # noqa: E731
+        for _ in range(2):
+            p = run()
+            self.assertEqual(p.returncode, 3, p.stderr)
+            self.assertEqual(self.box("feat-x"), [], "실패 중에는 뒤 답글도 대기")
+        p = run()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        out = json.loads(p.stdout)
+        self.assertEqual([r["to"] for r in out["routed"]], ["triage", "feature"])
+        self.assertIn("전달 3회 실패", out["routed"][0]["why"])
+        self.assertEqual([r["text"] for r in self.box("feat-x")], ["뒤 답글"])
+        self.assertTrue(any("계속 실패하는 답" in t for t in self.comments(out["routed"][0]["card"])))
+        self.assertEqual(json.loads(run().stdout)["routed"], [], "다시 처리하지 않음")
+
+
 class ReplyFallbackTest(ReplyBase):
     def feat_box(self):
         return self.box("feat-x")
