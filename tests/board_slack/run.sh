@@ -225,6 +225,20 @@ S2=$("$SCR/board-ask" --runnable no "다른 카드 기록만 있는 결정" --op
 printf '{"at":1,"kind":"file","card":"%s"}\n{"at":1,"kind":"text","card":"other-1","decision_id":"D-Bother1"}\n' "$S2" > "$SB/sent.jsonl"
 [ "$(python3 -I "$BS" push "$S2" --json | jq -r .sent)" = true ] && ok "다른 카드 기록·설명서 첨부 기록(번호 없음)만으로는 막지 않음" || ko "오탐" ""
 : > "$SB/sent.jsonl"
+# 잠금: 대기 시간 >= 보유 최대 시간, 폴더 실패는 원인·조치(traceback 없음)
+python3 -I - "$SCR" <<'PY' && ok "잠금 대기(LOCK_WAIT)가 잠금 최대 보유 시간(전송+bd 2번+미리보기 2단계)보다 김" || ko "잠금 대기 계산" ""
+import sys
+sys.path.insert(0, sys.argv[1])
+import board_slack as b, board_cards as c
+assert b.LOCK_HOLD_MAX == 2 * b.SEND_TIMEOUT + 2 * c.BD_TIMEOUT + b.PREVIEW_TIMEOUT, b.LOCK_HOLD_MAX
+assert b.LOCK_WAIT >= b.LOCK_HOLD_MAX, (b.LOCK_WAIT, b.LOCK_HOLD_MAX)
+PY
+S3=$("$SCR/board-ask" --runnable no "잠금 폴더 막힌 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "시안이 두 벌이라 하나로 맞춤" --terms 없음 --doc "$DOC")
+mkdir -p "$SB/h2"; : > "$SB/h2/.board-slack-locks"; touch "$SB/h2/.board-slack.on"; rm -f "$SB/notify.args"* "$SB/notify.n"  # 잠금 폴더 자리에 파일을 둬 폴더 생성 실패를 만듦
+LRM_HUB_DIR="$SB/h2" python3 -I "$BS" push "$S3" 2>"$SB/err" >/dev/null; rc=$?
+[ "$rc" = 3 ] && grep -q '조치' "$SB/err" && grep -q '잠금 폴더' "$SB/err" && ! grep -q Traceback "$SB/err" && [ ! -f "$SB/notify.args" ] && ok "잠금 폴더를 못 만들면 종료 3·원인·조치(traceback 없음, 전송 안 함)" || ko "잠금 폴더 실패" "rc=$rc $(cat "$SB/err")"
+LRM_HUB_DIR="$SB/h2" "$SCR/board-ask" --runnable no "잠금 폴더 막힌 자동 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "시안이 두 벌이라 하나로 맞춤" --terms 없음 --doc "$DOC" >/dev/null 2>"$SB/err"; rc=$?
+[ "$rc" = 0 ] && grep -q '잠금 폴더' "$SB/err" && ! grep -q Traceback "$SB/err" && ok "board-ask 자동 보내기도 잠금 실패에 경고만 남기고 traceback 없이 끝남" || ko "board-ask 잠금 실패" "rc=$rc $(cat "$SB/err")"
 # launchd 최소 환경에서 결정 번호 → 카드 조회
 DIDH=$(python3 -I "$BS" push "$H1" --json | jq -r .decisionId)
 OUT=$(env -i PATH=/usr/bin:/bin HOME="$HOME" BOARD_DIR="$BOARD_DIR" LRM_HUB_DIR="$LRM_HUB_DIR" python3 -I -c 'import sys;sys.path.insert(0,sys.argv[1]);import board_slack;print(board_slack.card_for(sys.argv[2]))' "$SCR" "$DIDH" 2>&1)

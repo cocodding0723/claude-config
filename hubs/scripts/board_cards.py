@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # -I 실행에�
 import decide_card  # noqa: E402
 
 KINDS = ("decision", "user-todo")
+BD_TIMEOUT = 30  # bd 호출 한 번의 시간 제한(초). board_slack 잠금 대기 계산도 이 값을 씀
 BD_CANDIDATES = ("/opt/homebrew/bin/bd", "/usr/local/bin/bd")  # launchd 기본 PATH(/usr/bin:/bin)에는 bd 가 없어 버튼 답이 카드로 못 갔음(11-17)
 LEGACY_APPROVAL = "approval"  # 옛 --kind approval. decision + gate:approval 로 바꿔 받음
 GATES = ("approval",)
@@ -96,7 +97,7 @@ def bd(*args):
     cmd = [find_bd(), *args]
     try:
         p = subprocess.run(cmd, cwd=os.environ.get("BOARD_DIR") or os.path.expanduser("~/orca/board"),
-                           capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+                           capture_output=True, text=True, timeout=BD_TIMEOUT, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired) as e:
         raise Fail(3, f"bd 실행 실패({type(e).__name__}). 조치: bd 설치·BOARD_DIR 확인")
     if p.returncode != 0:

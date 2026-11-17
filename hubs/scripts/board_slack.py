@@ -58,7 +58,9 @@ PARTICLE_PAIR = {"은": ("은", "는"), "는": ("은", "는"), "이": ("이", "�
 LETTER_JONG = set("LMNR")  # 읽을 때 받침이 있는 알파벳(엘·엠·엔·알)
 TITLE_NEED = f"보강 필요: 제목 {cards.TITLE_MAX}자"
 LOCK_DIR = os.path.join(HUB_DIR, ".board-slack-locks")  # 카드별 전송 잠금 파일 폴더
-LOCK_WAIT, LOCK_POLL = SEND_TIMEOUT * 2, 0.2  # 앞 전송이 끝나길 기다리는 최대 초(전송+미리보기 시간 여유)·확인 간격
+# 잠금을 쥐는 최대 시간 = 전송 + label 추가 + 첨부 실패 코멘트(bd 2번) + 미리보기 생성 + 미리보기 전송. 기다리는 쪽은 이보다 길게 기다려야 앞 전송이 길어져도 종료 3 으로 끝나지 않음
+LOCK_HOLD_MAX = SEND_TIMEOUT + 2 * cards.BD_TIMEOUT + PREVIEW_TIMEOUT + SEND_TIMEOUT
+LOCK_WAIT, LOCK_POLL = LOCK_HOLD_MAX + 10, 0.2  # 대기 최대 초(보유 최대 + 여유 10초)·확인 간격
 ATTACH_FAIL = "파일 첨부 실패"  # slack_notify 가 카드는 보내고 파일만 못 붙였을 때 stderr 에 남기는 문구
 
 
@@ -298,8 +300,11 @@ def push(card_id, dry_run=False):
 @contextlib.contextmanager
 def card_lock(card_id):
     """카드 하나당 파일 잠금(fcntl.flock). 프로세스가 죽으면 OS 가 풀어 줘서 낡은 잠금이 남지 않음. 못 얻으면 Fail(3)"""
-    os.makedirs(LOCK_DIR, exist_ok=True)
-    fd = os.open(os.path.join(LOCK_DIR, re.sub(r"[^A-Za-z0-9._-]", "_", card_id) + ".lock"), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        os.makedirs(LOCK_DIR, exist_ok=True)
+        fd = os.open(os.path.join(LOCK_DIR, re.sub(r"[^A-Za-z0-9._-]", "_", card_id) + ".lock"), os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError as e:  # 권한·디스크 문제가 traceback 으로 끝나지 않게(board-ask 자동 보내기는 Fail 만 받음)
+        raise cards.Fail(3, f"{card_id} 전송 잠금 폴더를 못 만들거나 못 엶({LOCK_DIR}: {e.strerror}). 조치: 폴더 권한·디스크 여유 확인 뒤 다시 시도(카드는 보내지 않았음)")
     try:
         end = time.monotonic() + LOCK_WAIT
         while True:
