@@ -116,6 +116,18 @@ class ParentTest(unittest.TestCase):
         self.run_round()
         self.assertEqual(len([c for c in self.calls() if "warn" in c]), 1)  # 열린 스레드·하루 1회라 다시 알리지 않음
 
+    def test_missing_why_notice_waits_for_successful_send(self):
+        self.card("쉬운 이름: x\n무엇: 고친다", [])
+        self.report(text="왜 없음")
+        open(self.p("fail.all"), "w").write("1")  # 전송이 계속 실패
+        res = self.run_round()
+        self.assertEqual(res["sent"], 0)
+        self.assertEqual([c for c in self.calls() if "warn" in c], [], "전송 실패 회차에는 안내를 보내지 않음")
+        os.remove(self.p("fail.all"))
+        for _ in range(3):  # 재시도 간격(backoff_s=0)이라 바로 다시 시도됨
+            self.run_round()
+        self.assertEqual(len([c for c in self.calls() if "warn" in c]), 1, "성공한 회차에 한 번")
+
     def test_hold_older_than_limit_sends_with_available_fields(self):
         self.card("", [], title="[impl]")
         self.report(text="오래 막힌 보고")

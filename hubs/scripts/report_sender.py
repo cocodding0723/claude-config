@@ -1013,8 +1013,6 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
             log(conf, line)
             continue
         notice = "" if bad_input else why_notice(conf, rep, st)
-        if notice:
-            hold_report(conf, rep, st, notice, deadline, held=False)
         tried += 1
         if bad_input or fails.get("fails", 0) >= conf.fail_limit:  # 접수 전 쌓인 영구 오류·상한 초과 기록은 호출 없이 중단
             why = bad_input or fails.get("error", "재시도 상한 초과")
@@ -1046,6 +1044,8 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
                 line = f"실패 {rep['id']} {rep['hub']} {rep['kind']} {fails['fails']}회째: {err}"
         else:
             out["sent"] += 1
+            if notice:  # 전송이 성공한 뒤에만 안내(실패하면 안내만 먼저 나가는 일 없음. 다음 회차에 같은 조건이면 다시 판정)
+                hold_report(conf, rep, st, notice, deadline, held=False)
             line = (f"전송 {rep['id']} {rep['hub']} {rep['kind']} → "
                     + (f"결정 카드 {res['body_ts']}" if rep["kind"] == "decide" else f"주제 {key} 스레드 {res['topic_ts']} 답글 {res['body_ts']}")
                     + (f" · 진행 줄 {res['line_ts']}" if res["line_ts"] else " · 진행 줄 없음(스레드 지정)" if res.get("pinned") else " · 진행 줄 생략"))
