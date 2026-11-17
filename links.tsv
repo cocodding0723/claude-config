@@ -12,6 +12,7 @@ claude/hooks/jira-approval-guard.sh	.claude/hooks/jira-approval-guard.sh	link
 claude/hooks/plan-approval-write-guard.sh	.claude/hooks/plan-approval-write-guard.sh	link
 claude/hooks/main-send-guard.sh	.claude/hooks/main-send-guard.sh	link
 claude/hooks/notify.sh	.claude/hooks/notify.sh	link
+claude/hooks/ai-state.sh	.claude/hooks/ai-state.sh	link
 claude/hooks/post-edit.sh	.claude/hooks/post-edit.sh	link
 claude/hooks/prompt-context.sh	.claude/hooks/prompt-context.sh	link
 claude/hooks/scoped-test.sh	.claude/hooks/scoped-test.sh	link
@@ -104,6 +105,9 @@ hubs/scripts/panel_collect.py	.config/lrm-hubs/panel_collect.py	link
 hubs/scripts/board_cards.py	.config/lrm-hubs/board_cards.py	link
 hubs/scripts/board-ask	.config/lrm-hubs/board-ask	link
 hubs/scripts/board-answer	.config/lrm-hubs/board-answer	link
+hubs/scripts/board_slack.py	.config/lrm-hubs/board_slack.py	link
+hubs/scripts/feedback_route.py	.config/lrm-hubs/feedback_route.py	link
+hubs/scripts/plan_check.py	.config/lrm-hubs/plan_check.py	link
 hubs/scripts/progress_collect.py	.config/lrm-hubs/progress_collect.py	link
 hubs/scripts/todo_items.py	.config/lrm-hubs/todo_items.py	link
 hubs/scripts/todo_sync.py	.config/lrm-hubs/todo_sync.py	link
@@ -164,6 +168,8 @@ hubs/launchd/ai.lrm.cinotify.plist	Library/LaunchAgents/ai.lrm.cinotify.plist	co
 hubs/scripts/slack_socket.py	.config/lrm-hubs/slack_socket.py	copy
 hubs/scripts/main_terminal.py	.config/lrm-hubs/main_terminal.py	link
 hubs/scripts/main_inbox.py	.config/lrm-hubs/main_inbox.py	link
+hubs/scripts/board_notify.py	.config/lrm-hubs/board_notify.py	link
+hubs/main-route	.config/lrm-hubs/main-route	link
 hubs/scripts/ledger.py	.config/lrm-hubs/ledger.py	copy
 hubs/scripts/ledger_sync.py	.config/lrm-hubs/ledger_sync.py	copy
 hubs/scripts/task_ledger.py	.config/lrm-hubs/task_ledger.py	copy
@@ -209,6 +215,7 @@ board/bin/board-merge-check	orca/board/bin/board-merge-check	link
 board/bin/board-merge	orca/board/bin/board-merge	link
 board/templates/card-mockup.md	orca/board/templates/card-mockup.md	link
 board/templates/card-task.md	orca/board/templates/card-task.md	link
+board/templates/plan.md	orca/board/templates/plan.md	link
 hubs/tools/HudRenderer.cs	.config/lrm-hubs/tools/HudRenderer.cs	link
 hubs/tools/ModalRenderer.cs	.config/lrm-hubs/tools/ModalRenderer.cs	link
 hubs/tools/RenderShots.cs	.config/lrm-hubs/tools/RenderShots.cs	link

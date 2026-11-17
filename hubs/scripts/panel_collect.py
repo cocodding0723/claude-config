@@ -712,8 +712,10 @@ def run_source(fn, prev, now):
 BOARD_DIR = os.environ.get("PANEL_BOARD_DIR") or os.path.expanduser("~/orca/board")
 BOARD_TIMEOUT, BOARD_DOING_MAX, BOARD_LIST_MAX, BOARD_RECENT = 10, 8, 10, 5
 BOARD_STATUSES = ("in_progress", "open", "blocked")
-# 사람 손이 필요한 카드 종류. 라벨 kind:<값>
-BOARD_KINDS = {"decision": "decisions", "user-todo": "todos", "approval": "approvals"}
+# 사람 손이 필요한 카드 종류. 라벨 kind:<값>. 승인 성격은 결정 카드의 label gate:approval(배지), 옛 kind:approval 카드도 결정으로 읽음
+BOARD_KINDS = {"decision": "decisions", "user-todo": "todos"}
+LEGACY_KINDS = {"approval": "decision"}
+GATE_PREFIX = "gate:"
 DESC_MAX = 600
 
 
@@ -729,8 +731,21 @@ def board_time(v):
 
 def board_kind(r):
     for label in r.get("labels") or []:
-        if isinstance(label, str) and label.startswith("kind:") and label[5:] in BOARD_KINDS:
-            return label[5:]
+        if isinstance(label, str) and label.startswith("kind:"):
+            k = LEGACY_KINDS.get(label[5:], label[5:])
+            if k in BOARD_KINDS:
+                return k
+    return None
+
+
+def board_gate(r):
+    """승인 성격 배지 이름. label gate:<값> 또는 옛 kind:approval 이면 'approval', 없으면 None"""
+    for label in r.get("labels") or []:
+        if isinstance(label, str):
+            if label.startswith(GATE_PREFIX):
+                return label[len(GATE_PREFIX):][:20] or None
+            if label == "kind:approval":
+                return "approval"
     return None
 
 
@@ -742,6 +757,7 @@ def board_card(r, desc=False):
            "startedAt": board_time(r.get("started_at")), "comments": r.get("comment_count") or 0}
     if desc:
         out["desc"] = str(r.get("description") or "")[:DESC_MAX] or None
+        out["gate"] = board_gate(r)
     return out
 
 
@@ -756,8 +772,42 @@ def board_headline(rows):
             "done": sum(1 for r in kids if r.get("status") == "closed"), "total": len(kids), "epics": len(epics)}
 
 
+FEATURE_DONE_SEC = 24 * 3600   # 닫힌 기능 epic 을 이 시간까지 실어 줌. '안 봄' 표시 시간은 패널 설정(doneShowMin)이 정함
+FEATURE_MAX, FEATURE_DOING_MAX = 20, 5
+
+
+def board_features(rows, now):
+    """기능(epic)별 한 줄 원료: 진척·진행 카드·막힘·답 대기·마지막 변화. 열린 epic + 최근 닫힌 epic"""
+    kids = {}
+    for r in rows:
+        if r.get("parent"):
+            kids.setdefault(r["parent"], []).append(r)
+    out = []
+    for e in rows:
+        if e.get("issue_type") != "epic":
+            continue
+        closed_at = board_time(e.get("closed_at"))
+        if e.get("status") == "closed" and (closed_at is None or now - closed_at > FEATURE_DONE_SEC):
+            continue
+        ks = kids.get(e.get("id"), [])
+        work = [k for k in ks if board_kind(k) is None]
+        stamps = [t for t in (board_time(x.get("updated_at")) for x in [e, *ks]) if t is not None]
+        doing = [k for k in work if k.get("status") == "in_progress"]
+        slug = next((lb[len("feature:"):] for lb in e.get("labels") or [] if str(lb).startswith("feature:")), None)
+        out.append({"id": str(e.get("id", ""))[:20], "title": str(e.get("title", ""))[:TITLE_MAX * 2], "slug": slug,
+                    "done": sum(1 for k in work if k.get("status") == "closed"), "total": len(work),
+                    "doing": [{"title": str(k.get("title", ""))[:TITLE_MAX * 2], "who": str(k.get("assignee") or "")[:40] or None,
+                               "beatAt": board_time(k.get("updated_at"))} for k in doing[:FEATURE_DOING_MAX]],
+                    "doingCount": len(doing), "blocked": sum(1 for k in work if k.get("status") == "blocked"),
+                    "asks": sum(1 for k in ks if board_kind(k) == "decision" and k.get("status") != "closed"),
+                    "lastAt": max(stamps) if stamps else None, "closedAt": closed_at if e.get("status") == "closed" else None,
+                    "p": e.get("priority") if isinstance(e.get("priority"), int) else 2})
+    out.sort(key=lambda f: (f["closedAt"] is not None, f["p"], -(f["lastAt"] or 0)))
+    return out[:FEATURE_MAX]
+
+
 def collect_board():
-    """작업판(beads) = 패널의 정본(11-16). 결정·할 일·승인은 kind 라벨, 진행·막힘은 상태, 헤드라인은 열린 epic"""
+    """작업판(beads) = 패널의 정본(11-16). 결정·할 일은 kind 라벨(승인은 결정 + gate 배지), 진행·막힘은 상태, 헤드라인은 열린 epic"""
     if not os.path.isdir(BOARD_DIR):
         raise SourceError("missing")
     try:
@@ -788,7 +838,11 @@ def collect_board():
             continue
         kind = board_kind(r)
         if kind is not None:
-            lists[BOARD_KINDS[kind]].append(board_card(r, desc=True))
+            c = board_card(r, desc=True)
+            c["parent"] = str(r.get("parent") or "")[:20] or None
+            c["waiting"] = sum(1 for k in rows if r.get("parent") and k.get("parent") == r.get("parent")
+                               and k.get("status") == "in_progress" and board_kind(k) is None) if kind == "decision" else 0
+            lists[BOARD_KINDS[kind]].append(c)
         elif st == "in_progress":
             doing.append(board_card(r))
         elif st == "blocked":
@@ -800,10 +854,47 @@ def collect_board():
                "at": board_time(r.get("closed_at")), "reason": str(r.get("close_reason") or "")[:TITLE_MAX * 2] or None}
               for r in closed[:BOARD_RECENT]]
     out = {"counts": counts, "doing": doing[:BOARD_DOING_MAX], "more": max(0, len(doing) - BOARD_DOING_MAX),
-           "blocked": blocked[:BOARD_LIST_MAX], "headline": board_headline(rows), "recent": recent}
+           "blocked": blocked[:BOARD_LIST_MAX], "headline": board_headline(rows), "recent": recent,
+           "features": board_features(rows, time.time())}
     for k, v in lists.items():
         out[k] = v[:BOARD_LIST_MAX]
     return out
+
+
+AI_STATE_DIR = os.environ.get("PANEL_AI_STATE_DIR") or os.path.join(os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs"), "ai-state")
+AI_STATE_MAX_AGE, AI_STATE_MAX = 12 * 3600, 60
+AI_STATES = ("working", "needs_input", "idle")
+GH_STATE = os.environ.get("PANEL_GH_STATE") or os.path.join(os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs"), "gh-state.json")
+
+
+def collect_ai(now):
+    """세션 훅(claude/hooks/ai-state.sh)이 쓰는 세션별 상태 파일. 화면 글자 판별보다 이 값을 먼저 씀(11-17)"""
+    if not os.path.isdir(AI_STATE_DIR):
+        raise SourceError("missing")
+    out = []
+    for name in sorted(os.listdir(AI_STATE_DIR)):
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(AI_STATE_DIR, name), encoding="utf-8") as f:
+                d = json.load(f)
+        except (OSError, ValueError):
+            continue
+        at = d.get("at") if isinstance(d, dict) and isinstance(d.get("at"), (int, float)) else None
+        if at is None or now - at > AI_STATE_MAX_AGE or d.get("state") not in AI_STATES:
+            continue
+        out.append({"cwd": str(d.get("cwd") or "")[:200], "state": d["state"], "kind": str(d.get("kind") or "")[:40] or None, "at": at})
+    out.sort(key=lambda x: -x["at"])
+    return {"sessions": out[:AI_STATE_MAX]}
+
+
+def collect_gh_state(now):
+    """PR·CI 감시기(feat/gh-watch)가 쓰는 gh-state.json 의 읽는 자리. 스키마 확정 전이라 있는지·시각만 싣음"""
+    try:
+        st = os.stat(GH_STATE)
+    except OSError:
+        raise SourceError("missing")
+    return {"present": True, "mtime": int(st.st_mtime)}
 
 
 def collect(conf, repos, interval, prev, now, mark_gh):
@@ -816,6 +907,8 @@ def collect(conf, repos, interval, prev, now, mark_gh):
         "workers": run_source(lambda: collect_workers(conf, get), prev.get("workers"), now),
         "idle": collect_idle(conf, get, prev.get("idle"), now, mark_gh),
         "board": run_source(collect_board, prev.get("board"), now),
+        "ai": run_source(lambda: collect_ai(now), prev.get("ai"), now),
+        "ghState": run_source(lambda: collect_gh_state(now), prev.get("ghState"), now),
     }
     src["progress"] = run_source(lambda: collect_progress(src, repos, mark_gh, get), prev.get("progress"), now)
     src["confirm"] = run_source(lambda: collect_confirm(src, now), prev.get("confirm"), now)

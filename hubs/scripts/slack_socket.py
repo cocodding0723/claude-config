@@ -36,6 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # 링크·-I �
 import answer_route  # noqa: E402
 import main_inbox  # noqa: E402
 import answer_store  # noqa: E402
+import board_slack  # noqa: E402
 import card_actions as actions  # noqa: E402
 import ledger  # noqa: E402
 import ledger_sync  # noqa: E402
@@ -176,6 +177,9 @@ class Decide:
         self.start(self.send_ask, did, ts, title, text)
 
     def send_ask(self, did: str, ts: str, title: str, text: str) -> None:
+        if board_slack.card_for(did):  # 작업판 결정 카드: 질문은 카드 코멘트로만(카드는 열어 둠), 허브·메인 전달 없음
+            self.to_board(did, ts, title, answer_route.asked_text(did, text), keep_open=True)
+            return
         try:
             out = self.asker.ask(did, ts, answer_store.SLACK, answer_route.asked_text(did, text))
         except Exception as err:
@@ -225,7 +229,25 @@ class Decide:
             STORE.record_delivery(did, ts, "action", True)
             threading.Thread(target=self.run_action, args=(entry, did, ts, extra.get("pick")), daemon=True).start()
             return
+        if board_slack.card_for(did):  # 작업판에서 보낸 결정: 답은 그 카드에만(board-answer), 허브·메인 받은 편지함 거치지 않음
+            self.start(self.to_board, did, ts, title, answer_route.said_text(did, extra, label))
+            return
         self.start(self.send_out, did, ts, title, label, extra)
+
+    def to_board(self, did: str, ts: str, title: str, text: str, keep_open: bool = False) -> None:
+        """작업판 결정 카드에 원문 기록. 실패하면 카드 스레드에 경고하고 옛 경로(허브·메인)로 넘기지 않음 — 작업판이 정본"""
+        try:
+            out = board_slack.answer(did, text, keep_open=keep_open)
+        except board_slack.cards.Fail as err:
+            out, why = None, str(err)[:120]
+        else:
+            why = "" if out else "카드 조회 실패"
+        ok = bool(out)
+        if not keep_open:
+            STORE.record_delivery(did, ts, "board", ok)
+        if not ok:
+            warn_slack(ts, f"작업판 기록 실패: {title or did}\n\n• 무엇: 답은 받았지만 작업판 카드에 못 남김({why})\n• 결과: board-answer 로 직접 남겨 주세요")
+        log(f"결정 {did} {'질문' if keep_open else '버튼 답'} → 작업판 카드 {'기록' if ok else '기록 실패'}")
 
     @staticmethod
     def start(fn, *args) -> None:

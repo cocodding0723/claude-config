@@ -180,6 +180,15 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ai-state.sh",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [
@@ -188,6 +197,11 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/prompt-context.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ai-state.sh",
             "timeout": 5
           }
         ]
@@ -201,6 +215,11 @@
             "command": "~/.claude/hooks/scoped-test.sh",
             "timeout": 150,
             "statusMessage": "scoped-test: 변경 범위 테스트 중"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ai-state.sh",
+            "timeout": 5
           }
         ]
       }
@@ -223,6 +242,11 @@
             "type": "command",
             "command": "~/.claude/hooks/session-end.sh",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ai-state.sh",
+            "timeout": 5
           }
         ]
       }
@@ -233,6 +257,11 @@
           {
             "type": "command",
             "command": "~/.claude/hooks/notify.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ai-state.sh",
             "timeout": 5
           }
         ]

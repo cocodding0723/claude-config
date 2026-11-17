@@ -11,7 +11,7 @@ import sys
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 HOME = os.path.expanduser("~")
-REASON = "메인 창 입력창에는 보고를 쓰지 않음 — SendMessage(to: loverevolutionmaker-*) 또는 ~/.config/lrm-hubs/hub-inbox/main.jsonl(main_inbox.py)로 보낼 것"
+REASON = "메인 창 입력창은 사용자 전용 — 보고는 맡은 카드에 bd comments add <카드>, 카드가 없으면 ~/.config/lrm-hubs/board_notify.py post --kind other --source <허브> '<본문>'"
 SEP = {";", "&&", "||", "|", "&", "|&", "(", ")"}
 SHELLS = {"bash", "sh", "zsh", "dash"}
 MIN_PREFIX = len("term_") + 4  # 이보다 짧은 접두는 아무 핸들과 맞아 오탐

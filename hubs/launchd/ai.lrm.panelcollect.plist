@@ -16,6 +16,7 @@
   <array>
     <string>__HOME__/orca/board/.beads/last-touched</string>
     <string>__HOME__/orca/board/.beads/issues.jsonl</string>
+    <string>__HOME__/.config/lrm-hubs/ai-state</string>
   </array>
   <!-- 셸 진입점이 쓸 python3: install.sh 가 3.10 이상으로 검증한 경로(lib/py.sh 가 읽음) -->
   <key>EnvironmentVariables</key>

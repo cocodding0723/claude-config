@@ -63,11 +63,8 @@ test('hubLine: 상태·출력 없음·중복·끊김', () => {
   assert.equal(b.hubLine({ hub: 'coord-a-hub', name: 'a', agent: 'claude', state: 'approval', quietMin: 12, connected: false, dup: true }), '승인창 · 12분 출력 없음 · 👥중복 · 🔌끊김')
 })
 
-test('pendingLine: 옛 카드는 제목·나이만, 번호 카드는 결정 번호·보류·충돌', () => {
-  assert.equal(b.pendingLine({ title: '🙋 결정 A', ageMin: 3 }), '🙋 결정 A  · 3분 전')
-  assert.equal(b.pendingLine({ title: '배포 순서', ageMin: null, id: 'D-0002', state: 'hold' }), '배포 순서 · D-0002 — 보류')
-  assert.equal(b.pendingLine({ title: '문서 위치', ageMin: 0, id: 'D-0003', state: 'conflict' }), '문서 위치 · D-0003 — 선택이 여러 개, 확인 필요  · 방금')
-  assert.equal(b.pendingLine({ title: '알림', ageMin: null, id: 'D-0004', state: null }), '알림 · D-0004')
+test('pendingLine 없음: Slack 칸은 패널에서 뺐음(결정 대기 한 칸)', () => {
+  assert.equal(b.pendingLine, undefined)
 })
 
 test('ghLine: --limit 만큼 꽉 차면 숫자 뒤에 +', () => {
@@ -160,7 +157,7 @@ test('hubLine: 하위 작업 공간 수, 10개 넘으면 경고', () => {
   assert.equal(b.hubLine(h), '작업 중')
 })
 
-test('confirmApprovals: 확인 목록 항목을 승인 칸 모양으로, 원료가 없으면 undefined(작업판 카드으로 복귀)', () => {
+test('confirmApprovals: 확인 목록 항목을 결정 대기 칸 항목(승인 배지)으로, 원료가 없으면 undefined(작업판 카드로 복귀)', () => {
   assert.equal(b.confirmApprovals(undefined), undefined)
   assert.equal(b.confirmApprovals(null), undefined)
   const v = b.confirmApprovals({ todo: 2, done: 0, items: [
@@ -168,8 +165,8 @@ test('confirmApprovals: 확인 목록 항목을 승인 칸 모양으로, 원료�
     { key: 'b', kind: 'merge', kind_label: '🔀 PR 병합', title: '#7 머지', hub: '미상', urgency: 1, how: '머지 버튼' },
   ] })
   assert.deepEqual(v, [
-    { key: 'a', p: 1, title: 'D-1 결정 (alpha)', why: '🙋 결정 카드', how: '카드에 답' },
-    { key: 'b', p: 3, title: '#7 머지', why: '🔀 PR 병합', how: '머지 버튼' },
+    { key: 'a', p: 1, title: '✋ 승인 D-1 결정 (alpha)', why: '🙋 결정 카드', how: '카드에 답' },
+    { key: 'b', p: 3, title: '✋ 승인 #7 머지', why: '🔀 PR 병합', how: '머지 버튼' },
   ])
   assert.deepEqual(b.confirmApprovals({ todo: 0, done: 0, items: [] }), [])
 })
@@ -188,14 +185,14 @@ test('mergeApprovals: 원료 항목 + 겹치지 않는 작업판 카드 항목',
   const hand = [{ p: 1, title: '손으로 적은 승인', why: '메인 메모' }]
   const r = b.mergeApprovals(conf([ci('k1', '창 승인 대기', 'alpha')]), hand, NOW)
   assert.equal(r.stale, false)
-  assert.deepEqual(r.items.map(i => i.title), ['창 승인 대기 (alpha)', '손으로 적은 승인'])
+  assert.deepEqual(r.items.map(i => i.title), ['✋ 승인 창 승인 대기 (alpha)', '손으로 적은 승인'])
 })
 
 test('mergeApprovals: 제목이 겹치면 원료 항목에 작업판 카드 why·detail 을 붙이고 중복은 하나', () => {
   const hand = [{ p: 1, title: '창 승인 대기', why: '배포 막힘', detail: ['3번째 요청'] }]
   const r = b.mergeApprovals(conf([ci('k1', '창 승인 대기', 'alpha')]), hand, NOW)
   assert.equal(r.items.length, 1)
-  assert.deepEqual(r.items[0], { key: 'k1', p: 2, title: '창 승인 대기 (alpha)', why: '🪟 창 승인 · 배포 막힘', how: '창에서 승인', detail: ['3번째 요청'] })
+  assert.deepEqual(r.items[0], { key: 'k1', p: 2, title: '✋ 승인 창 승인 대기 (alpha)', why: '🪟 창 승인 · 배포 막힘', how: '창에서 승인', detail: ['3번째 요청'] })
 })
 
 test('mergeApprovals: 키가 같으면 제목이 달라도 겹침', () => {
@@ -208,7 +205,7 @@ test('mergeApprovals: 원료가 낡으면 작업판 카드 우선·낡음 표시
   const old = conf([ci('k1', '창 승인 대기'), ci('k2', '원료 전용')], NOW / 1000 - (b.CONFIRM_STALE_MIN + 5) * 60)
   const r = b.mergeApprovals(old, hand, NOW)
   assert.equal(r.stale, true)
-  assert.deepEqual(r.items.map(i => i.title), ['창 승인 대기', '손 전용', '원료 전용'])
+  assert.deepEqual(r.items.map(i => i.title), ['창 승인 대기', '손 전용', '✋ 승인 원료 전용'])
   assert.match(r.items[2].why, /⚠ 낡음/)
   assert.equal(b.mergeApprovals(conf([ci('k2', 'x')], null), hand, NOW).stale, true)  // 시각 모르면 낡음
 })
@@ -245,6 +242,20 @@ test('cardItems: 결정 카드 → 항목(우선순위+1·설명 줄·답법)', 
   assert.deepEqual(b.cardItems(undefined, 'todo', NOW), [])
 })
 
+test('cardItems: gate:approval 결정은 승인 배지·승인 답법, ANSWER_HOW 에 승인 종류 없음', () => {
+  const [it] = b.cardItems([card({ gate: 'approval', desc: '선택지:\n- 승인\n- 보류' })], 'decision', NOW)
+  assert.equal(it.title, `${b.APPROVAL_BADGE} T`)
+  assert.equal(it.how, 'board-answer a-1 "<승인·보류 원문>"')
+  assert.equal(b.ANSWER_HOW.approval, undefined)
+  const [plain] = b.cardItems([card({ gate: null })], 'decision', NOW)
+  assert.equal(plain.title, 'T')
+})
+
+test('mergeApprovals: 배지 붙은 작업판 카드와 확인 목록 항목은 제목으로 겹침 판정', () => {
+  const hand = b.cardItems([card({ title: '창 승인 대기', gate: 'approval' })], 'decision', NOW)
+  assert.equal(b.mergeApprovals(conf([ci('k1', '창 승인 대기', 'alpha')]), hand, NOW).items.length, 1)
+})
+
 test('headlineText·recentLines·blockedLines', () => {
   assert.equal(b.headlineText(wb({ headline: { id: 'e', title: '에픽', done: 2, total: 5, epics: 1 } })), '🎯 에픽 (2/5)')
   assert.equal(b.headlineText(wb({ headline: { id: 'e', title: '에픽', done: 0, total: 0, epics: 3 } })), '🎯 에픽 (0/0) · 열린 epic 3')
@@ -252,4 +263,101 @@ test('headlineText·recentLines·blockedLines', () => {
   assert.deepEqual(b.recentLines(wb({ recent: [{ id: 'x', title: '끝', at: sec(NOW - 120000), reason: null }] }), NOW), ['✅ 끝  · 2분 전'])
   assert.deepEqual(b.blockedLines(wb({ blocked: [card()] })), ['a-1 T · u'])
   assert.deepEqual(b.blockedLines(undefined), [])
+})
+
+// ---- 11-17 4칸 패널 ----
+const feat = (o = {}) => ({ id: 'e-1', title: '메일함', slug: 'mail', done: 1, total: 3, doing: [{ title: '목록 화면', who: 'w1', beatAt: sec(NOW - 60000) }],
+  doingCount: 1, blocked: 0, asks: 0, lastAt: sec(NOW - 60000), closedAt: null, p: 2, ...o })
+const okBanner = { level: 'ok', text: '데이터 1초 전' }
+
+test('PANEL_CONFIG: 칸 순서 문제→답할 것→할 일→AI, 임계값 한 곳', () => {
+  assert.deepEqual([...b.PANEL_CONFIG.order], ['problem', 'ask', 'todo', 'ai'])
+  assert.equal(b.AUTO_STALE_MIN, b.PANEL_CONFIG.staleMin)
+  assert.equal(b.PANEL_CONFIG.stuckMin, 15)
+})
+
+test('askLines: 막는 AI 수 많은 순 → 오래된 순, 대기 분·답법 한 줄, 승인 배지', () => {
+  const cs = [
+    { ...card({ id: 'a', title: 'A', createdAt: sec(NOW - 5 * 60000) }), waiting: 0 },
+    { ...card({ id: 'b', title: 'B', createdAt: sec(NOW - 2 * 60000) }), waiting: 2 },
+    { ...card({ id: 'c', title: 'C', createdAt: sec(NOW - 9 * 60000), gate: 'approval' }), waiting: 0 },
+  ]
+  const ls = b.askLines(cs, NOW)
+  assert.deepEqual(ls.map(l => l.key), ['ask:b', 'ask:c', 'ask:a'])
+  assert.equal(ls[0].sub, 'AI 2곳 대기 2분 · 답: board-answer b "<답 원문>"')
+  assert.equal(ls[1].text, `${b.APPROVAL_BADGE} C`)
+  assert.match(ls[1].sub, /승인·보류/)
+})
+
+test('featureState: 답 대기 > 멈춤 의심(15분) > 막힘 > 작업 중 > 쉼, 끝남은 안 봄', () => {
+  assert.equal(b.featureState(feat({ asks: 1 }), null, NOW).mark, '?')
+  assert.equal(b.featureState(feat({ lastAt: sec(NOW - 20 * 60000) }), null, NOW).mark, '!')
+  assert.equal(b.featureState(feat({ lastAt: sec(NOW - 14 * 60000) }), null, NOW).mark, '✻')
+  assert.equal(b.featureState(feat({ doing: [], doingCount: 0, blocked: 1 }), null, NOW).mark, '✕')
+  assert.equal(b.featureState(feat({ doing: [], doingCount: 0 }), null, NOW).mark, '-')
+  assert.equal(b.featureState(feat({ closedAt: sec(NOW - 60000) }), null, NOW).mark, '✓')
+})
+
+test('featureState: 세션 훅 상태 파일(입력 필요·작업 중)이 카드보다 먼저', () => {
+  const ai = s => ({ sessions: [{ cwd: '/ws/feat-mail', state: s, kind: null, at: sec(NOW - 30000) }] })
+  assert.equal(b.featureState(feat(), ai('needs_input'), NOW).mark, '?')
+  assert.equal(b.featureState(feat({ doing: [], doingCount: 0, lastAt: sec(NOW - 3600000) }), ai('working'), NOW).mark, '✻')
+  assert.equal(b.featureState(feat(), { sessions: [{ cwd: '/ws/feat-shop', state: 'needs_input', kind: null, at: sec(NOW) }] }, NOW).mark, '✻')
+})
+
+test('featureLines: 기능 한 줄(이름·지금 하는 일·진척·분 단위), 오래 끝난 기능 숨김, 많으면 작업 중 접기', () => {
+  const [l] = b.featureLines([feat()], null, NOW)
+  assert.equal(l.text, '메일함 · 목록 화면 (1/3)')
+  assert.equal(l.age, '1분')
+  assert.equal(b.featureLines([feat({ closedAt: sec(NOW - 2 * 3600000) })], null, NOW).length, 0)
+  const many = Array.from({ length: 9 }, (_, i) => feat({ id: `e${i}`, title: `f${i}` }))
+  many.push(feat({ id: 'q', asks: 1 }))
+  const ls = b.featureLines(many, null, NOW)
+  assert.equal(ls[0].mark, '?')
+  assert.ok(ls.some(x => x.folded === true && /작업 중 9개/.test(x.text)))
+  assert.equal(b.featureCounts(ls), '입력 필요 1 / 작업 9')
+})
+
+test('problemLines: 있을 때만, 수집 끊김·멈춤 의심·막힌 카드·CI 실패·디스크 부족', () => {
+  assert.deepEqual(b.problemLines(auto(0), okBanner, [], NOW), [])
+  const a = auto(0, { sources: {
+    board: { ok: true, err: null, at: sec(NOW), stale: false, value: { counts: {}, doing: [], more: 0, blocked: [card({ id: 'x', title: '막힘' })] } },
+    gh: { ok: true, err: null, at: sec(NOW), stale: false, value: { repos: [{ repo: 'o/r', open: 2, ciFail: 1 }], open: 2, ciFail: 1 } },
+    idle: { ok: true, err: null, at: sec(NOW), stale: false, value: { disk: { freeGB: 5, usedPct: 98, minGB: 20, warn: true } } },
+  } })
+  const stuck = b.featureLines([feat({ lastAt: sec(NOW - 30 * 60000) })], null, NOW)
+  const ps = b.problemLines(a, { level: 'stale', text: '⚠️ 데이터 5분 전 — 자동 수집 멈춤' }, stuck, NOW)
+  assert.deepEqual(ps.map(p => p.key.split(':')[1]), ['collect', 'stuck', 'blocked', 'ci', 'disk'])
+  assert.equal(ps[0].text, '데이터 5분 전 — 자동 수집 멈춤')
+})
+
+test('headerLine: 칸별 개수·수집 시각, 낡으면 stale', () => {
+  const h = b.headerLine({ problem: 1, ask: 2, todo: 0, ai: 3 }, okBanner, NOW - 2 * 60000, NOW)
+  assert.equal(h.text, '문제 1 / 답할 것 2 / 할 일 0 / AI 3 · 수집 2분 전')
+  assert.equal(h.stale, false)
+  assert.equal(b.headerLine({ problem: 0, ask: 0, todo: 0, ai: 0 }, { level: 'stale', text: 'x' }, NOW, NOW).stale, true)
+})
+
+test('pickNotify: 첫 회차는 기록만, 새 항목만, 같은 항목 재전송 없음, 시간당 상한·묶음', () => {
+  const it = k => ({ key: k, text: k, head: 'h' })
+  let r = b.pickNotify([it('a')], {}, [], NOW, true)
+  assert.equal(r.send.length, 0)
+  r = b.pickNotify([it('a'), it('b')], r.seen, r.sent, NOW + 1000, false)
+  assert.deepEqual(r.send.map(x => x.text), ['b'])
+  const again = b.pickNotify([it('a'), it('b')], r.seen, r.sent, NOW + 2000, false)
+  assert.equal(again.send.length, 0)
+  const later = b.pickNotify([it('a')], r.seen, r.sent, NOW + 31 * 60000, false)
+  assert.deepEqual(later.send.map(x => x.text), ['a'])
+  const burst = b.pickNotify(['p', 'q', 'r', 's', 't', 'u', 'v'].map(it), {}, [NOW - 1000, NOW - 2000], NOW, false)
+  assert.equal(burst.send.length, 3)
+  assert.match(burst.send[2].text, /새 항목 5개/)
+  assert.equal(b.pickNotify([it('z')], {}, burst.sent, NOW + 1, false).send.length, 0)
+})
+
+test('detailText: 뺀 참고 정보를 슬래시 명령 글로(기능별 진행 카드 담당·원료 상태·gh-state 자리)', () => {
+  const a = auto(0, { sources: { board: { ok: true, err: null, at: sec(NOW), stale: false, value: { counts: {}, doing: [], more: 0, features: [feat()] } } } })
+  const t = b.detailText(a, NOW)
+  assert.match(t, /- 목록 화면 · w1 · 1분/)
+  assert.match(t, /gh-state.json: 없음 → 기존 gh 원료 사용/)
+  assert.match(t, /## 원료 상태/)
 })

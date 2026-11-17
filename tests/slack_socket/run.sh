@@ -287,6 +287,30 @@ start s29 "{\"history\":[$MSG]}" LRM_SOCKET_CHECK_S=0.3 LRM_ORCA="$SB/fake_orca.
 sleep 1.5; [ "$(grep -c 'web ' "$SB/s29/calls")" = 0 ] && ok "이미 닫은 카드는 Slack 을 다시 부르지 않음" || ko "재닫기" "$(grep 'web ' "$SB/s29/calls" | cut -c1-120)"
 stop s29
 
+# ---- 8-1. 작업판에서 보낸 결정 카드: 버튼 답 → 그 카드에만 기록(board-answer), 허브·메인 받은 편지함 없음 ----
+BD="$SB/board"; mkdir -p "$BD"
+(cd "$BD" && git init -q && bd init --prefix t -q >/dev/null 2>&1) || ko "임시 작업판" ""
+SCR="$HERE/../../hubs/scripts"
+CARD=$(BOARD_DIR="$BD" LRM_HUB_DIR="$SB/none" "$SCR/board-ask" --runnable no "색 정할까?" --options "파랑 => 차분|빨강 => 강렬" --recommend 파랑 --background "시안 두 벌이라 하나로 맞춤" --terms 없음)
+DID=$(python3 -I -c 'import sys;sys.path.insert(0,sys.argv[1]);import board_slack;print(board_slack.decision_id(sys.argv[2]))' "$SCR" "$CARD")
+(cd "$BD" && bd label add "$CARD" "slack:$DID" >/dev/null)
+QCARD=$(BOARD_DIR="$BD" LRM_HUB_DIR="$SB/none" "$SCR/board-ask" --runnable no "글꼴 정할까?" --options "A => 둥근|B => 각진" --recommend A --background "제목 글꼴 두 후보" --terms 없음)
+QDID=$(python3 -I -c 'import sys;sys.path.insert(0,sys.argv[1]);import board_slack;print(board_slack.decision_id(sys.argv[2]))' "$SCR" "$QCARD")
+(cd "$BD" && bd label add "$QCARD" "slack:$QDID" >/dev/null)
+bact() { act "$1" "$2" "$ME" "$3" "$DID|$4" "$5" | sed "s/D-T1/$DID/g"; }
+bq() { qsub "$1" "$2" "$3" | sed -e "s/D-T1/$QDID/g" -e 's/1794383274.541929/1794383274.777777/'; }
+mkdir -p "$SB/s40/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/s40/hub/main.env"
+start s40 "{\"events\":[$(bact 0.4 b1 pick_2 2 '2. 빨강'),$(bq 0.6 b2 '빨강은 왜 강렬한가요?')],\"history\":[$MSG]}" BOARD_DIR="$BD" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s40/orca.calls"
+waitfor s40 out "결정 $DID 버튼 답 → 작업판 카드 기록" 6 && waitfor s40 out "결정 $QDID 질문 → 작업판 카드 기록" 6
+st=$(cd "$BD" && bd show "$CARD" --json | jq -r 'if type=="array" then .[0] else . end | .status')
+cm=$(cd "$BD" && bd comments "$CARD" --json | jq -r '.[].text')
+[ "$st" = closed ] && printf '%s' "$cm" | grep -q "사용자 답: 결정 $DID = 선택 2(빨강) (버튼)" && ok "버튼 답 → 작업판 카드에 원문 코멘트 + 닫음" || ko "작업판 답" "st=$st $cm $(tail -3 "$SB/s40/out")"
+qst=$(cd "$BD" && bd show "$QCARD" --json | jq -r 'if type=="array" then .[0] else . end | .status')
+(cd "$BD" && bd comments "$QCARD" --json | jq -r '.[].text') | grep -q '빨강은 왜 강렬한가요?' && [ "$qst" = open ] && ok "직접 입력 질문 → 카드 코멘트만, 카드는 열림" || ko "작업판 질문" "qst=$qst"
+[ ! -s "$SB/s40/hub/hub-inbox/main.jsonl" ] && [ ! -s "$SB/s40/orca.calls" ] && ok "작업판 카드 답은 메인 받은 편지함·허브 전송 없음" || ko "메인 경유" "$(cat "$SB/s40/hub/hub-inbox/main.jsonl" 2>/dev/null | cut -c1-160)"
+grep -q "\"state\": \"board\"" "$SB/s40/hub/answer-delivery.jsonl" && ok "전달 기록 state=board" || ko "전달 기록" "$(cat "$SB/s40/hub/answer-delivery.jsonl" 2>/dev/null)"
+stop s40
+
 # ---- 9. 토큰·ID 는 어떤 출력에도 없음 ----------------------------------------------------------
 leaks=$(cat "$SB"/*/out | grep -Ec "$APPTOK|$BOTTOK|$ME|$LEAK|Uother9|Bbot1" || true)
 [ "$leaks" = 0 ] && ok "모든 시나리오 로그·표준출력에 토큰·사용자 ID·예외 본문 0건" || ko "유출" "${leaks}줄"
