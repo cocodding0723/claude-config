@@ -15,6 +15,8 @@ mkdir -p "$BOARD_DIR" "$HOME"
 b() { (cd "$BOARD_DIR" && bd "$@"); }
 id_of() { python3 -c 'import json,sys;d=json.load(sys.stdin);d=d[0] if isinstance(d,list) else d;print(d["id"])'; }
 
+# 최근 기록 시험이 DONE 을 맨 앞으로 보도록 먼저 닫음
+CEP=$(b create "끝난 기능" -t epic --json | id_of); CK=$(b create "끝난 기능의 일" --parent "$CEP" --json | id_of); b close "$CK" >/dev/null; b close "$CEP" >/dev/null
 EPIC=$(b create "구조 전환" -t epic -p 0 --json | id_of)
 DONE=$(b create "끝난 일" --parent "$EPIC" --json | id_of); b close "$DONE" --reason "커밋 abc" >/dev/null
 WORK=$(b create "진행 일" --parent "$EPIC" --json | id_of); BD_ACTOR=worker-1 b update "$WORK" --claim >/dev/null
@@ -47,6 +49,8 @@ O=$(b create "예전 승인 카드" -l kind:approval --json | id_of)
 AL=$(b create "📥 자동 알림: slack" -l kind:alert,alert:slack,hub:main --json | id_of)
 CF=$(b create "❓ 확인 필요: 답" -l kind:confirm,alert:confirm,hub:main --json | id_of)
 
+SUB=$(b create "손자 일" --parent "$WORK" --json | id_of)
+
 # 수집기 원료
 mkdir -p "$SB/hub/ai-state"; printf '{"cwd":"/ws/feat-mail","state":"needs_input","kind":"permission_prompt","at":%s}\n' "$(date +%s)" > "$SB/hub/ai-state/s1.json"
 printf '{"cwd":"/ws/old","state":"working","at":1}\n' > "$SB/hub/ai-state/s2.json"; printf 'broken' > "$SB/hub/ai-state/s3.json"
@@ -68,6 +72,9 @@ v() { echo "$P" | jq -r ".sources.board.value$1"; }
 
 F=$(echo "$P" | jq -c --arg e "$EPIC" '.sources.board.value.features[] | select(.id==$e)')
 [ "$(echo "$F" | jq -r '"\(.done)/\(.total)/\(.doingCount)/\(.asks)/\(.doing[0].who)/\(.closedAt)"')" = "1/2/1/1/worker-1/null" ] && [ "$(echo "$F" | jq -r '.lastAt|type')" = number ] && ok "기능 줄 원료: 진척(작업 카드만)·진행 수·답 대기·담당·마지막 변화" || ko "features" "$F"
+[ "$(echo "$F" | jq -r '[.kids[] | "\(.st)/\(.subs)"] | join(",")')" = "doing/1,done/0" ] && [ "$(echo "$F" | jq -r '.kids[0] | "\(.who)/\(.at|type)"')" = "worker-1/number" ] && ok "기능 하위 카드: 진행 중 먼저·상태·담당·마지막 갱신, 손자는 개수(subs)만, 결정 카드 제외" || ko "kids" "$(echo "$F" | jq -c .kids)"
+[ "$(echo "$P" | jq -r --arg e "$CEP" '.sources.board.value.features[] | select(.id==$e) | "\(.kids|length)/\(.done)/\(.total)"')" = "0/1/1" ] && ok "닫힌 기능은 하위 목록 없음(진행률 수치만)" || ko "closed kids" ""
+[ "$(echo "$P" | jq -r --arg e "$EPIC" '.sources.board.value.features | map(select(.id==$e)) | length')" = 1 ] && ok "하위 카드 목록은 에픽 줄 안에만(별도 카드 호출 없이 bd list 한 번)" || ko "한 번" ""
 [ "$(echo "$P" | jq -r --arg d "$D" '.sources.board.value.decisions[] | select(.id==$d) | "\(.parent)/\(.waiting)"')" = "$EPIC/1" ] && ok "결정 카드: 부모 epic·막는 작업 수" || ko "waiting" "$(v '.decisions[0]')"
 [ "$(echo "$P" | jq -r '.sources.ai.value.sessions | length')" = 1 ] && [ "$(echo "$P" | jq -r '.sources.ai.value.sessions[0].state')" = needs_input ] && ok "세션 상태 파일: 최근 것만, 깨진 파일 건너뜀" || ko "ai 원료" "$(echo "$P" | jq -c .sources.ai)"
 [ "$(echo "$P" | jq -r '.sources.ghState.ok')" = false ] && ok "gh-state.json 없음 → ghState 원료 missing(패널은 기존 gh 사용)" || ko "ghState" "$(echo "$P" | jq -c .sources.ghState)"
