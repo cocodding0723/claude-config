@@ -5,6 +5,7 @@
 ## 쉬운 말 3줄 요약
 
 - 11-16 개정: 손으로 쓰던 `panel.json` 을 없앴다. 결정·할 일·헤드라인·최근 기록은 작업판(beads, `~/orca/board`) 카드에서 나온다. 메인은 `board-ask`·`board-answer` 로 카드만 만들고 닫는다(6절).
+- 11-17 3차(워커 줄): 🔄 AI 진행 칸 아래에 워커를 한 줄씩 보인다. 지금 도는 워커(`▶ 작업 공간 · 허브 · 모델`, 경과)를 먼저, 60분 안에 끝난 워커(✅ 성공·❌ 실패·⏹ 중단, 끝난 시각)를 다음에 둔다. 합쳐 6줄(`PANEL_CONFIG.workerRows`), 넘치면 `외 N개`, 전체는 `/board-detail`. 워커 세션이 끝나면 Orca 가 터미널을 닫아 사이드바에서 사라지므로 이 줄이 유일한 흔적이다. 원료는 `worker-list`(도는지·끝났는지)·`worktree list`(표시 이름·상위 허브)·`worker-show --full`(시작·종료 시각·모델, 회차당 12회 상한).
 - 11-17 2차 개정(4칸): 패널은 사용자에게 필요한 것만 그린다. 위에서부터 🚨 문제(있을 때만) → 🙋 답할 것 → 🔧 직접 할 일 → 🔄 AI 진행(기능마다 한 줄). 맨 위 한 줄에 칸별 개수·수집 시각(3분 넘게 낡으면 빨강). 허브 표·PR 수·쉬는 자원·최근 기록·원료 상태는 `/board-detail` 로 본다(수집기 데이터는 그대로). 칸 순서·임계 시간(멈춤 의심 15분·끝난 기능 표시 60분·접기 8줄)·알림 상한(시간당 5, 같은 항목 30분)은 `board.ts` 의 `PANEL_CONFIG` 한 곳에서 바꾼다. 데스크톱 알림은 🙋·🚨 새 항목만. AI 상태는 세션 훅(`claude/hooks/ai-state.sh`)이 쓰는 `ai-state/<세션>.json` 을 먼저 보고 화면 글자 판별은 보조다. PR·CI 감시기의 `gh-state.json` 은 읽는 자리만 있고 스키마가 정해지면 🔧·🚨 가 그쪽을 읽는다(지금은 기존 gh 원료).
 - 11-17 개정: 승인 칸·Slack 칸을 없애고 🙋 결정 대기 한 칸으로 합쳤다. 승인 성격 결정은 카드 label `gate:approval` 이고 패널에서 `✋ 승인` 배지로만 구분한다. Slack 봇을 다시 켜면 Slack 결정 카드의 원천은 작업판 결정 카드다(7-1절).
 - 무엇이 바뀌었나: 허브 상태·결정 대기·최근 기록·PR 수·쉬는 자원(터미널 없는 워크스페이스·디스크 여유)은 이제 60초마다 스크립트가 자동으로 채운다. 패널 맨 위에 데이터 나이가 늘 보이고, 3분 넘게 안 채워지면 ⚠️ 가 붙는다. 작업판(beads, `~/orca/board`) 카드 수와 진행 중 카드도 보인다.
@@ -39,6 +40,7 @@
 | 〃 | `sources.board` → `counts`·`doing[]`·`more`·`blocked[]`·`decisions[]`·`todos[]`·`headline`(`id`·`title`·`done`·`total`·`epics`)·`recent[]`(`title`·`at`·`reason`) | 수집기 | `bd list --all --json`. 카드는 `id`·`title`·`p`·`who`·`createdAt`·`beatAt`(마지막 갱신)·`startedAt`·`comments`, 사람 손 카드만 `desc`(600자)·`gate`(label `gate:approval` 또는 옛 `kind:approval` 이면 `approval`). 라벨 `kind:decision`·`kind:user-todo`(옛 `kind:approval` 은 결정으로 읽음) 카드는 진행 줄에 넣지 않음 |
 | 〃 | `sources.push` → `lines[]`(`at`·`event`·`reason`) | 수집기 | `slack-push.log` 끝 5줄의 결과·사유 코드만 |
 | 〃 | `sources.workers` → `live`·`recent[]`(`title` 40자·`status`·`at`) | 수집기 | 최근 종료 워커(완료 보고) |
+| 〃 | `sources.agents` → `running[]`(`dispatch`·`name` 작업 공간 표시 이름 40자·`hub`·`agent`·`model`·`startedAt`)·`runningMore`·`finished[]`(같은 칸 + `status`·`finishedAt`)·`windowMin`(60)·`complete` | 수집기 | 🔄 AI 진행 칸 워커 줄(11-17) |
 | 〃 | `sources.gh` → `repos[]`·`open`·`ciFail` 또는 `off:true` | 수집기 | `PANEL_GH_REPOS` 가 있을 때만 |
 | 〃 | `sources.idle` → `terminals`·`workers`(상태별 건수·`leftover`·`items` 20개·`seen`·`total`·`complete`·`terminalStates`)·`workspaces`(`total`·`noTerminal`·`items` 20개·`more`·`truncated`)·`disk`(`freeGB`·`usedPct`·`minGB`·`warn`)·`wsSize`(`gb`·`at`·`err`) | 수집기 | 부분마다 따로 실패. `err` 는 `부분:종류` 목록 |
 | 〃 | 원료마다 `ok`·`err`·`at`·`tried`·`stale` | 수집기 | 실패하면 `ok:false`·`err`(종류만)·`stale:true` 이고 `value`·`at` 은 마지막 성공 값 그대로 |
