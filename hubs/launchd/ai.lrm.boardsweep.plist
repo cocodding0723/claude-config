@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.lrm.boardsweep</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__HOME__/.config/lrm-hubs/board_sweep.sh</string>
+  </array>
+  <!-- 30분 주기. 규칙·값은 board_sweep.tsv, 동작 기록은 ~/orca/board/sweep.log -->
+  <key>StartInterval</key><integer>1800</integer>
+  <key>RunAtLoad</key><false/>
+  <!-- 셸 진입점이 쓸 python3: install.sh 가 3.10 이상으로 검증한 경로(lib/py.sh 가 읽음) -->
+  <key>EnvironmentVariables</key>
+  <dict><key>LRM_PYTHON3</key><string>__PYTHON3__</string></dict>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>__HOME__/.config/lrm-hubs/board-sweep.launchd.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.config/lrm-hubs/board-sweep.launchd.log</string>
+</dict>
+</plist>
