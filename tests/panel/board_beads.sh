@@ -102,6 +102,21 @@ NEW=$(echo "$P3" | jq -r --arg e "$E2" '.sources.board.value.features[] | select
 [ "$NEW" -gt "$OLD" ] && ok "heartbeat 가 beatAt 을 앞으로 보냄(updated_at 이 안 변해도)" || ko "beat 반영" "$OLD → $NEW"
 [ "$(echo "$P3" | jq -r --arg w "$WORK" '.sources.board.value.doing[] | select(.id==$w) | .beatAt|type')" = number ] && ok "진행 줄 beatAt 도 heartbeat 반영 값" || ko "doing beatAt" ""
 
+# 코멘트로 단 증거 줄(board-done 이 보는 방식)도 읽음: 종류별 마지막 줄을 브랜치 끝과 비교. bd export 한 번에서 진행 중 카드만 모음
+K5=$(mk "코멘트 증거 맞는 일"); K6=$(mk "코멘트 증거 낡은 일"); K7=$(mk "코멘트 증거 커밋 없는 일"); K8=$(mk "코멘트 마지막 줄이 맞는 일")
+for k in $K5 $K6 $K7 $K8; do BD_ACTOR=w-beat b update "$k" --claim >/dev/null; done
+b comments add "$K5" "evidence:test=/x/a.log commit=$TIP" >/dev/null
+b comments add "$K6" "evidence:test=/x/a.log commit=1111111111111111111111111111111111111111" >/dev/null
+b comments add "$K7" "evidence:test=/x/a.log" >/dev/null
+b comments add "$K8" "evidence:test=/x/a.log commit=1111111111111111111111111111111111111111" >/dev/null; b comments add "$K8" "evidence:test=/x/b.log commit=$TIP" >/dev/null
+P4=$(env -u PANEL_GH_REPOS PANEL_ORCA=/usr/bin/false LRM_HUB_DIR="$SB/hub" bash "$SCRIPTS/panel_collect.sh" --print 2>/dev/null)
+KS=$(echo "$P4" | jq -c --arg e "$E2" '.sources.board.value.features[] | select(.id==$e) | .kids')
+[ "$(ev_of "$K5")/$(ev_of "$K6")/$(ev_of "$K7")/$(ev_of "$K8")/$(ev_of "$K0")" = "ok/stale/unk/ok/none" ] && ok "코멘트 증거: 브랜치 끝과 맞으면 ✓·다르면 낡음·commit= 없으면 ?, 종류별 마지막 줄 기준, 증거 없는 카드는 그대로 없음" || ko "코멘트 증거" "$(echo "$KS" | jq -c '[.[]|{id,ev}]')"
+FAILBD="$SB/failbd.sh"; printf '#!/bin/bash\n[ "$1" = export ] && exit 1\nexec bd "$@"\n' > "$FAILBD"; chmod +x "$FAILBD"
+P5=$(env -u PANEL_GH_REPOS PANEL_BD="$FAILBD" PANEL_ORCA=/usr/bin/false LRM_HUB_DIR="$SB/hub" bash "$SCRIPTS/panel_collect.sh" --print 2>/dev/null)
+KS=$(echo "$P5" | jq -c --arg e "$E2" '.sources.board.value.features[] | select(.id==$e) | .kids')
+[ "$(ev_of "$K0")/$(ev_of "$K1")/$(ev_of "$K5")" = "unk/ok/unk" ] && ok "코멘트를 못 읽으면(bd export 실패) 없음 대신 ? — metadata 증거는 그대로" || ko "export 실패" "$(echo "$KS" | jq -c '[.[]|{id,ev}]')"
+
 # board-answer
 R=$("$SCRIPTS/board-answer" "$D" "옮김. Slack 칸은 숨겨" --json)
 [ "$(echo "$R" | jq -r .closed)" = true ] && [ "$(b show "$D" --json | jq -r 'if type=="array" then .[0] else . end | .status')" = closed ] && ok "board-answer: 코멘트 + 닫음" || ko "board-answer" "$R"

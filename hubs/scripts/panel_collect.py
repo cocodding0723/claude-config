@@ -913,34 +913,87 @@ def branch_tip(r, cache):
     return cache[key]
 
 
-def kid_evidence(r, cache):
-    """진행 중 카드의 완료 증거 상태: none(없음)·ok(브랜치 끝과 맞음)·stale(커밋이 달라짐)·unk(브랜치 끝을 몰라 비교 불가).
-    증거 원료는 board-run --card 가 남긴 metadata evidence_<종류>=<커밋>. 카드마다 bd 를 부르지 않고 목록 JSON 안의 값만 봄"""
+def load_evidence_parser():
+    """board-done 이 쓰는 증거 줄 해석(board/lib/board_evidence.py)을 재사용. 못 찾으면 None(코멘트 증거는 '?' 처리).
+    설치본은 링크라 실제 경로(저장소 hubs/scripts)에서 ../../board/lib 를 먼저 보고, 없으면 작업판 설치 위치를 봄"""
+    here = os.path.dirname(os.path.realpath(__file__))
+    for d in (os.path.join(here, "..", "..", "board", "lib"), os.path.expanduser("~/orca/board/lib")):
+        if os.path.isfile(os.path.join(d, "board_evidence.py")):
+            sys.path.insert(0, d)
+            try:
+                import board_evidence
+                return board_evidence.parse
+            except ImportError:
+                return None
+    return None
+
+
+def collect_comment_texts(ids):
+    """진행 중 카드 notes·코멘트 본문. `bd export` 한 번(전체 목록 JSONL, 코멘트 포함)에서 ids 것만 추림 — 카드마다 bd 를 부르지 않음.
+    실패하면 None(호출자가 '?' 로 처리)"""
+    if not ids:
+        return {}
+    try:
+        p = subprocess.run([os.environ.get("PANEL_BD", "bd"), "export"], cwd=BOARD_DIR, capture_output=True, text=True,
+                           timeout=BOARD_TIMEOUT, stdin=subprocess.DEVNULL)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if p.returncode != 0:
+        return None
+    out = {}
+    for line in p.stdout.splitlines():
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(d, dict) and d.get("id") in ids:
+            out[d["id"]] = [str(d.get("notes") or "")] + [str(c.get("text") or "") for c in d.get("comments") or [] if isinstance(c, dict)]
+    return out
+
+
+def evidence_ctx(rows):
+    """한 회차 증거 원료: 코멘트 본문(진행 중 카드만, bd 한 번)·해석 함수·브랜치 끝 캐시(회차 하나로 공유)"""
+    ids = {r.get("id") for r in rows if r.get("status") == "in_progress"}
+    return {"texts": collect_comment_texts(ids), "parse": load_evidence_parser(), "tips": {}}
+
+
+def kid_evidence(r, ev):
+    """진행 중 카드의 완료 증거 상태: none(없음)·ok(브랜치 끝과 맞음)·stale(커밋이 달라짐)·unk(있으나 비교 불가, 또는 코멘트를 못 읽음).
+    증거 원료 둘: ① board-run --card 가 남긴 metadata evidence_<종류>=<커밋> ② 코멘트의 `evidence:<종류>=… commit=<해시>` 줄
+    (board-done 이 보는 쪽, 종류별 마지막 줄만). ev 는 evidence_ctx 결과. 코멘트 줄에 commit= 이 없으면 비교할 수 없어 unk"""
+    cache, texts, parse = ev["tips"], ev["texts"], ev["parse"]
     meta = r.get("metadata") if isinstance(r.get("metadata"), dict) else {}
     commits = [str(v).lower() for k, v in meta.items() if str(k).startswith(EVIDENCE_PREFIX) and isinstance(v, str) and v]
+    bare = False
+    if texts is not None and parse is not None:
+        for entries in parse(texts.get(r.get("id"), [])).values():
+            sha = entries[-1][1]
+            if sha:
+                commits.append(sha.lower())
+            else:
+                bare = True
     if not commits:
-        return "none"
+        return "unk" if bare or texts is None or parse is None else "none"
     tip = branch_tip(r, cache)
     if not tip:
         return "unk"
     return "ok" if any(tip.startswith(c) or c.startswith(tip) for c in commits) else "stale"
 
 
-def board_kids(work, rows_kids, now):
+def board_kids(work, rows_kids, now, ev):
     """에픽 하위 카드 1단 목록(진행 중 → 막힘 → 열림 → 닫힘, 최근 갱신 먼저). 그 아래는 개수(subs)만.
     진행 중 카드는 마지막 heartbeat(beatAt)와 증거 상태(ev)도 실음. 오래됨 판정은 화면(PANEL_CONFIG.beatStaleMin)이 함"""
     order = {"doing": 0, "blocked": 1, "todo": 2, "done": 3}
-    tips = {}
     out = [{"id": str(k.get("id", ""))[:20], "title": str(k.get("title", ""))[:TITLE_MAX * 2],
             "st": KID_STATE.get(k.get("status"), "todo"), "who": str(k.get("assignee") or "")[:40] or None,
             "at": board_time(k.get("updated_at")), "subs": len(rows_kids.get(k.get("id"), [])),
-            **({"beatAt": beat_time(k), "ev": kid_evidence(k, tips)}
+            **({"beatAt": beat_time(k), "ev": kid_evidence(k, ev)}
                if k.get("status") == "in_progress" else {})} for k in work]
     out.sort(key=lambda x: (order[x["st"]], -(x["at"] or 0)))
     return out[:EPIC_KIDS_MAX]
 
 
-def board_features(rows, now):
+def board_features(rows, now, ev):
     """기능(epic)별 한 줄 원료: 진척·진행 카드·막힘·답 대기·마지막 변화. 열린 epic + 최근 닫힌 epic"""
     kids = {}
     for r in rows:
@@ -962,7 +1015,7 @@ def board_features(rows, now):
                     "done": sum(1 for k in work if k.get("status") == "closed"), "total": len(work),
                     "doing": [{"title": str(k.get("title", ""))[:TITLE_MAX * 2], "who": str(k.get("assignee") or "")[:40] or None,
                                "beatAt": beat_time(k)} for k in doing[:FEATURE_DOING_MAX]],
-                    "doingCount": len(doing), "kids": board_kids(work, kids, now) if e.get("status") != "closed" else [],
+                    "doingCount": len(doing), "kids": board_kids(work, kids, now, ev) if e.get("status") != "closed" else [],
                     "blocked": sum(1 for k in work if k.get("status") == "blocked"),
                     "asks": sum(1 for k in ks if board_kind(k) == "decision" and k.get("status") != "closed"),
                     "lastAt": max(stamps) if stamps else None, "closedAt": closed_at if e.get("status") == "closed" else None,
@@ -1020,7 +1073,7 @@ def collect_board():
               for r in closed[:BOARD_RECENT]]
     out = {"counts": counts, "doing": doing[:BOARD_DOING_MAX], "more": max(0, len(doing) - BOARD_DOING_MAX),
            "blocked": blocked[:BOARD_LIST_MAX], "headline": board_headline(rows), "recent": recent,
-           "features": board_features(rows, time.time())}
+           "features": board_features(rows, time.time(), evidence_ctx(rows))}
     for k, v in lists.items():
         out[k] = v[:BOARD_LIST_MAX]
     return out
