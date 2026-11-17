@@ -10,7 +10,7 @@ MISSED=0
 
 mutant() { # id 설명 perl치환식
   local id="$1" desc="$2" expr="$3" out
-  cp "$SRC" "$WORK/ws_gc.sh"; perl -0pi -e "$expr" "$WORK/ws_gc.sh"
+  cp "$SRC" "$WORK/ws_gc.sh"; cp -R "$(dirname "$SRC")/lib" "$WORK/"; perl -0pi -e "$expr" "$WORK/ws_gc.sh"
   if cmp -s "$SRC" "$WORK/ws_gc.sh"; then echo "$id 변이 정의 오류: 사본이 바뀌지 않음" >&2; MISSED=1; return; fi
   out=$(GC_SCRIPT="$WORK/ws_gc.sh" bash "$HERE/run.sh" 2>&1); local rc=$?
   if [ "$rc" != 0 ]; then echo "검출 $id — $desc ($(printf '%s\n' "$out" | grep -c '^FAIL')건 실패)"; else echo "놓침 $id — $desc"; MISSED=1; fi
@@ -28,4 +28,8 @@ mutant M9 "보관 내용 대조(cmp) 제거" 's/cmp -s "\$src" "\$dest\/\$e" \|\
 mutant M10 "추적 파일 수정에도 부산물(.meta·SDF) 예외 적용" 's/(    else if \(q ~ ENVIRON\["LZ"\] && xy)/    else if (q ~ ENVIRON["NZ"]) print "N\\t" q\n$1/'
 mutant M11 "캐시 폴더 안을 목록 방식으로 되돌림(생성 목록 밖도 버림, .kt·.mp4 놓침)" 's/\{ print "!" \$0 \}\x27/\/\\.(cs|meta|asset|json)\$\/ { print "!" \$0 }\x27/'
 mutant M12 "서브모듈 안 분류 생략(상위 판정만)" 's/\( TMP="\$TMP\/sub"; mkdir -p "\$TMP" && classify_changes "\$sp" && /( true && /'
+mutant M13 "PR 닫힘 정리: OPEN PR 검사 제거" 's/length > 0 and all\(\.\[\]; \.state != "OPEN"\)/length > 0/'
+mutant M14 "PR 닫힘 정리: HEAD 가 PR 마지막 커밋 안인지 검사 제거(PR 뒤 새 커밋)" 's/ && git -C "\$p" merge-base --is-ancestor HEAD "\$oid" 2>\/dev\/null && return 0/ \&\& return 0/'
+mutant M15 "PR 닫힘 정리: 강제 삭제 전 보관본 재대조 제거" 's/    verify_full "\$p" "\$dest" \|\| return 1\n    log "RM_RETRY_FORCE PR/    log "RM_RETRY_FORCE PR/'
+mutant M16 "PR 닫힘 정리: 보관 상한 검사 제거" 's/if \[ "\$bytes" -gt /if [ "\$bytes" -lt 0 ] \&\& [ 1 -gt /'
 exit "$MISSED"
