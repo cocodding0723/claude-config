@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -61,7 +62,7 @@ class Base(unittest.TestCase):
 
     def report(self, card, text="시작", ws=None, kind="info", hub="feat-x"):
         rep = hub_report.make_report(hub, "없음", kind, text, [], card=card, ws=ws)
-        return hub_report.add(self.conf.outbox, rep, 1.0, False)[0]
+        return hub_report.add(self.conf.outbox, rep, time.time(), False)[0]  # 접수 시각이 실제여야 보류 상한 판정이 맞음
 
     def calls(self):
         try:
