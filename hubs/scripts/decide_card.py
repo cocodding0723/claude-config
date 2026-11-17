@@ -20,16 +20,6 @@ RESULT_MAX = 100  # 선택지 결과 상한
 MAX_LINES, MAX_CHARS = 8, 1000  # decide 본문 상한(제목·배경·용어·이유·참고 포함). 카드 전체는 Slack 블록 3000자 안
 NO_TERMS = "없음"
 
-# Slack 양식 A 규칙 1: 제목(첫 줄) 상한과 세는 방식. 알림 스크립트 검사·board-ask·board_slack 이 모두 여기 값을 씀
-TITLE_MAX = 40
-TITLE_DROP = ("So", "Sk", "Cf", "Mn", "Me")  # 글자 수에서 빼는 이모지·결합 문자 범주
-TITLE_EMOJI = re.compile(r"(?<!\w):[\w+\-]{1,40}:(?!\w)")  # :이름: 이모지 코드도 제외
-
-# 양식 A 규칙 2: 본문에 있으면 안 되는 번호(맨 아래 '참고:' 줄로 이동). 알림 스크립트 검사와 board_slack 의 번호 이동이 같은 식을 씀
-TICKET_RX = re.compile(r"(?<![0-9A-Za-z_])LRM-\d+(?![0-9A-Za-z_])")
-# 커밋 해시: 숫자·a~f 가 섞인 7~40자. 앞뒤가 '#'·'-' 이면 색 값(#F2994A80)·세션 번호 조각(5660c10e-1211-…)이라 커밋으로 보지 않음
-HEX_RX = re.compile(r"(?<![0-9A-Za-z_#\-])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![0-9A-Za-z_\-])", re.I)
-
 # D-RDY<PR번호>(draft 해제 요청) 카드는 본문에 '로컬 QA:' 줄 필수(사용자 11-13 D-LOCALQA)
 QA, RDY_ID = "로컬 QA", re.compile(r"D-RDY[0-9]+$")
 QA_NONE = "해당 없음(도구·CI·문서)"
@@ -257,9 +247,3 @@ def problem(body: str, options_raw: "str | None" = None, decision_id: "str | Non
     parts += bad
     return (f"결정 카드 필수 항목 부족(전송 안 함) — {'; '.join(parts)}. 조치: 본문에 '배경: …'(지금 무슨 작업 중이고 왜 이 질문이 생겼는지, 처음 보는 사람 기준 1~2줄)"
             f"·'용어: …'(낯선 말·파일·내부 이름 한 줄 풀이, 없으면 '{NO_TERMS}')를 쓰고 선택지마다 '번호=문구 => 고르면 달라지는 점'을 씀. {EXAMPLE}")
-
-
-def title_len(title):
-    """제목(첫 줄) 글자 수. 이모지·공백 제외"""
-    t = TITLE_EMOJI.sub("", unicodedata.normalize("NFC", title.split("\n", 1)[0]))
-    return sum(1 for c in t if unicodedata.category(c) not in TITLE_DROP and not c.isspace())

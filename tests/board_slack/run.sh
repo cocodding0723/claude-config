@@ -167,9 +167,9 @@ python3 -I "$BS" push "$L1" 2>/dev/null >&2; python3 -I "$BS" push "$L1" 2>/dev/
 python3 - "$SCR/slack_notify.sh" "$SB/notify_src.sh" <<'PY'
 import sys
 s = open(sys.argv[1], encoding="utf-8").read()
-open(sys.argv[2], "w", encoding="utf-8").write(s.replace("head_len > decide_card.TITLE_MAX", "head_len > 3", 1))
+open(sys.argv[2], "w", encoding="utf-8").write(s.replace("head_len > board_cards.TITLE_MAX", "head_len > 3", 1))
 PY
-cp "$SCR/decide_card.py" "$SB/"
+cp "$SCR/decide_card.py" "$SCR/board_cards.py" "$SB/"  # 변형 사본 옆에 양식 검사가 부르는 모듈도 둠
 LRM_NOTIFY_SRC="$SB/notify_src.sh" python3 -I "$BS" push "$G1" --dry-run 2>"$SB/err" >/dev/null; rc=$?
 [ "$rc" = 2 ] && grep -q '양식 A 위반' "$SB/err" && ok "건조 실행이 slack_notify 양식 검사 코드를 그대로 돌림(검사가 바뀌면 결과도 바뀜)" || ko "양식 검사 연동" "rc=$rc $(cat "$SB/err")"
 LRM_NOTIFY_SRC="$SB/없음.sh" python3 -I "$BS" push "$G1" --dry-run 2>"$SB/err" >/dev/null; rc=$?
@@ -193,13 +193,13 @@ X3=$(mkcard3 "선택지 이모지 카드" "시안이 두 벌이라 하나로 맞
 python3 -I "$BS" push "$X3" --dry-run 2>"$SB/err" >/dev/null; rc=$?
 [ "$rc" = 2 ] && grep -q '이모지 이름' "$SB/err" && ok "건조 실행: 선택지 문구에 :이름: 이모지가 있으면 거부" || ko "선택지 이모지" "rc=$rc $(cat "$SB/err")"
 # 제목 기준 공유: board-ask 쪽 글자 수와 알림 스크립트 양식 검사가 경계(40·41자, 이모지·코드 제외)에서 같은 결과
-python3 -I - "$SCR" <<'PY' && ok "제목 40자 기준·세는 방식이 알림 스크립트·board_cards 에서 같은 값(decide_card 한 곳)" || ko "제목 기준 공유" ""
+python3 -I - "$SCR" <<'PY' && ok "제목 40자 기준·세는 방식이 알림 스크립트·board_cards 에서 같은 값(board_cards 한 곳)" || ko "제목 기준 공유" ""
 import re, subprocess, sys
 sys.path.insert(0, sys.argv[1])
-import board_cards, decide_card
+import board_cards
 src = open(sys.argv[1] + "/slack_notify.sh", encoding="utf-8").read()
 code = src.split("read -r -d '' FORM_PY <<'PYEOF' || true\n", 1)[1].split("\nPYEOF\n", 1)[0]
-assert board_cards.TITLE_MAX == decide_card.TITLE_MAX == 40 and board_cards.title_len is decide_card.title_len
+assert board_cards.TITLE_MAX == 40
 for t in ("가" * 40, "가" * 41, "🚀 " + "가" * 40, ":rocket: " + "가" * 41, "가 " * 20 + "나"):
     out = subprocess.run([sys.executable, "-I", "-c", code, "check", "decide", "1"], input=t, capture_output=True, text=True,
                          env={"LRM_SCRIPT_DIR": sys.argv[1]}).stdout

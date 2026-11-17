@@ -228,6 +228,7 @@ read -r -d '' FORM_PY <<'PYEOF' || true
 import json, os, re, sys, time, unicodedata
 sys.path.insert(0, os.environ.get("LRM_SCRIPT_DIR", ""))
 import decide_card
+import board_cards  # 제목 기준·번호 판정식은 board_cards 한 곳(board_slack 과 공유). 설치본 decide_card 는 복사본이라 여기 두지 않음
 
 RX = {
     "fence": re.compile(r"```.*?```", re.S),
@@ -235,8 +236,8 @@ RX = {
     "url": re.compile(r"https?://\S+"),
     "ref": re.compile(r"^[ \t]*(?:[•\-*][ \t]*)?참고[ \t]*:", re.M),
     "code": re.compile(r"(?<!\w):[\w+\-]{1,40}:(?!\w)"),
-    "ticket": decide_card.TICKET_RX,  # 번호 판정식은 decide_card 한 곳(board_slack 번호 이동과 공유)
-    "hex": decide_card.HEX_RX,
+    "ticket": board_cards.TICKET_RX,
+    "hex": board_cards.HEX_RX,
     "bold": re.compile(r"(?<![\w*])\*(?!\s)[^*\n]+?(?<!\s)\*(?![0-9A-Za-z_*])"),
     "answer": re.compile(r"^[ \t]*(?:👉|:point_right:)[ \t]*답[ \t]*:", re.M),
     # 결정 제목 줄 판정(규칙 고정). 줄머리 접두 = 인용 >·불릿 •-*·· 반복(굵게 * 포함)·머리글 #·대괄호 [. 번호 = ①-⑳·1.·1)·(1)·1️⃣·1번
@@ -309,9 +310,9 @@ def ref_start(scan):
 def check_form(msg, kind, guided):
     out = []
     msg = unicodedata.normalize("NFC", msg)
-    head_len = decide_card.title_len(msg)  # 세는 방식·상한은 decide_card 한 곳(board_cards 도 공유)
-    if head_len > decide_card.TITLE_MAX:
-        out.append(("reject", "title-len", "첫 줄이 %d자(최대 %d) — 주제를 짧게 줄이고 세부는 '• 무엇:' 줄로 옮기세요" % (head_len, decide_card.TITLE_MAX)))
+    head_len = board_cards.title_len(msg)  # 세는 방식·상한은 board_cards 한 곳(board_slack 도 공유)
+    if head_len > board_cards.TITLE_MAX:
+        out.append(("reject", "title-len", "첫 줄이 %d자(최대 %d) — 주제를 짧게 줄이고 세부는 '• 무엇:' 줄로 옮기세요" % (head_len, board_cards.TITLE_MAX)))
     scan = scrub(msg)
     pos = ref_start(scan)
     body = scan if pos is None else scan[:pos]

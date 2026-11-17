@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import unicodedata
 from html.parser import HTMLParser
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # -I 실행에서도 같은 폴더의 board_slack 을 찾음
@@ -28,7 +29,16 @@ APPROVAL_OPTIONS = ("승인 => 이대로 진행", "보류 => 진행하지 않고
 REASON_MAX = 80
 OPTION_MAX = 4  # Slack 번호 카드 선택지 상한(board_slack 도 이 값을 씀)
 RESULT_SEP = "=>"  # 선택지 '문구 => 고르면 달라지는 점'
-TITLE_MAX, title_len = decide_card.TITLE_MAX, decide_card.title_len  # 제목 기준·세는 방식은 알림 스크립트와 공유하는 decide_card 한 곳
+# Slack 양식 A 규칙(제목 길이·본문 번호 판정). 알림 스크립트 검사(FORM_PY)와 board_slack 이 이 값을 그대로 씀.
+# 설치 위치(~/.config/lrm-hubs)에서 decide_card.py·hub_report.py 는 복사본이라 갱신이 늦지만 이 파일은 링크라 항상 최신이므로 공유 규칙은 여기 둠
+TITLE_MAX = 40  # 결정 카드 제목(Slack 첫 줄) 상한
+TITLE_DROP = ("So", "Sk", "Cf", "Mn", "Me")  # 글자 수에서 빼는 이모지·결합 문자 범주
+TITLE_EMOJI = re.compile(r"(?<!\w):[\w+\-]{1,40}:(?!\w)")  # :이름: 이모지 코드도 제외
+TICKET_RX = re.compile(r"(?<![0-9A-Za-z_])LRM-\d+(?![0-9A-Za-z_])")  # 본문에 있으면 안 되는 티켓 번호
+# 커밋 해시: 숫자·a~f 가 섞인 7~40자. 앞뒤가 '#'·'-' 이면 색 값(#F2994A80)·세션 번호 조각(5660c10e-1211-…)이라 커밋으로 보지 않음
+HEX_RX = re.compile(r"(?<![0-9A-Za-z_#\-])(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}(?![0-9A-Za-z_\-])", re.I)
+
+
 # 결정 카드 HTML 설명서 검사 기준(검사는 doc_gaps 한 함수). board-ask 와 board_slack 전송 직전이 같이 씀
 DOC_LINE = "설명서"  # 카드 설명의 '설명서: <html 절대 경로>' 줄 머리
 DOC_EXT = ".html"
@@ -110,6 +120,12 @@ def bd_json(*args):
         return json.loads(bd(*args, "--json") or "null")
     except ValueError:
         raise Fail(3, f"bd {args[0]} 출력이 JSON 아님. 조치: bd 버전 확인")
+
+
+def title_len(title):
+    """제목(첫 줄) 글자 수. 이모지·공백 제외"""
+    t = TITLE_EMOJI.sub("", unicodedata.normalize("NFC", title.split("\n", 1)[0]))
+    return sum(1 for c in t if unicodedata.category(c) not in TITLE_DROP and not c.isspace())
 
 
 def option_name(opt):
