@@ -352,6 +352,28 @@ wexp "plan-write: 메인이어도 slack-inbox.jsonl Write 거부" '{"tool_name":
 wexp "plan-write: slack-inbox.jsonl Bash 추가 쓰기 거부" '{"tool_name":"Bash","tool_input":{"command":"echo {} >> ~/.config/lrm-hubs/slack-inbox.jsonl"}}' deny main
 wexp "plan-write: slack-inbox.jsonl 읽기는 통과" '{"tool_name":"Bash","tool_input":{"command":"tail -5 ~/.config/lrm-hubs/slack-inbox.jsonl"}}'
 wexp "plan-write: 깨진 입력은 통과" '{깨진'
+# 적대 검수 탐침(11-17): 읽기 오탐 0, 변수·스크립트·rsync 등 쓰기 미탐 0
+bx() { jq -cn --arg c "$1" --arg d "${2:-$SB}" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}'; }
+wexp "plan-write: 원장 tail | json.tool 읽기 통과" "$(bx 'tail -3 ~/.config/lrm-hubs/slack-inbox.jsonl | python3 -m json.tool')"
+wexp "plan-write: 원장 grep 결과를 다른 곳으로 리다이렉트 통과" "$(bx 'grep ts ~/.config/lrm-hubs/slack-inbox.jsonl > /tmp/hit.txt')"
+wexp "plan-write: 기록 cat | python3 -c 읽기 통과" "$(bx 'cat ~/.config/lrm-hubs/plan-approvals/p.json | python3 -c "import json,sys;print(json.load(sys.stdin))"')"
+wexp "plan-write: 커밋 메시지 속 낱말·화살표 통과" "$(bx 'git commit -m "docs: plan-approvals 기록 -> 규칙 반영"')"
+wexp "plan-write: 시험 고정값 폴더의 Write 통과" '{"tool_name":"Write","tool_input":{"file_path":"/w/repo/tests/fixtures/plan-approvals/a.json"}}'
+wexp "plan-write: 메모리 파일 Write 통과" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$SB/home/.claude/projects/-x/memory/a.md\"}}"
+wexp "plan-write: 변수로 조립한 경로 쓰기 거부" "$(bx 'D=~/.config/lrm-hubs/plan-approvals; echo {} > $D/p.json')" deny
+printf 'echo {} > ~/.config/lrm-hubs/plan-approvals/p.json\n' > "$SB/write_it.sh"
+wexp "plan-write: 설치 밖 스크립트로 쓰기 거부" "$(bx "bash $SB/write_it.sh")" deny
+wexp "plan-write: rsync 쓰기 거부" "$(bx 'rsync a.json ~/.config/lrm-hubs/plan-approvals/')" deny
+wexp "plan-write: curl -o 쓰기 거부" "$(bx 'curl -s -o ~/.config/lrm-hubs/plan-approvals/p.json https://example.invalid')" deny
+wexp "plan-write: sponge 쓰기 거부" "$(bx 'echo {} | sponge ~/.config/lrm-hubs/plan-approvals/p.json')" deny
+wexp "plan-write: cd 글롭 뒤 상대 경로 쓰기 거부" "$(bx 'cd ~/.config/lrm-hubs/plan-appr*; echo {} > p.json')" deny
+wexp "plan-write: python -c 쓰기 거부" "$(bx 'python3 -c "open(\"/x/.config/lrm-hubs/plan-approvals/p.json\",\"w\").write(\"{}\")"')" deny
+wexp "plan-write: python heredoc 쓰기 거부" "$(bx $'python3 - <<EOF\nopen("plan-approvals/p.json","w")\nEOF')" deny
+wexp "plan-write: 메인이어도 board-approve 실행 거부" "$(bx '~/orca/board/bin/board-approve Org/R feat/x "올려"')" deny main
+wexp "plan-write: board-approve 원본 읽기는 통과" "$(bx 'sed -n 1,20p ~/orca/board/bin/board-approve')"
+wexp "plan-write: user-approvals.jsonl 쓰기 거부" "$(bx 'echo {} >> ~/.config/lrm-hubs/user-approvals.jsonl')" deny main
+wexp "plan-write: 세션 기록 jsonl 쓰기 거부" "$(bx 'echo {} >> ~/.claude/projects/-x/abc.jsonl')" deny main
+wexp "plan-write: 세션 기록 Write 거부" "{\"tool_name\":\"Write\",\"tool_input\":{\"file_path\":\"$SB/home/.claude/projects/-x/abc.jsonl\"}}" deny main
 
 # ---- commit-msg 훅: 게임 저장소에서 AI 흔적 줄 삭제 ----
 GH_HOOKS="$HERE/../../git/hooks"
