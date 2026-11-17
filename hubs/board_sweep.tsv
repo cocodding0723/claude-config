@@ -1,0 +1,23 @@
+# 작업판 주기 정리기(hubs/scripts/board_sweep.py) 규칙 표. 형식: 키<TAB>값<TAB>설명. 코드에 숫자·라벨 이름을 두지 않고 여기서만 바꿈
+# 목록 값은 쉼표 구분. 규칙을 끄려면 rules 에서 이름을 뺌
+rules	pr_done,expired,stale,duplicate,orphan	실행할 규칙(순서대로). pr_done=PR 끝난 카드 닫기, expired=만료 라벨 닫기, stale=오래된 결정 라벨, duplicate=같은 제목 닫기 후보, orphan=담당 없는 진행 중 되돌리기
+kinds	decision,user-todo,approval	pr_done·expired 대상 kind:<값>. approval 은 11-17 폐지된 옛 종류(남은 카드 정리용)
+kind_prefix	kind:	종류 라벨 접두
+pr_repo	Basakansoft/LoveRevolutionMaker	PR 번호를 조회할 저장소
+pr_label_prefix	pr:	카드를 PR 에 묶는 라벨 접두(pr:825)
+pr_sources	label,title,body	PR 번호를 찾을 곳. title·body 는 #번호 표기
+pr_min_digits	3	#번호 최소 자릿수(#1·#12 같은 목록 번호 오인 방지)
+gh_calls_max	20	실행 1회의 gh 호출 상한. 넘으면 남은 PR 은 다음 회차로
+gh_timeout_sec	20	gh 호출 1회 제한 시간(초)
+expires_label_prefix	expires:	만료 라벨 접두(expires:2026-11-18 또는 expires:2026-11-18T10:00+09:00). 날짜만 쓰면 그날 끝(로컬 시각)
+stale_kinds	decision	오래됨 라벨을 붙일 종류
+stale_hours	24	만든 뒤 이 시간이 지나면 오래됨
+stale_label	stale	오래됨 라벨(패널이 '오래됨' 표시에 씀)
+dup_kinds	decision,user-todo,approval,task	같은 제목 검사 대상 종류
+candidate_label	sweep:close-candidate	닫기 후보 라벨: 같은 제목 중 오래된 쪽, 닫기가 훅·게이트로 막힌 카드. 붙은 카드는 닫기 규칙이 다시 건드리지 않음
+orphan_hours	2	진행 중 카드가 이 시간 넘게 활동(갱신·댓글)이 없으면 되돌림
+skip_label	sweep:skip	이 라벨이 있는 카드는 모든 규칙에서 제외
+protect_ids		모든 규칙에서 제외할 카드 id(쉼표, 끝 * 는 접두 일치). 지금 돌고 있는 작업을 임시로 지킬 때
+bd_timeout_sec	30	bd 호출 1회 제한 시간(초)
+log_path	~/orca/board/sweep.log	동작 기록(한 줄 한 건, 탭 구분)
+lock_path	~/orca/board/.board-sweep.lock	중복 실행 방지 잠금 파일
