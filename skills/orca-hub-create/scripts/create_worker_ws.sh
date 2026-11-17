@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 허브 하위 워커용 워크스페이스 생성(기본 sparse·detached). 출력: 경로 한 줄(--json 이면 path·branch·displayName·parent JSON 한 줄)
-# 종료 코드: 0 생성(부모 연결 확인됨), 1 부모 허브 연결 실패(폴더는 남음, stderr 에 수동 명령), 2 인자 오류, 3 같은 이름 폴더가 이미 있음(덮어쓰지 않음)
+# 종료 코드: 0 생성(부모 연결 확인됨), 1 부모 허브 연결 실패(폴더는 남음, stderr 에 수동 명령), 2 인자 오류, 3 같은 이름 폴더가 이미 있음(덮어쓰지 않음), 4 정리 뒤에도 하위 작업 공간이 상한 이상이라 생성 거부(폴더 안 만듦)
 # 허브는 출력(경로·JSON)을 그대로 쓴다. 'LRM-507-*' 같은 폴더를 추측해 고르면 다른 허브의 작업 공간을 고를 수 있음.
 set -euo pipefail
 REPO="${REPO:-$HOME/orca/LoveRevolutionMaker}"
@@ -11,10 +11,10 @@ while [ $# -gt 0 ]; do case "$1" in
   --branch) BRANCH="$2"; shift 2;; --base) BASE="$2"; shift 2;; --full) FULL=1; shift;; --json) JSON=1; shift;;
   *) echo "알 수 없는 인자: $1" >&2; exit 2;; esac; done
 : "${HUB:?--hub 필요}" "${NAME:?--name 필요}"
-# 허브당 하위 작업 공간 상한(설정은 이 블록 한 곳). 넘으면 그 허브 하위만 ws_gc 로 1회 정리하고, 그래도 넘으면 경고·기록(생성은 계속)
+# 허브당 하위 작업 공간 상한(설정은 이 블록 한 곳). 넘으면 그 허브 하위만 ws_gc 로 1회 정리하고, 그래도 넘으면 기록 뒤 생성 거부(종료 4). 하위 수 조회 실패(빈 값)는 판정 불가라 경고만 하고 생성 계속 — Orca 일시 오류로 작업이 멈추는 것을 피함
 CFG_HUB_MAX="${LRM_HUB_MAX_CHILDREN:-10}"
 CFG_WS_GC="${LRM_WS_GC:-$HOME/.config/lrm-hubs/ws_gc.sh}"
-CFG_GC_TIMEOUT="${LRM_HUB_GC_TIMEOUT:-60}"   # 상한 정리에 줄 제한 시간(초). 넘기면 정리를 끊고 생성을 계속함
+CFG_GC_TIMEOUT="${LRM_HUB_GC_TIMEOUT:-60}"   # 상한 정리에 줄 제한 시간(초). 넘기면 정리를 끊고 다시 세어 판정함
 CFG_GC_GRACE="${LRM_HUB_GC_GRACE:-5}"        # 시간 초과 때 TERM 뒤 KILL 까지 유예(초)
 CFG_HUB_REPORT="${LRM_HUB_REPORT:-$HOME/.config/lrm-hubs/hub_report.py}"
 CFG_REG_WAIT="${LRM_WS_REG_WAIT:-30}"          # 새 작업 공간이 Orca 에 등록·부모 연결되길 기다리는 최대 시간(초)
@@ -24,10 +24,11 @@ count_kids() { # 허브 경로 → 등록된 하위 수. 조회 실패 시 빈 �
     '[.result.worktrees[].id] as $ids | [.result.worktrees[] | select(.path == $h) | (.childWorktreeIds // []) | map(select(. as $c | $ids | index($c))) | length][0] // empty' 2>/dev/null || true
 }
 kids=$(count_kids "$HUB")
+[ -n "$kids" ] || echo "⚠️ 하위 작업 공간 수 조회 실패 — 상한 판정 없이 생성 계속" >&2
 if [ -n "$kids" ] && [ "$kids" -ge "$CFG_HUB_MAX" ]; then
   echo "하위 작업 공간 ${kids}개(상한 ${CFG_HUB_MAX}) — 이 허브 하위만 정리 1회 실행" >&2
   gc_rc=0
-  # 제한 시간 안에 못 끝나면 정리기와 그 자식 프로세스 그룹 전체를 종료(TERM 뒤 그룹이 비지 않고 유예가 지나면 KILL). TERM 을 무시하는 자식도 남기지 않음. 정리 실패·시간 초과여도 생성은 계속
+  # 제한 시간 안에 못 끝나면 정리기와 그 자식 프로세스 그룹 전체를 종료(TERM 뒤 그룹이 비지 않고 유예가 지나면 KILL). TERM 을 무시하는 자식도 남기지 않음. 정리 실패·시간 초과여도 정리 뒤 수를 다시 세어 판정
   python3 -c 'import os, signal, subprocess, sys, time
 timeout, grace = float(sys.argv[1]), float(sys.argv[2])
 p = subprocess.Popen(sys.argv[3:], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
@@ -53,13 +54,14 @@ if alive():  # 시간 초과거나 자식이 남은 경우: TERM 뒤 그룹이 �
     if alive():
         os.killpg(pg, signal.SIGKILL)
 sys.exit(rc)' "$CFG_GC_TIMEOUT" "$CFG_GC_GRACE" bash "$CFG_WS_GC" --parent "$HUB" --apply --quiet --no-slack || gc_rc=$?
-  if [ "$gc_rc" = 124 ]; then echo "⚠️ 정리기가 ${CFG_GC_TIMEOUT}초 안에 끝나지 않아 중단 — 생성은 계속(~/orca/archive/ws_gc.log 확인)" >&2
+  if [ "$gc_rc" = 124 ]; then echo "⚠️ 정리기가 ${CFG_GC_TIMEOUT}초 안에 끝나지 않아 중단(~/orca/archive/ws_gc.log 확인)" >&2
   elif [ "$gc_rc" != 0 ]; then echo "⚠️ 정리기 실행 실패(종료 ${gc_rc}) — ~/orca/archive/ws_gc.log 확인" >&2; fi
   kids=$(count_kids "$HUB")
   if [ -n "$kids" ] && [ "$kids" -ge "$CFG_HUB_MAX" ]; then
-    echo "⚠️ 정리 뒤에도 하위 작업 공간 ${kids}개(상한 ${CFG_HUB_MAX}) — 남길 것만으로 초과. 끝난 워커는 release_ws.sh 로 반납할 것" >&2
+    echo "하위 작업 공간 ${kids}개(상한 ${CFG_HUB_MAX}) — 정리 뒤에도 초과해 생성을 거부함. 끝난 워커를 반납: release_ws.sh --dispatch <id> (정리 기록: ~/orca/archive/ws_gc.log)" >&2
     hub_slug="$(basename "$HUB")"; hub_slug="${hub_slug#coord-}"; hub_slug="${hub_slug%-hub}"
-    python3 "$CFG_HUB_REPORT" add --hub "$hub_slug" --task 없음 --kind block --text "하위 작업 공간 ${kids}개, 남길 것만으로 ${CFG_HUB_MAX}개 초과" >/dev/null 2>&1 || echo "⚠️ 허브 보고 기록 실패(생성은 계속)" >&2
+    python3 "$CFG_HUB_REPORT" add --hub "$hub_slug" --task 없음 --kind block --text "하위 작업 공간 ${kids}개, 남길 것만으로 ${CFG_HUB_MAX}개 초과" >/dev/null 2>&1 || echo "⚠️ 허브 보고 기록 실패" >&2
+    exit 4
   fi
 fi
 # 폴더 이름: 한글 유지. NFC 로 통일(macOS 파일명·붙여넣기는 NFD 라 같은 이름이 다른 폴더가 되는 것 방지), 잘린 UTF-8 은 버림,
