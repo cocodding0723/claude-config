@@ -301,6 +301,7 @@ replies ""
 VAR="$SB/poll-nowin.sh"
 sed 's/^ACK_WINDOW, ACK_MAX = 60, 3 /ACK_WINDOW, ACK_MAX = 0, 3 /' "$POLL" > "$VAR"
 cp "$(dirname "$POLL")/tls_ctx.py" "$SB/"  # 사본이 같은 폴더에서 공용 인증서 모듈을 import 함
+mkdir -p "$SB/lib" && cp "$(dirname "$POLL")/lib/py.sh" "$SB/lib/"  # 사본이 같은 폴더의 lib/py.sh 로 파이썬을 고름
 if cmp -s "$POLL" "$VAR"; then ko "ⓜ 변형 사본 생성" "치환 실패(상수 선언이 바뀜)"; else
   H="$SB/hubM"; mkhub "$H"
   hist "$msgs"
@@ -345,6 +346,9 @@ pollh "$H" u4
 deliver "$H" 9-2 "{\"$N.003000\":2}"
 pollh "$H" u5
 [ "$(ucalls)" = 2 ] && [ "$(updates | jq -r '.text' | tail -1)" = "📨 메인에 전달했어요 (3건)" ] && [ "$(updates | jq -r '.ts' | sort -u | wc -l | tr -d ' ')" = 1 ] && ok "같은 스레드의 다음 배치(2건): 호출 1회, 건수는 누적 '(3건)'" || ko "누적" "$(updates | tail -1)"
+DSEQ=$((DSEQ + 1)); printf '{"seq":%s,"id":"12-3","roots":{"%s":1},"via":"board"}\n' "$DSEQ" "$N.003000" >> "$H/slack-push-delivered.jsonl"
+pollh "$H" u6
+[ "$(ucalls)" = 3 ] && [ "$(updates | jq -r '.text' | tail -1)" = "📋 작업판에 기록했어요 (4건)" ] && ok "작업판 경로 기록(via=board) → 문구 '📋 작업판에 기록했어요 (n건)'" || ko "작업판 문구" "$(updates | tail -1)"
 grep -q 'POST:chat.update' "$CL" && ! grep -qF -- "$FAKE_TOKEN" "$CL" && ok "chat.update 는 POST 로 호출하고 토큰은 요청 기록에 없음" || ko "POST·토큰" ""
 
 # 실패해도 나머지 스레드를 계속, 사유 코드만 stderr 1줄씩, 재시도 없음

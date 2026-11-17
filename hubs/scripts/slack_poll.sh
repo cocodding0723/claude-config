@@ -36,13 +36,15 @@ usage() {
            레코드에 kind=decide·decision_id·pick·option_text(문구 앞 80자). 같은 카드 답이 갈리면 conflict:true·choices
            할 일(form_kind=todo): ✅·🛠️(hammer_and_wrench)=done ❌=hold, kind=todo·todo_id. 범위 밖·기록 모양 오류는 이름 그대로(stderr 1줄)
 스레드 답글: '채널에도 보내기'를 켠 답글(subtype thread_broadcast)도 thread_reply 로 수집
+           slack-sent.jsonl 에 없는 봇 메시지(대기 목록·생존 경고·삭제된 메시지 자리 등)의 사용자 답글도 thread_reply 로 수집(제목=봇 메시지 첫 줄).
+           결정 해석·반응 수집은 하지 않음. 상태 키 bot_reply_since(첫 실행 시각 - 6시간) 이전 답글은 기록만 하고 새 항목으로 만들지 않음
            번호 카드 스레드의 글은 kind=decide·decision_id·action 을 더함. 글 전체가 A~D·🅰️·1~4·추천(전부 추천)이면 action=pick|approve(+pick·option_text),
            그 밖은 action=free(원문 그대로). 옵션 기록 없는 카드도 free
 수신 확인 답장: 새 사용자 메시지의 스레드에 "📥 메시지 집계 중이에요" 1회(chat:write). 같은 스레드 30초 1회, 60초 3회, 회차 3회. 결정·승인 같은 명령 답글에는 달지 않음.
            slack_cmd.sh 즉답 명령·30분 넘게 묵은 항목은 제외. 권한 부족이면 조용히 건너뛰고 10분마다 재시도(상태: ack_disabled_reason).
            전송 전에 상태(acked·ack_sent)부터 저장하므로 실패해도 다시 보내지 않음. 이미 보낸 답장은 지우거나 고치지 않음(아래 전달 완료 표시만 예외)
 전달 완료 표시: 메인 전달(slack_push.sh)이 slack-push-delivered.jsonl 에 남긴 기록을 읽어 그 스레드의 확인 답장을 chat.update(POST, chat:write)로
-           "📨 메인에 전달했어요 (n건)" 으로 고침. n 은 스레드 누적 전달 건수, 기록 1건·스레드 1개당 1회, 회차당 5회.
+           "📨 메인에 전달했어요 (n건)"(작업판 경로 기록이면 "📋 작업판에 기록했어요 (n건)") 으로 고침. n 은 스레드 누적 전달 건수, 기록 1건·스레드 1개당 1회, 회차당 5회.
            처리 위치는 기록의 단조 증가 번호(seq)로 저장해 그보다 큰 기록만 처리(기록 파일이 잘려도 옛 기록 재처리 없음).
            앞 확인 답장이 아직 '집계 중'이면 같은 스레드에 새 답장을 보내지 않음(앞 답장이 영구히 '집계 중'으로 남는 것 방지)
            실패(message_not_found·cant_update_message·edit_window_closed 등)는 stderr 1줄만 남기고 재시도 안 함. LRM_ACK_UPDATE=off 로 끔
@@ -159,6 +161,9 @@ RX_TYPES = ("note", "command", "thread_reply")  # 반응 대상 레코드. type=
 RX_ON_DONE = "ballot_box_with_check"
 BCAST_SINCE_KEY = "thread_broadcast_since"  # 상태 파일 키: '채널에도 보내기' 답글 수집 시작 시각(초). 이전 broadcast 답글은 seen 에만 기록
 REPLY_SUBTYPES = USER_SUBTYPES + ("thread_broadcast",)  # 스레드 답글로 인정할 subtype. '채널에도 보내기'를 켠 답글은 thread_broadcast
+# 기록 없는 봇 메시지 답글 수집 시작 시각. 이 기능 전에는 이 답글을 버렸으므로(11-17 대기 목록 스레드 답 유실) 첫 실행 때 6시간만 거슬러 회수함
+BOT_SINCE_KEY, BOT_REPLY_GRACE = "bot_reply_since", 6 * 3600
+BOT_TITLE_MAX, TOMBSTONE_TITLE = 80, "삭제된 봇 메시지"
 def env_int(name, default, lo, hi):
     """정수 환경 변수. 정수가 아니면 default, 범위 밖이면 경계값. 잘못된 설정 하나가 수집 전체를 죽이지 않게 함"""
     try:
@@ -192,6 +197,7 @@ ACK_RETRY = RX_RETRY
 # 토큰이 없는 push 대신 여기서 호출. LRM_ACK=off 또는 LRM_ACK_UPDATE=off 면 안 함
 PUSH_DELIVERED = os.path.join(DIR, "slack-push-delivered.jsonl")
 DONE_TEXT = "📨 메인에 전달했어요 ({n}건)"
+DONE_TEXT_BOARD = "📋 작업판에 기록했어요 ({n}건)"  # 전달 기록 via=board(main-route=board 경로)
 UPD_MAX = 5                                  # 회차당 chat.update 상한
 # slack_cmd.sh 가 직접 답하는 명령. case 라벨(대기|미승인|"승인 대기" / PR|pr|"초안 PR" / 할일|"할 일" / CI|ci / 문서\ *)을 옮긴 것이라 그쪽을 바꾸면 함께 바꿀 것
 CMD_REPLY_EXACT = frozenset({"대기", "미승인", "승인 대기", "PR", "pr", "초안 PR", "할일", "할 일", "CI", "ci"})
@@ -728,7 +734,8 @@ def done_phase(state):
             save_state(state)
             calls += 1
             try:
-                api("chat.update", _post=True, channel=ent.get("ch") or "", ts=ent["ts"], text=DONE_TEXT.format(n=ent["n"]))
+                done = DONE_TEXT_BOARD if rec.get("via") == "board" else DONE_TEXT
+                api("chat.update", _post=True, channel=ent.get("ch") or "", ts=ent["ts"], text=done.format(n=ent["n"]))
             except ApiError as e:
                 print(f"전달 완료 표시 건너뜀({e.code or 'http'}) — 재시도 안 함", file=sys.stderr)
                 if e.code in ACK_DISABLE:  # 권한·채널 문제는 나머지도 실패하므로 이번 회차 중단
@@ -749,6 +756,12 @@ def fetch_history(ch, oldest):
         if not cursor:
             break
     return msgs
+
+def bot_title(m):
+    """기록 없는 봇 메시지의 제목: 본문 첫 줄(굵게 '*' 제거, BOT_TITLE_MAX 자). 삭제된 메시지 자리(tombstone)는 고정 문구"""
+    if m.get("subtype") == "tombstone":
+        return TOMBSTONE_TITLE
+    return " ".join((m.get("text") or "").split("\n", 1)[0].replace("*", "").split())[:BOT_TITLE_MAX]
 
 def save_state(state):
     tmp = STATE + ".tmp"
@@ -775,6 +788,10 @@ def main():
         state[BCAST_SINCE_KEY] = int(time.time())
         save_state(state)
     bcast_since = state[BCAST_SINCE_KEY]
+    if not isinstance(state.get(BOT_SINCE_KEY), (int, float)):
+        state[BOT_SINCE_KEY] = int(time.time()) - BOT_REPLY_GRACE
+        save_state(state)
+    bot_since = state[BOT_SINCE_KEY]
     seen = state.setdefault("seen", {})
     latest = state.setdefault("latest", {})  # 스레드 부모 ts → 마지막으로 읽은 latest_reply
     ch = api("conversations.open", users=ME)["channel"]["id"]
@@ -844,6 +861,9 @@ def main():
             # 본인 최상위 메시지: 확인 답장 스레드에 이어 쓴 사용자 답글만 수집(반응은 대상 아님, 봇 답장은 collect_replies 가 제외)
             if own_top:
                 collect_replies(m, {"parent_ts": ts, "title": "", "tag": ""}, own_since)
+            elif not mine and (not isinstance(m.get("reply_users"), list) or ME in m["reply_users"]):
+                # 기록 없는 봇 메시지: 사용자 답글만 원문 수집. 봇끼리 단 답글뿐이면(reply_users 에 본인 없음) 조회 생략
+                collect_replies(m, {"parent_ts": ts, "title": bot_title(m), "tag": ""}, bot_since)
             continue
         meta = {"parent_ts": ts, "title": rec.get("title", ""), "tag": rec.get("tag", "")}
         kind = msg_kind(rec)

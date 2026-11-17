@@ -16,6 +16,7 @@ import unicodedata
 import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # python -I 는 스크립트 폴더를 경로에 넣지 않음. 링크로 설치돼도 원본 폴더의 공용 모듈을 찾음
+import main_inbox  # noqa: E402
 import main_terminal as mt  # noqa: E402
 
 DIR = os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
@@ -108,6 +109,11 @@ SCREEN_TAIL, PROMPT_ZONE, FOOTER_MAX, FOOTER_CHARS = 8, 5, 3, 120  # 대화상�
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 RETRY_KEYS = ("orchestrationRequestId",)              # 모호한 실패 때 Orca 가 error.data 에 담아 알리는 요청 ID(재시도 때 같은 값이어야 함)
 CODE_RE = re.compile(r"[^a-z0-9_]")
+# 작업판 경로(main-route=board, 11-17): 메인 입력창은 사용자만 쓰므로 터미널에 치지 않고 메시지마다 작업판 카드 코멘트 + 데스크톱 알림 1회.
+# 카드 찾기·중복 방지는 main_inbox → board_notify 가 맡고, 작업판 쓰기가 실패하면 main.jsonl 로 떨어짐(잃지 않음)
+BOARD_KIND, BOARD_SOURCE = "slack", "slack_push"
+OSASCRIPT = os.environ.get("LRM_OSASCRIPT", "osascript")
+NOTICE_TITLE = "Slack 메시지 {n}건 — 작업판 기록"
 
 
 def log(event, **kv):
@@ -441,7 +447,7 @@ def last_seq(rows):
     return 0
 
 
-def record_delivery(items, last):
+def record_delivery(items, last, via="terminal"):
     """전달한 묶음의 스레드별 건수를 폴러가 읽도록 한 줄 기록. 스레드 = 답글이면 부모 ts, 최상위면 자기 ts(확인 답장이 달린 곳).
     seq 는 단조 증가 번호(밀리초 시각, 직전 seq 보다 작아지지 않음). 폴러는 이 값을 '처리한 위치'로 저장하고 그보다 큰 기록만 처리하므로
     기록이 1000줄을 넘어 최근 500줄로 잘려도 옛 기록을 다시 처리하지 않음"""
@@ -458,7 +464,10 @@ def record_delivery(items, last):
         except OSError:
             rows = []
         seq = max(int(time.time() * 1000), last_seq(rows) + 1)
-        rows.append(json.dumps({"seq": seq, "id": f"{last}-{int(time.time())}", "roots": roots}, ensure_ascii=False) + "\n")
+        rec = {"seq": seq, "id": f"{last}-{int(time.time())}", "roots": roots}
+        if via != "terminal":  # 폴러가 확인 답장 문구를 고를 때 씀. 옛 기록 모양은 그대로
+            rec["via"] = via
+        rows.append(json.dumps(rec, ensure_ascii=False) + "\n")
         keep = rows[-500:] if len(rows) > 1000 else None
         if keep is None:
             with open(DELIVERED, "a", encoding="utf-8") as f:
@@ -874,6 +883,60 @@ def seal(pp, items, lines, mark):
     pp["text"], pp["request_id"], pp["ambig"] = render(items, pp["batch"], react), str(uuid.uuid4()), None
 
 
+def board_text(ln, it):
+    """작업판 코멘트 본문 1건. 줄 번호는 '#n' 대신 '줄 n'(board_notify 가 '#n' 을 PR 번호로 읽음)"""
+    if it.get("type") == REACT_TYPE:
+        return "줄 " + react_line(ln, it)[3:]
+    said = reply_text(it)
+    out = [f"줄 {ln} [{label(it)}] ts={ts_text(it)}{kind_text(it)}" + (f" → {said}" if said else "")]
+    body = clean(it.get("text") or it.get("command") or "").strip("\n")
+    out += quote(body[:BATCH_CHARS]) if body else []
+    if len(body) > BATCH_CHARS:
+        out.append("> " + CUT_NOTE)
+    out += ["첨부: " + path_text(p) for p in it.get("files") or []]
+    return "\n".join(out)
+
+
+def board_ref(it):
+    """카드 찾기 단서 + 중복 방지 키. 결정 답이면 결정 번호를 앞에 둬 그 결정 카드(slack:D-…)로 감"""
+    did = it.get("decision_id")
+    head = f"{did} " if isinstance(did, str) and DECISION_ID_RE.fullmatch(did) else ""
+    if it.get("type") == REACT_TYPE:
+        return f"{head}slack 반응 {ts_text({'ts': it.get('parent_ts')})}:{one_line(it.get('emoji'), 40)}"
+    return f"{head}slack {ts_text(it)}"
+
+
+def notify_desktop(n, preview):
+    """데스크톱 알림 1회. 인자로 넘겨 본문이 스크립트로 해석되지 않게 함. activate·open 은 쓰지 않음(포커스 뺏기 금지)"""
+    try:
+        return subprocess.run([OSASCRIPT, "-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)",
+                               "-e", "end run", NOTICE_TITLE.format(n=n), preview], capture_output=True, timeout=10,
+                              stdin=subprocess.DEVNULL).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def board_attempt(state, pp, items, lines, mark, now, span):
+    """작업판 경로 전달: 메시지마다 카드 코멘트(같은 줄은 멱등) → 데스크톱 알림 1회 → 읽음 표식. 기록 실패면 보류 후 재시도"""
+    got = {"new": 0, "dup": 0, "fallback": 0}  # 새 코멘트 · 이미 기록됨 · 작업판 실패로 main.jsonl
+    try:
+        for ln, it in items:
+            r = main_inbox.append(BOARD_KIND, board_text(ln, it), BOARD_SOURCE, ref=board_ref(it), hub=DIR)
+            got["dup" if r.get("status") == "duplicate" else "new" if r.get("board") else "fallback"] += 1
+    except (OSError, ValueError) as e:
+        hold(pp, "board_fail", now + HOLD_RETRY, span, why=type(e).__name__)
+        return "hold"
+    first = items[0][1]
+    shown = notify_desktop(len(items), one_line(first.get("text") or first.get("emoji") or "", 60) or NO_LABEL)
+    state["pushed_lines"], state["push_pending"] = pp["last"], None
+    state["pending_since"] = state["last_new_ts"] = None
+    mark_to = walk_mark(lines, mark, state["pushed_lines"], state.get("skip_to", 0), react_floor(state))
+    write_mark(mark_to)
+    record_delivery(items, pp["last"], via="board")
+    log("ok", via="board", n=len(items), lines=span, mark=mark_to, **got, notice="ok" if shown else "fail")
+    return "sent"
+
+
 def attempt(state, lines, mark, now):
     """보류 묶음 1회 전달 시도. 'sent' | 'fail' | 'hold'"""
     pp = state["push_pending"]
@@ -882,6 +945,8 @@ def attempt(state, lines, mark, now):
     if not items:  # 보류분이 사라짐(inbox 가 바뀜). 보낼 것 없음
         state["push_pending"] = None
         return "sent"
+    if main_inbox.to_board(DIR):
+        return board_attempt(state, pp, items, lines, mark, now, span)
     handle, why, short, cands = find_target()
     if why in LINK_LOST:
         alert(why, cands)
