@@ -90,6 +90,9 @@ def main():
         if rel and not repo:
             die(f"거부: {a.card} 의 상대 경로 file:{rel[0]} 의 기준 저장소를 모름. 조치: bd label add {a.card} repo:<작업 공간 경로> 또는 --repo", 2)
         mine = [bs.locate(p, repo) for p in raw]
+        broad = [p for p, loc in zip(raw, mine) if bs.too_broad(loc)]
+        if broad:
+            die(f"거부: {a.card} 의 file:{broad[0]} 은 저장소 전체 범위(검사가 무의미). 조치: 고칠 폴더·파일로 좁혀 bd label 수정", 2)
 
         for other in bd_json("list", "--status", "in_progress", "--limit", "0"):
             if other.get("id") == a.card:

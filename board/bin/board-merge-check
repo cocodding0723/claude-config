@@ -109,6 +109,7 @@ def main():
             fail(f"거부: epic {a.card} 에 file: label 있는 하위 카드 없음")
         mine = [p for k in kids for p in file_labels(k)]
         mine_loc = [loc for k in kids for loc in scope(k, repo)]
+        card["parent"] = a.card
         family = {a.card} | {k["id"] for k in kids}
         a.base = a.base or bs.label(card, "base")
         if not a.base:
@@ -118,18 +119,28 @@ def main():
         if not mine:
             fail(f"거부: {a.card} 에 file: label 없음. 조치: bd label add {a.card} file:<경로> 뒤 다시 실행")
         mine_loc = scope(card, repo)
-        family = {a.card}
+        family = {a.card} | ({card["parent"]} if card.get("parent") else set())
         a.base = a.base or resolve_base(card, board)
     if not a.base:
         fail(f"거부: 비교 기준 없음. 조치: --base <기능 통합 브랜치> 를 주거나 bd label add {a.card} base:<ref>")
     rng = f"{a.base}...{a.branch}"
     files = [f for f in run(["git", "diff", "--name-only", "--no-renames", rng], repo).splitlines() if f]
+    broad = [bs.loc_text(l) or "." for l in mine_loc if bs.too_broad(l)]
+    if broad:
+        fail(f"거부: {a.card} 범위 {broad[0]} 는 저장소 전체(아무 변경이나 통과). 조치: 코디네이터가 고칠 폴더·파일로 좁히고 decisions.tsv 에 기록")
     outside = [f for f in files if not covered(f, mine_loc, repo)]
 
     others = []
     for c in bd_json(["list", "--status", "in_progress,closed", "--limit", "0"], board):
-        if c.get("id") not in family and file_labels(c):
-            others.append((c["id"], c.get("status", ""), scope(c, repo)))
+        if c.get("id") in family or not file_labels(c):
+            continue
+        # 닫힌 카드는 같은 기능 묶음이거나 그 브랜치가 이미 기준에 들어갔으면 경고에서 뺌(쌓이는 영구 경고 방지)
+        if c.get("status") == "closed":
+            ob = bs.label(c, "branch")
+            if (card.get("parent") and c.get("parent") == card.get("parent")) or (
+                    ob and subprocess.run(["git", "-C", repo, "merge-base", "--is-ancestor", ob, a.base], capture_output=True).returncode == 0):
+                continue
+        others.append((c["id"], c.get("status", ""), scope(c, repo)))
 
     warnings = []
     for f in files:
@@ -156,7 +167,7 @@ def main():
             print("거부: 카드 범위 밖 파일")
             for f in outside:
                 print(f"  {f}")
-            print(f"조치: bd label add {a.card} file:<경로> 로 범위를 넓힌 뒤 다시 실행, 또는 해당 파일을 {a.base} 상태로 되돌림")
+            print(f"조치: 해당 파일을 {a.base} 상태로 되돌림. 범위가 정말 더 필요하면 코디네이터가 file: 을 추가하고 decisions.tsv 에 이유를 남김")
         for w in warnings:
             if w["kind"] == "revert":
                 print(f"경고: 되돌림 커밋 {w['commit']} {w['subject']}")

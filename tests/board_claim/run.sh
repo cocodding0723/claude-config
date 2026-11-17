@@ -42,6 +42,9 @@ expect "같은 원격 clone 두 번째는 3" 3 "$BIN" "$k2" wK2
 r=$(new_card r "file:src/rel/")
 expect "상대 경로인데 repo: 없으면 2" 2 "$BIN" "$r" w1
 
+wide=$(new_card wide "file:.,repo:$G")
+expect "file:. (저장소 전체) 범위는 2" 2 "$BIN" "$wide" w1
+
 n=$(new_card n "")
 expect "file: label 없으면 2" 2 "$BIN" "$n" w1
 expect "--help 0" 0 "$BIN" --help

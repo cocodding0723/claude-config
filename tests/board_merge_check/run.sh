@@ -18,6 +18,7 @@ case "$1" in
     e1) echo '[{"id":"e1","issue_type":"epic","labels":["branch:dev"]}]' ;;
     e2) echo '[{"id":"e2","issue_type":"epic","status":"open","labels":["branch:feat2"]}]' ;;
     c6) echo '[{"id":"c6","status":"closed","parent":"e2","labels":["file:src/a/"]}]' ;;
+    cw) echo '[{"id":"cw","status":"in_progress","labels":["file:.","base:dev"]}]' ;;
   esac ;;
   children) [ "$2" = e2 ] && echo '[{"id":"c6","status":"closed","parent":"e2","labels":["file:src/a/"]},{"id":"c7","status":"closed","parent":"e2","labels":["file:src/b/"]}]' || echo '[]' ;;
   list) echo '[{"id":"c1","status":"in_progress","labels":["file:src/a/"]},{"id":"c2","status":"closed","labels":["file:src/a/shared.cs"]}]' ;;
@@ -71,6 +72,7 @@ expect "--epic: 하위 카드 범위 합집합이면 통과" 0 "$CHK" --epic e2 
 git checkout -q -b feat3 feat2; mkdir -p src/c; echo 1 > src/c/z.cs; git add .; c commit -m feat3
 expect "--epic: 어느 카드에도 없는 파일은 4" 4 "$CHK" --epic e2 feat3 --base dev --repo "$R"
 expect "--epic 에 epic 아닌 카드는 2" 2 "$CHK" --epic c6 feat2 --base dev --repo "$R"
+expect "file:. 넓은 범위는 2" 2 "$CHK" cw ok --repo "$R"
 expect "인자 없음 2" 2 "$CHK"
 expect "--help 0" 0 "$CHK" --help
 

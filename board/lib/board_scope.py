@@ -115,6 +115,12 @@ def loc_text(loc):
     return f"{rid.split(':', 1)[-1]}:{rel or '.'}" if rid else rel
 
 
+def too_broad(loc):
+    """저장소 전체(file:.)·파일 시스템 최상위처럼 아무 변경이나 통과시키는 범위"""
+    rid, rel = loc
+    return (bool(rid) and rel == "") or (not rid and rel.count("/") <= 2 and os.path.isabs(rel)) or rel in ("", ".")
+
+
 def card_repo(card, fallback=""):
     """카드 label repo: 가 읽을 수 있는 git 저장소면 그 경로, 아니면(반납된 작업 공간 등) fallback"""
     r = os.path.expanduser(label(card, "repo"))
