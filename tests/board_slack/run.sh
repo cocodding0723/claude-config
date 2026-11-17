@@ -150,7 +150,7 @@ python3 -I "$BS" push "$L1" 2>/dev/null >&2; python3 -I "$BS" push "$L1" 2>/dev/
 python3 - "$SCR/slack_notify.sh" "$SB/notify_src.sh" <<'PY'
 import sys
 s = open(sys.argv[1], encoding="utf-8").read()
-open(sys.argv[2], "w", encoding="utf-8").write(s.replace("len(head) > 40", "len(head) > 3", 1))
+open(sys.argv[2], "w", encoding="utf-8").write(s.replace("head_len > decide_card.TITLE_MAX", "head_len > 3", 1))
 PY
 cp "$SCR/decide_card.py" "$SB/"
 LRM_NOTIFY_SRC="$SB/notify_src.sh" python3 -I "$BS" push "$G1" --dry-run 2>"$SB/err" >/dev/null; rc=$?
@@ -175,6 +175,19 @@ python3 -I "$BS" push "$X2" --dry-run 2>"$SB/err" >/dev/null; rc=$?
 X3=$(mkcard3 "선택지 이모지 카드" "시안이 두 벌이라 하나로 맞춰야 화면 작업을 이어 갈 수 있음" $'- 로켓 :rocket: 발사 => 가 됨\n- B => 나 됨' B)
 python3 -I "$BS" push "$X3" --dry-run 2>"$SB/err" >/dev/null; rc=$?
 [ "$rc" = 2 ] && grep -q '이모지 이름' "$SB/err" && ok "건조 실행: 선택지 문구에 :이름: 이모지가 있으면 거부" || ko "선택지 이모지" "rc=$rc $(cat "$SB/err")"
+# 제목 기준 공유: board-ask 쪽 글자 수와 알림 스크립트 양식 검사가 경계(40·41자, 이모지·코드 제외)에서 같은 결과
+python3 -I - "$SCR" <<'PY' && ok "제목 40자 기준·세는 방식이 알림 스크립트·board_cards 에서 같은 값(decide_card 한 곳)" || ko "제목 기준 공유" ""
+import re, subprocess, sys
+sys.path.insert(0, sys.argv[1])
+import board_cards, decide_card
+src = open(sys.argv[1] + "/slack_notify.sh", encoding="utf-8").read()
+code = src.split("read -r -d '' FORM_PY <<'PYEOF' || true\n", 1)[1].split("\nPYEOF\n", 1)[0]
+assert board_cards.TITLE_MAX == decide_card.TITLE_MAX == 40 and board_cards.title_len is decide_card.title_len
+for t in ("가" * 40, "가" * 41, "🚀 " + "가" * 40, ":rocket: " + "가" * 41, "가 " * 20 + "나"):
+    out = subprocess.run([sys.executable, "-I", "-c", code, "check", "decide", "1"], input=t, capture_output=True, text=True,
+                         env={"LRM_SCRIPT_DIR": sys.argv[1]}).stdout
+    assert ("title-len" in out) == (board_cards.title_len(t) > board_cards.TITLE_MAX), (t, out)
+PY
 # 동시 push 2개 → 전송 1번
 H1=$("$SCR/board-ask" --runnable no "동시에 보낼 결정" --options "A => 가 됨|B => 나 됨" --recommend A --background "시안이 두 벌이라 하나로 맞춤" --terms 없음 --doc "$DOC")
 rm -f "$SB/notify.args"* "$SB/notify.n"; touch "$SB/slow"

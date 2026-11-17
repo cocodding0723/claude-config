@@ -309,10 +309,9 @@ def ref_start(scan):
 def check_form(msg, kind, guided):
     out = []
     msg = unicodedata.normalize("NFC", msg)
-    head = RX["code"].sub("", msg.split("\n", 1)[0])
-    head = "".join(c for c in head if unicodedata.category(c) not in ("So", "Sk", "Cf", "Mn", "Me") and not c.isspace())
-    if len(head) > 40:
-        out.append(("reject", "title-len", "첫 줄이 %d자(최대 40) — 주제를 짧게 줄이고 세부는 '• 무엇:' 줄로 옮기세요" % len(head)))
+    head_len = decide_card.title_len(msg)  # 세는 방식·상한은 decide_card 한 곳(board_cards 도 공유)
+    if head_len > decide_card.TITLE_MAX:
+        out.append(("reject", "title-len", "첫 줄이 %d자(최대 %d) — 주제를 짧게 줄이고 세부는 '• 무엇:' 줄로 옮기세요" % (head_len, decide_card.TITLE_MAX)))
     scan = scrub(msg)
     pos = ref_start(scan)
     body = scan if pos is None else scan[:pos]
