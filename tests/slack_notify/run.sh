@@ -873,5 +873,20 @@ r=$(lastrec)
 run_n --kind doc $'문서\n\n• 무엇: 첨부' "$SB/card.html"
 [ "$(lastrec | jq -r '[.ts,has("card")|tostring]|join(",")')" = "1700000009.000200,false" ] && ok "R --card 없는 파일 전송도 ts 기록, card 칸 없음" || ko "R 파일 card 없음" "$(lastrec)"
 
+# ---- S. --update: 기존 글 본문 교체(chat.update). 새 글·sent 기록 없음 ------------------------------------------
+newhome s
+: > "$LOG/update.json"; rm -f "$LOG/fail.upd"
+run_n --kind progress --update 1700000000.000900 $'새 제목\n\n- 무엇: 고침'
+[ "$RC" = 0 ] && [ "$(cat "$SB/out")" = "ok 1700000000.000900" ] && [ "$(jq -r '[.ts,.channel,(has("thread_ts")|tostring),.attachments[0].color!=null|tostring]|join(",")' "$LOG/update.json")" = "1700000000.000900,Dfake,false,true" ] \
+  && ! grep -q 'chat.postMessage' "$LOG/calls.log" && [ ! -e "$CFG/slack-sent.jsonl" ] && ok "S --update → chat.update 로 ts 본문 교체, 새 글·sent 기록 없음" || ko "S update" "rc=$RC $(cat "$SB/out" "$SB/err")"
+run_n --kind progress --update 1700000000.000900 --thread 1700000000.000100 "x"
+[ "$RC" = 2 ] && grep -q -- '--update 는 본문만 고침' "$SB/err" && ok "S --update 와 --thread 혼용 → 종료 코드 2" || ko "S 혼용" "rc=$RC"
+run_n --update abc "x"
+[ "$RC" = 2 ] && grep -q -- '--update 형식 오류' "$SB/err" && ok "S --update ts 형식 오류 → 종료 코드 2" || ko "S 형식" "rc=$RC"
+printf message_not_found > "$LOG/fail.upd"
+run_n --kind progress --update 1700000000.000900 "x"
+[ "$RC" = 1 ] && grep -q message_not_found "$SB/out" && ok "S chat.update 실패 → 종료 코드 1, 오류 출력" || ko "S 실패" "rc=$RC $(cat "$SB/out")"
+rm -f "$LOG/fail.upd"
+
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
