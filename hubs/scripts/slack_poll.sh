@@ -105,7 +105,7 @@ RETRY_CAP = float(os.environ.get("LRM_RETRY_CAP", "20"))  # 429 한 번당 대�
 DEADLINE = time.time() + float(os.environ.get("LRM_POLL_BUDGET", "90"))
 RETRIES = 2
 PAGE_LIMIT = 200
-MAX_PAGES = 5
+MAX_PAGES = 10  # 7일 1000건을 넘긴 적 있음(11-16). 상한을 넘으면 가장 오래된 쪽만 빠짐(fetch_history)
 SENT, INBOX, STATE = (os.path.join(DIR, n) for n in ("slack-sent.jsonl", "slack-inbox.jsonl", "slack-poll-state.json"))
 # 반응 → 답 해석. 같은 이모지도 메시지 종류에 따라 뜻이 다름(결정 카드 REACTION_ACTION, 시안 REVIEW_ACTION). 표에 없으면 이름 그대로
 REACTION_ACTION = {"white_check_mark": "approve", "x": "hold", "비서-추천대로": "approve", "비서-lgtm": "approve", "비서동의": "approve", "비서-보류": "hold", "비서-a": "a", "비서-b": "b", "비서-c": "c", "비서-d": "d"}
@@ -745,9 +745,12 @@ def done_phase(state):
         part = {}
 
 def fetch_history(ch, oldest):
+    """기간 안 메시지를 최신부터. latest 를 함께 줌: oldest 만 주면 Slack 이 가장 오래된 쪽부터 돌려줘
+    페이지 상한에 걸릴 때 최신 메시지가 빠짐(11-17 실측: 7일 1037건 중 최신 37건이 안 보여 새 DM 수집 0건)"""
     msgs, cursor = [], None
+    latest = f"{time.time():.6f}"
     for _ in range(MAX_PAGES):
-        params = {"channel": ch, "oldest": oldest, "limit": PAGE_LIMIT}
+        params = {"channel": ch, "oldest": oldest, "latest": latest, "limit": PAGE_LIMIT}
         if cursor:
             params["cursor"] = cursor
         d = api("conversations.history", **params)

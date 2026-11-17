@@ -65,6 +65,9 @@ pollh "$H" a1; rc=$?
 [ "$(jq -r ".reacted[\"$N.000110\"]" "$H/slack-poll-state.json")" = eyes ] && ok "새 답글에 읽음 반응 👀 달림(reacted=eyes)" || ko "읽음 반응" "$(jq -c '.reacted' "$H/slack-poll-state.json")"
 grep -q "^reactions.add	.*timestamp=$N.000110" "$CL" && ok "reactions.add 호출 대상 = 사용자 답글 ts" || ko "reactions.add" "$(grep reactions "$CL")"
 
+# oldest 만 주면 Slack 은 가장 오래된 페이지부터 줌 → 페이지 상한에 걸리면 최신 DM 이 빠짐(11-17). latest 를 함께 줘야 최신부터
+grep "^conversations.history	" "$CL" | head -1 | grep -q "oldest=" && grep "^conversations.history	" "$CL" | head -1 | grep -q "latest=" \
+  && ok "목록 조회에 oldest·latest 함께 전달(최신 페이지부터)" || ko "목록 조회 인자" "$(grep '^conversations.history' "$CL" | head -1)"
 before=$(wc -l < "$H/slack-inbox.jsonl" | tr -d ' ')
 pollh "$H" a2
 [ "$(wc -l < "$H/slack-inbox.jsonl" | tr -d ' ')" = "$before" ] && [ "$(rcalls "$P")" = 1 ] && ok "재실행: 중복 기록·답글 재조회 없음" || ko "재실행" "$(rcalls "$P")"
