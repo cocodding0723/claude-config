@@ -2,7 +2,9 @@
 패널(lrm-board)은 kind:decision·kind:user-todo 열린 카드를 결정 대기·할 일 칸으로 그림.
 승인 성격(PR 게시·병합 허락 등)은 따로 종류를 두지 않고 결정 카드에 label gate:approval 을 붙여 배지로만 구분(11-17, kind:approval 폐지).
 환경: BOARD_DIR(기본 ~/orca/board), BOARD_BD(기본 bd).
-종료 코드: 0 정상(이미 있음·이미 닫힘 포함), 2 인자 오류, 3 bd 실패, 4 카드 없음"""
+결정 카드는 '돌려 보면 알 수 있나'(--runnable) 칸이 필수. yes 면 카드를 만들지 않음 — 동작·시간·배치·출력처럼 실행해 보면 아는 사실은
+사람에게 묻지 않고 시제품·실측으로 판정함(제품 방향·취향만 묻는다). 승인 성격(--gate approval)은 사실 질문이 아니라 제외.
+종료 코드: 0 정상(이미 있음·이미 닫힘 포함), 2 인자 오류, 3 bd 실패, 4 카드 없음, 5 돌려 보면 아는 질문이라 거부"""
 import argparse
 import json
 import os
@@ -16,13 +18,18 @@ LEGACY_APPROVAL = "approval"  # 옛 --kind approval. decision + gate:approval �
 GATES = ("approval",)
 APPROVAL_OPTIONS = ("승인 => 이대로 진행", "보류 => 진행하지 않고 카드를 열어 둠")
 REASON_MAX = 80
+RUNNABLE = ("yes", "no")
+EXIT_RUNNABLE = 5
+RUNNABLE_REFUSE = ("돌려 보면 알 수 있는 질문은 결정 카드로 묻지 않음. "
+                   "조치: 시제품·실측(실행·촬영·시험)으로 정하고 결과와 근거를 작업 카드 코멘트·decisions.tsv 에 남김. "
+                   "제품 방향·취향이라 실행으로 못 정하면 --runnable no")
 
 ASK_HELP = """결정·할 일 카드를 작업판에 만든다. 같은 종류·같은 제목의 열린 카드가 있으면 새로 만들지 않고 그 id 를 낸다.
 승인 성격은 --gate approval(결정 카드 + label gate:approval, 선택지를 안 주면 승인|보류).
 Slack 자동 보내기 스위치(~/.config/lrm-hubs/.board-slack.on)가 켜져 있으면 새 결정 카드를 바로 Slack 번호 카드로 보냄(board_slack.py).
 
 예:
-  board-ask "패널 정본을 작업판으로 옮길까?" --options "옮김|유지" --recommend 옮김 --parent lrm-q5o
+  board-ask "패널 정본을 작업판으로 옮길까?" --options "옮김|유지" --recommend 옮김 --runnable no --parent lrm-q5o
   board-ask "릴리스 키스토어 만들기" --kind user-todo --why "출시 전 Google 로그인 필요"
   board-ask "PR #812 게시" --gate approval --json
 
@@ -76,6 +83,11 @@ def ask(a):
         a.kind, a.gate = "decision", "approval"
     if a.gate and a.kind != "decision":
         raise Fail(2, "--gate 는 결정 카드에만. 조치: --kind 를 빼거나 decision")
+    if a.kind == "decision" and not a.gate:
+        if a.runnable is None:
+            raise Fail(2, "결정 카드는 '돌려 보면 알 수 있나' 칸 필수. 조치: 실행·시제품으로 알 수 있으면 --runnable yes(거부됨), 방향·취향이면 --runnable no")
+        if a.runnable == "yes":
+            raise Fail(EXIT_RUNNABLE, RUNNABLE_REFUSE)
     opts = [o.strip() for o in (a.options or "").split("|") if o.strip()]
     if a.gate == "approval" and not opts:
         opts = list(APPROVAL_OPTIONS)
@@ -96,6 +108,8 @@ def ask(a):
         lines.append(f"추천: {a.recommend}")
     if a.why:
         lines.append(f"이유: {a.why}")
+    if a.kind == "decision" and not a.gate:
+        lines.append("돌려 보면 알 수 있나: 아니오")
     if a.background:
         lines.append(f"배경: {a.background}")
     if a.terms:
@@ -153,6 +167,7 @@ def main(argv):
         ap.add_argument("--parent", help="상위 epic id")
         ap.add_argument("--kind", choices=KINDS + (LEGACY_APPROVAL,), default="decision", help="카드 종류(기본 decision). approval 은 폐지된 옛 값")
         ap.add_argument("--gate", choices=GATES, help="승인 성격 배지(label gate:<값>). 결정 카드에만")
+        ap.add_argument("--runnable", choices=RUNNABLE, help="돌려 보면 알 수 있나(결정 카드 필수, 승인 성격 제외). yes 면 거부: 시제품·실측으로 판정")
         ap.add_argument("--background", help="배경 한 줄(Slack 결정 카드로 보낼 때 필수)")
         ap.add_argument("--terms", help="낯선 말 풀이 한 줄, 없으면 '없음'(Slack 결정 카드로 보낼 때 필수)")
         ap.add_argument("--priority", type=int, choices=range(5), default=1, help="0 최우선~4(기본 1)")

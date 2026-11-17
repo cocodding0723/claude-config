@@ -291,10 +291,10 @@ stop s29
 BD="$SB/board"; mkdir -p "$BD"
 (cd "$BD" && git init -q && bd init --prefix t -q >/dev/null 2>&1) || ko "임시 작업판" ""
 SCR="$HERE/../../hubs/scripts"
-CARD=$(BOARD_DIR="$BD" LRM_HUB_DIR="$SB/none" "$SCR/board-ask" "색 정할까?" --options "파랑 => 차분|빨강 => 강렬" --recommend 파랑 --background "시안 두 벌이라 하나로 맞춤" --terms 없음)
+CARD=$(BOARD_DIR="$BD" LRM_HUB_DIR="$SB/none" "$SCR/board-ask" --runnable no "색 정할까?" --options "파랑 => 차분|빨강 => 강렬" --recommend 파랑 --background "시안 두 벌이라 하나로 맞춤" --terms 없음)
 DID=$(python3 -I -c 'import sys;sys.path.insert(0,sys.argv[1]);import board_slack;print(board_slack.decision_id(sys.argv[2]))' "$SCR" "$CARD")
 (cd "$BD" && bd label add "$CARD" "slack:$DID" >/dev/null)
-QCARD=$(BOARD_DIR="$BD" LRM_HUB_DIR="$SB/none" "$SCR/board-ask" "글꼴 정할까?" --options "A => 둥근|B => 각진" --recommend A --background "제목 글꼴 두 후보" --terms 없음)
+QCARD=$(BOARD_DIR="$BD" LRM_HUB_DIR="$SB/none" "$SCR/board-ask" --runnable no "글꼴 정할까?" --options "A => 둥근|B => 각진" --recommend A --background "제목 글꼴 두 후보" --terms 없음)
 QDID=$(python3 -I -c 'import sys;sys.path.insert(0,sys.argv[1]);import board_slack;print(board_slack.decision_id(sys.argv[2]))' "$SCR" "$QCARD")
 (cd "$BD" && bd label add "$QCARD" "slack:$QDID" >/dev/null)
 bact() { act "$1" "$2" "$ME" "$3" "$DID|$4" "$5" | sed "s/D-T1/$DID/g"; }

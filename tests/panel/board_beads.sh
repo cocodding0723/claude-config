@@ -21,14 +21,18 @@ WORK=$(b create "진행 일" --parent "$EPIC" --json | id_of); BD_ACTOR=worker-1
 STUCK=$(b create "막힌 일" --json | id_of); b update "$STUCK" --status blocked >/dev/null
 
 # board-ask
-D=$("$SCRIPTS/board-ask" "패널 정본 옮길까?" --options "옮김|유지" --recommend 옮김 --why "손 칸 낡음" --parent "$EPIC" --priority 0); rc=$?
+D=$("$SCRIPTS/board-ask" --runnable no "패널 정본 옮길까?" --options "옮김|유지" --recommend 옮김 --why "손 칸 낡음" --parent "$EPIC" --priority 0); rc=$?
 [ "$rc" = 0 ] && [ -n "$D" ] && ok "board-ask: 결정 카드 생성, id 출력" || ko "board-ask 생성" "rc=$rc"
-D2=$("$SCRIPTS/board-ask" "패널 정본 옮길까?" --options "옮김|유지" --json)
+D2=$("$SCRIPTS/board-ask" --runnable no "패널 정본 옮길까?" --options "옮김|유지" --json)
 [ "$(echo "$D2" | jq -r '.id + "/" + (.created|tostring)')" = "$D/false" ] && ok "board-ask: 같은 제목 열린 카드면 새로 안 만듦" || ko "board-ask 반복" "$D2"
-"$SCRIPTS/board-ask" "선택지 하나" --options "A" >/dev/null 2>"$SB/err"; [ $? = 2 ] && grep -q '조치' "$SB/err" && ok "board-ask: 선택지 1개 → 종료 2, 원인·조치" || ko "선택지 검사" ""
-"$SCRIPTS/board-ask" "x" --options "A|B" --recommend C >/dev/null 2>&1; [ $? = 2 ] && ok "board-ask: 추천이 선택지 밖 → 종료 2" || ko "추천 검사" ""
+"$SCRIPTS/board-ask" --runnable no "선택지 하나" --options "A" >/dev/null 2>"$SB/err"; [ $? = 2 ] && grep -q '조치' "$SB/err" && ok "board-ask: 선택지 1개 → 종료 2, 원인·조치" || ko "선택지 검사" ""
+"$SCRIPTS/board-ask" --runnable no "x" --options "A|B" --recommend C >/dev/null 2>&1; [ $? = 2 ] && ok "board-ask: 추천이 선택지 밖 → 종료 2" || ko "추천 검사" ""
 "$SCRIPTS/board-ask" --help >/dev/null; [ $? = 0 ] && ok "board-ask --help 종료 0" || ko "--help" ""
-DRY=$("$SCRIPTS/board-ask" "건조" --options "A|B" --dry-run); [ "$(b list --json --limit 0 | jq '[.[]|select(.title=="건조")]|length')" = 0 ] && ok "board-ask --dry-run: 작업판 그대로" || ko "dry-run" "$DRY"
+DRY=$("$SCRIPTS/board-ask" --runnable no "건조" --options "A|B" --dry-run); [ "$(b list --json --limit 0 | jq '[.[]|select(.title=="건조")]|length')" = 0 ] && ok "board-ask --dry-run: 작업판 그대로" || ko "dry-run" "$DRY"
+"$SCRIPTS/board-ask" "칸 없는 결정" --options "A|B" >/dev/null 2>"$SB/err"; [ $? = 2 ] && grep -q '돌려 보면 알 수 있나' "$SB/err" && grep -q '조치' "$SB/err" && ok "board-ask: 결정 카드에 '돌려 보면 알 수 있나' 칸 없으면 종료 2" || ko "runnable 필수" "$(cat "$SB/err")"
+"$SCRIPTS/board-ask" "버튼 위치 어디가 잘 보일까?" --options "위|아래" --runnable yes >/dev/null 2>"$SB/err"; rc=$?
+[ "$rc" = 5 ] && grep -q '시제품' "$SB/err" && [ "$(b list --json --limit 0 | jq '[.[]|select(.title=="버튼 위치 어디가 잘 보일까?")]|length')" = 0 ] && ok "board-ask --runnable yes → 종료 5, 카드 안 만듦, 시제품으로 판정 안내" || ko "runnable yes" "rc=$rc $(cat "$SB/err")"
+b show "$D" --json | jq -r 'if type=="array" then .[0] else . end | .description' | grep -qx '돌려 보면 알 수 있나: 아니오' && ok "board-ask --runnable no → 카드 설명에 판정 기록" || ko "runnable 기록" ""
 T=$("$SCRIPTS/board-ask" "키스토어 만들기" --kind user-todo)
 A=$("$SCRIPTS/board-ask" "PR 게시" --gate approval)
 [ "$(b show "$A" --json | jq -r 'if type=="array" then .[0] else . end | (.labels|sort|join(","))')" = "gate:approval,kind:decision" ] && b show "$A" --json | jq -r 'if type=="array" then .[0] else . end | .description' | grep -q -- '- 승인' && ok "board-ask --gate approval: kind:decision + gate:approval, 선택지 기본 승인|보류" || ko "gate approval" "$(b show "$A" --json | jq -c 'if type=="array" then .[0] else . end | .labels')"

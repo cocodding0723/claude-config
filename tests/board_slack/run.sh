@@ -20,11 +20,11 @@ b() { (cd "$BOARD_DIR" && bd "$@"); }
 labels() { b show "$1" --json | jq -r 'if type=="array" then .[0] else . end | (.labels|sort|join(","))'; }
 BS="$SCR/board_slack.py"
 
-THIN=$("$SCR/board-ask" "선택지 결과 없는 결정" --options "A|B" --recommend A)
+THIN=$("$SCR/board-ask" --runnable no "선택지 결과 없는 결정" --options "A|B" --recommend A)
 python3 -I "$BS" push "$THIN" 2>"$SB/err"; rc=$?
 [ "$rc" = 2 ] && grep -q '배경' "$SB/err" && grep -q '선택지 결과' "$SB/err" && grep -q '조치' "$SB/err" && [ ! -f "$SB/notify.args" ] && ok "필수 칸(배경·용어·결과) 없으면 안 보냄, 원인·조치" || ko "필수 칸" "rc=$rc $(cat "$SB/err")"
 
-C=$("$SCR/board-ask" "색 정할까?" --options "파랑 => 차분|빨강 => 강렬" --recommend 빨강 --why "시안 기준" --background "시안 두 벌이라 하나로 맞춤" --terms 없음)
+C=$("$SCR/board-ask" --runnable no "색 정할까?" --options "파랑 => 차분|빨강 => 강렬" --recommend 빨강 --why "시안 기준" --background "시안 두 벌이라 하나로 맞춤" --terms 없음)
 OUT=$(python3 -I "$BS" push "$C" --json); rc=$?
 DID=$(echo "$OUT" | jq -r .decisionId)
 [ "$rc" = 0 ] && [ "$(echo "$OUT" | jq -r .sent)" = true ] && [[ "$DID" =~ ^D-B[A-Za-z0-9]{1,16}$ ]] && ok "보냄: 결정 번호 D-B+카드 id" || ko "push" "rc=$rc $OUT"
@@ -52,9 +52,9 @@ R=$(python3 -I "$BS" answer "$DID" "결정 $DID = 선택 2(빨강) (버튼)" --j
 [ "$(python3 -I "$BS" answer D-RDY812 "승인" --json | jq -r .board)" = false ] && ok "작업판 카드가 아닌 결정 번호는 손대지 않음" || ko "남의 번호" ""
 
 touch "$LRM_HUB_DIR/.board-slack.on"
-A2=$("$SCR/board-ask" "글꼴 정할까?" --options "A => 둥근|B => 각진" --recommend A --background "제목 글꼴 후보 둘" --terms 없음)
+A2=$("$SCR/board-ask" --runnable no "글꼴 정할까?" --options "A => 둥근|B => 각진" --recommend A --background "제목 글꼴 후보 둘" --terms 없음)
 labels "$A2" | grep -q 'slack:D-B' && ok "스위치 파일 있으면 board-ask 가 새 결정 카드를 바로 보냄" || ko "auto push" "$(labels "$A2")"
-A3=$("$SCR/board-ask" "칸 빠진 결정" --options "A|B" 2>"$SB/err"); rc=$?
+A3=$("$SCR/board-ask" --runnable no "칸 빠진 결정" --options "A|B" 2>"$SB/err"); rc=$?
 [ "$rc" = 0 ] && [ -n "$A3" ] && grep -q 'Slack 카드 못 보냄' "$SB/err" && ok "자동 보내기 실패는 카드 생성을 막지 않음(경고만)" || ko "auto push 실패" "rc=$rc $(cat "$SB/err")"
 rm -f "$LRM_HUB_DIR/.board-slack.on"
 printf '통과 %d · 실패 %d\n' "$PASS" "$FAIL"
