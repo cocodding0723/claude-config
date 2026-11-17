@@ -10,6 +10,10 @@ import datetime
 import json
 import os
 import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import user_approval  # noqa: E402
 
 DIR = "plan-approvals"
 TTL = datetime.timedelta(days=7)
@@ -95,11 +99,11 @@ def _items(rec, field):
 
 
 def find_pr(hub, repo, branch):
-    """repo:branch 가 적힌 계획의 plan_id, 없으면 ''"""
+    """repo:branch 가 적힌 계획의 plan_id → 없으면 사용자 터미널 승인(board-approve, Slack 봇이 꺼져 있을 때) → 없으면 ''"""
     for r in records(hub):
         if any(x.get("repo") == repo and x.get("branch") == branch for x in _items(r, "prs")):
             return r["plan_id"]
-    return ""
+    return user_approval.find_pr(hub, repo, branch)
 
 
 def find_ticket(hub, summary):

@@ -33,7 +33,8 @@ API_CREATE_REASON = "gh api 로 새 PR 생성 — 승인 기록을 확인할 수
 CREATE_APPROVAL_REASON = ("새 PR 생성은 사용자 승인 뒤에만(사용자 11-16) — [{repo} {branch}] 결정 카드 {did} 의 1번 답 필요. 예: "
                           "slack_notify.sh --kind decide --decision-id {did} --options '1=PR 올리기 => draft PR 생성,2=보류 => 로컬 유지' "
                           "--recommend 1 --no-doc $'{repo} {branch} PR 생성 승인\\n배경: …\\n용어: 없음'. 또는 계획서에 이 PR 을 추가한 뒤 컨펌 "
-                          "→ plan-approvals/<plan-id>.json 의 prs 에 {{repo, branch}} 기록")
+                          "→ plan-approvals/<plan-id>.json 의 prs 에 {{repo, branch}} 기록. Slack 봇이 꺼져 있으면 사용자에게 프롬프트에서 "
+                          "'! ~/orca/board/bin/board-approve {repo} {branch} \"<원문>\"' 한 줄을 직접 치도록 안내(모델은 실행하지 않음)")
 
 
 class Unknown(Exception):
