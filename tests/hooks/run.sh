@@ -681,5 +681,58 @@ texp "ws-guard: 작업자 timeout 래퍼 slack_notify.sh 거부" "$(bj 'timeout 
 texp "ws-guard: 설정 폴더 통째 Grep 거부" "{\"tool_name\":\"Grep\",\"tool_input\":{\"pattern\":\"xoxb\",\"path\":\"$SB/home/.config/lrm-hubs\"}}" deny
 texp "ws-guard: 설정 폴더 Grep glob=*.env 거부" "{\"tool_name\":\"Grep\",\"tool_input\":{\"pattern\":\"x\",\"path\":\"$SB/home/.config/lrm-hubs\",\"glob\":\"*.env\"}}" deny
 
+# ---- epic-scope-guard: 코디네이터는 자기 에픽 아래 카드만 씀 ----
+EG="$H/lib/epic_scope_guard.py"
+ESB="$SB/es-board"; mkdir -p "$ESB"
+(cd "$ESB" && git init -q && bd init --quiet >/dev/null 2>&1)
+mkc() { (cd "$ESB" && bd create "$@" --json 2>/dev/null | jq -r .id); }
+EA=$(mkc ea -t epic -l hub:coord-ea-hub); EA1=$(mkc ea1 --parent "$EA")
+EB=$(mkc eb -t epic -l hub:coord-eb-hub); EB1=$(mkc eb1 --parent "$EB")
+EZ=$(mkc ez -t epic -l feature:zz); EF=$(mkc ef -t epic -l "repo:$SB/ws/coord-ef-hub")
+AL=$(mkc alert -l hub:main,kind:alert)
+git -C "$TM" worktree add -q -b feat/es-a "$SB/coord-ea-hub"; git -C "$TM" worktree add -q -b feat/es-z "$SB/coord-feat-zz-hub"
+git -C "$TM" worktree add -q -b feat/es-n "$SB/coord-none-hub"; git -C "$TM" worktree add -q -b feat/es-f "$SB/coord-ef-hub"
+# erun <cmd> <cwd> [ORCA_ROLE] → pass|deny (stderr 는 $SB/es.err)
+erun() { local out; out=$(printf '%s' "$(jq -cn --arg c "$1" --arg d "$2" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}')" | HOME="$SB/home" LRM_BOARD="$ESB" ORCA_ROLE="${3:-}" LRM_PUSH_MAIN=/x/main python3 -I "$EG" 2>"$SB/es.err"); [ -z "$out" ] && echo pass || printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision'; }
+eexp() { local got; got=$(erun "$2" "$3" "${5:-}"); [ "$got" = "${4:-pass}" ] && ok "$1" || ko "$1" "기대 ${4:-pass}, 실제 $got"; }
+HA="$SB/coord-ea-hub"; B="bd -C $ESB"
+eexp "epic-scope: 자기 에픽 하위 update 통과" "$B update $EA1 --status in_progress" "$HA"
+eexp "epic-scope: 자기 에픽 comments add 통과" "$B comments add $EA1 'see $EB'" "$HA"
+eexp "epic-scope: 자기 에픽 자체 update 통과" "$B update $EA -d x" "$HA"
+eexp "epic-scope: 남의 에픽 하위 update 거부" "$B update $EB1 --status closed" "$HA" deny
+eexp "epic-scope: 남의 에픽 close 거부" "$B close $EB" "$HA" deny
+eexp "epic-scope: 남의 카드 comments add 거부" "$B comments add $EB1 hi" "$HA" deny
+eexp "epic-scope: label add 거부" "$B label add $EB1 x" "$HA" deny
+eexp "epic-scope: dep add 거부" "$B dep add $EB1 $EA1" "$HA" deny
+eexp "epic-scope: update --parent 로 남의 에픽에 옮기기 거부" "$B update $EA1 --parent $EB" "$HA" deny
+eexp "epic-scope: 사용자 알림 카드(hub:main) 직접 쓰기 거부" "$B comments add $AL x" "$HA" deny
+eexp "epic-scope: cd <작업판> && bd 형태도 검사" "cd $ESB && bd update $EB1 -p 1" "$HA" deny
+eexp "epic-scope: 읽기 show·list·comments 통과" "$B show $EB1 && $B list && $B comments $EB1 && $B children $EB" "$HA"
+eexp "epic-scope: 작업판이 아닌 -C 는 안 봄" "bd -C /tmp/other update $EB1 -p 1" "$HA"
+eexp "epic-scope: 작업판에 없는 id·값은 통과" "$B update lrm-zzzzz -s open" "$HA"
+eexp "epic-scope: 커밋 메시지 속 bd 문구 통과" "git commit -m 'bd update $EB1 막음'" "$HA"
+eexp "epic-scope: create --parent 자기 에픽 통과" "$B create t --parent $EA -l a:b" "$HA"
+eexp "epic-scope: create --parent 자기 하위 카드 통과" "$B create t --parent $EA1" "$HA"
+eexp "epic-scope: create --parent 남의 에픽 거부" "$B create t --parent $EB" "$HA" deny
+eexp "epic-scope: create --parent 없음 거부" "$B create t -l a:b" "$HA" deny
+eexp "epic-scope: create --dry-run 통과" "$B create t --dry-run" "$HA"
+eexp "epic-scope: create 거부 뒤에도 && 로 이어진 읽기 통과" "$B show $EA1 && $B list" "$HA"
+eexp "epic-scope: feature:<slug> 표식으로 자기 에픽 판별(허브 coord-feat-zz-hub)" "$B update $EZ -p 1" "$SB/coord-feat-zz-hub"
+eexp "epic-scope: feature 허브의 남의 에픽 거부" "$B update $EA1 -p 1" "$SB/coord-feat-zz-hub" deny
+eexp "epic-scope: repo:<허브 폴더> 표식으로 판별" "$B update $EF -p 1" "$SB/coord-ef-hub"
+eexp "epic-scope: 판별 불가 허브는 통과" "$B update $EB1 -p 1" "$SB/coord-none-hub"
+grep -q '경고' "$SB/es.err" && ok "epic-scope: 판별 불가는 stderr 경고" || ko "epic-scope: 판별 불가는 stderr 경고" "stderr: $(cat "$SB/es.err")"
+eexp "epic-scope: 작업자(연결 작업 공간) 세션 통과" "$B comments add $EB1 hi" "$SB/tg-worker"
+eexp "epic-scope: ORCA_ROLE=worker 통과" "$B update $EB1 -p 1" "$HA" pass worker
+eexp "epic-scope: ORCA_ROLE=main 통과" "$B update $EB1 -p 1" "$HA" pass main
+eexp "epic-scope: ORCA_ROLE=coordinator 면 거부 적용" "$B update $EB1 -p 1" "$HA" deny coordinator
+eexp "epic-scope: 메인 체크아웃 세션 통과" "$B update $EB1 -p 1" "$TM"
+eexp "epic-scope: 조회 실패(작업판 아님)는 통과" "bd -C $SB/home update $EB1 -p 1" "$HA"
+LRM_BOARD_SAVE="$ESB"; ESB="$SB/es-missing"
+eexp "epic-scope: 작업판 없음은 통과" "bd -C $ESB update $EB1 -p 1" "$HA"
+ESB="$LRM_BOARD_SAVE"
+eexp "epic-scope: 깨진 입력은 통과" "" "$HA"
+out=$(printf '{깨진' | python3 -I "$EG" 2>/dev/null); [ -z "$out" ] && ok "epic-scope: 깨진 JSON 통과" || ko "epic-scope: 깨진 JSON 통과" "$out"
+
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]

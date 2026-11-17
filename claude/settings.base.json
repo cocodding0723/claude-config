@@ -179,6 +179,17 @@
             "statusMessage": "ws-token-guard 검사 중"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I ~/.claude/hooks/lib/epic_scope_guard.py",
+            "timeout": 30,
+            "statusMessage": "epic-scope-guard 검사 중"
+          }
+        ]
       }
     ],
     "PostToolUse": [
