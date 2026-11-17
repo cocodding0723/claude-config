@@ -399,3 +399,45 @@ test('detailText: 워커 줄은 상한 없이 전부', () => {
   assert.match(t, /## 워커 \(워커 실행 8 · 60분 안 끝남 0\)/)
   assert.match(t, /- ▶ w7 · bugfix · opus-5-5 · 경과 방금/)
 })
+
+// ---- 11-17 에픽 하위 작업 펼치기 ----
+test('parseEpicView: 없음·깨짐·모양 다름은 기본값(전체 펼침), 정상 값은 그대로', () => {
+  assert.deepEqual(b.parseEpicView(undefined), { all: true, epics: {} })
+  assert.deepEqual(b.parseEpicView('{broken'), { all: true, epics: {} })
+  assert.deepEqual(b.parseEpicView('null'), { all: true, epics: {} })
+  assert.deepEqual(b.parseEpicView('{"all":false,"epics":{"a":true,"b":"x"}}'), { all: false, epics: { a: true } })
+})
+
+test('applyEpicToggle: on·off·반전·에픽별 반전·모호/없는 id 오류, 반복 실행 안전', () => {
+  const v0 = b.DEFAULT_EPIC_VIEW
+  const ids = ['lrm-q5o', 'lrm-abc']
+  assert.deepEqual(b.applyEpicToggle(v0, 'off', ids).view, { all: false, epics: {} })
+  assert.deepEqual(b.applyEpicToggle(b.applyEpicToggle(v0, 'off', ids).view, 'off', ids).view, { all: false, epics: {} })
+  assert.deepEqual(b.applyEpicToggle(v0, '', ids).view, { all: false, epics: {} })
+  const one = b.applyEpicToggle(v0, 'lrm-q5o', ids).view
+  assert.equal(b.epicOpen(one, 'lrm-q5o'), false)
+  assert.equal(b.epicOpen(one, 'lrm-abc'), true)
+  assert.equal(b.epicOpen(b.applyEpicToggle(one, 'q5o', ids).view, 'lrm-q5o'), true) // 접미어로도 지정
+  assert.match(b.applyEpicToggle(v0, 'zzz', ids).error, /없음/)
+  assert.match(b.applyEpicToggle(v0, 'lrm', ids).error, /여러/)
+  assert.deepEqual(b.applyEpicToggle(b.applyEpicToggle(v0, 'lrm-q5o', ids).view, 'on', ids).view, { all: true, epics: {} })
+})
+
+test('epicBar: 비율·0 전체·초과 보정', () => {
+  assert.equal(b.epicBar(2, 4, 8), '▰▰▰▰▱▱▱▱ 2/4')
+  assert.equal(b.epicBar(0, 0, 4), '▱▱▱▱ 0/0')
+  assert.equal(b.epicBar(9, 4, 4), '▰▰▰▰ 9/4')
+})
+
+test('kidLines: 상태 표시·담당·하위 개수, 상한 넘으면 외 N개, 없으면 빈 배열', () => {
+  const kid = (i, st, extra = {}) => ({ id: `k${i}`, title: `일${i}`, st, who: null, at: sec(NOW - 5 * 60000), subs: 0, ...extra })
+  const ls = b.kidLines([kid(1, 'doing', { who: 'w-1', subs: 2 }), kid(2, 'done'), kid(3, 'todo')], NOW)
+  assert.deepEqual(ls.map(l => l.mark), ['◐', '✓', '○'])
+  assert.equal(ls[0].text, '일1 · w-1 · 하위 2')
+  assert.equal(ls[0].age, '5분')
+  const many = Array.from({ length: 11 }, (_, i) => kid(i, 'todo'))
+  const cut = b.kidLines(many, NOW, { ...b.PANEL_CONFIG, epicKidsMax: 3 })
+  assert.equal(cut.length, 4)
+  assert.equal(cut[3].text, '외 8개')
+  assert.deepEqual(b.kidLines(undefined, NOW), [])
+})

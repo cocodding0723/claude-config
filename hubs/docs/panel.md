@@ -193,6 +193,22 @@
 - 폴러 회차마다 `feedback_route.py --once` 가 그 스레드의 사용자 답글을 원문 그대로 epic 코멘트와 `hub-inbox/feat-<slug>.jsonl` 로 보낸다. 메인 전달(`slack_push`)에서는 빠진다.
 - 같은 스레드가 epic 여럿에 걸렸거나 닫힌 epic 만 있으면 메인 카드 `📥 기능 판별 필요`(label `feedback:triage`)에 모은다.
 
+## 7-4. 에픽 하위 작업 펼치기 토글 (11-17)
+
+🔄 AI 진행 칸의 에픽 줄 끝에 `▾ ▰▰▰▱▱ 3/6` 처럼 펼침 표시·진행률 막대·닫힌/전체가 붙고, 펼친 에픽은 아래에 하위 작업 목록이 나온다. 한 줄은 `○ 열림 · ◐ 진행 중 · ⛔ 막힘 · ✓ 닫힘` 표시, 제목, 담당, (그 아래 카드가 있으면 `하위 N`), 마지막 갱신이다. 깊이는 에픽 → 하위 카드 1단이다. 닫힌 에픽은 목록 없이 한 줄만 보인다.
+
+| 명령 | 동작 |
+|---|---|
+| `/board-epics on` | 전체 펼침. 에픽별 예외를 지운다 |
+| `/board-epics off` | 전체 접힘. 에픽별 예외를 지운다 |
+| `/board-epics` | 전체를 반전한다 |
+| `/board-epics <에픽 id>` | 그 에픽만 반전한다. id 는 끝·앞 일부(`q5o`)도 되며 둘 이상 맞으면 거절한다 |
+
+- 입력은 슬래시 명령이다. 이 mod 는 키·클릭 입력을 받지 않는다.
+- 기본값은 전체 펼침이다. 상태는 `~/.config/lrm-hubs/panel-view.json`(`{"all": true, "epics": {"<id>": false}}`)에 저장돼 패널을 다시 열어도 유지된다. 파일이 없거나 깨지면 기본값으로 읽는다. 경로는 `register.tsx` 의 `VIEW_FILE` 한 곳이다. 다른 세션에서 바꾼 값도 5초 안에 반영된다.
+- 펼친 에픽 하나가 그리는 줄은 `board.ts` 의 `PANEL_CONFIG.epicKidsMax`(8)까지이고 넘치면 `외 N개` 한 줄이다. 막대 칸 수는 `barCells`. 수집기가 싣는 하위 카드 상한은 `panel_collect.py` 의 `EPIC_KIDS_MAX`(30)다.
+- 원료는 `sources.board.value.features[].kids[]`(`id`·`title`·`st`(todo·doing·blocked·done)·`who`·`at`·`subs`)이다. 기존 `bd list --all --json` 한 번의 결과에서 만들며 카드마다 `bd` 를 부르지 않는다.
+
 ## 8. 후속 제안
 
 - Slack 할 일 목록(리스트) 읽기: 봇 토큰 스코프(`lists:read` 등) 확인이 먼저다. 수집기는 지금 토큰을 읽지 않으므로, 읽게 하려면 토큰을 다루는 별도 단계(폴러 쪽)에 붙이는 편이 맞다.

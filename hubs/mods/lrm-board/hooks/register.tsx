@@ -1,13 +1,18 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { AutoBoard, BoardView } from '../types'
+import type { AutoBoard, BoardView, EpicView } from '../types'
 import {
   PANEL_CONFIG,
   askLines,
   autoBanner,
   autoStamp,
+  applyEpicToggle,
   detailText,
+  epicOpen,
+  kidLines,
+  parseEpicView,
+  epicBar,
   featureCounts,
   featureLines,
   headerLine,
@@ -26,14 +31,16 @@ const PANE = 'lrm-board'
 const TITLE = 'LRM 현황'
 // 수집기(launchd ai.lrm.panelcollect)가 60초마다·작업판 변경 때 쓰는 자동 칸. 결정·할 일·헤드라인의 정본은 작업판(bd). 승인은 결정 대기 칸의 배지
 const AUTO_SOURCE = '__HOME__/.config/lrm-hubs/panel-auto.json'
+// 에픽 펼침 상태 파일(경로는 여기 한 곳). 패널을 다시 열어도 유지됨
+const VIEW_FILE = '__HOME__/.config/lrm-hubs/panel-view.json'
 const POLL_MS = 5000
 const MAIN_CWD = '__HOME__/orca/LoveRevolutionMaker'
 
-// 알림 기록을 더해 모양이 바뀜: view-4. 옛 값은 초기값으로 읽힘
+// 에픽 펼침 상태를 더해 모양이 바뀜: view-5. 옛 값은 초기값으로 읽힘
 const view = atom(
   { plugin: 'lrm-board', key: 'view' } as const,
   { autoMtimeMs: 0, nowMs: 0 } as BoardView,
-  { shape: 'view-4' },
+  { shape: 'view-5' },
 )
 
 const C = {
@@ -63,6 +70,10 @@ export const register: Register = on => {
       description: 'LRM 오케스트레이션 현황 패널 열기',
     })
     await $.command.register({
+      name: 'board-epics',
+      description: '에픽 아래 하위 작업 펼치기 on/off. 인자: on · off · (없음=전체 반전) · 에픽 id(그 에픽만 반전)',
+    })
+    await $.command.register({
       name: 'board-detail',
       description: '패널에서 뺀 참고 정보(허브·PR·쉬는 자원·최근 기록·진행 카드 담당·원료 상태)',
     })
@@ -89,9 +100,17 @@ export const register: Register = on => {
         }
       }
 
+      // 펼침 상태 파일: 수정 시각이 바뀌었을 때만 다시 읽음(다른 세션에서 바꾼 것도 반영)
+      const viewStat = await $.fs.stat(VIEW_FILE).catch(() => undefined)
+      const viewMtimeMs = viewStat?.mtimeMs ?? 0
+      let epicView: EpicView | undefined = current.epicView
+      if (epicView === undefined || viewMtimeMs !== current.viewMtimeMs) {
+        epicView = parseEpicView(viewStat === undefined ? undefined : await $.fs.read(VIEW_FILE).catch(() => undefined))
+      }
+
       // 글자는 분 단위라 파일이 그대로면 분이 바뀔 때만 다시 그림(5초마다 그리지 않음)
       const sameMinute = Math.floor(nowMs / 60000) === Math.floor(current.nowMs / 60000)
-      if (auto === current.auto && autoMtimeMs === current.autoMtimeMs && autoError === current.autoError && sameMinute) return
+      if (auto === current.auto && autoMtimeMs === current.autoMtimeMs && autoError === current.autoError && sameMinute && viewMtimeMs === current.viewMtimeMs) return
 
       // 데스크톱 알림: 🙋·🚨 새 항목만, 같은 항목 재전송 막기·시간당 상한(PANEL_CONFIG)
       const banner = autoBanner(auto, autoMtimeMs, autoError, nowMs)
@@ -103,7 +122,7 @@ export const register: Register = on => {
       const pick = pickNotify(items, current.notified ?? {}, current.sentAt ?? [], nowMs, current.notified === undefined)
       for (const n of pick.send) void $.ui.notify(n.text, { title: n.title }).catch(() => undefined)
 
-      await update($, view, () => ({ auto, autoError, autoMtimeMs, nowMs, notified: pick.seen, sentAt: pick.sent }))
+      await update($, view, () => ({ auto, autoError, autoMtimeMs, nowMs, notified: pick.seen, sentAt: pick.sent, epicView, viewMtimeMs }))
     }
 
     await refresh()
@@ -114,6 +133,22 @@ export const register: Register = on => {
     }
 
     return next(e)
+  })
+
+  on('command.run', { command: 'board-epics' }, async ($, e) => {
+    const { auto, epicView } = await read($, view)
+    const ids = (auto?.sources.board?.value?.features ?? []).filter(f => f.closedAt === null).map(f => f.id)
+    const r = applyEpicToggle(epicView ?? parseEpicView(undefined), e.args, ids)
+    if (r.error !== undefined) return { text: r.error }
+    try {
+      await $.fs.write(VIEW_FILE, `${JSON.stringify(r.view, null, 2)}\n`)
+    } catch (err) {
+      return { text: `상태 파일 쓰기 실패(${VIEW_FILE}): ${String(err)}. 폴더 권한을 확인한다.` }
+    }
+    const st = await $.fs.stat(VIEW_FILE).catch(() => undefined)
+    await update($, view, cur => ({ ...cur, epicView: r.view, viewMtimeMs: st?.mtimeMs ?? 0 }))
+
+    return { text: `에픽 하위 작업: 기본 ${r.view.all ? '펼침' : '접힘'}, 예외 ${Object.keys(r.view.epics).length}개` }
   })
 
   on('command.run', { command: 'board-detail' }, async $ => {
@@ -130,7 +165,8 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const { auto, autoError, autoMtimeMs, nowMs } = await read($, view)
+    const { auto, autoError, autoMtimeMs, nowMs, epicView } = await read($, view)
+    const ev = epicView ?? parseEpicView(undefined)
 
     const banner = autoBanner(auto, autoMtimeMs, autoError, nowMs)
     const board = auto?.sources.board?.value ?? undefined
@@ -199,7 +235,18 @@ export const register: Register = on => {
           <Box flexDirection="column">
             {title('ai', feats.length, feats.length > 0 ? featureCounts(feats) : undefined)}
             {readFail ? <Text color={C.problem}>읽기 실패</Text> : feats.length === 0 ? <Text dimColor>쉬는 중</Text> :
-              feats.map(f => row(f.mark, MARK_COLOR[f.mark] ?? C.meta, f.text, f.mark === '-' ? C.meta : C.title, f.age))}
+              feats.map(f => {
+                const src = (board?.features ?? []).find(x => `ai:${x.id}` === f.key && x.closedAt === null)
+                if (src === undefined) return row(f.mark, MARK_COLOR[f.mark] ?? C.meta, f.text, f.mark === '-' ? C.meta : C.title, f.age)
+                const open = epicOpen(ev, src.id)
+                const tail = `${open ? '▾' : '▸'} ${epicBar(src.done, src.total)}  ${f.age}`
+                return (
+                  <Box flexDirection="column">
+                    {row(f.mark, MARK_COLOR[f.mark] ?? C.meta, f.text, C.title, tail)}
+                    {open && kidLines(src.kids, nowMs).map(k => row(k.mark, MARK_COLOR[k.mark] ?? C.meta, `  ${k.text}`, k.mark === '✓' ? C.meta : C.detail, k.age))}
+                  </Box>
+                )
+              })}
             {agents?.value && (
               <Box marginTop={feats.length > 0 ? 1 : 0}>
                 <Text dimColor>{workerCounts(agents.value)}</Text>
@@ -223,7 +270,7 @@ export const register: Register = on => {
         <Text bold={head.stale} color={head.stale ? C.stale : C.meta} wrap="wrap">{head.stale ? `${head.text} · ${banner.text}` : head.text}</Text>
         {PANEL_CONFIG.order.map(id => block(id))}
         <Box marginTop={1}>
-          <Text dimColor>{'자세히: /board-detail'}</Text>
+          <Text dimColor>{'자세히: /board-detail · 하위 작업 펼치기: /board-epics [on|off|에픽 id]'}</Text>
         </Box>
       </Box>
     )
