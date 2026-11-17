@@ -149,6 +149,12 @@ bd comments add "$dk" "board-merge: $HEAD_W side → w" >/dev/null
 expect "병합이 board-merge 로 기록돼 있으면 epic 통과" 0 "$BIN" --epic "$de" lead --dry-run
 git -C "$GR" branch -f w "$ME"; HEAD_W=$ME
 
+# 작업 공간 반납: 카드 repo: 폴더가 없으면 epic repo: 에서 브랜치를 읽음
+ge=$(bd create "반납" -t epic --labels "branch:w,repo:$GR" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+gk=$(bd create "반납 하위" --parent "$ge" --labels "branch:w,repo:$SB/gone-ws" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'); claim "$gk" w1
+good_compile "$SB/ev/gk.log"; ev "$gk" "compile=$SB/ev/gk.log"; good_xml "$SB/ev/gk.xml"; ev "$gk" "editmode=$SB/ev/gk.xml"
+expect "반납된 작업 공간 카드도 epic 저장소로 검사" 0 "$BIN" "$gk" w1 --dry-run
+
 # 커밋 묶기
 g=$(new_card "커밋"); claim "$g" w1
 good_compile "$SB/ev/g.log"; good_xml "$SB/ev/g.xml"

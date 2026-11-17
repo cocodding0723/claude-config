@@ -121,6 +121,11 @@ def git(repo, *args):
 def branch_head(card):
     """(repo, 브랜치, 끝 해시, 커밋 시각). label 이 없거나 브랜치를 못 읽으면 Fail"""
     repo, branch = os.path.expanduser(bs.label(card, "repo")), bs.label(card, "branch")
+    if branch and card.get("parent") and not (repo and git(repo, "rev-parse", "--verify", "-q", branch + "^{commit}")):
+        # 작업 공간이 반납돼 repo: 폴더가 없으면 epic 의 repo:(주 저장소)에서 브랜치를 읽음
+        epic = bd_json("show", card["parent"]) or []
+        epic = epic[0] if isinstance(epic, list) and epic else epic or {}
+        repo = os.path.expanduser(bs.label(epic, "repo")) or repo
     if not repo or not branch:
         raise Fail(EXIT_MISSING, f"{card['id']} 에 branch:·repo: label 없음(증거를 커밋에 묶을 수 없음)",
                    f"bd label add {card['id']} branch:<브랜치> && bd label add {card['id']} repo:<저장소 경로>")
