@@ -15,6 +15,8 @@ import {
   pickNotify,
   problemLines,
   todoLines,
+  workerCounts,
+  workerLines,
 } from './board'
 import type { Line, SectionId } from './board'
 
@@ -133,6 +135,8 @@ export const register: Register = on => {
     const banner = autoBanner(auto, autoMtimeMs, autoError, nowMs)
     const board = auto?.sources.board?.value ?? undefined
     const feats = featureLines(board?.features, auto?.sources.ai?.value, nowMs)
+    const agents = auto?.sources.agents
+    const workers = workerLines(agents?.value, nowMs)
     const lines: Record<SectionId, Line[]> = {
       problem: problemLines(auto, banner, feats, nowMs),
       ask: askLines(board?.decisions, nowMs),
@@ -196,6 +200,13 @@ export const register: Register = on => {
             {title('ai', feats.length, feats.length > 0 ? featureCounts(feats) : undefined)}
             {readFail ? <Text color={C.problem}>읽기 실패</Text> : feats.length === 0 ? <Text dimColor>쉬는 중</Text> :
               feats.map(f => row(f.mark, MARK_COLOR[f.mark] ?? C.meta, f.text, f.mark === '-' ? C.meta : C.title, f.age))}
+            {agents?.value && (
+              <Box marginTop={feats.length > 0 ? 1 : 0}>
+                <Text dimColor>{workerCounts(agents.value)}</Text>
+              </Box>
+            )}
+            {agents !== undefined && !agents.ok && <Text dimColor>{`워커 목록 ⚠ 수집 실패(${agents.err ?? '?'})`}</Text>}
+            {workers.map(w => row(w.mark, w.done ? C.meta : C.ai, w.text, w.done ? C.detail : C.title, w.age))}
           </Box>
         )
       }
