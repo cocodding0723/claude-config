@@ -96,3 +96,4 @@
 - Unity 실행은 `~/.config/lrm-hubs/unity-run --name "<허브>:<작업>" -- <명령>` 으로만, unity_slot.sh 직접 acquire/release 금지. 동시 1개(LRM_UNITY_SLOTS 기본 1), 부하 기준 코어 수×1.5, 오래 기다릴 작업은 --keep-waiting.
 - 하네스 지표 재측정: `tools/metrics/measure.sh --since <YYYY-MM-DD> --until <YYYY-MM-DD>`(설정 저장소, 읽기 전용).
 - 완료는 별도 검수자 통과 뒤: 기계 검사(컴파일·테스트·픽셀 비교) 먼저, 구현자와 다른 모델(비주얼=astra, 기능·논리=Fable)이 시안·완료 기준 대비 판정, 통과분만 사용자 보고.
+- 11-17 개정(사용자 "jira 티켓 발급 그냥 자동화하자"): Jira 이슈 발급·이슈 링크·에픽·상위 지정은 게임 작업에 한해 승인 없이 통과한다. 위 83·93행의 `D-JIRA<요약 해시>` 승인·계획서 tickets 요구는 폐기. 개인 업무 Jira 발급 금지, 상태 변경 게이트(`D-JST<이슈 키>`·계획 jira_transitions), ready 전환·병합 승인은 유지.
