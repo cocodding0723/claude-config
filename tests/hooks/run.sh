@@ -352,6 +352,13 @@ wexp "plan-write: 메인이어도 slack-inbox.jsonl Write 거부" '{"tool_name":
 wexp "plan-write: slack-inbox.jsonl Bash 추가 쓰기 거부" '{"tool_name":"Bash","tool_input":{"command":"echo {} >> ~/.config/lrm-hubs/slack-inbox.jsonl"}}' deny main
 wexp "plan-write: slack-inbox.jsonl 읽기는 통과" '{"tool_name":"Bash","tool_input":{"command":"tail -5 ~/.config/lrm-hubs/slack-inbox.jsonl"}}'
 wexp "plan-write: 깨진 입력은 통과" '{깨진'
+# 메인 판별: ORCA_ROLE 없이도 메인 체크아웃에서 시작한 세션(세션 기록 폴더 이름)이면 메인
+MK=$(printf '%s' "$SB/mainrepo" | sed 's/[^A-Za-z0-9]/-/g')
+mw() { jq -cn --arg f "$WP" --arg t "$1" '{tool_name:"Write",tool_input:{file_path:$f},transcript_path:$t}'; }
+wrun2() { local out; out=$(printf '%s' "$1" | HOME="$SB/home" LRM_PUSH_MAIN="$SB/mainrepo" ORCA_ROLE="${2:-}" bash "$H/plan-approval-write-guard.sh" 2>/dev/null); [ -z "$out" ] && echo pass || printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision'; }
+r=$(wrun2 "$(mw "$SB/home/.claude/projects/$MK/s1.jsonl")"); [ "$r" = pass ] && ok "plan-write: 메인 체크아웃 세션은 ORCA_ROLE 없이 Write 통과" || ko "plan-write: 메인 체크아웃 세션" "$r $(mw x)"
+[ "$(wrun2 "$(mw "$SB/home/.claude/projects/$MK-ws-hub/s2.jsonl")")" = deny ] && ok "plan-write: 다른 작업 공간 세션은 거부" || ko "plan-write: 다른 작업 공간 세션"
+[ "$(wrun2 "$(mw "$SB/home/.claude/projects/$MK/s1.jsonl")" feature)" = deny ] && ok "plan-write: ORCA_ROLE 명시값이 우선" || ko "plan-write: ORCA_ROLE 우선"
 # 적대 검수 탐침(11-17): 읽기 오탐 0, 변수·스크립트·rsync 등 쓰기 미탐 0
 bx() { jq -cn --arg c "$1" --arg d "${2:-$SB}" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}'; }
 wexp "plan-write: 원장 tail | json.tool 읽기 통과" "$(bx 'tail -3 ~/.config/lrm-hubs/slack-inbox.jsonl | python3 -m json.tool')"
