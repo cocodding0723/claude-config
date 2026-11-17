@@ -46,6 +46,8 @@ class Base(unittest.TestCase):
         return d[0] if isinstance(d, list) and d and args[0] == "show" else d
 
     def make(self, title, *extra):
+        if "-d" not in extra:  # 양식 칸(무엇·왜)이 있어야 스레드 부모가 열림
+            extra += ("-d", "무엇: 시험 작업.\n왜: 시험")
         return self.bd("create", title, *extra)["id"]
 
     def card(self, cid):
@@ -130,7 +132,7 @@ class CardThreadTest(Base):
         self.assertNotIn(c, "\n".join(text.splitlines()[:-1]))
 
     def test_card_with_blank_fields_holds_ws_thread_report(self):
-        c = self.make("작업", "-t", "task")  # 설명 칸 없음: 무엇·왜 폴백도 없음
+        c = self.make("작업", "-t", "task", "-d", "#")  # 무엇·왜 칸도 폴백 재료도 없음
         self.report(c, "시작", ws="/w/a")
         self.assertEqual(self.run_sender()["sent"], 0)
         self.assertNotIn(f"card:{c}", self.topics())
