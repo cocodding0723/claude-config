@@ -10,9 +10,11 @@ kind: answer(사용자 답) question(결정 카드 직접 입력 질문, 답 아
 규칙: flock + O_APPEND, 권한 0600, 한 줄 4KiB 상한(넘으면 전문은 main-overflow/<id>.txt, 줄에는 앞부분+full 경로),
       같은 id 는 최근 500줄 안에서 한 번만(같은 알림 재전송 금지), 1MiB 넘으면 main.jsonl.1 로 회전(읽는 쪽이 옛 파일 잔여분을 이어 읽음).
 
-CLI: main_inbox.py append --kind K --source S [--ref R] [--dry-run] [--json] <본문|->
-     main_inbox.py read --since-offset [--peek] [--json]   새 줄 출력 후 읽은 위치 기록(--peek 은 기록 안 함)
-환경: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs). 받은 편지함 <폴더>/hub-inbox/main.jsonl, 읽은 위치 <폴더>/main-inbox.offset
+받은 편지함 이름(--box, 기본 main): 기능 코디네이터는 feat-<slug> 상자를 씀(Slack 기능 스레드 피드백, feedback_route.py). 규칙은 같고 파일만 다름.
+
+CLI: main_inbox.py append --kind K --source S [--ref R] [--box B] [--dry-run] [--json] <본문|->
+     main_inbox.py read --since-offset [--box B] [--peek] [--json]   새 줄 출력 후 읽은 위치 기록(--peek 은 기록 안 함)
+환경: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs). 받은 편지함 <폴더>/hub-inbox/<상자>.jsonl, 읽은 위치 <폴더>/<상자>-inbox.offset
 종료 코드: 0 성공(중복 건너뜀 포함), 1 파일 읽기·쓰기 실패, 2 인자·입력 오류
 """
 import argparse
@@ -22,10 +24,12 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import sys
 
-KINDS = ("answer", "question", "stall", "ci", "restart", "intake", "review", "slack", "other")
-INBOX_NAME, LOCK_NAME, OVERFLOW_DIR, OFFSET_NAME = "main.jsonl", ".main.jsonl.lock", "main-overflow", "main-inbox.offset"
+KINDS = ("answer", "question", "stall", "ci", "restart", "intake", "review", "slack", "feedback", "other")
+MAIN = "main"
+BOX_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
 LINE_MAX = 4096        # 한 줄(개행 포함) 바이트 상한. PIPE_BUF 와 같아 O_APPEND 한 번 쓰기가 끊기지 않음
 DEDUP_LINES = 500
 ROTATE_BYTES = 1 << 20
@@ -37,12 +41,19 @@ def hub_dir(env=None):
     return env.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
 
 
-def inbox_path(d=None):
-    return os.path.join(d or hub_dir(), "hub-inbox", INBOX_NAME)
+def box_name(box):
+    box = box or MAIN
+    if not BOX_RE.match(box):
+        raise ValueError("상자 이름은 영문 소문자·숫자·- (예: feat-mail)")
+    return box
 
 
-def offset_path(d=None):
-    return os.path.join(d or hub_dir(), OFFSET_NAME)
+def inbox_path(d=None, box=MAIN):
+    return os.path.join(d or hub_dir(), "hub-inbox", box_name(box) + ".jsonl")
+
+
+def offset_path(d=None, box=MAIN):
+    return os.path.join(d or hub_dir(), box_name(box) + "-inbox.offset")
 
 
 def make_id(source, kind, text, ref=None):
@@ -94,9 +105,9 @@ def tail_ids(path, n=DEDUP_LINES):
 
 
 @contextlib.contextmanager
-def locked(d):
+def locked(d, box=MAIN):
     os.makedirs(os.path.join(d, "hub-inbox"), mode=0o700, exist_ok=True)
-    fd = os.open(os.path.join(d, "hub-inbox", LOCK_NAME), os.O_RDWR | os.O_CREAT, 0o600)
+    fd = os.open(os.path.join(d, "hub-inbox", f".{box_name(box)}.jsonl.lock"), os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield
@@ -104,7 +115,7 @@ def locked(d):
         os.close(fd)  # 닫으면 잠금도 풀림
 
 
-def append(kind, text, source, ref=None, hub=None, dry_run=False):
+def append(kind, text, source, ref=None, hub=None, dry_run=False, box=MAIN):
     """한 줄 추가. 반환 {status: added|duplicate, id, truncated}. 쓰기 실패는 OSError, 인자 오류는 ValueError.
     dry_run 은 파일·폴더를 만들지 않고 같은 판정만 돌려주며 line 에 쓸 줄을 담음"""
     if kind not in KINDS:
@@ -112,14 +123,14 @@ def append(kind, text, source, ref=None, hub=None, dry_run=False):
     if not source or not isinstance(text, str) or not text.strip():
         raise ValueError("source·본문 필요")
     d = hub or hub_dir()
-    path = inbox_path(d)
+    path = inbox_path(d, box)
     rec = {"at": now_iso(), "source": source, "kind": kind, "text": text}
     if ref:
         rec["ref"] = str(ref)
     rec["id"] = make_id(source, kind, text, ref)
 
     def spill(full):
-        p = os.path.join(d, "hub-inbox", OVERFLOW_DIR, rec["id"] + ".txt")
+        p = os.path.join(d, "hub-inbox", f"{box_name(box)}-overflow", rec["id"] + ".txt")
         if not dry_run:
             os.makedirs(os.path.dirname(p), mode=0o700, exist_ok=True)
             fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -130,7 +141,7 @@ def append(kind, text, source, ref=None, hub=None, dry_run=False):
     if dry_run:
         line, cut = fit(rec, spill)
         return {"status": "duplicate" if rec["id"] in tail_ids(path) else "added", "id": rec["id"], "truncated": cut, "line": line.decode("utf-8")}
-    with locked(d):
+    with locked(d, box):
         if rec["id"] in tail_ids(path):
             return {"status": "duplicate", "id": rec["id"], "truncated": False}
         line, cut = fit(rec, spill)
@@ -195,12 +206,12 @@ def read_from(path, offset):
     return recs, offset + end
 
 
-def read_new(d=None, commit=True):
+def read_new(d=None, commit=True, box=MAIN):
     """읽은 위치 이후의 새 줄. 회전(inode 변경)이면 옛 파일(.1)의 잔여분을 먼저, 잘림(크기 < 오프셋)이면 처음부터.
     반환 (레코드 목록, 메모). 잠금 아래에서 읽고 기록해 순찰이 겹쳐도 같은 줄을 두 번 가져가지 않음"""
     d = d or hub_dir()
-    path, opath = inbox_path(d), offset_path(d)
-    with locked(d):
+    path, opath = inbox_path(d, box), offset_path(d, box)
+    with locked(d, box):
         ino, off = load_offset(opath)
         try:
             st = os.stat(path)
@@ -251,12 +262,14 @@ def build_parser():
     a.add_argument("--kind", required=True, choices=KINDS)
     a.add_argument("--source", required=True, help="보낸 스크립트 이름")
     a.add_argument("--ref", help="관련 번호·경로(선택)")
+    a.add_argument("--box", default=MAIN, help="받은 편지함 이름(기본 main, 기능 코디네이터는 feat-<slug>)")
     a.add_argument("--dry-run", action="store_true", help="쓰지 않고 쓸 줄·중복 여부만 출력")
     a.add_argument("--json", action="store_true", help="결과를 JSON 한 줄로 출력")
     a.add_argument("text", help="본문. '-' 면 표준 입력")
     r = sub.add_parser("read", help="읽은 위치 이후 새 줄 출력")
     r.add_argument("--since-offset", action="store_true", required=True, help="main-inbox.offset 이후만(필수)")
     r.add_argument("--peek", action="store_true", help="읽은 위치를 기록하지 않음")
+    r.add_argument("--box", default=MAIN, help="받은 편지함 이름(기본 main)")
     r.add_argument("--json", action="store_true", help="줄마다 JSON 으로 출력")
     return p
 
@@ -266,7 +279,7 @@ def main(argv):
     try:
         if a.cmd == "append":
             text = sys.stdin.read() if a.text == "-" else a.text
-            res = append(a.kind, text.strip(), a.source, a.ref, dry_run=a.dry_run)
+            res = append(a.kind, text.strip(), a.source, a.ref, dry_run=a.dry_run, box=a.box)
             if a.json:
                 print(json.dumps({k: v for k, v in res.items()}, ensure_ascii=False))
             elif a.dry_run:
@@ -274,7 +287,7 @@ def main(argv):
             else:
                 print(f"{'추가함' if res['status'] == 'added' else '이미 있음(건너뜀)'} {res['id']}")
             return 0
-        recs, note = read_new(commit=not a.peek)
+        recs, note = read_new(commit=not a.peek, box=a.box)
     except ValueError as err:
         print(f"오류: {err} — --help 참고", file=sys.stderr)
         return EXIT_USAGE

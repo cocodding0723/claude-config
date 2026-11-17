@@ -138,10 +138,20 @@ def hub_delivered_ts():
         return set()  # 읽지 못하면 거르지 않음: 중복이 유실보다 낫다
 
 
+def feature_routed_ts():
+    """feedback_route.py 가 기능 카드로 보낸 답글 ts. 읽지 못하면 빈 집합(메인 전달 유지)"""
+    try:
+        import feedback_route
+        return feedback_route.routed_ts(os.path.join(os.path.dirname(INBOX), "feedback-routed.jsonl"))
+    except Exception:  # noqa: BLE001 — 모듈·파일 문제로 메인 전달을 막지 않음
+        return set()
+
+
 def read_inbox():
     """inbox 의 모든 물리 줄을 (dict|None) 목록으로. 줄 번호 = 인덱스 + 1(폴러의 .main-read-lines 와 같은 기준).
     접수기가 허브에 하달한 최상위 명령 줄은 None 으로 비움(메인 중복 전달 방지, 줄 번호는 유지)"""
     skip = hub_delivered_ts()
+    fed = feature_routed_ts()
     try:
         with open(INBOX, encoding="utf-8") as f:
             out = []
@@ -154,6 +164,8 @@ def read_inbox():
                 if d is not None and skip and not d.get("parent_ts") and str(d.get("ts")) in skip and d.get("type") in MSG_TYPES \
                         and not d.get("files") and not d.get("files_failed"):  # 첨부는 하달되지 않으므로 기록 없는 옛 접수도 메인에 보냄
                     d = None
+                if d is not None and fed and d.get("type") == "thread_reply" and str(d.get("ts")) in fed:
+                    d = None  # 기능 스레드 피드백은 feedback_route 가 기능 카드·코디네이터 상자로 보냄(메인 중계 없음)
                 out.append(d)
             return out
     except OSError:
