@@ -11,8 +11,9 @@ gh_calls_max	20	실행 1회의 gh 호출 상한. 넘으면 남은 PR 은 다음 
 gh_timeout_sec	20	gh 호출 1회 제한 시간(초)
 expires_label_prefix	expires:	만료 라벨 접두(expires:2026-11-18 또는 expires:2026-11-18T10:00+09:00). 날짜만 쓰면 그날 끝(로컬 시각)
 slack_kinds	decision	slack_answered 대상 kind:<값>
-slack_id_pattern	D-[0-9A-Za-z]{1,16}	카드 라벨·제목·본문에서 결정 번호를 찾는 정규식(Slack 번호 카드 규칙과 같음)
-slack_label_prefix	slack:	board_slack 이 보낸 카드에 붙이는 결정 번호 라벨 접두
+slack_id_pattern	D-[0-9A-Za-z]{1,16}	결정 번호 정규식(Slack 번호 카드 규칙과 같음). 앞뒤 낱말 경계는 코드가 붙임
+slack_label_prefix	slack:,decision:	카드 자신의 결정 번호 라벨 접두(쉼표 구분). slack: 은 board_slack 이 보낸 카드에 붙임
+slack_body_line	결정 번호:	본문에서 결정 번호를 인정하는 전용 줄 머리. 이 줄 밖의 본문 번호는 인용으로 보고 무시
 stale_kinds	decision	오래됨 라벨을 붙일 종류
 stale_hours	24	만든 뒤 이 시간이 지나면 오래됨
 stale_label	stale	오래됨 라벨(패널이 '오래됨' 표시에 씀)

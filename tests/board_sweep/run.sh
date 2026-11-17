@@ -68,13 +68,18 @@ printf '%s\n' \
   '{"type":"button","parent_ts":"4.4","decision_id":"D-BTEST4","kind":"decide","option_text":"2. 유지","received_at":1794807300,"action":"pick","pick":2,"source":"slack"}' > "$INBOX"
 reset "[$(card sa1 open kind:decision,slack:D-TEST1 $OLD '엔진 설정 결정'),$(card sa2 open kind:decision $OLD '옮긴 카드' '배경: D-TEST1 에서 옮김'),
 $(card sa3 open kind:decision,slack:D-TEST2 $OLD),$(card sa4 open kind:decision,slack:D-TEST3 $OLD),$(card sa5 open kind:task,slack:D-TEST1 $OLD),
-$(card sa6 open kind:decision $NEW '번호 없음'),$(card sa7 open kind:decision,slack:D-BTEST4,sweep:skip $OLD),$(card sa8 open kind:decision,slack:D-BTEST4 $OLD)]"
+$(card sa6 open kind:decision $NEW '번호 없음'),$(card sa9 open kind:decision $OLD '전용 줄 카드' $'배경: 설명\n결정 번호: D-TEST1'),
+$(card sa10 open kind:decision,decision:D-TEST1 $OLD),$(card sa11 open kind:decision,slack:D-TEST1 $NEW),$(card sa12 open kind:decision $OLD 'PROD-TEST1 확인'),
+$(card sa13 open kind:decision $OLD 'D-TEST1 결정'),$(card sa14 open kind:decision $OLD '인용만 한 카드' $'근거: 옛 결정 D-TEST1 에서 정함\nID-TEST1 은 다른 것'),$(card sa7 open kind:decision,slack:D-BTEST4,sweep:skip $OLD),$(card sa8 open kind:decision,slack:D-BTEST4 $OLD)]"
 cp "$FAKE_BD_STATE" "$SB/before.json"
 sweep --dry-run
 check "slack_answered dry-run: 작업판을 바꾸지 않고 mode=dry 로 기록" 'cmp -s "$FAKE_BD_STATE" "$SB/before.json" && grep -q "	dry	slack_answered	sa1	close	" "$SB/sweep.log"' "$(cat "$SB/sweep.log")"
 sweep
 check "slack_answered: 라벨 slack:<번호> 의 버튼 답이 있으면 닫음" '[ "$(status_of sa1)" = closed ]'
-check "slack_answered: 본문에 적힌 결정 번호도 찾음" '[ "$(status_of sa2)" = closed ]'
+check "slack_answered: 본문에 인용만 한 다른 결정 번호의 옛 답으로는 안 닫힘" '[ "$(status_of sa2)" = open ] && [ "$(status_of sa14)" = open ]'
+check "slack_answered: 본문 '결정 번호:' 전용 줄·decision: 라벨·제목의 자기 번호는 닫음" '[ "$(status_of sa9)" = closed ] && [ "$(status_of sa10)" = closed ] && [ "$(status_of sa13)" = closed ]'
+check "slack_answered: 카드를 만들기 전에 온 답은 안 닫음" '[ "$(status_of sa11)" = open ]'
+check "slack_answered: 낱말 속 번호(PROD-TEST1)는 안 잡음" '[ "$(status_of sa12)" = open ]'
 check "slack_answered: 답 원문을 댓글에 남김" 'grep -q "\"comment\", \"sa1\", \"정리(자동): Slack 에서 답함(D-TEST1, .*사용자 답: 1. 엔진 설정 유지" "$FAKE_BD_LOG"'
 check "slack_answered: 직접 입력(질문)·스레드 글은 답으로 안 봄" '[ "$(status_of sa3)" = open ] && [ "$(status_of sa4)" = open ]'
 check "slack_answered: 결정 카드가 아니거나 번호가 없으면 둠" '[ "$(status_of sa5)" = open ] && [ "$(status_of sa6)" = open ]'
