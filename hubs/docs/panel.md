@@ -176,6 +176,19 @@
 
 필수 칸(배경·용어·선택지 결과·추천)이 없는 카드는 보내지 않고 원인·조치를 낸다. 이모지 반응·스레드 글 답은 아직 작업판으로 옮기지 않았다(버튼 답만).
 
+## 7-2. 메인 입력은 사용자만 — 자동 알림은 작업판 카드로 (11-17)
+
+- `~/.config/lrm-hubs/main-route`(저장소 `hubs/main-route`, 값 `board`)가 있으면 허브 보고·CI·리뷰·Slack 답·멈춤 같은 메인 대상 자동 알림이 `hub-inbox/main.jsonl` 대신 작업판 카드 코멘트가 된다(`board_notify.py`, 호출처는 그대로 `main_inbox.py`).
+- 카드 찾기: 결정 번호 → `slack:<번호>` 카드, PR 번호 → `pr:<n>` 카드, 본문의 카드 id → 그 카드, 못 찾으면 종류별 모음 카드 `📥 자동 알림: <종류>`(label `kind:alert`).
+- 작업판 쓰기가 실패하면 `main.jsonl` 로 떨어진다. 끄려면 `main-route` 를 지운다(링크만 지우면 다음 `install.sh` 가 되살리므로 `links.tsv` 줄도 뺀다).
+- 허브 보고는 맡은 카드에 `bd comments add`, 카드가 없으면 `board_notify.py post`. 메인 입력창 터미널 전송은 훅이 막는다.
+
+## 7-3. Slack 기능 스레드 피드백 → 기능 카드 (11-17, 봇 꺼짐)
+
+- 기능 코디네이터가 첫 Slack 보고 ts 로 `feedback_route.py open-thread --epic <epic> --ts <ts>` 를 실행하면 epic 에 `slack-thread:<ts>` 가 붙는다.
+- 폴러 회차마다 `feedback_route.py --once` 가 그 스레드의 사용자 답글을 원문 그대로 epic 코멘트와 `hub-inbox/feat-<slug>.jsonl` 로 보낸다. 메인 전달(`slack_push`)에서는 빠진다.
+- 같은 스레드가 epic 여럿에 걸렸거나 닫힌 epic 만 있으면 메인 카드 `📥 기능 판별 필요`(label `feedback:triage`)에 모은다.
+
 ## 8. 후속 제안
 
 - Slack 할 일 목록(리스트) 읽기: 봇 토큰 스코프(`lists:read` 등) 확인이 먼저다. 수집기는 지금 토큰을 읽지 않으므로, 읽게 하려면 토큰을 다루는 별도 단계(폴러 쪽)에 붙이는 편이 맞다.

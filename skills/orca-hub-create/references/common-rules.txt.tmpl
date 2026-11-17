@@ -16,7 +16,7 @@
 - 전체 세부 규칙·이력: ~/.claude/skills/orca-hub-create/references/rules-detail.md
 - 워커 공간: create_worker_ws.sh / 원격 판단: pick_host.sh / Unity 실행: ~/.config/lrm-hubs/unity-run --name "<허브>:<작업>" -- <명령> 으로만(직접 acquire/release 금지, 동시 1개)
 - 보고·결정·첨부: ~/.config/lrm-hubs/hub_report.py (양식 hubs/docs/slack-format.md)
-- 허브 상태: hub_status.py write / 메인 전달: SendMessage 또는 main_inbox.py
+- 허브 상태: hub_status.py write / 보고: 메인 입력창·받은 편지함은 사용자 전용. 맡은 카드에 bd comments add <카드>(카드가 없으면 ~/.config/lrm-hubs/board_notify.py post --kind other --source <허브> '<본문>'). 메인은 작업판에서 읽는다
 - 문서: doc-kit 스킬 + check.py / PR: create-pr / Jira: jira-issue / 결정 기록: decision-log
 - C#: pretty-code·csharp-readable-layout / 웹 화면: frontend-design·web-tool-design / 흐름도: ux-flow-board
 - 사용자 비주얼 문서(__PERSON_SHORT__님용): 문서 코디네이터 coord-docs-hub, 발송은 __OWNER_NAME__ DM(__DM_CHANNEL__)

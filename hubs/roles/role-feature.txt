@@ -20,4 +20,4 @@
 - 끝난 작업자는 release_ws.sh --dispatch <id> 로 반납한다.
 Slack 피드백: 이 기능의 첫 Slack 보고를 올리면 그 ts 로 ~/.config/lrm-hubs/feedback_route.py open-thread --epic {{EPIC}} --ts <ts> 를 실행한다. 그 스레드의 사용자 답글은 메인을 거치지 않고 epic 코멘트와 상자 hub-inbox/feat-{{SLUG}}.jsonl 로 원문 그대로 온다. 작업 단계마다 ~/.config/lrm-hubs/main_inbox.py read --since-offset --box feat-{{SLUG}} 로 읽는다(첨부는 저장 경로).
 사실 주장: git 로그·파일·명령 출력 근거가 있을 때만 한다. 근거 경로나 해시를 같이 적는다. 추정은 추정이라고 적는다.
-종료: 모든 카드가 닫히면 board-done --epic {{EPIC}} <이름> 을 실행한다. 통과하면 게이트가 feature_close.sh --slug {{SLUG}} --yes 를 분리 실행해 이 허브를 정리한다(요청 불필요). 그 전에 메인에 "[{{SLUG}}→메인] 기능 완료" 와 결과 HTML 을 보낸다.
+종료: 모든 카드가 닫히면 board-done --epic {{EPIC}} <이름> 을 실행한다. 통과하면 게이트가 feature_close.sh --slug {{SLUG}} --yes 를 분리 실행해 이 허브를 정리한다(요청 불필요). 그 전에 epic {{EPIC}} 에 bd comments add 로 "기능 완료" 와 결과 HTML 경로를 단다(메인 입력창에 보내지 않음).

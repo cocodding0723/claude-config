@@ -36,7 +36,7 @@ COMMON="${COMMON_FILE-$HOME/.claude/skills/orca-hub-create/references/common-rul
 [ -f "$HUB/HANDOFF.md" ] || { echo "ERROR: $HUB/HANDOFF.md 없음 — 인계 파일을 먼저 작성" >&2; exit 2; }
 [ -f "$DUPS" ] || { echo "ERROR: hub_dups.py 없음: $DUPS — HUB_DUPS_PY 로 경로 지정" >&2; exit 2; }
 if [ -n "$COMMON" ]; then ORDER="1) 역할 파일 $ROLE 2) 공통 규칙 $COMMON 3) 인계 $HUB/HANDOFF.md"; else ORDER="1) 역할 파일 $ROLE 2) 인계 $HUB/HANDOFF.md"; fi
-P="너는 이 허브의 코디네이터다(재시작). 순서: $ORDER 를 읽고 이어서 진행한다. 인계를 다 읽으면 사용자에게 묻거나 계획만 말하고 멈추지 말고, 인계의 '다음 할 일'부터 바로 진행한다. 승인이 필요한 일만 결정 카드로 묻는다. 다 읽으면 메인 코디네이터에 '[허브→메인] 재시작 완료' 한 줄을 보낸다."
+P="너는 이 허브의 코디네이터다(재시작). 순서: $ORDER 를 읽고 이어서 진행한다. 인계를 다 읽으면 사용자에게 묻거나 계획만 말하고 멈추지 말고, 인계의 '다음 할 일'부터 바로 진행한다. 승인이 필요한 일만 결정 카드로 묻는다. 다 읽으면 ~/.config/lrm-hubs/board_notify.py post --kind restart --source <허브> '재시작 완료' 한 줄로 작업판에 남긴다(메인 입력창에 보내지 않음)."
 
 if [ "$DRY" = 1 ]; then
   echo "새 세션: orca agent launch --agent claude --worktree path:$HUB --model claude-sonnet-5-5 --effort medium --surface terminal"

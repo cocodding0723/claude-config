@@ -10,6 +10,7 @@ kind: answer(사용자 답) question(결정 카드 직접 입력 질문, 답 아
 규칙: flock + O_APPEND, 권한 0600, 한 줄 4KiB 상한(넘으면 전문은 main-overflow/<id>.txt, 줄에는 앞부분+full 경로),
       같은 id 는 최근 500줄 안에서 한 번만(같은 알림 재전송 금지), 1MiB 넘으면 main.jsonl.1 로 회전(읽는 쪽이 옛 파일 잔여분을 이어 읽음).
 
+작업판 경로: <폴더>/main-route 가 board 면 상자 main 대상 알림은 작업판 카드 코멘트로 감(board_notify.py). 실패하면 main.jsonl 로 떨어짐.
 받은 편지함 이름(--box, 기본 main): 기능 코디네이터는 feat-<slug> 상자를 씀(Slack 기능 스레드 피드백, feedback_route.py). 규칙은 같고 파일만 다름.
 
 CLI: main_inbox.py append --kind K --source S [--ref R] [--box B] [--dry-run] [--json] <본문|->
@@ -26,6 +27,8 @@ import json
 import os
 import re
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # -I 실행에서도 같은 폴더의 board_notify 를 찾음
 
 KINDS = ("answer", "question", "stall", "ci", "restart", "intake", "review", "slack", "feedback", "other")
 MAIN = "main"
@@ -128,6 +131,10 @@ def append(kind, text, source, ref=None, hub=None, dry_run=False, box=MAIN):
     if ref:
         rec["ref"] = str(ref)
     rec["id"] = make_id(source, kind, text, ref)
+    if box_name(box) == MAIN and not dry_run and to_board(d):
+        res = board_route(kind, text, source, ref, rec["id"], d)
+        if res is not None:
+            return res
 
     def spill(full):
         p = os.path.join(d, "hub-inbox", f"{box_name(box)}-overflow", rec["id"] + ".txt")
@@ -156,6 +163,25 @@ def append(kind, text, source, ref=None, hub=None, dry_run=False, box=MAIN):
         finally:
             os.close(fd)
     return {"status": "added", "id": rec["id"], "truncated": cut}
+
+
+def to_board(d):
+    """<폴더>/main-route 첫 줄이 board 면 메인 대상 자동 알림을 작업판 카드로(메인 입력은 사용자만, 11-17)"""
+    try:
+        with open(os.path.join(d, "main-route"), encoding="utf-8") as f:
+            return f.readline().strip() == "board"
+    except OSError:
+        return False
+
+
+def board_route(kind, text, source, ref, rid, d):
+    """작업판 카드 코멘트로 보냄. 실패하면 None → 호출한 쪽이 main.jsonl 로 기록(알림을 잃지 않음)"""
+    try:
+        import board_notify
+        r = board_notify.post(kind, text, source, ref, rid=rid, d=d)
+    except Exception:  # noqa: BLE001 — bd·작업판 문제는 옛 경로로 떨어뜨림
+        return None
+    return {"status": "added" if r["status"] == "board" else "duplicate", "id": rid, "truncated": False, "board": r.get("card")}
 
 
 def sender(source, kind, hub=None):
