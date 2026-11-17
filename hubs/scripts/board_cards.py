@@ -235,7 +235,7 @@ class DocScan(HTMLParser):
             self.sections[-1]["chars"] += n
 
 
-WHY_SLASH = "' / ' 로 사실을 이음"
+WHY_SLASH = "빗금(/)으로 사실을 이음"  # 안내 문구가 자기 검사에 걸리지 않게 ' / ' 를 쓰지 않음(경고·거부 문구가 그대로 전송됨)
 WHY_DOT = "가운뎃점으로 사실을 나열함"
 
 

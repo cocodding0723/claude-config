@@ -40,6 +40,7 @@ import time
 from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import board_cards  # noqa: E402
 import hub_report  # noqa: E402
 import hub_status  # noqa: E402
 import ledger  # noqa: E402
@@ -402,11 +403,17 @@ def clip(text: str, n: int) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
+def split_slash(label: str, value: str) -> list:
+    """카드 설명의 ' / ' 로 이은 값을 항목 줄로 나눔(알림 스크립트 줄 검사가 거부하는 모양이라 조립 쪽에서 풀어 줌)"""
+    parts = [clip(p.strip(), PARENT_FIELD_MAX) for p in board_cards.DOC_SLASH_JOIN.split(value) if p.strip()] or [""]
+    return [f"- {label}: {parts[0]}"] + [f"- {p}" for p in parts[1:]]
+
+
 def card_parent_text(info: dict, hub: str) -> str:
     """부모 양식 ①~⑥: 제목(쉬운 이름) · 무엇 · 왜 · 진행률 · 답하는 법 · 참고(카드 번호·허브 이름은 여기에만)"""
     f = info["fields"]
     title = clip(f.get("쉬운 이름") or title_what(info["title"]) or info["title"], PARENT_TITLE_MAX)
-    rows = [f"- 무엇: {clip(f['무엇'], PARENT_FIELD_MAX)}", f"- 왜: {clip(f['왜'], PARENT_FIELD_MAX)}"]
+    rows = split_slash("무엇", f["무엇"]) + split_slash("왜", f["왜"])
     if info["total"] is not None:  # 하위 조회 실패면 거짓 '없음' 대신 줄을 뺌
         rows.append(f"- 지금: 하위 작업 {info['closed']}/{info['total']} 완료" if info["total"] else "- 지금: 하위 작업 없음")
     return "\n".join([title, "", *rows, f"- 답하는 법: {PARENT_HOW_TO}", "", f"참고: {info['id']} · 허브 {hub}"])
@@ -786,7 +793,7 @@ def warn_stop(conf: Conf, rep: dict, st: dict, why: str, permanent: "bool | None
         cause = "원인 미확인(이전 기록)" + (f" — {why}" if why else "")
     else:
         cause = f"입력 오류(재시도해도 같은 결과) — {why}" if permanent else f"{conf.fail_limit}회 연속 전송 실패 — {why}"
-    cause = safe_text(cause)
+    cause = board_cards.DOC_SLASH_JOIN.sub("/", safe_text(cause))  # 원인에 섞인 ' / ' 가 경고 자신을 줄 검사에 걸리게 하지 않음
     msg = (f"허브 보고 전송 중단\n\n- 무엇: {rep['hub']} {label} 보고 {rep['id']} 재시도 중단\n"
            f"- 원인: {cause}\n- 조치: 보고를 고쳐 hub_report.py add 로 다시 기록")
     run_notify(conf, ["--tag", rep["hub"], "--kind", "warn", "--from", "report_sender", "--subject", rep["id"], "--state", "stopped"]
@@ -830,8 +837,8 @@ def warn_pending(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
         warn_stop(conf, rep, st, rs.get("error", ""), rs.get("stop_permanent"), deadline)  # 키 없는 옛 상태는 분류 불명(None)
         st["warned"][rep["id"]] = int(time.time())
         save_state(conf.state, st)
-    except NotifyError:
-        pass  # 경고 전송 실패는 다음 회차에 다시 시도
+    except NotifyError as e:
+        log(conf, f"전송 중단 경고 실패(다음 회차에 재시도) 보고 {rep['id']}: {safe_text(str(e))[:200]}")
 
 
 def hold_report(conf: Conf, rep: dict, st: dict, why: str, deadline: float, held: bool = True) -> None:

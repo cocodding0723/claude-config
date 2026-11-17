@@ -334,7 +334,7 @@ run_n --kind decide --no-doc $'주제\n\n결정 1) 시각\n결정 2) 장소\n결
 [ "$RC" = 2 ] && grep -q '^거부: 결정이 3개임' "$SB/err" && ok "G 결정 3개 → 개수를 3으로 안내" || ko "G 3개" "$(cat "$SB/err")"
 grep -q '예: ' "$SB/err" && ok "G 거부 메시지에 분할 예시 포함" || ko "G 예시" "$(cat "$SB/err")"
 run_n --kind decide --no-doc $'주제\n\n• 무엇: 시각 정하기\n• 선택지: A 9시 / B 10시 / C 11시\n\n👉 답: :비서-a: A · :비서-b: B · :비서-c: C'
-[ "$RC" = 2 ] && ! grep -q '결정이 [0-9]*개' "$SB/err" && grep -q "' / ' 로 사실을 이음" "$SB/err" && ok "G 결정 1건 + 선택지 A/B/C 나열 → 결정 개수는 1(줄 가독성 규칙으로만 거부)" || ko "G 선택지 오탐" "rc=$RC $(cat "$SB/err")"
+[ "$RC" = 2 ] && ! grep -q '결정이 [0-9]*개' "$SB/err" && grep -q "빗금(/)으로 사실을 이음" "$SB/err" && ok "G 결정 1건 + 선택지 A/B/C 나열 → 결정 개수는 1(줄 가독성 규칙으로만 거부)" || ko "G 선택지 오탐" "rc=$RC $(cat "$SB/err")"
 run_n --kind decide --no-doc $'주제\n\n• 무엇: 시각 정하기\n1. 현재는 9시\n2. 바꾸면 10시\n3. 영향은 없음\n\n👉 답: 확인'
 [ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "G 결정 낱말 없는 번호 목록(1. 2. 3.) → 통과(오탐 없음)" || ko "G 번호 목록 오탐" "rc=$RC $(cat "$SB/err")"
 run_n --kind decide --no-doc $'주제\n\n① A안 9시\n② B안 10시\n\n👉 답: 확인'
@@ -666,7 +666,7 @@ newhome k
 run_n --kind done $'완료\n\n- 무엇: 끝\n- 왜: 이유\n- 결과: 반영'
 [ "$RC" = 0 ] && [ "$(errn)" = 0 ] && posted && ok "K '- ' 항목 여러 줄 → 경고 없이 전송" || ko "K 여러 줄" "rc=$RC $(cat "$SB/err")"
 run_n --kind done $'완료\n\n- 무엇: A / B'
-[ "$RC" = 2 ] && grep -q "^거부: 한 줄에 사실 여러 개가 이어짐: 3번째 줄(' / ' 로 사실을 이음) — 항목마다 줄을 나눠" "$SB/err" && grep -q "'- 무엇: A' 줄과 '- B' 줄로" "$SB/err" && ! posted && ok "K ' / ' 로 이은 줄 1개도 거부(원인·조치·고친 예, 미전송)" || ko "K 슬래시 거부" "rc=$RC $(cat "$SB/err")"
+[ "$RC" = 2 ] && grep -q "^거부: 한 줄에 사실 여러 개가 이어짐: 3번째 줄(빗금(/)으로 사실을 이음) — 항목마다 줄을 나눠" "$SB/err" && grep -q "'- 무엇: A' 줄과 '- B' 줄로" "$SB/err" && ! posted && ok "K ' / ' 로 이은 줄 1개도 거부(원인·조치·고친 예, 미전송)" || ko "K 슬래시 거부" "rc=$RC $(cat "$SB/err")"
 LRM_FORMAT=strict run_n --kind done $'완료\n\n- 무엇: A / B / C / D'
 [ "$RC" = 2 ] && ! posted && ok "K strict 에서도 거부" || ko "K strict" "rc=$RC"
 run_n --no-check --kind done $'완료\n\n- 무엇: A / B'
