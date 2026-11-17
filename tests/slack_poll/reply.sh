@@ -7,7 +7,7 @@ export LRM_PUSH=off PYTHONDONTWRITEBYTECODE=1
 
 HERE=$(cd "$(dirname "$0")" && pwd -P)
 SCRIPTS="$HERE/../../hubs/scripts"
-POLL="$SCRIPTS/slack_poll.sh" PUSH_PY="$SCRIPTS/slack_push.py" SOCK_PY="$SCRIPTS/slack_socket.py"
+POLL="$SCRIPTS/slack_poll.sh" PUSH_PY="$SCRIPTS/slack_push.py"
 PASS=0 FAIL=0
 ok() { PASS=$((PASS + 1)); printf 'PASS  %s\n' "$1"; }
 ko() { FAIL=$((FAIL + 1)); printf 'FAIL  %s — %s\n' "$1" "${2:-}"; }
@@ -157,19 +157,16 @@ grep -E '^- #[0-9]+ \[결정 옛 카드\]' "$SB/q.txt" | grep -qF "→" && ko "T
 n=$(grep -c "^- #" "$SB/q.txt"); [ "$n" = 23 ] && ok "T 글 23건 모두 전달(누락 없음)" || ko "T 건수" "$n: $(grep '^- #' "$SB/q.txt" | cut -c1-60 | tr '\n' '|')"
 
 # ---- B. 버튼·직접 입력 전달문 ------------------------------------------------------------------
+# 문구는 answer_route.said_text 가 만듦(수신기는 부르기만 함)
 cat > "$SB/said.py" <<'EOF'
-import sys, types
-sys.modules["slack_sdk"] = types.ModuleType("slack_sdk")
-src = open(sys.argv[1], encoding="utf-8").read().split("\ndef said_text", 1)[1].split("\nclass Decide", 1)[0]
-import re
-ns = {"re": re}
-exec("def said_text" + src, ns)
-f = ns["said_text"]
+import sys
+sys.path.insert(0, sys.argv[1])
+from answer_route import said_text as f
 print(f("D-0B01", {"action": "pick", "pick": 1}, "1. A 유지"))
 print(f("D-0B02", {"action": "pick", "pick": 2}, "2. B 줄별 팝"))
 print(f("D-0B03", {"action": "custom", "text": "1. 양식을 제대로 정해야할듯"}, "직접 입력: 1. 양식을 제대로 정해야할듯"))
 EOF
-b=$(python3 -I "$SB/said.py" "$SOCK_PY")
+b=$(python3 -I "$SB/said.py" "$SCRIPTS")
 [ "$(printf '%s' "$b" | sed -n 1p)" = "결정 D-0B01 = 선택 1(A 유지) (버튼)" ] && ok "B 버튼 pick → '결정 D-0B01 = 선택 1(A 유지) (버튼)'" || ko "B pick" "$b"
 [ "$(printf '%s' "$b" | sed -n 2p)" = "결정 D-0B02 = 선택 2(B 줄별 팝) (버튼)" ] && ok "B 버튼 pick 2" || ko "B pick 2" "$b"
 [ "$(printf '%s' "$b" | sed -n 3p)" = "결정 D-0B03 답(자유 글): 1. 양식을 제대로 정해야할듯" ] && ok "B 직접 입력 → '결정 D-0B03 답(자유 글): 원문'" || ko "B custom" "$b"

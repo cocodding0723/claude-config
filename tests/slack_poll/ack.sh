@@ -301,6 +301,7 @@ replies ""
 VAR="$SB/poll-nowin.sh"
 sed 's/^ACK_WINDOW, ACK_MAX = 60, 3 /ACK_WINDOW, ACK_MAX = 0, 3 /' "$POLL" > "$VAR"
 cp "$(dirname "$POLL")/tls_ctx.py" "$SB/"  # 사본이 같은 폴더에서 공용 인증서 모듈을 import 함
+mkdir -p "$SB/lib" && cp "$(dirname "$POLL")/lib/py.sh" "$SB/lib/"  # 사본이 같은 폴더의 lib/py.sh 로 파이썬을 고름
 if cmp -s "$POLL" "$VAR"; then ko "ⓜ 변형 사본 생성" "치환 실패(상수 선언이 바뀜)"; else
   H="$SB/hubM"; mkhub "$H"
   hist "$msgs"
