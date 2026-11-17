@@ -75,7 +75,7 @@ chk "결정 카드·선택지 담당 허브에 알리기/무시" 'grep -qx decid
 chk "허브별 한 줄: 허브·작업 제목·상태(분)" 'grep -q "• 베타 허브 (beta) · 워커 ws-ctx_3 · 베타 구현 LRM-3 — 4[0-9]분째 응답 없음 · 마지막 출력 [0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]" "$FAKE_NOTIFY_LOG" && grep -q "• 알파 허브 (alpha) · 워커 ws-ctx_6 · 알파 새 작업 @U1 — 종료 보고 없이 멈춤 · 마지막 출력 미확인" "$FAKE_NOTIFY_LOG"'
 chk "기준선 워커(ctx_1)·끝난 작업(ctx_2)·최근 관찰(ctx_4)·관찰 없음(ctx_5)은 제외" '! grep -q "알파 옛 작업\|끝난 작업\|최근 관찰\|관찰 없음" "$FAKE_NOTIFY_LOG"'
 chk "문구는 '응답 없음', '죽음' 표현 없음·Slack 멘션 문자 제거" 'grep -q "응답 없음" "$FAKE_NOTIFY_LOG" && ! grep -q "죽" "$FAKE_NOTIFY_LOG" && ! grep -q "<@U1>" "$FAKE_NOTIFY_LOG"'
-chk "중복 코디네이터 줄: 베타 허브 · 제목 2개(연결 끊긴 창은 세지 않음)" 'grep -q "• 중복 코디네이터: 베타 허브 · 서버 허브 이어받기 / 서버 허브 복원 (2개)" "$FAKE_NOTIFY_LOG" && ! grep -q "베타 죽은 창" "$FAKE_NOTIFY_LOG"'
+chk "중복 코디네이터 줄: 베타 허브 · 제목 2개(연결 끊긴 창은 세지 않음)" 'grep -q "• 중복 코디네이터: 베타 허브 (2개)" "$FAKE_NOTIFY_LOG" && grep -q "^  - 서버 허브 이어받기$" "$FAKE_NOTIFY_LOG" && grep -q "^  - 서버 허브 복원$" "$FAKE_NOTIFY_LOG" && ! grep -q "베타 죽은 창" "$FAKE_NOTIFY_LOG"'
 chk "알파는 코디네이터 1개라 중복 줄 없음" '! grep -q "중복 코디네이터: 알파" "$FAKE_NOTIFY_LOG"'
 
 # ---- 3. 6시간 중복 방지 -------------------------------------------------------------------------
@@ -157,6 +157,11 @@ chk "승인 대기 6분: 새 카드 1장" '[ "$(cards)" = "$((BEFORE + 1))" ] &&
 LAST=$(python3 -c "import sys;print([c for c in open(sys.argv[1],encoding='utf-8').read().split('---\n') if c.strip()][-1])" "$FAKE_NOTIFY_LOG")
 chk "카드 줄: 허브·작업·'승인 대기 6분째(확인 창은 사용자만 누름)'" 'printf "%s" "$LAST" | grep -q "• 알파 허브 (alpha) · 워커 ws-ctx_w7 · 승인 질문 작업 T7 — 승인 대기 6분째(확인 창은 사용자만 누름) · 마지막 출력 [0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]"'
 chk "카드: 화면 요약에 질문·명령 포함, 구분선 제외" 'printf "%s" "$LAST" | grep -q "화면: .*Bash command.*rm -rf ./build.*Do you want to proceed?" && ! printf "%s" "$LAST" | grep -q "────"'
+chk "알림 스크립트로 간 카드 전부(화면 요약·중복 코디네이터 포함) 줄 검사 거부 0" 'python3 -c "
+import sys;sys.path.insert(0,sys.argv[1]);import board_cards as b
+cards=[c for c in open(sys.argv[2],encoding=\"utf-8\").read().split(\"---\\n\") if c.strip()]
+bad=[(i,g) for i,c in enumerate(cards) for g in b.text_gaps(c,skip_first=True) if g[2]==\"reject\"]
+assert cards and not bad,(len(cards),bad)" "$HERE/../../hubs/scripts" "$FAKE_NOTIFY_LOG"'
 chk "카드: 비밀 값 가림(토큰 원문 없음)" 'printf "%s" "$LAST" | grep -q "\[가림\]" && ! printf "%s" "$LAST" | grep -q "123456789012-abcdef"'
 chk "카드: 4분짜리(T8)는 포함되지 않음" '! printf "%s" "$LAST" | grep -q "T8"'
 DID=$(printf "%s" "$LAST" | grep -Eo "D-ST[0-9a-f]{10}" | head -1)
