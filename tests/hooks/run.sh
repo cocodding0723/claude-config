@@ -805,6 +805,31 @@ mexp "연결 명령 중 모르는 것만 있으면 확인" Bash "bd list; foo-ba
 mexp "작업자 세션 쓰기·빌드 통과" Bash "touch $GR/x; dotnet build" pass worker
 mexp "대상 아닌 도구 통과" Glob "x"
 out=$(printf '{깨진' | python3 -I "$MG" 2>/dev/null); [ -z "$out" ] && ok "main-work: 깨진 JSON 통과" || ko "main-work: 깨진 JSON 통과" "$out"
+# 검수 반영(q5o15): fd 복제·따옴표 글·구문 낱말. 메인은 게임 저장소 cwd 에서 시작하므로 cwd=게임 저장소로 시험
+MCWD="$GR" mexp "bd list 2>&1 | head 통과" Bash "bd -C ~/orca/board list 2>&1 | head"
+MCWD="$GR" mexp "bd show 2>&1 통과" Bash "bd show lrm-1 2>&1"
+MCWD="$GR" mexp "git status 2>&1 | tail 통과" Bash "git status 2>&1 | tail"
+MCWD="$GR" mexp "git -C log 2>&1 통과" Bash "git -C $GR log 2>&1"
+MCWD="$GR" mexp "feature_open.sh --dry-run 2>&1 | tail 통과" Bash "bash ~/.config/lrm-hubs/feature_open.sh --ticket LRM-1 --name x --base dev --dry-run 2>&1 | tail"
+MCWD="$GR" mexp "bd list >/dev/null 2>&1 통과" Bash "bd list >/dev/null 2>&1"
+MCWD="$GR" mexp "bd list &>/dev/null 통과" Bash "bd list &>/dev/null"
+MCWD="$GR" mexp ">&2 통과" Bash "echo x >&2"
+MCWD="$GR" mexp "echo > 게임 파일 2>&1 거부" Bash "echo x > Assets/a 2>&1" deny
+MCWD="$GR" mexp "&> 게임 파일 거부" Bash "echo x &> Assets/a" deny
+MCWD="$GR" mexp "bd list > 게임 파일 거부" Bash "bd list > Assets/out.txt" deny
+MCWD="$GR" mexp "bd list > 저장소 밖 파일 통과" Bash "bd list > $SB/mg-other/out.txt"
+MCWD="$GR" mexp "bd 글 인자 '> 인용' 통과" Bash 'bd comments add lrm-1 "> 사용자 원문 인용"'
+MCWD="$GR" mexp "bd create -d '> 원문' 통과" Bash 'bd create "제목" -d "> 요청 원문"'
+MCWD="$GR" mexp "bd 글 인자 '>> 중요' 통과" Bash 'bd comments add lrm-1 ">> 중요"'
+MCWD="$GR" mexp "bd 작은따옴표 백틱·\$( ) 글 통과" Bash "bd comments add lrm-1 '\`rm -rf Temp\` 를 워커가 실행' '원문: \$(git push) 는 금지'"
+MCWD="$GR" mexp "board-ask 글 인자 '=>' 통과" Bash "board-ask --card lrm-1 'A => B' '> 인용'"
+MCWD="$GR" mexp "큰따옴표 안 \$( ) 의 git push 는 확인" Bash 'echo "$(git push)"' ask
+MCWD="$GR" mexp "for 구문 안 bd 통과" Bash 'for i in 1 2; do bd show $i; done'
+MCWD="$GR" mexp "for 구문 안 변수 경로 쓰기는 확인" Bash 'for i in 1 2; do touch Assets/$i; done' ask
+MCWD="$GR" mexp "if 구문 안 게임 git commit 거부" Bash 'if true; then git commit -m x; fi' deny
+MCWD="$GR" mexp "source 설정 폴더 통과" Bash ". ~/.config/lrm-hubs/main.env"
+MCWD="$GR" mexp "source 다른 곳은 확인" Bash "source /etc/profile" ask
+MCWD="$GR" mexp "open 통과" Bash "open $SB/mg-other/a.html"
 # 임시 허용 파일
 touch "$MALLOW"
 mexp "허용 파일 있으면 Agent 통과" Agent x pass
@@ -814,6 +839,8 @@ mexp "허용 파일 있어도 허용 파일 Write 거부" Write "$MALLOW" deny
 mexp "허용 파일 있어도 허용 파일 rm 거부" Bash "rm $MALLOW" deny
 mexp "허용 파일 있어도 허용 파일 touch 거부" Bash "touch $MALLOW" deny
 mexp "허용 파일 읽기(ls)는 통과" Bash "ls -l $MALLOW"
+touch -t 209912312359 "$MALLOW"
+mexp "허용 파일 수정 시각이 미래면 Agent 거부" Agent x deny
 touch -t 202001010000 "$MALLOW"
 mexp "허용 파일 1시간 지나면 Agent 거부" Agent x deny
 mexp "허용 파일 만료 시 Edit 거부" Edit "$GR/a.cs" deny

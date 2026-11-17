@@ -11,6 +11,7 @@
 import json
 import os
 import re
+import shlex
 import sys
 import time
 
@@ -31,7 +32,7 @@ FILE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 FILE_KEYS = ("file_path", "notebook_path", "path")
 OPEN_CMD = "bash ~/.config/lrm-hubs/feature_open.sh --ticket LRM-n --name \"<기능 이름>\" --base dev --dry-run"
 REASON_TAIL = (f"메인은 계획 카드만 적음 — 게임 작업은 기능 코디네이터로 넘김: {OPEN_CMD} (먼저 --dry-run). "
-               f"급히 직접 해야 하면 사용자가 `! touch {ALLOW_FILE}` 로 1시간 허용")
+               f"급히 직접 해야 하면 사용자가 `! touch {ALLOW_FILE}` 로 1시간 허용. 메인이 아닌 개발 세션이면 ORCA_ROLE=dev 로 시작")
 REASON_AGENT = "메인은 하위 에이전트(Agent·Task)로 조사·구현하지 않음. " + REASON_TAIL
 REASON_FILE = "메인은 게임 저장소 파일을 직접 고치지 않음({p}). " + REASON_TAIL
 REASON_BASH = "메인은 게임 저장소를 직접 수정·빌드하지 않음({c}). " + REASON_TAIL
@@ -42,7 +43,7 @@ REASON_ASK = "메인 직접 작업 차단 훅이 판단하지 못한 명령({c})
 # 읽기·현황 명령(어디서든 통과). 인자 검사 없음
 READ_CMDS = {"ls", "cat", "head", "tail", "wc", "rg", "grep", "egrep", "fgrep", "jq", "awk", "gawk", "echo", "printf", "pwd", "date", "stat", "file",
              "test", "[", "[[", "which", "basename", "dirname", "realpath", "readlink", "true", "false", "sort", "uniq", "cut", "tr", "diff", "cmp",
-             "du", "df", "ps", "uname", "whoami", "id", "env", "printenv", "tree", "column", "nl", "less", "more", "type", "command", "export",
+             "du", "df", "open", "pbcopy", "ps", "uname", "whoami", "id", "env", "printenv", "tree", "column", "nl", "less", "more", "type", "command", "export",
              "set", "unset", "sleep", "sed", "find", "ag", "lsof", "pgrep", "md5", "shasum", "uptime", "hostname", "git"}
 # 작업판·메인 도구(인자 없이 통과). 스크립트는 `bash <이름>` 으로 불러도 같은 이름이면 통과
 BOARD_CMDS = {"bd", "board-ask", "board-answer", "feature_open.sh", "patrol.sh", "board_notify.py", "main_inbox.py", "plan_check.py", "board-run"}
@@ -67,7 +68,12 @@ ORCA_PASS = {("orchestration", "check"), ("orchestration", "send"), ("orchestrat
              ("terminal", "list"), ("terminal", "read"), ("terminal", "show"), ("status",), ("worktree", "list"), ("worktree", "ps")}
 GH_READ = {("pr", "view"), ("pr", "list"), ("pr", "status"), ("pr", "checks"), ("pr", "diff"), ("run", "list"), ("run", "view"), ("issue", "view"),
            ("issue", "list"), ("repo", "view"), ("auth", "status")}
-REDIR = re.compile(r"^(\d*|&)>>?(.*)$")
+PUNCT = ";&|()<>"
+SEP = {";", "&&", "||", "|", "&", "|&", "(", ")", ";;"}
+LEAD_WORDS = {"do", "then", "else", "elif", "if", "while", "until", "!", "{", "time"}  # 뒤에 오는 명령만 판정
+LOOP_WORDS = {"for", "case", "select", "done", "fi", "esac", "}", "in"}  # 구문 낱말 단계는 명령 아님
+SOURCE_CMDS = {"source", "."}
+SUBST_RE = re.compile(r"\$\(([^()]*)\)|`([^`]*)`")
 
 
 def decide(kind, reason):
@@ -80,7 +86,7 @@ def allow_path():
 
 def allow_active():
     try:
-        return time.time() - os.stat(allow_path()).st_mtime < ALLOW_TTL
+        return 0 <= time.time() - os.stat(allow_path()).st_mtime < ALLOW_TTL  # 미래 시각(시계 오차)은 무효
     except OSError:
         return False
 
@@ -113,18 +119,59 @@ def seg_cwd(seg, i, cwd):
 
 
 def positional(args):
-    return [a for a in args if not a.startswith("-") and not REDIR.match(a)]
+    return [a for a in args if not a.startswith("-")]
 
 
-def redirect_targets(seg):
-    out = []
-    for k, t in enumerate(seg):
-        m = REDIR.match(t)
-        if not m:
-            continue
-        tgt = m.group(2) or (seg[k + 1] if k + 1 < len(seg) else "")
-        if tgt and not tgt.startswith("&"):
-            out.append(tgt)
+def lex_line(text):
+    """한 줄 → [(낱말, 따옴표 없는 연산자인가)]. > < 도 구분자로 나눠 따옴표 안 '> 글' 과 실제 리다이렉트를 구별"""
+    lx = shlex.shlex(text, posix=True, punctuation_chars=PUNCT)
+    lx.whitespace_split = True
+    lx.commenters = ""
+    return [(t, bool(t) and all(c in PUNCT for c in t)) for t in lx]
+
+
+def split(cmd, depth=0, soft=False):
+    """명령 → [(낱말 목록, 리다이렉트 대상 목록, 낮춤 여부)]. 리다이렉트 연산자·fd 복제(2>&1)는 낱말에서 뺌.
+    soft: 따옴표 안 $( )·백틱에서 나온 단계라 거부 대신 확인으로 낮춤(실행되는지 불확실)"""
+    out, buf = [], ""
+    for line in cmd.split("\n"):
+        buf = f"{buf}\n{line}" if buf else line
+        try:
+            toks = lex_line(buf)
+        except ValueError:
+            continue  # 따옴표가 줄을 넘어 이어짐
+        buf = ""
+        cur, redirs, k = [], [], 0
+        while k < len(toks):
+            t, op = toks[k]
+            if op and t in SEP:
+                cur and out.append((cur, redirs, soft))
+                cur, redirs = [], []
+            elif op and ">" in t:
+                if cur and cur[-1].isdigit():
+                    cur.pop()  # 2>file 의 fd 번호
+                nxt = toks[k + 1][0] if k + 1 < len(toks) else ""
+                if t.endswith("&") and t != "&>" and (nxt.isdigit() or nxt == "-"):
+                    k += 1  # 2>&1 · >&2 · >&-: 파일이 아님
+                elif nxt and not toks[k + 1][1]:
+                    redirs.append(nxt)
+                    k += 1
+            elif op:
+                pass  # < << <<< 등 입력 쪽
+            else:
+                cur.append(t)
+            k += 1
+        cur and out.append((cur, redirs, soft))
+    if buf:
+        out.append((buf.split(), [], soft))
+    if depth < 3:
+        for seg, _, sf in list(out):
+            for i, t in enumerate(seg):
+                if i > 0 and seg[0].rsplit("/", 1)[-1] in main_send_guard.SHELLS and re.fullmatch(r"-[a-zA-Z]*c", seg[i - 1]):
+                    out += split(t, depth + 1, sf)
+                elif i > 0 and SUBST_RE.search(t) and seg[0].rsplit("/", 1)[-1] not in BOARD_CMDS:  # 카드 글 인자는 명령이 아님
+                    for m in SUBST_RE.findall(t):
+                        out += split(m[0] or m[1], depth + 1, True)
     return out
 
 
@@ -155,21 +202,32 @@ def judge_git(seg, i, cwd):
     return "deny" if in_game(gdir) else "pass"
 
 
-def judge_seg(seg, cwd):
+def judge_seg(seg, redirs, cwd):
     """명령 한 단계 → (pass|deny|ask, 새 cwd)"""
+    while seg and seg[0] in LEAD_WORDS and len(seg) > 1:
+        seg = seg[1:]  # do·then·if 뒤 명령만 판정
     i = wtg.head(seg)
     if i >= len(seg):
         return "pass", cwd  # 변수 대입만
     cmd = wtg.base(seg[i])
     args = seg[i + 1:]
+    if cmd in LOOP_WORDS or cmd in LEAD_WORDS:
+        return "pass", cwd
     if cmd == "cd":
         return "pass", seg_cwd(seg, i, cwd) if cwd else None
-    for t in redirect_targets(seg):
+    for t in redirs:
+        if t == os.devnull:
+            continue
         p = resolve(t, cwd) if cwd else None
         if p is None:
             return "ask", cwd
         if in_game(p):
             return "deny", cwd
+    if cmd in BOARD_CMDS:
+        return "pass", cwd  # 인자는 글일 뿐 명령이 아님. 리다이렉트만 위에서 검사
+    if cmd in SOURCE_CMDS:
+        p = resolve(args[0], cwd) if args and cwd else None
+        return ("pass" if p and p.startswith(os.path.realpath(wtg.expand("~/.config/lrm-hubs")) + os.sep) else "ask"), cwd
     if cmd in main_send_guard.SHELLS | {"python", "python3"}:
         if any(re.fullmatch(r"-[a-zA-Z]*c", a) for a in args) and cmd in main_send_guard.SHELLS:
             return "pass", cwd  # -c 문자열은 segments 가 따로 분리해 판정
@@ -217,17 +275,20 @@ def judge_targets(paths, cwd):
 
 def judge_bash(ev):
     cmd = (ev.get("tool_input") or {}).get("command") or ""
+    segs = split(wtg.drop_heredocs(cmd))
     name = os.path.basename(allow_path())
-    if name in cmd and not all(wtg.base(s[wtg.head(s)]) in {"ls", "cat", "stat", "test", "[", "[[", "file", "head", "tail", "wc", "grep", "rg"}
-                               for s in main_send_guard.segments(wtg.drop_heredocs(cmd)) if wtg.head(s) < len(s)):
+    readers = {"ls", "cat", "stat", "test", "[", "[[", "file", "head", "tail", "wc", "grep", "rg"}
+    if name in cmd and not all(wtg.base(sg[wtg.head(sg)]) in readers for sg, _, _ in segs if wtg.head(sg) < len(sg)):
         return "deny", REASON_ALLOW
     if allow_active():
         return None
     cwd = os.path.realpath(ev.get("cwd") or os.getcwd())
     asks = []
-    for seg in main_send_guard.segments(wtg.drop_heredocs(cmd)):
-        verdict, cwd = judge_seg(seg, cwd)
+    for seg, redirs, soft in segs:
+        verdict, cwd = judge_seg(seg, redirs, cwd)
         text = " ".join(seg)[:80]
+        if verdict == "deny" and soft:
+            verdict = "ask"
         if verdict == "deny":
             if "worker-start" in seg:
                 return "deny", REASON_WORKER
