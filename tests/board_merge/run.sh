@@ -54,6 +54,7 @@ before=$(into); expect "같은 카드 다시 실행은 0(반복 안전)" 0 "$BIN
 
 c4=$(card 충돌 w-cf src/a/); claim "$c4" w1; evidence "$c4" w-cf
 before=$(into); expect "충돌은 7" 7 "$BIN" "$c4" w1 --repo "$R"; unchanged "$before" "충돌"
+grep -q '"kind": "merge_reject".*"exit": "7"' "$BOARD_DIR/incidents.jsonl" 2>/dev/null && ok "충돌 거부는 사건 기록" || ko "충돌 사건 기록" "$(cat "$BOARD_DIR/incidents.jsonl" 2>/dev/null)"
 
 echo dirty > "$R/base.txt"; expect "더러운 작업 공간은 3" 3 "$BIN" "$c4" w1 --repo "$R"; git -C "$R" checkout -q base.txt
 mkdir "$R/.git/board-merge.lock"; echo 999999 > "$R/.git/board-merge.lock/pid"
