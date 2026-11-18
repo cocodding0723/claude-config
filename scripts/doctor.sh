@@ -15,7 +15,7 @@ usage() {
   WARN  항목 — 원인: … / 조치: …   권장·선택. 종료 코드에 영향 없음
 마지막 줄: 요약: 필수 누락 N, 경고 M
 
-값·시크릿 파일(values.env, slack-bot.env, main.env)은 있는지와 권한(600 권장)만 본다.
+값·시크릿 파일(values.env, slack-bot.env 또는 discord-bot.env, main.env)은 있는지와 권한(600 권장)만 본다.
 환경: HOME 기준. CLAUDE_CONFIG_VALUES 로 값 파일 위치 변경(install.sh 와 같음).
 예시: ./install.sh --doctor && ./install.sh --dry-run
 종료 코드: 0 필수 전부 있음, 1 필수 누락, 2 인자 오류
@@ -103,6 +103,10 @@ SOCK_PY="${CLAUDE_CONFIG_PYTHON3:-$(command -v python3 || true)}"
 if [ -n "$SOCK_PY" ] && "$SOCK_PY" -I -c 'import slack_sdk' 2>/dev/null; then ok "python3 slack_sdk (Socket Mode 수신기용, -I 로 확인)"
 else warn "python3 slack_sdk" "모듈 없음 또는 -I(사용자 site 제외)로 안 보임(Socket Mode 수신기를 켤 때만 필요, 폴러는 무관)" "켤 때 가상환경에 설치하고 그 python3 를 지정: install-orca-main.md 2절"; fi
 
+# ---- 택1 연동: 고른 쪽의 시크릿·도구만 점검 -----------------------------------
+VALS="${CLAUDE_CONFIG_VALUES:-$HOME/.config/claude-config/values.env}"
+pick() { local v; v=$(grep -E "^$1=" "$VALS" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]'); printf '%s' "${v:-$2}"; }
+CHAT=$(pick CHAT slack); TRACKER=$(pick TRACKER jira)
 # ---- 값·시크릿 파일: 존재·권한만 ---------------------------------------------
 perm_of() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null; }
 secret_file() {
@@ -119,10 +123,22 @@ secret_file() {
 }
 secret_file "${CLAUDE_CONFIG_VALUES:-$HOME/.config/claude-config/values.env}" req \
   "install.sh 가 실명·채널 자리표시를 채울 값" "values.env.example 을 복사해 값을 채운 뒤 chmod 600"
-secret_file "$HOME/.config/lrm-hubs/slack-bot.env" opt \
+[ "$CHAT" != slack ] || secret_file "$HOME/.config/lrm-hubs/slack-bot.env" opt \
   "Slack 봇 토큰. 없으면 슬랙 알림·수신 꺼짐" "만들고 SLACK_BOT_TOKEN=·SLACK_USER_ID= 를 직접 채운 뒤 chmod 600"
 secret_file "$HOME/.config/lrm-hubs/main.env" opt \
   "메인 코디네이터 설정" "skills/orca-main/references/main.env.example 을 복사해 채운 뒤 chmod 600"
+
+ok "연동 선택: CHAT=$CHAT, TRACKER=$TRACKER"
+if [ "$CHAT" = discord ]; then
+  secret_file "$HOME/.config/lrm-hubs/discord-bot.env" opt \
+    "Discord 봇 토큰. 없으면 디스코드 알림·수신 꺼짐" "만들고 DISCORD_BOT_TOKEN=·DISCORD_USER_ID= 를 직접 채운 뒤 chmod 600"
+fi
+if [ "$TRACKER" = github ]; then
+  if gh auth status >/dev/null 2>&1; then
+    if gh auth status 2>&1 | grep -q "'project'"; then ok "gh 권한 project (Project 보드 추가용)"
+    else warn "gh 권한 project" "토큰에 project 범위 없음(이슈는 되나 보드 추가 실패)" "gh auth refresh -s project"; fi
+  else warn "gh 인증" "gh 로그인 안 됨(TRACKER=github 의 이슈 등록 불가)" "gh auth login"; fi
+fi
 
 printf '요약: 필수 누락 %d, 경고 %d\n' "$N_MISS" "$N_WARN"
 [ "$N_MISS" = 0 ]

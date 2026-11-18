@@ -456,6 +456,16 @@ HOME="$SB6" "$INSTALL" --dry-run >/dev/null 2>&1; rc=$?
 [ "$rc" != 0 ] && ok "값이 공백뿐이면 중단" || ko "공백 값" "rc=$rc"
 rm -rf "${SB6:?}"
 
+# ---- 6g. 택1 키(CHAT·TRACKER): 빠지면 기본값, 허용값 밖이면 중단 ---------------
+SB6G=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox6g.XXXXXX")
+mkdir -p "$SB6G/.config/claude-config"
+grep -vE '^(CHAT|TRACKER)=' "$SB/.config/claude-config/values.env" > "$SB6G/.config/claude-config/values.env"
+HOME="$SB6G" "$INSTALL" --dry-run >/dev/null 2>&1; rc1=$?
+printf 'CHAT=teams\n' >> "$SB6G/.config/claude-config/values.env"
+out=$(HOME="$SB6G" "$INSTALL" --dry-run 2>&1); rc2=$?
+[ "$rc1" = 0 ] && [ "$rc2" != 0 ] && echo "$out" | grep -q 'CHAT=teams 는 허용값' && ok "택1 키: 없으면 기본값, 허용값 밖이면 중단" || ko "택1 키" "rc1=$rc1 rc2=$rc2"
+rm -rf "${SB6G:?}"
+
 # ---- 7. 임의 설정 사본 검증(선택) -------------------------------------------
 if [ -n "${SETTINGS_SAMPLE:-}" ] && [ -f "$SETTINGS_SAMPLE" ]; then
   sed "s#$REAL_HOME#$SB#g" "$SETTINGS_SAMPLE" > "$SB/.claude/settings.json"; cp "$SB/.claude/settings.json" "$SB/settings.sample"

@@ -204,6 +204,10 @@ subst_file() {
       case "$k" in ''|'#'*) continue ;; esac
       content=${content//"__${k}__"/$v}
     done < "$VALUES"
+    while IFS='=' read -r k _; do
+      case "$k" in ''|'#'*) continue ;; esac
+      content=${content//"__${k}__"/$(value_of "$k")}
+    done < "$VALUES_EXAMPLE"
   fi
   printf '%s' "$content" > "$out"
 }
@@ -214,10 +218,28 @@ check_values() {
   [ -f "$VALUES" ] || die "값 파일 없음: $VALUES. values.env.example 을 복사해 채운 뒤 다시 실행 (권한 600 권장)"
   while IFS='=' read -r k _; do
     case "$k" in ''|'#'*) continue ;; esac
-    v=$(grep -E "^${k}=" "$VALUES" | head -1 | cut -d= -f2- | tr -d '[:space:]')
-    [ -n "$v" ] || missing="$missing $k"
+    v=$(grep -E "^${k}=" "$VALUES" | head -1 | cut -d= -f2- | tr -d '[:space:]' || true)
+    [ -n "$v" ] || [ -n "$(example_default "$k")" ] || missing="$missing $k"
   done < "$VALUES_EXAMPLE"
   [ -z "$missing" ] || die "값 파일에 빈 키:$missing ($VALUES)"
+  check_choice CHAT slack discord
+  check_choice TRACKER jira github
+}
+
+# 예시에 값이 있는 키는 선택 키. 값 파일에서 비면 이 기본값을 씀
+example_default() { grep -E "^$1=" "$VALUES_EXAMPLE" | head -1 | cut -d= -f2- | tr -d '[:space:]' || true; }
+
+value_of() {
+  local v
+  v=$(grep -E "^$1=" "$VALUES" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]' || true)
+  printf '%s' "${v:-$(example_default "$1")}"
+}
+
+# 택1 키: 허용값 밖이면 아무것도 바꾸기 전에 중단
+check_choice() {
+  local k="$1" v; shift
+  v=$(value_of "$k")
+  case " $* " in *" $v "*) ;; *) die "값 파일 $k=$v 는 허용값($*) 밖 ($VALUES)" ;; esac
 }
 
 do_copy() {
