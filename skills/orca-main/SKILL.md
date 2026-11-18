@@ -13,7 +13,7 @@ description: Orca 메인 세션을 운영한다 — 사용자 질문에 답하�
 사용자 ◀──Slack 봇(도식·캡처·결정)── 기능 코디네이터
 ```
 
-- 메인은 허브를 만들지 않고(`feature_open.sh`·`orca-hub-create` 는 사용자 몫), 허브에 지시·답을 옮기지 않는다.
+- 메인은 스스로 판단해 허브를 만들지 않고(`feature_open.sh`·`orca-hub-create` 는 사용자 몫), 허브에 지시·답을 옮기지 않는다. 사용자가 `/orca-feature` 로 직접 부른 열기·끝내기만 대신 실행한다.
 - 허브 보고·결정·답은 Slack 봇과 작업판 카드로 사용자에게 바로 간다. 메인 입력창은 사용자만 쓴다.
 - 단계별 도구는 [워크플로 지도](references/workflow.md), 지킬 것은 [운영 규칙](references/rules.md).
 
