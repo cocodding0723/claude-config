@@ -446,7 +446,7 @@ def write_fail(out_dir, pr, hub, sha, fails, slack_ts=""):
     lines += [f"- {c['key']}: {c.get('cause') or '원인 줄 못 찾음'} ({c.get('link', '')})" for c in fails]
     thread = f" --thread {slack_ts}" if slack_ts else ""
     lines += ["", "## 처리 규칙",
-              f"1. 고치기 전에 Slack 으로 설명: slack_notify.sh --kind warn{thread} — 첫 줄 주제, '• 무엇: 실패한 검사·원인 / • 왜: 코드 근거(파일:줄) / • 결과: 고칠 방법 1~2줄'",
+              f"1. 고치기 전에 Slack 으로 설명: slack_notify.sh --kind warn{thread} — 첫 줄 주제, 이어서 항목마다 한 줄씩 '- 무엇: 실패한 검사·원인', '- 왜: 코드 근거(파일:줄)', '- 결과: 고칠 방법 1~2줄' (' / ' 로 잇지 않음)",
               "2. 원인 수정 커밋 + 일반 push. 고치지 못하면 메인에 근거 보고",
               f"3. push 뒤 같은 스레드에 done 한 줄: slack_notify.sh --kind done{thread} \"수정 push 완료\"",
               "- 강제 push·dev 병합 금지"]

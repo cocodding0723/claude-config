@@ -334,7 +334,7 @@ run_n --kind decide --no-doc $'주제\n\n결정 1) 시각\n결정 2) 장소\n결
 [ "$RC" = 2 ] && grep -q '^거부: 결정이 3개임' "$SB/err" && ok "G 결정 3개 → 개수를 3으로 안내" || ko "G 3개" "$(cat "$SB/err")"
 grep -q '예: ' "$SB/err" && ok "G 거부 메시지에 분할 예시 포함" || ko "G 예시" "$(cat "$SB/err")"
 run_n --kind decide --no-doc $'주제\n\n• 무엇: 시각 정하기\n• 선택지: A 9시 / B 10시 / C 11시\n\n👉 답: :비서-a: A · :비서-b: B · :비서-c: C'
-[ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "G 결정 1건 + 선택지 A/B/C 나열 → 통과(오탐 없음)" || ko "G 선택지 오탐" "rc=$RC $(cat "$SB/err")"
+[ "$RC" = 2 ] && ! grep -q '결정이 [0-9]*개' "$SB/err" && grep -q "빗금(/)으로 사실을 이음" "$SB/err" && ok "G 결정 1건 + 선택지 A/B/C 나열 → 결정 개수는 1(줄 가독성 규칙으로만 거부)" || ko "G 선택지 오탐" "rc=$RC $(cat "$SB/err")"
 run_n --kind decide --no-doc $'주제\n\n• 무엇: 시각 정하기\n1. 현재는 9시\n2. 바꾸면 10시\n3. 영향은 없음\n\n👉 답: 확인'
 [ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "G 결정 낱말 없는 번호 목록(1. 2. 3.) → 통과(오탐 없음)" || ko "G 번호 목록 오탐" "rc=$RC $(cat "$SB/err")"
 run_n --kind decide --no-doc $'주제\n\n① A안 9시\n② B안 10시\n\n👉 답: 확인'
@@ -352,12 +352,16 @@ pass_case() { # 이름, 본문
   run_n --kind decide --no-doc "$2"
   [ "$RC" = 0 ] && posted && [ "$(errn)" = 0 ] && ok "G2 통과: $1" || ko "G2 오탐 $1" "rc=$RC $(cat "$SB/err")"
 }
+single_case() { # 이름, 본문: 결정 개수는 1이어야 함(' / ' 이은 줄 거부는 줄 가독성 규칙이라 별개)
+  run_n --kind decide --no-doc "$2"
+  ! grep -q '결정이 [0-9]*개' "$SB/err" && ok "G2 결정 1건: $1" || ko "G2 결정 개수 오탐 $1" "rc=$RC $(cat "$SB/err")"
+}
 rej_case() { # 이름, 본문
   run_n --kind decide --no-doc "$2"
   [ "$RC" = 2 ] && ! posted && nocall && grep -q "$MULTI_RX" "$SB/err" && ok "G2 거부: $1" || ko "G2 누락 $1" "rc=$RC $(cat "$SB/err")"
 }
-pass_case "선택지 '1. 기존 결정 유지 / 2. 결정 철회'" $'주제\n\n• 선택지: 1. 기존 결정 유지 / 2. 결정 철회\n\n👉 답: 확인'
-pass_case "선택지 '① 기존 결정 유지 / ② 결정 변경'" $'주제\n\n• 선택지: ① 기존 결정 유지 / ② 결정 변경\n\n👉 답: 확인'
+single_case "선택지 '1. 기존 결정 유지 / 2. 결정 철회'" $'주제\n\n• 선택지: 1. 기존 결정 유지 / 2. 결정 철회\n\n👉 답: 확인'
+single_case "선택지 '① 기존 결정 유지 / ② 결정 변경'" $'주제\n\n• 선택지: ① 기존 결정 유지 / ② 결정 변경\n\n👉 답: 확인'
 pass_case "선택지 줄 나눔 '1. 기존 결정 유지' 줄 + '2. 결정 철회' 줄" $'주제\n\n1. 기존 결정 유지\n2. 결정 철회\n\n👉 답: 확인'
 pass_case "선택지 줄 나눔 '① 기존 결정 유지' 줄 + '② 결정 변경' 줄" $'주제\n\n① 기존 결정 유지\n② 결정 변경\n\n👉 답: 확인'
 pass_case "배경 '1. 이미 결정된 것 / 2. 미결정'" $'주제\n\n1. 이미 결정된 것\n2. 미결정\n\n👉 답: 확인'
@@ -657,18 +661,22 @@ LRM_BTN_WARN=on run_n --kind decide --no-doc --choices 2 "주제"
 LRM_BTN_WARN=on run_n --kind decide --no-doc --options '1=A 안,2=B 안' --recommend 2 --decision-id D-0J03 "주제"
 ! grep -q '선택지 버튼 없음' "$SB/err" && ok "J --options 카드는 경고 없음" || ko "J 정상 카드 경고" "$(cat "$SB/err")"
 
-# ---- K. 줄바꿈 양식: '- ' 여러 줄 허용 · ' / '·' · ' 3개 이상 이은 줄은 경고만 ---------------------------
+# ---- K. 줄바꿈 양식: '- ' 여러 줄 허용 · ' / ' 이은 줄은 거부(종료 2) · 가운뎃점 나열은 경고 ---------------------------
 newhome k
 run_n --kind done $'완료\n\n- 무엇: 끝\n- 왜: 이유\n- 결과: 반영'
 [ "$RC" = 0 ] && [ "$(errn)" = 0 ] && posted && ok "K '- ' 항목 여러 줄 → 경고 없이 전송" || ko "K 여러 줄" "rc=$RC $(cat "$SB/err")"
-run_n --kind done $'완료\n\n- 무엇: A / B / C / D'
-[ "$RC" = 0 ] && grep -q "^경고: ' / '·' · ' 로 이은 줄이 있음(3번째 줄)" "$SB/err" && ! grep -q '양식 위반' "$SB/err" && posted && ok "K ' / ' 3개 이상 → 경고만(위반 건수에 안 셈, 전송)" || ko "K 슬래시 경고" "rc=$RC $(cat "$SB/err")"
-run_n --kind done $'완료\n\n- 무엇: A · B · C · D'
-grep -q "로 이은 줄이 있음" "$SB/err" && ok "K ' · ' 3개 이상 → 경고" || ko "K 가운뎃점 경고" "$(cat "$SB/err")"
+run_n --kind done $'완료\n\n- 무엇: A / B'
+[ "$RC" = 2 ] && grep -q "^거부: 한 줄에 사실 여러 개가 이어짐: 3번째 줄(빗금(/)으로 사실을 이음) — 항목마다 줄을 나눠" "$SB/err" && grep -q "'- 무엇: A' 줄과 '- B' 줄로" "$SB/err" && ! posted && ok "K ' / ' 로 이은 줄 1개도 거부(원인·조치·고친 예, 미전송)" || ko "K 슬래시 거부" "rc=$RC $(cat "$SB/err")"
 LRM_FORMAT=strict run_n --kind done $'완료\n\n- 무엇: A / B / C / D'
-[ "$RC" = 0 ] && posted && ok "K strict 에서도 거부하지 않음" || ko "K strict" "rc=$RC"
+[ "$RC" = 2 ] && ! posted && ok "K strict 에서도 거부" || ko "K strict" "rc=$RC"
+run_n --no-check --kind done $'완료\n\n- 무엇: A / B'
+[ "$RC" = 0 ] && posted && ok "K --no-check 는 우회" || ko "K 우회" "rc=$RC $(cat "$SB/err")"
+run_n --kind done $'완료\n\n- 무엇: https://x.test/a/b 와 /usr/bin/x 와 `a / b` 와 11/17 와 2 / 3'
+[ "$RC" = 0 ] && [ "$(errn)" = 0 ] && posted && ok "K URL·경로·코드·날짜·분수의 '/' 는 오탐하지 않음" || ko "K 오탐" "rc=$RC $(cat "$SB/err")"
+run_n --kind done $'완료\n\n- 무엇: 앞 항목에 대한 설명입니다 · 가나다 · 라마바 · 사아자 · 차카타 · 파하'
+[ "$RC" = 0 ] && grep -q "^경고: 한 줄에 사실 여러 개가 이어짐: 3번째 줄(가운뎃점으로 사실을 나열함)" "$SB/err" && posted && ok "K 가운뎃점 나열 → 경고만(전송)" || ko "K 가운뎃점 경고" "rc=$RC $(cat "$SB/err")"
 run_n --kind done $'완료\n\n- 무엇: A / B\n- 왜: C · D'
-[ "$(errn)" = 0 ] && ok "K 2개까지는 경고 없음" || ko "K 2개" "$(cat "$SB/err")"
+[ "$RC" = 2 ] && ok "K 거부 줄이 하나라도 있으면 전송 안 함" || ko "K 혼합" "rc=$RC"
 run_n --kind done $'완료 · 가 · 나 · 다 · 라\n\n- 무엇: 끝'
 ! grep -q "로 이은 줄" "$SB/err" && ok "K 첫 줄(제목)은 검사 제외" || ko "K 제목" "$(cat "$SB/err")"
 run_n --kind decide --no-doc "주제$ANS"

@@ -8,6 +8,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "..", "hubs", "scripts"))
+import board_cards  # noqa: E402
 import hub_report  # noqa: E402
 import report_sender  # noqa: E402
 
@@ -68,6 +69,40 @@ class ParentTest(unittest.TestCase):
         self.assertEqual(text.splitlines()[-1], "참고: lrm-q5o · 허브 structure-v2")  # 내부 기호는 맨 아래 참고 줄에만
         self.assertNotIn("lrm-q5o", "\n".join(text.splitlines()[:-1]))
         self.assertTrue(self.topics()["lrm-q5o"]["fmt"].startswith(report_sender.PARENT_FORMAT + ":"))
+
+    def rejected(self, text):
+        return [g for g in board_cards.text_gaps(text, skip_first=True) if g[2] == "reject"]
+
+    def test_slash_joined_card_description_is_split_into_lines_and_passes_line_check(self):
+        self.card("무엇: 기능 코디네이터 허브: /a/b / 통합 브랜치: feat/x\n왜: 가 / 나", [], title="구조 개선")
+        self.report()
+        self.assertEqual(self.run_round()["sent"], 1)
+        text = next(c for c in self.calls() if "progress" in c and "--thread" not in c)[-1]
+        self.assertIn("- 무엇: 기능 코디네이터 허브: /a/b\n- 통합 브랜치: feat/x\n- 왜: 가\n- 나", text)
+        self.assertEqual(self.rejected(text), [])
+
+    def test_feature_open_style_description_without_what_line_passes(self):
+        self.card("기능 코디네이터 허브: /a/b / 통합 브랜치: feat/x", [], title="[T-1] 기능")
+        self.report()
+        self.assertEqual(self.run_round()["sent"], 1)
+        text = next(c for c in self.calls() if "progress" in c and "--thread" not in c)[-1]
+        self.assertEqual(self.rejected(text), [])
+
+    def test_stop_warning_text_passes_its_own_line_check(self):
+        rep = self.report()
+        why = "거부: " + board_cards.gap_message([(3, board_cards.WHY_SLASH, "reject")], "x\ny\n- 무엇: 가 / 나") + " 가 / 나"
+        report_sender.warn_stop(self.conf, rep, {"topics": {}}, why, True, time.monotonic() + 30)
+        self.assertEqual(self.rejected(self.calls()[-1][-1]), [])
+
+    def test_warn_pending_failure_leaves_log_line(self):
+        rep = self.report()
+        st = {"reports": {rep["id"]: {"error": "x", "stop_permanent": True}}, "warned": {}, "topics": {}}
+        with open(self.p("fail.all"), "w") as f:
+            f.write("1")
+        report_sender.warn_pending(self.conf, rep, st, time.monotonic() + 30)
+        self.assertNotIn(rep["id"], st["warned"])
+        with open(self.p("log.txt"), encoding="utf-8") as f:
+            self.assertIn(f"전송 중단 경고 실패(다음 회차에 재시도) 보고 {rep['id']}", f.read())
 
     def test_missing_easy_name_falls_back_to_card_title(self):
         self.card("무엇: 고친다.\n왜: 요청", [], title="구조 개선")

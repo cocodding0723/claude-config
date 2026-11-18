@@ -19,6 +19,12 @@ run() { python3 "$S/ci_watch.py" "$@" > "$D/out" 2>&1; }
 chk pending 3 pending; run; [ "$(sent)" = 0 ] && ok "첫 실행은 기준만 기록, 전송 0" || ko "첫 실행" "$(sent)"
 chk fail 5 pass; run; [ "$(sent)" = 1 ] && ok "결론 변화 → 1건 전송" || ko "변화 전송" "$(sent)"
 grep -q -- "--kind warn" "$D/sent.log" && grep -q "시트 스냅숏이 없음: Locale.csv" "$D/sent.log" && ok "실패면 warn + 원인 한 줄" || ko "원인 줄" "$(cat "$D/sent.log")"
+# ' / ' 가 든 GitHub 검사 이름은 바꾸지 않고 백틱으로 감싸 알림 스크립트 줄 검사(board_cards.text_gaps)를 통과시킴
+grep -q '`Run Unity validation / Unity validation`:' "$D/sent.log" && python3 -c '
+import sys;sys.path.insert(0,sys.argv[1]);import board_cards as b
+t=open(sys.argv[2],encoding="utf-8").read().split("\n===\n")[0]
+bad=[g for g in b.text_gaps(t,skip_first=True) if g[2]=="reject"]
+assert not bad, bad' "$S" "$D/sent.log" && ok "검사 이름의 ' / ' 는 코드 표시로 감싸 줄 검사 통과(거부 0)" || ko "검사 이름 줄 검사" "$(cat "$D/sent.log")"
 ! grep -q "AI Review Gate" "$D/sent.log" && ! grep -q "mention-author" "$D/sent.log" && ok "실패한 감시 대상만 보냄" || ko "감시 대상"
 ! grep -q "LRM-474" "$D/sent.log" && ok "티켓 번호 본문 제외" || ko "티켓"
 run; [ "$(sent)" = 1 ] && ok "같은 결론 재전송 없음" || ko "중복 방지" "$(sent)"
@@ -84,7 +90,7 @@ assert r.hub_for("feat/LRM-279-x","",r.load_table(sys.argv[2])).startswith("UI �
 echo '[{"number":703,"title":"x","headRefName":"b","headRefOid":"e1"}]' > "$D/prs.json"
 echo '[{"name":"AI Review Gate (0/5)","workflow":"Preview Stack Events","bucket":"pending","link":""}]' > "$D/checks-703.json"; run
 echo '[{"name":"AI Review Gate (0/5)","workflow":"Preview Stack Events","bucket":"fail","link":""}]' > "$D/checks-703.json"; run
-grep -q "AI Review Gate: 리뷰어 오류(재실행 대상)" "$D/sent.log" && ! grep -q "CI 실패 PR#703" "$MJ" && ok "리뷰어 오류뿐인 게이트 실패: Slack 원인 1줄, 메인 CI 실패 전달 없음" || ko "게이트 합침" "$(cat "$D/sent.log") | $(cat "$MJ")"
+grep -qF '`AI Review Gate`: 리뷰어 오류(재실행 대상)' "$D/sent.log" && ! grep -q "CI 실패 PR#703" "$MJ" && ok "리뷰어 오류뿐인 게이트 실패: Slack 원인 1줄, 메인 CI 실패 전달 없음" || ko "게이트 합침" "$(cat "$D/sent.log") | $(cat "$MJ")"
 
 # ---- 원인 줄: Shader error 우선, FAILED 0 무시, xml 대체 ----
 echo '[{"number":679,"title":"t"}]' > "$D/prs.json"; rm -f "$D/ci-watch.state.json"; : > "$D/sent.log"
@@ -400,5 +406,13 @@ fresh; prs "$(pj 730 bundle-x 4040404040404040)"; wt feat/other; sed -i '' 's#"b
 grep -q "담당 허브 UI 계층 통합 설계 (근거: 제목 티켓 LRM-1 · 작업 공간 \[LRM-1\] → ui-layer)" "$MJ" && ok "작업 공간 이름 티켓 → ui-layer 근거 문구" || ko "작업 공간 통합" "$(cat "$MJ")"
 fresh; prs "$(pj 731 b1 5050505050505050),$(pj 732 b2 6060606060606060)"; wt feat/other; cycle 731 732
 [ "$(grep -c '^worktree list' "$D/orca.log")" = 1 ] && ok "작업 공간 조회 회차당 1회(PR 2개 → 1회)" || ko "조회 횟수" "$(grep -c '^worktree list' "$D/orca.log")"
+
+# 원인 줄은 CI 로그·시험 이름을 그대로 옮긴 글이라 ' / ' 가 들어올 수 있음. 감싸지 않으면 줄 검사가 실패 알림 전체를 거부함
+python3 -c '
+import sys;sys.path.insert(0,sys.argv[1]);import ci_watch as w, board_cards as b
+t=w.message({"number":7,"title":"x"},[{"key":"U","cause":"Game.Tests / EditMode: 1 / 2","link":""}])[1]
+assert "`Game.Tests / EditMode: 1 / 2`" in t, t
+assert not [g for g in b.text_gaps(t,skip_first=True) if g[2]=="reject"], t
+assert w.cause_text("리뷰어 오류(재실행 대상)")=="리뷰어 오류(재실행 대상)" and "못 찾음" in w.cause_text("")' "$S" && ok "원인 줄의 ' / ' 는 코드 표시로 감싸 줄 검사 통과, 우리 문구는 그대로" || ko "원인 줄 줄 검사"
 
 echo "통과 $PASS / 실패 $FAIL"; [ "$FAIL" = 0 ]

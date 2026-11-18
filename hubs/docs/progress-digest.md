@@ -50,7 +50,8 @@ python3 ~/.config/lrm-hubs/progress_digest.py --help
 전제: 봇 토큰에 목록 쓰기 권한(`lists:write`, 읽기는 `lists:read`)이 있어야 한다. 현재 `hubs/slack-bot-manifest.yml` 에 없으므로 앱 권한을 추가하고 재설치한다. 권한이 없으면 목록 갱신만 실패하고(`missing_scope`) DM 은 보낸다. 실패한 회차는 다음 회차에 다시 시도한다.
 
 ```sh
-./install.sh                         # 스크립트·plist 배치
+./install.sh                         # 스크립트 배치. plist 는 ~/.config/lrm-hubs/ 에만 놓임(11-17 사용자가 끔: 로그인 때 자동 실행되지 않게)
+cp ~/.config/lrm-hubs/ai.lrm.progressdigest.plist ~/Library/LaunchAgents/
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.lrm.progressdigest.plist
 launchctl kickstart gui/$(id -u)/ai.lrm.progressdigest   # 바로 1회 실행
 ```

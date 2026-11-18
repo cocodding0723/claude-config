@@ -11,6 +11,15 @@ while [ $# -gt 0 ]; do case "$1" in
   --base) BASE="$2"; shift 2;; --branch) BRANCH="$2"; shift 2;; --dry-run) DRY=1; shift;;
   *) echo "알 수 없는 인자: $1" >&2; exit 2;; esac; done
 : "${SLUG:?--slug 필요}" "${NAME:?--name 필요}" "${ROLE_FILE:?--role-file 필요}"
+# 공통 규칙은 설치 때 값을 채워 만든 파일이라 저장소에는 틀(.tmpl)만 있음. 저장소 사본으로 실행돼도 설치본을 읽고,
+# 작업 공간을 만들기 전에 확인함(만든 뒤 실패하면 반쯤 만들어진 허브가 남음). 종료 3 은 feature_open.sh 가 '이미 실행 중'으로 읽으므로 4
+COMMON_FILE="${COMMON_FILE:-}"
+[ -z "$COMMON_FILE" ] || [ -f "$COMMON_FILE" ] || { echo "COMMON_FILE 로 지정한 공통 규칙 파일 없음: $COMMON_FILE" >&2; exit 4; }   # 오타면 다른 규칙으로 기동하지 않고 멈춤
+[ -n "${PATHS// /}" ] || { echo "--paths 가 비어 있음 — 받을 경로를 하나 이상 지정" >&2; exit 2; }
+for c in "$COMMON_FILE" "$(dirname "$0")/../references/common-rules.txt" "$HOME/.claude/skills/orca-hub-create/references/common-rules.txt"; do
+  if [ -n "$c" ] && [ -f "$c" ]; then COMMON_FILE="$c"; break; fi
+done
+[ -f "$COMMON_FILE" ] || { echo "공통 규칙 파일 없음(common-rules.txt) — claude-config 의 install.sh 를 먼저 실행하거나 COMMON_FILE 로 지정" >&2; exit 4; }
 HUB="$WS_ROOT/coord-${SLUG}-hub"
 # --branch: 그 브랜치를 허브에 체크아웃(없으면 BASE 에서 생성). 기본은 BASE 에 detached
 if [ -n "$BRANCH" ]; then
@@ -24,8 +33,8 @@ fi
 if [ ! -d "$HUB" ]; then
   git -C "$REPO" fetch -q origin || echo "⚠️ fetch 실패 — 로컬 ${BASE} 로 진행"
   GIT_LFS_SKIP_SMUDGE=1 git -C "$REPO" worktree add -q --no-checkout ${WT_OPT[@]+"${WT_OPT[@]}"} "$HUB" "$WT_REF"
-  # shellcheck disable=SC2086
-  git -C "$HUB" sparse-checkout set --no-cone $PATHS
+  read -r -a SPARSE <<<"$PATHS"   # 따옴표 없이 넘기면 "/*" 가 컴퓨터 최상위 폴더 목록으로 풀림
+  git -C "$HUB" sparse-checkout set --no-cone "${SPARSE[@]}"
   GIT_LFS_SKIP_SMUDGE=1 git -C "$HUB" checkout -q
 fi
 # 이미 살아 있는 코디네이터가 있으면 중복 기동 방지
@@ -37,7 +46,7 @@ if [ -d "$HUB" ] && [ "$FORCE" = 0 ]; then
 fi
 orca worktree set --worktree "path:$HUB" --display-name "[관리] ${NAME} 코디네이터" \
   --parent-worktree "path:$REPO" --comment "sparse 관리 전용. ${NAME}" --json >/dev/null
-COMMON="$(cat "$(dirname "$0")/../references/common-rules.txt")"
+COMMON="$(cat "$COMMON_FILE")"
 PROMPT="orca-coordinator 스킬로 이 허브의 ${NAME} 코디네이터를 맡아라.
 ${COMMON}
 ${RESUME:+이어받기: Orca 재시작 등으로 이전 세션이 끝났다. 먼저 다음을 읽고 이어서 진행: ${RESUME}

@@ -138,9 +138,20 @@ def xml_cause(run_id):
     return "", ""
 
 
+SLASH_JOIN = re.compile(r"\s/\s")
+
+
+def cause_text(cause):
+    """원인 줄은 CI 로그·시험 이름을 그대로 옮긴 글. ' / ' 가 들어 있으면 알림 스크립트의 줄 검사(사실을 빗금으로 이음)가 실패 알림 전체를 거부하므로
+    코드 표시로 감싸 검사 밖에 둠. 우리가 만든 원인 문구는 그대로"""
+    if not cause:
+        return "원인 줄 못 찾음 — 로그 확인"
+    return "`" + cause.replace("`", "'") + "`" if SLASH_JOIN.search(cause) else cause
+
+
 def message(pr, fails):
     lines = [f"PR #{pr['number']} CI 실패 원인", ""]
-    lines += [f"• {c['key']}: {c.get('cause') or '원인 줄 못 찾음 — 로그 확인'}" for c in fails]
+    lines += [f"• `{c['key']}`: {cause_text(c.get('cause'))}" for c in fails]
     lines += ["", "👉 답: 고칠 곳 확인 뒤 다시 실행"]
     ref = [TICKET.sub("", pr.get("title", "")).strip()] + [c["link"] for c in fails if c.get("link")]
     lines += ["", "참고: " + " · ".join(x for x in ref if x)]  # 제목의 티켓 번호는 양식 검사 대상이라 뺌
