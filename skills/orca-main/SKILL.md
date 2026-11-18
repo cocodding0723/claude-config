@@ -1,20 +1,20 @@
 ---
 name: orca-main
-description: Orca 메인 코디네이터를 운영한다 — 계획 하나마다 새 세션을 열어 작업판(beads)만 읽고, 사용자 요청을 계획 카드(epic)로 적고, 기능 코디네이터를 띄운 뒤 끝낸다. 현황 질문은 패널·bd 조회 명령으로 답한다. 직접 조사·구현·허브 중계는 하지 않는다. "메인 코디네이터 시작", "계획 올려줘", "지금 상황", "결정 뭐 남았어", `/orca-main` 요청에 사용한다. 허브 생성은 orca-hub-create, 허브 안의 작업 배정·리뷰는 orca-coordinator 가 맡는다.
+description: Orca 메인 세션을 운영한다 — 사용자 질문에 답하고, 현황(작업판·CI)을 조회하고, 작은 일(시트 수정·운영툴 실행·티켓 발급)을 직접 처리한다. 코디네이터 허브 생성·지시는 사용자가 직접 하므로 메인은 허브를 만들거나 중계하지 않는다. "메인 시작", "지금 상황", "결정 뭐 남았어", "티켓 하나 끊어줘", `/orca-main` 요청에 사용한다. 허브 생성은 orca-hub-create, 허브 안의 작업 배정·리뷰는 orca-coordinator 가 맡는다.
 ---
 
-# Orca 메인 코디네이터 (11-17 개정: 계획당 새 세션)
+# Orca 메인 (11-18 개정: 사용자가 코디네이터를 직접 관리)
 
-메인 = 사용자 요청을 작업판 계획 카드로 바꾸는 창구. 결과·보고·답은 작업판 카드에 모이고, 메인은 그 사이를 중계하지 않는다.
+메인 = 사용자 옆의 질문 창구 + 작은 일 처리기. 기능 작업은 사용자가 만든 코디네이터 허브가 사용자와 직접 주고받는다.
 
 ```
-사용자 ──요청──▶ 메인(계획 1개 = 세션 1개) ──epic·카드──▶ 작업판 ~/orca/board
-                                                         ▲      │
-사용자 ◀──패널·Slack 결정 카드── 작업판 ◀──코멘트·결정 카드── 기능 코디네이터 ⇄ 워커
+사용자 ──질문·작은 일──▶ 메인 ──조회──▶ 작업판 ~/orca/board · CI
+사용자 ──허브 생성·지시──▶ 기능 코디네이터 ⇄ (필요할 때만) 워커
+사용자 ◀──Slack 봇(도식·캡처·결정)── 기능 코디네이터
 ```
 
-- 메인 입력창은 사용자만 쓴다. 허브 보고·CI·리뷰·Slack 답 자동 알림은 작업판 카드 코멘트로 간다(`main-route`, `$HUB_SCRIPTS/docs/panel.md` 7-2절).
-- 결정 답은 Slack 버튼이나 `board-answer` 로 그 카드에 바로 남는다. 메인이 허브에 옮겨 주지 않는다.
+- 메인은 허브를 만들지 않고(`feature_open.sh`·`orca-hub-create` 는 사용자 몫), 허브에 지시·답을 옮기지 않는다.
+- 허브 보고·결정·답은 Slack 봇과 작업판 카드로 사용자에게 바로 간다. 메인 입력창은 사용자만 쓴다.
 - 단계별 도구는 [워크플로 지도](references/workflow.md), 지킬 것은 [운영 규칙](references/rules.md).
 
 ## 0. 설정
@@ -30,27 +30,26 @@ description: Orca 메인 코디네이터를 운영한다 — 계획 하나마다
 cd ~/orca/board
 bd list --label kind:decision --status open      # 🙋 답할 것
 bd list --label kind:user-todo --status open     # 🛠️ 사용자 할 일
-bd list --type epic --status open                # 진행 중 기능(계획)
+bd list --type epic --status open                # 진행 중 기능
 bd list --status blocked                         # 막힌 카드
 ```
 
 사용자에게 3줄로 알린다: 🙋 답할 것 수 · ⚠️ 막힌 것 · 🔄 열린 기능 수.
 
-## 2. 계획 하나 = 세션 하나
+## 2. 하는 일
 
-1. 사용자 요청을 듣고 맞는 기능 epic 이 있으면 그 epic 에 코멘트로 요청 원문을 단다. 없으면 새 기능을 연다.
-   - 새 기능: `bash $HUB_SCRIPTS/feature_open.sh --ticket LRM-n --name "<기능 이름>" --base dev [--slug <영문>]` (epic·통합 브랜치·기능 코디네이터를 만든다. 먼저 `--dry-run`)
-   - 요청 원문은 고쳐 쓰지 않고 그대로 epic 설명·코멘트에 남긴다.
-2. 모호하면 질문을 결정 카드로 올린다(아래 3절). 돌려 보면 아는 질문은 올리지 않는다(`--runnable yes` 는 거부됨).
-3. 기능 코디네이터가 계획서(`~/orca/board/templates/plan.md` 양식, `plan_check.py` 통과)를 epic 에 올리면 사용자 컨펌을 받아 2-1절의 승인 기록을 쓴다.
-4. 계획 카드·승인 기록까지 쓰면 **세션을 끝낸다.** 다음 요청은 새 세션에서.
+| 요청 | 처리 |
+|---|---|
+| 현황 질문 | 4절 조회 명령 출력을 인용해 답한다 |
+| 조사 질문(코드·로그·문서) | 직접 읽거나 읽기 전용 하위 에이전트(`Explore`·`Plan`·`claude-code-guide`·`web-fetch`)로 조사한다 |
+| 작은 일 | 시트 수정·운영툴 실행은 해당 스킬·스크립트로, 티켓 발급은 `jira-issue` 로 직접 처리한다 |
+| 기능 작업(게임 코드 수정·빌드·워커 필요) | 하지 않는다. 사용자에게 "코디네이터 허브에 맡길 일"이라고 한 줄로 알리고, 맡길 문장(목표 + 확인 방법)을 초안으로 준다 |
 
-직접 하지 않는 것: 코드·로그 조사, 구현, 워커 배정, 허브 화면 읽고 옮기기, 허브 사이 메시지 전달.
-훅(`main_work_guard.py`)이 메인의 Agent·Task, 게임 저장소 수정·빌드, `worker-start` 를 거부하고 `feature_open.sh` 로 안내한다. 읽기·`bd`·`feature_open.sh` 는 통과. 급할 때는 사용자가 거부 안내에 나오는 `! touch …` 명령으로 1시간 푼다(허용 파일 경로는 훅 `ALLOW_FILE` 한 곳, 모델은 이 파일을 쓰지 못함).
+훅(`main_work_guard.py`)이 메인의 게임 저장소 수정·빌드, `worker-start`, 쓰기 도구를 가진 하위 에이전트(`general-purpose`·`fork` 등)를 거부한다. 읽기 전용 하위 에이전트·읽기·`bd` 는 통과. 급할 때는 사용자가 거부 안내에 나오는 `! touch …` 명령으로 1시간 푼다(허용 파일 경로는 훅 `ALLOW_FILE` 한 곳, 모델은 이 파일을 쓰지 못함).
 
 ## 2-1. 계획 승인 기록
 
-사용자가 계획서를 컨펌하면 `~/.config/lrm-hubs/plan-approvals/<plan-id>.json` 을 쓴다.
+사용자가 코디네이터의 계획서를 컨펌하고 메인에 기록을 요청하면 `~/.config/lrm-hubs/plan-approvals/<plan-id>.json` 을 쓴다.
 
 ```json
 {"plan_id":"<파일 이름과 같게>","approved_at":"2026-11-16T23:00:00+09:00",
@@ -73,9 +72,7 @@ bd list --status blocked                         # 막힌 카드
 
 두 도우미는 같은 제목의 열린 카드·이미 닫힌 카드를 다시 만들거나 닫지 않아 반복해도 안전하다. `--json`·`--dry-run`·`--help` 를 지원한다.
 
-## 4. 현황 질문에 답하기
-
-조사하지 않고 아래 출력만 인용한다.
+## 4. 현황 조회
 
 | 질문 | 명령 |
 |---|---|
@@ -84,6 +81,7 @@ bd list --status blocked                         # 막힌 카드
 | 누가 뭐 하고 있어 | `bd list --status in_progress` |
 | 막힌 것 | `bd list --status blocked` |
 | 최근 끝난 것 | `bd list --status closed --sort closed --limit 10` |
+| CI | `gh run list --limit 10` · `gh pr checks <번호>` |
 | 자동 알림 | `bd list --label kind:alert` 후 `bd comments <id>` |
 | 기능 판별 못 한 Slack 피드백 | `bd list --label feedback:triage` |
 | 허브 터미널 상태(진단 요청 때만) | `bash scripts/patrol.sh` |
@@ -92,8 +90,7 @@ bd list --status blocked                         # 막힌 카드
 
 ## 하지 않는 것
 
-- 직접 조사·구현·워커 배정(기능 코디네이터 몫)
-- 허브 결정·답·보고 중계(작업판 카드가 대신함)
+- 코디네이터 허브 생성(`feature_open.sh`·`orca-hub-create`), 허브에 지시·답·보고 중계
+- 게임 코드 구현·빌드, 워커 기동·배정
 - 워커·허브 승인 창 대신 누르기
 - push·PR·merge·rebase·강제 명령·라이브 서버 쓰기를 사용자 원문 승인 없이 진행
-- 한 세션에서 계획 여러 개 이어 받기

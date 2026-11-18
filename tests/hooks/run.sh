@@ -757,12 +757,19 @@ out=$(printf '{깨진' | python3 -I "$EG" 2>/dev/null); [ -z "$out" ] && ok "epi
 MG="$H/lib/main_work_guard.py"
 GR="$SB/mg-game"; mkdir -p "$GR/Assets" "$SB/mg-other"; MALLOW="$SB/mg-home/main-work.allow"; mkdir -p "$SB/mg-home"
 # mrun <도구> <입력값(명령·경로)> [ORCA_ROLE] → pass|ask|deny
-mrun() { local key=command out; case "$1" in Write|Edit|MultiEdit) key=file_path ;; NotebookEdit) key=notebook_path ;; esac
+mrun() { local key=command out; case "$1" in Write|Edit|MultiEdit) key=file_path ;; NotebookEdit) key=notebook_path ;; Agent|Task) key=subagent_type ;; esac
   out=$(printf '%s' "$(jq -cn --arg t "$1" --arg k "$key" --arg v "$2" --arg d "${MCWD:-$SB/mg-other}" '{tool_name:$t,tool_input:{($k):$v},cwd:$d}')" | HOME="$SB/home" ORCA_ROLE="${3:-main}" LRM_GAME_ROOTS="$GR" LRM_MAIN_ALLOW="$MALLOW" python3 -I "$MG" 2>/dev/null)
   [ -z "$out" ] && echo pass || printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision'; }
 mexp() { local got; got=$(mrun "$2" "$3" "${5:-main}"); [ "$got" = "${4:-pass}" ] && ok "main-work: $1" || ko "main-work: $1" "기대 ${4:-pass}, 실제 $got"; }
 mexp "Agent 거부" Agent x deny
 mexp "Task 거부" Task x deny
+mexp "general-purpose 하위 에이전트 거부" Agent general-purpose deny
+mexp "fork 하위 에이전트 거부" Agent fork deny
+mexp "종류 없는 하위 에이전트 거부" Agent "" deny
+mexp "Explore 하위 에이전트 통과" Agent Explore
+mexp "Plan 하위 에이전트 통과" Agent Plan
+mexp "web-fetch 하위 에이전트 통과" Agent web-fetch
+mexp "claude-code-guide 하위 에이전트 통과" Task claude-code-guide
 mexp "작업자 세션 Agent 통과" Agent x pass worker
 mexp "코디네이터 세션 Agent 통과" Agent x pass coordinator
 mexp "작업자 세션 게임 저장소 Edit 통과" Edit "$GR/Assets/a.cs" pass worker
@@ -773,7 +780,7 @@ mexp "게임 저장소 밖 Write 통과(메모리·문서)" Write "$SB/mg-other/
 mexp "작업판 문서 Edit 통과" Edit "$HOME/orca/board/x.md" pass
 mexp "bd list 통과" Bash "bd list --status open"
 mexp "bd -C 카드 조작 통과" Bash "bd -C ~/orca/board update lrm-1 --status open"
-mexp "feature_open.sh 통과" Bash "bash ~/.config/lrm-hubs/feature_open.sh --ticket LRM-1 --name x --base dev --dry-run"
+mexp "feature_open.sh 는 확인(허브 생성은 사용자 몫)" Bash "bash ~/.config/lrm-hubs/feature_open.sh --ticket LRM-1 --name x --base dev --dry-run" ask
 mexp "board-ask 통과" Bash "board-ask --card lrm-1 'q'"
 mexp "읽기 파이프 통과" Bash "ls $GR/Assets | head -3; cat $GR/a | jq ."
 mexp "rg 게임 저장소 읽기 통과" Bash "rg foo $GR"
@@ -810,7 +817,7 @@ MCWD="$GR" mexp "bd list 2>&1 | head 통과" Bash "bd -C ~/orca/board list 2>&1 
 MCWD="$GR" mexp "bd show 2>&1 통과" Bash "bd show lrm-1 2>&1"
 MCWD="$GR" mexp "git status 2>&1 | tail 통과" Bash "git status 2>&1 | tail"
 MCWD="$GR" mexp "git -C log 2>&1 통과" Bash "git -C $GR log 2>&1"
-MCWD="$GR" mexp "feature_open.sh --dry-run 2>&1 | tail 통과" Bash "bash ~/.config/lrm-hubs/feature_open.sh --ticket LRM-1 --name x --base dev --dry-run 2>&1 | tail"
+MCWD="$GR" mexp "patrol.sh 2>&1 | tail 통과" Bash "bash ~/.config/lrm-hubs/patrol.sh 2>&1 | tail"
 MCWD="$GR" mexp "bd list >/dev/null 2>&1 통과" Bash "bd list >/dev/null 2>&1"
 MCWD="$GR" mexp "bd list &>/dev/null 통과" Bash "bd list &>/dev/null"
 MCWD="$GR" mexp ">&2 통과" Bash "echo x >&2"

@@ -138,7 +138,7 @@ leak=$(grep -nE '직접 ?전달|DM 으로|채널 ID|허브→메인|비주얼 �
 
 # ---- 새 허브: 역할 파일·생성 스크립트·restart_hub ------------------------------
 out=$("$REPO/tests/doc-kit/check_unique.sh" "$REPO/hubs/roles/role-doc-kit.txt" 2>&1) && ok "새 허브 역할 파일 고유값 0건" || ko "역할 파일 고유값" "$(echo "$out" | head -3 | tr '\n' ' ')"
-grep -q 'doc_config.py' "$REPO/hubs/roles/role-doc-kit.txt" && grep -q '직접 보내지 않는다' "$REPO/hubs/roles/role-doc-kit.txt" && grep -q '\[문서→메인\] 📄' "$REPO/hubs/roles/role-doc-kit.txt" && ok "역할 파일: 설정 참조·직접 전달 금지·제목 형식 포함" || ko "역할 파일 내용" ""
+grep -q 'doc_config.py' "$REPO/hubs/roles/role-doc-kit.txt" && grep -q '직접 보내지 않는다' "$REPO/hubs/roles/role-doc-kit.txt" && grep -q '제목 형식: "📄 <유형>' "$REPO/hubs/roles/role-doc-kit.txt" && ok "역할 파일: 설정 참조·직접 전달 금지·제목 형식 포함" || ko "역할 파일 내용" ""
 DH="$W/dochub"; mkdir -p "$DH/ws"
 before=$(find "$DH" | sort | tr '\n' ' ')
 out=$(DOC_HUB_REPO="$DH/repo" DOC_HUB_WS_ROOT="$DH/ws" "$REPO/hubs/scripts/create_doc_hub.sh" --dry-run --project 시험A 2>&1); rc=$?

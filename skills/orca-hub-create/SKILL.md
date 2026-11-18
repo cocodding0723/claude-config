@@ -29,7 +29,7 @@ description: Orca 에 새 코디네이터 허브(sparse 관리 워크스페이�
 - 게임 프로젝트 작업의 하위 워크스페이스는 컨펌된 계획서에 적힌 Jira 를 발급한 뒤 만든다(중복 검색, 같은 티켓 하위 작업은 키 재사용). 계획에 없는 티켓은 계획서에 추가 후 재컨펌. 사용자 개인 업무(오케스트레이션·스킬·도구·개인 보고·스크럼 초안·정리)는 Jira 없이 `[개인] 하는 일`.
 - 워커 bypass, 승인 요청은 코디네이터가 처리. 새 PR(검수 뒤)·dev/main 병합·강제 push·reset --hard·clean·branch -D 만 사용자 승인. 일반 push·열린 PR 갱신·추천안 결정·개발 Firebase 쓰기는 무승인(11-13 D-CFGAPPLY, common-rules '승인 경계' 절). 승인이 필요하면 허브 창에 묻지 말고 hub_report.py decide Slack 카드로.
 - rm 은 리터럴 경로·`${VAR:?}`·`mktemp -d`. Unity activate 는 녹화 때만 사전 고지.
-- Slack·Confluence 게시는 인증이 없으면 메인 코디네이터에 파일 경로와 핵심 3줄을 넘긴다.
+- Slack 게시는 Slack 봇(hub_report.py)으로 직접. Confluence 인증이 없으면 파일 경로와 핵심 3줄을 사용자에게 넘긴다.
 
 ## 주의
 
