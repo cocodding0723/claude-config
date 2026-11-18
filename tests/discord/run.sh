@@ -79,7 +79,7 @@ start "{\"messages\": [
   {\"id\": \"$U2\", \"author\": {\"id\": \"42\"}, \"content\": \"추천대로 ㄱㄱ\", \"message_reference\": {\"message_id\": \"$BASE\"}}],
   \"reactors\": {\"$BASE|2️⃣\": [\"900\", \"42\"]}}"
 out=$("$PY" -I "$S/discord_poll.py" --once --json); rc=$?
-[ "$rc" = 0 ] && [ "$out" = '{"ok": true, "added": 3}' ] && ok "받기: 새 항목 3건" || ko "받기" "rc=$rc $out"
+[ "$rc" = 0 ] && [ "$out" = '{"ok": true, "added": 3, "routed": 0}' ] && ok "받기: 새 항목 3건" || ko "받기" "rc=$rc $out"
 IN="$HUB/slack-inbox.jsonl"
 [ "$(q "$IN" '[(x["type"],x.get("command")) for x in d if x.get("ts")=="'$U1'"]')" = "[('command', 'status')]" ] && ok "받기: '현황' → command status" || ko "명령" ""
 [ "$(q "$IN" '[(x["type"],x["parent_ts"],x["action"],x["pick"]) for x in d if x.get("ts")=="'$U2'"]')" = "[('thread_reply', '$BASE', 'approve', 1)]" ] \
@@ -87,7 +87,7 @@ IN="$HUB/slack-inbox.jsonl"
 [ "$(q "$IN" '[(x["emoji"],x["action"],x["pick"],x["decision_id"]) for x in d if x["type"]=="reaction"]')" = "[('two', 'pick', 2, 'D-0001')]" ] \
   && ok "받기: 사용자 2️⃣ 반응만 → reaction emoji=two pick=2 (봇 혼자 단 ✅ 제외)" || ko "반응" "$(cat "$IN")"
 out=$("$PY" -I "$S/discord_poll.py" --once --json)
-[ "$out" = '{"ok": true, "added": 0}' ] && ok "받기 재실행: 중복 0건" || ko "중복" "$out"
+[ "$out" = '{"ok": true, "added": 0, "routed": 0}' ] && ok "받기 재실행: 중복 0건" || ko "중복" "$out"
 out=$("$PY" -I "$S/discord_poll.py" 2>&1); rc=$?
 [ "$rc" = 2 ] && ok "받기: --once 없으면 종료 코드 2" || ko "--once" "rc=$rc"
 
@@ -125,6 +125,16 @@ out=$("$PY" -I "$S/discord_notify.py" --thread "$mid" --broadcast "답글"); rc=
 [ "$rc" = 0 ] && [ "$(q "$LOG" '[x for x in d if x["path"]=="/users/@me/channels"][-1]["body"]["recipient_id"]')" = 42 ] && ok "--to-user Slack ID: 본인 DM 으로" || ko "--to-user Slack ID" "rc=$rc"
 "$PY" -I "$S/discord_notify.py" --to-user 123456789012345678 "문서" >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && [ "$(q "$LOG" '[x for x in d if x["path"]=="/users/@me/channels"][-1]["body"]["recipient_id"]')" = 123456789012345678 ] && ok "--to-user 디스코드 ID: 그 사람 DM" || ko "--to-user 디스코드 ID" "rc=$rc"
+
+out=$("$PY" -I "$S/discord_notify.py" --kind decide --no-doc --options '1=둘 다 => 27은 막고, 24는 고친다,2=빼기 => 그 자리에 멈춘다' \
+  --recommend 1 --decision-id D-COMMA $'쉼표 선택지\n배경: 시험'); rc=$?
+[ "$rc" = 0 ] && [ "$(q "$HUB/slack-sent.jsonl" '[x for x in d if x.get("decision_id")=="D-COMMA"][-1]["options"]["1"]')" = "둘 다" ] \
+  && ok "결정 카드: 선택지 문구 안 쉼표 허용(슬랙판과 같은 파서)" || ko "쉼표 선택지" "rc=$rc $out"
+n0=$(grep -c . "$LOG")
+out=$("$PY" -I "$S/discord_pending.py" --help); rc=$?
+[ "$rc" = 0 ] && [ "$(grep -c . "$LOG")" = "$n0" ] && ok "대기 목록 --help: 사용법만, 전송 없음" || ko "pending --help" "rc=$rc"
+"$PY" -I "$S/discord_pending.py" --what >/dev/null 2>&1; rc=$?
+[ "$rc" = 2 ] && [ "$(grep -c . "$LOG")" = "$n0" ] && ok "대기 목록 모르는 인자: 종료 코드 2, 전송 없음" || ko "pending 인자" "rc=$rc"
 
 printf '결과: PASS %d, FAIL %d\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

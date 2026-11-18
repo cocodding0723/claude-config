@@ -31,7 +31,15 @@ def pending(hub):
 
 
 def main():
-    dry = "--dry-run" in sys.argv[1:]
+    args = sys.argv[1:]
+    if args and args[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    bad = [x for x in args if x != "--dry-run"]
+    if bad:  # 모르는 인자로 실제 목록을 보내지 않음
+        print(f"알 수 없는 인자: {' '.join(bad)} — 사용: slack_pending.sh [--dry-run] [--help]", file=sys.stderr)
+        return 2
+    dry = "--dry-run" in args
     hub = os.environ.get("LRM_HUB_DIR", os.path.expanduser("~/.config/lrm-hubs"))
     lock = os.path.join(hub, ".slack-pending.lock")
     if os.path.isdir(lock) and time.time() - os.path.getmtime(lock) > LOCK_STALE:
@@ -89,4 +97,4 @@ def run(hub, dry):
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
