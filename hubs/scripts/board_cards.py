@@ -438,6 +438,29 @@ def ask(a):
     return {"id": made["id"], "created": True, "kind": a.kind, "gate": a.gate}
 
 
+SLACK_LABEL = "slack:"  # 결정 카드 label slack:<결정 번호> (board_slack 이 붙임)
+
+
+def close_slack_cards(card, text):
+    """작업판에서 닫은 결정을 Slack 결정 기록에도 남김. 남기지 않으면 2시간 재알림이 그 결정을 계속 물음. 남긴 카드 수.
+    Slack 으로 보낸 적 없는 카드(label 없음)는 0. 기록 실패는 카드 닫기를 되돌리지 않고 경고만 함"""
+    did = next((lb[len(SLACK_LABEL):] for lb in card.get("labels") or [] if lb.startswith(SLACK_LABEL + "D-")), "")
+    if not did:
+        return 0
+    try:
+        import answer_store  # 함수 안 import: 작업판만 쓰는 호출이 허브 스크립트 묶음 전체를 읽지 않게
+        store, n = answer_store.AnswerStore(), 0
+        for c in store.cards(did):
+            if not c["by"]:
+                extra = {"action": "custom", "text": text}
+                store.record(answer_store.Answer(did, c["ts"], c.get("channel", ""), c.get("title", ""), text, answer_store.TERMINAL, extra))
+                n += 1
+        return n
+    except Exception as e:  # noqa: BLE001  기록 파일 문제로 사용자 답 기록(카드 닫기)을 실패시키지 않음
+        print(f"경고: Slack 결정 기록에 남기지 못함({type(e).__name__}). 조치: decide-answer {did} \"<원문>\"", file=sys.stderr)
+        return 0
+
+
 def answer(a):
     text = a.text.strip()
     if not text:
@@ -455,7 +478,7 @@ def answer(a):
         return {"id": a.id, "closed": False, "commented": True}
     reason = text if len(text) <= REASON_MAX else text[:REASON_MAX - 1] + "…"
     bd("close", a.id, "--reason", f"답: {reason}")
-    return {"id": a.id, "closed": True, "commented": True}
+    return {"id": a.id, "closed": True, "commented": True, "slack": close_slack_cards(card, text)}
 
 
 def main(argv):

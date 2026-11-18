@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""결정 답 공용 기록. Slack 버튼(slack_socket.py)과 문서 사이트(doc_browser.py)가 같은 지점에서 답을 남김.
+"""결정 답 공용 기록. Slack 버튼(slack_socket.py)·문서 사이트(doc_browser.py)·터미널(decide-answer, board-answer)이 같은 지점에서 답을 남김.
 
 한 카드(parent_ts)에는 먼저 온 답만 인정함. 같은 번호로 다시 올린 카드는 새 카드라 따로 판정함.
 판정·기록은 flock 아래 한 번에 하므로 두 입구가 겹쳐도 한쪽만 이김.
@@ -22,9 +22,11 @@ from dataclasses import dataclass, field
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import card_actions as actions  # noqa: E402
 
-SLACK, DOCSITE = "slack", "docsite"
-SOURCE_NAME = {SLACK: "Slack", DOCSITE: "문서 사이트"}
-LATE_TEXT = {SLACK: "이미 Slack 에서 답함", DOCSITE: "이미 문서 사이트에서 답함"}  # 늦은 쪽에 보여 주는 사유
+SLACK, DOCSITE, TERMINAL = "slack", "docsite", "terminal"
+SOURCE_NAME = {SLACK: "Slack", DOCSITE: "문서 사이트", TERMINAL: "터미널"}
+LATE_TEXT = {SLACK: "이미 Slack 에서 답함", DOCSITE: "이미 문서 사이트에서 답함", TERMINAL: "이미 터미널에서 답함"}  # 늦은 쪽에 보여 주는 사유
+# 글로 쓴 답이 질문인지 판정하는 규칙(한 곳). 끝이 물음표, 또는 끝말이 아래 어미. 끝의 공백·마침표·느낌표·물결은 무시. 질문은 답이 아니라 카드를 열어 둠
+QUESTION_RE = re.compile(r"[?？]\s*$|(?:뭐야|뭔데|어떻게|왜|인가|나요|까)[\s.!~]*$")
 ANSWER_KINDS = ("pick", "approve")  # 이 동작의 반응·글은 답. 보류(hold)는 카드가 열려 있어 답이 아님
 DELIVERY_NAME = "answer-delivery.jsonl"
 PENDING = "pending"
@@ -32,6 +34,10 @@ APPROVE_NAME = "pr-approve.jsonl"  # PR 병합 승인 기록(종류 pr-approve)
 APPROVE_KIND = "pr-approve"
 PENDING_TTL_S = max(300, actions.BLOCK_WINDOW_S + 120)  # 이 시간이 지나도 전달 결과가 없으면 전달 전에 종료된 것으로 봄. 막힘 재시도 중(BLOCK_WINDOW_S)에는 넘지 않게
 LABEL_MAX = 80  # inbox option_text 길이 상한(Slack 버튼 때와 같음)
+
+
+def is_question(text: str) -> bool:
+    return bool(QUESTION_RE.search((text or "").strip()))
 
 
 @dataclass(frozen=True)
@@ -91,13 +97,26 @@ class AnswerStore:
                     self.mark(ans.did, ans.ts, PENDING, None, now, retry=True)
                     return Claim("redeliver", by, rec=rec)
                 return Claim("late", by)
-            rec = {"type": "button", "parent_ts": ans.ts, "channel": ans.channel, "title": ans.title, "decision_id": ans.did,
-                   "kind": "decide", "option_text": ans.label[:LABEL_MAX], "received_at": int(time.time() if now is None else now),
-                   **ans.extra, "source": ans.source}
-            self.append(self.inbox, json.dumps(rec, ensure_ascii=False) + "\n")
-            self.append(self.done, ans.ts + "\n")
+            self.write_answer(ans, now)
             self.mark(ans.did, ans.ts, PENDING, None, now)
         return Claim("claimed", taken=actions.try_take(ans.did))
+
+    def record(self, ans: Answer, now: float | None = None) -> str:
+        """Slack 밖(터미널·작업판)에서 받은 답을 같은 기록에 남김. 이미 답이 있으면 기록 없이 먼저 답한 입구를 돌려주고, 새로 남겼으면 빈 문자열.
+        전달 기록·감시기 카드 등록은 건드리지 않음 — 답을 받은 쪽이 이미 알고 있고, 실행 카드의 동작은 버튼으로만 일어나야 함"""
+        with actions.flock(self.lock):
+            by = self.find_answer(ans.did, ans.ts)[0]
+            if not by:
+                self.write_answer(ans, now)
+        return by
+
+    def write_answer(self, ans: Answer, now: float | None = None) -> None:
+        """답 한 줄(inbox)과 닫힘 한 줄(done). 잠금은 호출자가 잡음"""
+        rec = {"type": "button", "parent_ts": ans.ts, "channel": ans.channel, "title": ans.title, "decision_id": ans.did,
+               "kind": "decide", "option_text": ans.label[:LABEL_MAX], "received_at": int(time.time() if now is None else now),
+               **ans.extra, "source": ans.source}
+        self.append(self.inbox, json.dumps(rec, ensure_ascii=False) + "\n")
+        self.append(self.done, ans.ts + "\n")
 
     def first_answer(self, did: str, ts: str) -> str:
         """이 카드(ts)에 이미 인정된 답이 있으면 그 입구(slack|docsite), 없으면 빈 문자열"""
@@ -112,6 +131,7 @@ class AnswerStore:
     def judge(inbox: list, done: set, did: str, ts: str) -> tuple:
         """카드 한 장의 답 판정. 버튼 답은 그 자체로 확정(충돌 카드를 버튼으로 정리할 수 있음). 그다음 done 에 ts 가 있으면(사용자가 직접 닫음) 답한 것으로 봄.
         그 밖에 반응·스레드의 pick/approve 가 한 가지면 답, 서로 다르거나 conflict 표시가 있으면 충돌이라 답 없음.
+        선택 표기가 없을 때는 스레드에 글로 쓴 답(action free)도 답으로 봄. 질문 꼴(is_question)은 답이 아님.
         source 가 없는 옛 기록은 Slack 에서 온 것"""
         recs = [d for d in inbox if d.get("decision_id") == did and d.get("kind") == "decide" and d.get("parent_ts") == ts]
         src = lambda d: d.get("source") if d.get("source") in SOURCE_NAME else SLACK  # noqa: E731
@@ -121,9 +141,12 @@ class AnswerStore:
         if ts and ts in done:
             return SLACK, {}
         votes = [d for d in recs if d.get("type") in ("reaction", "thread_reply") and d.get("action") in ANSWER_KINDS]
-        if not votes or any(d.get("conflict") is True for d in votes) or len({str(d.get("pick")) for d in votes}) > 1:
-            return "", {}
-        return src(votes[0]), votes[0]
+        if votes:
+            if any(d.get("conflict") is True for d in votes) or len({str(d.get("pick")) for d in votes}) > 1:
+                return "", {}
+            return src(votes[0]), votes[0]
+        said = [d for d in recs if d.get("type") == "thread_reply" and d.get("action") == "free" and not is_question(d.get("text"))]
+        return (src(said[0]), said[0]) if said else ("", {})
 
     def cards(self, did: str = "") -> list:
         """번호 카드 기록(slack-sent.jsonl) 전부, 오래된 순. did 를 주면 그 번호만. 같은 번호로 다시 올린 카드는 각각 한 건.

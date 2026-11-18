@@ -21,6 +21,7 @@ LRM_PY_DIR="$(cd "$(dirname "$0")" && pwd)" "$PY" -I - "$DIR" "$@" <<'PY'
 import json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 sys.path.insert(0, os.environ["LRM_PY_DIR"])  # -I 는 같은 폴더를 import 경로에 넣지 않음
 import tls_ctx
+import answer_store
 SSL_CTX = tls_ctx.ssl_context()
 H = sys.argv[1]
 DRY = "--dry-run" in sys.argv[2:]
@@ -139,6 +140,10 @@ def main():
              and isinstance(s.get("decision_id"), str) and DECISION_ID_RE.fullmatch(s["decision_id"])}
     done = {t for t in reacted if t not in cards} | {t for t, st in cards.items() if st and st[0] == "closed"}
     done |= set(open(done_file).read().split()) if os.path.exists(done_file) else set()
+    # 버튼·터미널·글로 쓴 답은 답 기록 모듈이 판정(확인 목록·옆 패널과 같은 한 곳). 여기서 따로 세면 Slack 밖에서 답한 결정이 계속 대기로 남음
+    closed = set(done)
+    done |= {s["ts"] for s in sent if s.get("ts") and isinstance(s.get("decision_id"), str)
+             and answer_store.AnswerStore.judge(inbox, closed, s["decision_id"], s["ts"])[0]}
     # 번호 카드 기록이면 번호가 손상됐어도 목록에는 남김(번호 없이 제목만 표시)
     decisions = [s for s in sent if s.get("ts") and not s.get("thread_ts")
                  and ("결정" in s.get("title", "") or s["ts"] in cards or (s.get("form_kind") == "decide" and "options" in s))]
