@@ -465,6 +465,41 @@ for (const width of [40, 60, 100]) {
   })
 }
 
+// heartbeat·증거 둘째 줄: 진행 중 카드만, 오래됨이면 ⚠, 폭 40·60·100 에서 한 줄
+const doingKid = (extra = {}) => ({ id: 'k1', title: '가'.repeat(40), st: 'doing', who: 'w-heartbeat-long-name', at: sec(NOW - 2 * 60000), subs: 3, beatAt: sec(NOW - 5 * 60000), ev: 'ok', ...extra })
+
+test('kidBeat: 진행 중만, 기준(beatStaleMin) 이상이면 ⚠·warn, 증거 상태 문구', () => {
+  const lim = b.PANEL_CONFIG.beatStaleMin
+  assert.equal(b.kidBeat(doingKid({ st: 'todo' }), NOW), undefined)
+  assert.equal(b.kidBeat(doingKid({ st: 'done' }), NOW), undefined)
+  assert.deepEqual(b.kidBeat(doingKid(), NOW), { text: '갱신 5분 · 증거 ✓', warn: false })
+  const old = b.kidBeat(doingKid({ beatAt: sec(NOW - lim * 60000), ev: 'none' }), NOW)
+  assert.deepEqual(old, { text: `갱신 ${lim}분 ⚠ · 증거 없음`, warn: true })
+  assert.equal(b.kidBeat(doingKid({ beatAt: sec(NOW - (lim - 1) * 60000) }), NOW).warn, false)
+  assert.equal(b.kidBeat(doingKid({ ev: 'stale' }), NOW).text, '갱신 5분 · 증거 낡음')
+  assert.equal(b.kidBeat(doingKid({ ev: 'unk' }), NOW).text, '갱신 5분 · 증거 ?')
+  assert.equal(b.BEAT_STALE_MIN, lim) // 오래됨 기준은 PANEL_CONFIG 한 곳
+})
+
+test('kidBeat: 옛 수집 파일(beatAt·ev 없음)은 마지막 갱신으로 대체하고 증거 없음', () => {
+  const k = { id: 'k', title: 't', st: 'doing', who: null, at: sec(NOW - 90 * 60000), subs: 0 }
+  assert.deepEqual(b.kidBeat(k, NOW), { text: '갱신 1시간 ⚠ · 증거 없음', warn: true })
+  assert.match(b.kidBeat({ ...k, at: null }, NOW).text, /^갱신 \? ⚠/) // 시각을 모르면 오래됨으로 봄
+})
+
+for (const width of [40, 60, 100]) {
+  test(`하위 둘째 줄 폭 ${width}: 가장 긴 경우에도 한 줄, 진행 중이 아닌 카드엔 없음`, () => {
+    const worst = [doingKid({ beatAt: sec(NOW - 99 * 3600000), ev: 'stale' }), doingKid({ beatAt: null, at: null, ev: 'unk' }), doingKid({ ev: 'none', beatAt: sec(NOW - 40 * 60000) })]
+    const todo = { ...doingKid(), st: 'todo' }
+    const ls = b.kidLines([...worst, todo], NOW)
+    for (const l of ls.slice(0, 3)) assert.ok(rowCount(`  ${l.sub}`, '', width) === 1, `${width}칸: ${l.sub}`)
+    assert.equal(ls[3].sub, undefined)
+    // 첫 줄: 한글 전각 16자 제목 + 담당 상한 + 하위 N 의 최악 조합. 담당을 12자로 잘라 폭 40·60 에서도 2줄 이내(자르기 전엔 3줄)
+    for (const l of ls.slice(0, 3)) assert.ok(rowCount(`  ${l.text}`, l.age, width) <= (width >= 100 ? 1 : 2), `${width}칸: ${l.text}`)
+    assert.ok(!ls[0].text.includes('w-heartbeat-long-name'))
+  })
+}
+
 test('epicRows: 하위 0 이면 막대·표식 없음(기존 한 줄 유지), 접힘이면 막대만', () => {
   assert.equal(b.epicRows({ ...longEpic, total: 0, kids: [] }, true, NOW).bar, undefined)
   const folded = b.epicRows(longEpic, false, NOW)

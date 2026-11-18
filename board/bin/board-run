@@ -5,11 +5,13 @@ set -uo pipefail
 
 usage() {
   cat <<'H'
-사용: board-run <compile|editmode|test> [--out <로그>] [--result <결과 파일>] -- <명령…>
+사용: board-run <compile|editmode|test> [--out <로그>] [--result <결과 파일>] [--card <카드> --actor <작업자>] -- <명령…>
   현재 폴더(git 작업 트리)에서 명령을 실행하고 로그를 남김. 마지막 줄에 증거 줄을 출력함.
   로그 머리줄: # board-run kind=<종류> tree=<작업 트리 tree 해시> head=<HEAD>
   로그 끝줄:   # exit <종료 코드>
   --result: 명령이 만든 결과 파일(예: EditMode xml)의 sha256 을 로그에 묶음. 증거 줄은 로그를 가리킴.
+  --card/--actor(환경 BOARD_CARD·BOARD_ACTOR): 끝나면 board-beat 로 그 카드의 heartbeat 를 갱신함. 명령이 성공(0)하고 tree 가 HEAD 와 같으면
+    증거 커밋(metadata evidence_<종류>=<HEAD>)도 남겨 패널이 '증거 ✓' 를 보임. 실패는 board-run 종료 코드에 영향 없음(경고만).
   tree 는 추적 파일 + 무시되지 않은 새 파일의 현재 내용. 커밋 전에 돌려도 그대로 커밋하면 같은 값.
 종료: 명령의 종료 코드 / 2 사용법·git 작업 트리 아님
 환경: BOARD_DIR(기본 ~/orca/board, 로그 기본 위치 <BOARD_DIR>/.evidence)
@@ -26,11 +28,13 @@ case "$KIND" in
   compile|editmode|test) ;;
   *) usage >&2; exit 2 ;;
 esac
-OUT="" RESULT=""
+OUT="" RESULT="" CARD="${BOARD_CARD:-}" ACTOR="${BOARD_ACTOR:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) OUT="${2:?--out 값 필요}"; shift 2 ;;
     --result) RESULT="${2:?--result 값 필요}"; shift 2 ;;
+    --card) CARD="${2:?--card 값 필요}"; shift 2 ;;
+    --actor) ACTOR="${2:?--actor 값 필요}"; shift 2 ;;
     --) shift; break ;;
     *) echo "오류: 알 수 없는 인자 '$1'. 명령 앞에 -- 필요" >&2; exit 2 ;;
   esac
@@ -63,5 +67,14 @@ if [ -n "$RESULT" ]; then
 fi
 echo "# exit $RC" >> "$OUT"
 echo "evidence:$KIND=$OUT commit=$HEAD"
-[ "$TREE" = "$(git rev-parse -q --verify 'HEAD^{tree}' 2>/dev/null)" ] || echo "참고: 커밋 안 된 변경 포함. 이 내용 그대로 커밋하면 commit= 을 새 커밋 해시로 바꿔 달 것" >&2
+COMMITTED=1
+[ "$TREE" = "$(git rev-parse -q --verify 'HEAD^{tree}' 2>/dev/null)" ] || { COMMITTED=0; echo "참고: 커밋 안 된 변경 포함. 이 내용 그대로 커밋하면 commit= 을 새 커밋 해시로 바꿔 달 것" >&2; }
+if [ -n "$CARD" ]; then
+  [ -n "$ACTOR" ] || echo "경고: --card 에는 --actor 도 필요함. heartbeat 생략" >&2
+  if [ -n "$ACTOR" ]; then
+    BEAT="$(cd "$(dirname "$(perl -MCwd=realpath -e 'print realpath shift' "${BASH_SOURCE[0]}")")" && pwd -P)/board-beat"
+    if [ "$RC" = 0 ] && [ "$COMMITTED" = 1 ] && [ "$HEAD" != none ]; then "$BEAT" "$CARD" "$ACTOR" --evidence "$KIND=$HEAD" >/dev/null || echo "경고: 카드 $CARD 증거 기록 실패(위 오류 확인). 증거 줄은 손으로 달 것" >&2
+    else "$BEAT" "$CARD" "$ACTOR" >/dev/null || echo "경고: 카드 $CARD heartbeat 실패" >&2; fi
+  fi
+fi
 exit "$RC"

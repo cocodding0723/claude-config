@@ -243,7 +243,12 @@ export const register: Register = on => {
                   <Box flexDirection="column">
                     {row(f.mark, MARK_COLOR[f.mark] ?? C.meta, f.text, C.title, f.age)}
                     {rows.bar !== undefined && row('', C.meta, rows.bar, C.meta)}
-                    {rows.kids.map(k => row(k.mark, MARK_COLOR[k.mark] ?? C.meta, `  ${k.text}`, k.mark === '✓' ? C.meta : C.detail, k.age))}
+                    {rows.kids.map(k => (
+                      <Box flexDirection="column">
+                        {row(k.mark, MARK_COLOR[k.mark] ?? C.meta, `  ${k.text}`, k.mark === '✓' ? C.meta : C.detail, k.age)}
+                        {k.sub !== undefined && row('', C.meta, `  ${k.sub}`, k.warn ? C.stale : C.meta)}
+                      </Box>
+                    ))}
                   </Box>
                 )
               })}

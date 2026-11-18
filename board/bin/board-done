@@ -10,6 +10,7 @@ import sys
 from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
+import board_evidence as bev  # noqa: E402
 import board_scope as bs  # noqa: E402
 import board_config  # noqa: E402
 
@@ -53,18 +54,11 @@ REQUIRED = {
     "epic": ["screenshot", "recording", "review"],
 }
 
-GUESS = [
-    ("mapping", re.compile(r"(mapping|대응표).*\.md$", re.I)),
-    ("prefab-diff", re.compile(r"prefab.*(diff|compare|비교)", re.I)),
-    ("editmode", re.compile(r"editmode.*\.xml$|\.xml$", re.I)),
-    ("compile", re.compile(r"compile.*\.(log|txt)$|\.log$", re.I)),
-    ("screenshot", re.compile(r"\.(png|jpe?g)$", re.I)),
-    ("recording", re.compile(r"\.(mp4|mov|webm)$", re.I)),
-]
+GUESS = bev.GUESS
 
 EMPTY_CELL = {"", "-", "—", "미정", "todo", "tbd", "?"}
 RUN_HEAD = re.compile(r"^# board-run kind=(\S+) tree=([0-9a-f]{40}) head=(\S+)", re.M)
-EVIDENCE_RE = re.compile(r"^\s*evidence:\s*(?:([a-z-]+)=)?(\S.*?)(?:\s+commit=([0-9a-f]{7,40}))?\s*$", re.M)
+EVIDENCE_RE = bev.EVIDENCE_RE
 
 
 class Fail(Exception):
@@ -105,13 +99,7 @@ def collect_evidence(card):
     texts = [card.get("notes") or ""]
     for c in bd_json("comments", card["id"]) or []:
         texts.append(c.get("text") or "")
-    found = {}
-    for t in texts:
-        for kind, path, sha in EVIDENCE_RE.findall(t):
-            if not kind:
-                kind = next((k for k, rx in GUESS if rx.search(path)), "unknown")
-            found.setdefault(kind, []).append((os.path.expanduser(path), sha))
-    return found
+    return bev.parse(texts)
 
 
 def git(repo, *args):

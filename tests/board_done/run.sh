@@ -194,6 +194,25 @@ expect "feature: epic 닫힘" 0 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epi
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$SB/fc.args" ] && break; sleep 0.3; done
 [ "$(cat "$SB/fc.args" 2>/dev/null)" = "--slug demo --yes" ] && ok "epic 닫힘 뒤 feature_close --slug --yes 실행" || ko "feature_close 연결" "$(cat "$SB/fc.args" 2>/dev/null)"
 
+# board-run --card: 성공·커밋된 트리면 증거 커밋을 metadata 에 남기고 heartbeat 갱신. 실패·미커밋은 증거 안 남김. 시험 종료 코드는 그대로
+bm=$(new_card "beat 연결"); claim "$bm" wb
+meta_of() { bd show "$1" --json | python3 -c 'import json,sys;d=json.load(sys.stdin);d=d[0] if isinstance(d,list) else d;print((d.get("metadata") or {}).get(sys.argv[1],""))' "$2"; }
+hb_of() { bd show "$1" --json | python3 -c 'import json,sys;d=json.load(sys.stdin);d=d[0] if isinstance(d,list) else d;print(d.get("heartbeat_at",""))'; }
+git -C "$GR" checkout -q w; h0=$(hb_of "$bm"); sleep 1
+(cd "$GR" && "$RUN" test --out "$SB/ev/bm1.log" --card "$bm" --actor wb -- true >/dev/null 2>&1); rc=$?
+[ "$rc" = 0 ] && [ "$(meta_of "$bm" evidence_test)" = "$HEAD_W" ] && [ "$(hb_of "$bm")" \> "$h0" ] && ok "board-run --card: 성공 시 증거 커밋·heartbeat 기록" || ko "board-run --card 성공" "rc=$rc ev=$(meta_of "$bm" evidence_test)"
+bf=$(new_card "beat 실패"); claim "$bf" wb
+(cd "$GR" && "$RUN" test --out "$SB/ev/bm2.log" --card "$bf" --actor wb -- false >/dev/null 2>&1); rc=$?
+[ "$rc" = 1 ] && [ -z "$(meta_of "$bf" evidence_test)" ] && ok "board-run --card: 시험 실패는 증거 안 남기고 종료 코드 유지" || ko "board-run --card 실패" "rc=$rc"
+bd2=$(new_card "beat 미커밋"); claim "$bd2" wb
+(cd "$GR" && echo x > dirty.txt && "$RUN" test --out "$SB/ev/bm3.log" --card "$bd2" --actor wb -- true >/dev/null 2>&1; rm -f dirty.txt)
+[ -z "$(meta_of "$bd2" evidence_test)" ] && ok "board-run --card: 커밋 안 된 트리는 증거 안 남김" || ko "미커밋 증거" ""
+(cd "$GR" && "$RUN" test --out "$SB/ev/bm4.log" --card "$bm" -- true >"$SB/out" 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q '경고: --card 에는 --actor' "$SB/out" && ok "board-run --card 만 주면 경고하고 시험은 그대로" || ko "--actor 누락" "rc=$rc"
+(cd "$GR" && "$RUN" test --out "$SB/ev/bm5.log" --card "$bm" --actor intruder -- true >"$SB/out" 2>&1); rc=$?
+[ "$rc" = 0 ] && grep -q '경고' "$SB/out" && ok "담당 아닌 --actor 는 경고만, 시험 종료 코드 유지" || ko "담당 아님" "rc=$rc $(cat "$SB/out")"
+git -C "$GR" checkout -q main
+
 expect "인자 부족은 2" 2 "$BIN" onlyid
 expect "--help 는 0" 0 "$BIN" --help
 expect "없는 카드는 4" 4 "$BIN" nope-1 w1

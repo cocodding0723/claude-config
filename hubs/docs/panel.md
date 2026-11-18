@@ -209,6 +209,32 @@
 - 펼친 에픽 하나가 그리는 줄은 `board.ts` 의 `PANEL_CONFIG.epicKidsMax`(5)까지이고 넘치면 `외 N개` 한 줄이다. 하위 제목은 `kidTitleMax`(16자)에서 …로 자른다. 패널 폭은 렌더에서 알 수 없어 폭에 맞춘 상한 대신 고정 상한을 쓴다. 펼친 에픽이 있으면 AI 진행 칸 머리 줄에 `접기: /board-epics off` 안내가 보인다. 막대 칸 수는 `barCells`. 수집기가 싣는 하위 카드 상한은 `panel_collect.py` 의 `EPIC_KIDS_MAX`(30)다.
 - 원료는 `sources.board.value.features[].kids[]`(`id`·`title`·`st`(todo·doing·blocked·done)·`who`·`at`·`subs`)이다. 기존 `bd list --all --json` 한 번의 결과에서 만들며 카드마다 `bd` 를 부르지 않는다.
 
+### 하위 카드 둘째 줄: 갱신·증거 (11-17, lrm-fxm)
+
+진행 중(`◐`) 하위 카드 아래에 한 줄이 더 붙는다. 담당 이름은 첫 줄에 있어 되풀이하지 않는다.
+
+| 표시 | 뜻 |
+|---|---|
+| `갱신 N분` | 마지막 heartbeat 이후 경과. heartbeat 가 없으면 카드 마지막 변경 시각으로 대신한다 |
+| `갱신 N분 ⚠` | 30분 넘게 갱신이 없다(줄 색도 경고). 기준은 `board.ts` 의 `PANEL_CONFIG.beatStaleMin` 한 곳이다 |
+| `증거 ✓` | 증거 커밋(`board-run --card` 의 metadata 또는 코멘트의 `evidence:… commit=` 줄)이 작업 브랜치 끝과 같다 |
+| `증거 없음` | metadata 에도 코멘트에도 증거가 없다 |
+| `증거 낡음` | 증거 커밋이 브랜치 끝과 다르다(증거 뒤에 커밋이 생김). 다시 돌려야 한다 |
+| `증거 ?` | 증거는 있으나 비교할 수 없다: 코멘트 줄에 `commit=` 이 없거나, 브랜치 끝을 모르거나, 코멘트를 읽지 못했다(`bd export` 실패) |
+
+- 열림·막힘·닫힘 카드에는 둘째 줄이 없다. 폭 40·60·100 에서 한 줄이다(`tests/panel/board.test.mjs`). 담당 이름은 `kidWhoMax`(12자)에서 자른다.
+- 원료는 `features[].kids[]` 의 `beatAt`(epoch 초)·`ev`(`none`·`ok`·`stale`·`unk`)다. 기존 `bd list --all --json` 한 번에서 만들며 카드마다 `bd` 를 부르지 않는다. 브랜치 끝은 같은 저장소·브랜치당 `git rev-parse` 한 번이다.
+- 진행 줄의 `beatAt` 도 heartbeat 와 마지막 변경 중 늦은 쪽이다.
+
+**heartbeat 남기기**: `board-beat <카드> <작업자> ["한 줄 메모"]`
+
+- 갱신 시각은 beads 임대의 `heartbeat_at`, 메모는 카드 metadata `beat_note`(한 줄·80자)에 남는다. 코멘트는 늘지 않는다.
+- 담당 작업자만 갱신할 수 있다(아니면 종료 13). 반복 실행해도 안전하다. `--help` 에 종료 코드가 있다.
+- `board-claim`(다시 집기 포함)과 `board-run <종류> --card <카드> --actor <작업자> -- <명령>` 이 자동으로 부른다. `board-run` 은 명령이 성공하고 작업 트리가 HEAD 와 같을 때만 증거 커밋(`evidence_<종류>`)도 남긴다.
+- 단계가 바뀔 때와 30분 넘게 길어질 때 손으로 한 번씩 부른다.
+
+**코멘트 증거도 읽는다.** 지금까지처럼 `board-run` 이 출력한 줄을 코멘트로 달아도 된다. 수집기가 진행 중 카드의 notes·코멘트를 `bd export` 한 번으로 모아(카드마다 `bd` 를 부르지 않는다) 종류별 마지막 `evidence:` 줄을 읽는다. 해석은 `board-done` 과 같은 `board/lib/board_evidence.py` 를 쓴다. `commit=` 이 없는 줄은 비교할 수 없어 `증거 ?` 로 보인다.
+
 ## 8. 후속 제안
 
 - Slack 할 일 목록(리스트) 읽기: 봇 토큰 스코프(`lists:read` 등) 확인이 먼저다. 수집기는 지금 토큰을 읽지 않으므로, 읽게 하려면 토큰을 다루는 별도 단계(폴러 쪽)에 붙이는 편이 맞다.
