@@ -787,6 +787,8 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
         refresh_parent(conf, rep, st, deadline)
     topic = st["topics"].get(key, {})
     shared = bool(topic.get("shared"))
+    # 상한 밖 카드가 같이 쓰는 기능 스레드에는 결정 카드를 올리지 않음: 그 스레드의 글 답이 어느 작업 공간 것인지 가릴 수 없어 기능 코디네이터로 감
+    threaded = threaded and not (decide and shared)
     if "body_ts" not in rs:
         warn_unattached(conf, rep)
         if decide:

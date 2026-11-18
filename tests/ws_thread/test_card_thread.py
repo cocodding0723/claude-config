@@ -288,6 +288,20 @@ class CapTest(Base):
         self.assertEqual(last[last.index("--thread") + 1], et)
         self.assertIn(k3, last[-1], "어느 카드 글인지 머리에 카드 id")
 
+    def test_decision_from_a_card_sharing_the_feature_thread_stays_top_level(self):
+        """상한 밖 카드는 기능 스레드를 같이 씀. 거기에 결정 카드를 올리면 스레드 글 답이 어느 작업 공간 것인지 가릴 수 없어 맨 위 글로 보냄"""
+        self.open_first_two()
+        k3 = self.kids[2]
+        self.report(k3, "시작", ws="/w/2")
+        self.run_sender()
+        rep = hub_report.make_report("feat-x", "없음", "decide", DECIDE_TEXT, [], options=DECIDE_OPTS, recommend="1", decision_id="D-SH01",
+                                     no_doc=True, card=k3, ws="/w/2")
+        hub_report.add(self.conf.outbox, rep, time.time(), False)
+        self.assertEqual(self.run_sender()["sent"], 1)
+        a = next(x for x in self.calls() if "D-SH01" in x)
+        self.assertNotIn("--thread", a)
+        self.assertNotIn("--broadcast", a)
+
     def test_over_cap_decision_is_made_once(self):
         self.open_first_two()
         k3 = self.kids[2]

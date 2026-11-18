@@ -33,6 +33,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import board_cards as cards  # noqa: E402
 import card_actions as actions  # noqa: E402
+import answer_store  # noqa: E402
 import main_inbox  # noqa: E402
 import pending_judge  # noqa: E402
 
@@ -65,8 +66,11 @@ TRIAGE_LABELS = "hub:main,feedback:triage"
 TRIAGE_TITLE = "📥 기능 판별 필요: Slack 스레드 {ts}"
 TS_RE = re.compile(r"^[0-9]{1,12}\.[0-9]{1,9}$")
 SENT_NAME = "slack-sent.jsonl"
-# 작업 스레드에 결정 번호로 시작하는 글. 원문 앞에 붙여 담당이 결정 답임을 알게 함(글 답은 카드를 닫지 않으므로 닫는 법도 함께)
-DECIDE_HEAD = "결정 {did} 답(스레드 글, 카드는 열려 있음. 확인 뒤 decide-answer {did} 로 닫음): "
+# 작업 스레드에 결정 번호로 시작하는 글. 상자 줄 머리는 짧게(입력창 알림 요약 HEAD_MAX 안에 원문이 남게), 닫는 법은 카드 코멘트에만
+DECIDE_HEAD = "[결정 {did} {kind}] "
+DECIDE_ANSWER, DECIDE_ASK = "답", "질문"
+DECIDE_NOTE = {DECIDE_ANSWER: ", 결정 {did} 의 글 답. 카드는 열려 있음, 확인 뒤 decide-answer {did} 로 닫음",
+               DECIDE_ASK: ", 결정 {did} 에 대한 질문. 답이 아님"}
 SOURCE = "feedback_route"
 EXIT_CONFLICT = 5
 
@@ -172,11 +176,11 @@ def triage_card(ts, dry_run):
     return made["id"]
 
 
-def to_feature(epic, rec, text, dry_run, note=""):
+def to_feature(epic, rec, text, dry_run, note="", head=""):
     """열린 기능 epic 으로: epic 코멘트 + 기능 코디네이터 상자. note 는 코멘트 머리 보충(끝난 작업 공간 카드에서 온 답 등)"""
     box = BOX_HEAD + slug_of(epic)
     if not dry_run:  # 상자 먼저: 중복 판정이 있어 재시도해도 줄이 겹치지 않고, 코멘트는 상자가 된 뒤에 한 번만
-        main_inbox.append("feedback", text, SOURCE, ref=f"{epic['id']} slack:{rec.get('ts')}", box=box)
+        main_inbox.append("feedback", head + text, SOURCE, ref=f"{epic['id']} slack:{rec.get('ts')}", box=box)
         cards.bd("comments", "add", epic["id"], f"Slack 피드백(원문{note}): {text}")
     return {"ts": str(rec.get("ts")), "parent_ts": str(rec.get("parent_ts") or ""), "to": "feature", "epic": epic["id"], "box": box}
 
@@ -189,12 +193,12 @@ def to_triage(rec, hits, why, text, dry_run):
     return {"ts": str(rec.get("ts")), "parent_ts": parent, "to": "triage", "card": cid, "why": why}
 
 
-def to_ws(card, rec, text, dry_run):
+def to_ws(card, rec, text, dry_run, head="", note=""):
     """열린 작업 공간 카드로: 카드 코멘트 + 세션 받은 편지함 한 줄. 입력창 알림은 호출한 쪽이 once() 끝에서 처리"""
     box = box_of(card["id"])
     if not dry_run:  # 상자 먼저(to_feature 와 같은 이유)
-        main_inbox.append("feedback", text, SOURCE, ref=f"{card['id']} slack:{rec.get('ts')}", box=box)
-        cards.bd("comments", "add", card["id"], f"Slack 피드백(원문): {text}")
+        main_inbox.append("feedback", head + text, SOURCE, ref=f"{card['id']} slack:{rec.get('ts')}", box=box)
+        cards.bd("comments", "add", card["id"], f"Slack 피드백(원문{note}): {text}")
     return {"ts": str(rec.get("ts")), "parent_ts": str(rec.get("parent_ts") or ""), "to": "ws", "card": card["id"], "box": box}
 
 
@@ -247,24 +251,28 @@ def route(rec, by_ts, dry_run):
     if not hits:
         return None
     did = decision_of(rec)
-    got = place(rec, hits, (DECIDE_HEAD.format(did=did) if did else "") + body(rec), dry_run)
-    return dict(got, decision_id=did) if did else got
+    if not did:
+        return place(rec, hits, body(rec), dry_run)
+    # 번호로 시작해도 질문이면 답으로 표시하지 않음(담당이 질문을 답으로 보고 카드를 닫지 않게). 판정은 대기 목록과 같은 규칙
+    kind = DECIDE_ASK if answer_store.is_question(rec.get("text")) else DECIDE_ANSWER
+    got = place(rec, hits, body(rec), dry_run, head=DECIDE_HEAD.format(did=did, kind=kind), note=DECIDE_NOTE[kind].format(did=did))
+    return dict(got, decision_id=did)
 
 
-def place(rec, hits, text, dry_run):
-    """답글을 받을 곳(작업 공간 카드·기능 epic·확인 카드)에 넣음"""
+def place(rec, hits, text, dry_run, head="", note=""):
+    """답글을 받을 곳(작업 공간 카드·기능 epic·확인 카드)에 넣음. head 는 상자 줄 머리, note 는 카드 코멘트의 보충(둘 다 원문은 건드리지 않음)"""
     if len(hits) == 1:
         c = hits[0]
         if ws_of(c) is not None:
             if is_open(c):
-                return to_ws(c, rec, text, dry_run)
+                return to_ws(c, rec, text, dry_run, head, note)
             # 끝난 작업 공간 카드: 답은 그 기능 코디네이터가 받음. 기능도 끝났으면 확인 카드
             up = card_row(c["parent"]) if c.get("parent") else None
             if up and up.get("status") != "closed" and is_feature(up):
-                return to_feature(up, rec, text, dry_run, note=f", 끝난 작업 공간 카드 {c['id']} 스레드")
-            return to_triage(rec, hits, "끝난 작업 공간 카드(기능도 끝남)", text, dry_run)
+                return to_feature(up, rec, text, dry_run, note=f", 끝난 작업 공간 카드 {c['id']} 스레드" + note, head=head)
+            return to_triage(rec, hits, "끝난 작업 공간 카드(기능도 끝남)" + note, text, dry_run)
         if is_feature(c) and c.get("status") != "closed":
-            return to_feature(c, rec, text, dry_run)
+            return to_feature(c, rec, text, dry_run, note=note, head=head)
     opened = [e for e in hits if e.get("status") != "closed"]
     if len(hits) > 1:
         why = "epic 여럿" if all(e.get("issue_type") == "epic" for e in hits) else "카드 여럿"
@@ -274,7 +282,7 @@ def place(rec, hits, text, dry_run):
         why = "epic 에 feature: 라벨 없음"
     else:
         why = "담당 작업 공간 없는 카드"
-    return to_triage(rec, hits, why, text, dry_run)
+    return to_triage(rec, hits, why + note, text, dry_run)
 
 
 # ---- 세션 입력창 알림 ------------------------------------------------------------------------

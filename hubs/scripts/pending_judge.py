@@ -57,7 +57,8 @@ def is_decision(s: dict) -> bool:
     return bool(s.get("ts")) and s.get("form_kind") == DECIDE and "options" in s
 
 
-ID_LEAD = re.compile(r"\s*(?:결정\s+)?")  # 번호 앞에 올 수 있는 말(카드 아래 참고 줄이 '결정 D-…' 꼴)
+# 번호 앞에 올 수 있는 것: 인용 표시(>), 봇을 부른 말(<@U…>), '결정' 낱말(카드 아래 참고 줄이 '결정 D-…' 꼴, 붙여 쓰기도 함)
+ID_LEAD = re.compile(r"\s*(?:>\s*)?(?:<@[A-Z0-9]+>\s*)?(?:결정\s*)?")
 
 
 def written_answer(card: dict, rec: dict) -> bool:
@@ -68,7 +69,7 @@ def written_answer(card: dict, rec: dict) -> bool:
         return False
     text = str(rec.get("text") or "")
     rest = text[ID_LEAD.match(text).end():]
-    return rest.startswith(did) and not re.match(r"[0-9A-Za-z]", rest[len(did):])
+    return rest[:len(did)].lower() == did.lower() and not re.match(r"[0-9A-Za-z]", rest[len(did):])  # 소문자로 쓴 번호도 같은 번호
 
 
 def is_auto(s: dict, rules: Rules) -> bool:
