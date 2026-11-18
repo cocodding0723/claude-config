@@ -15,6 +15,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I 는 같은 폴더를 import 경로에 넣지 않음
+import decide_card  # noqa: E402
 import discord_api as dapi
 
 KIND_EMOJI = {"decide": "🟠", "todo": "📌", "done": "✅", "progress": "🔵", "warn": "🔴", "doc": "📄"}
@@ -49,12 +50,14 @@ def card(a):
     if not (a.recommend and a.decision_id):
         die("--options 에는 --recommend·--decision-id 가 필요")
     opts, outcomes = {}, {}
-    for part in a.options.split(","):
-        n, _, rest = part.partition("=")
-        text, _, result = rest.partition("=>")
-        opts[n.strip()] = text.strip()
-        if result.strip():
-            outcomes[n.strip()] = result.strip()
+    try:  # 슬랙판·미리 실행과 같은 파서: 문구 안 쉼표는 뒤에 '숫자=' 가 올 때만 구분자
+        parsed = decide_card.options(a.options)
+    except ValueError as e:
+        die(str(e))
+    for n, text, result in parsed:
+        opts[n] = text
+        if result:
+            outcomes[n] = result
     if not 2 <= len(opts) <= 4 or set(opts) != {str(i) for i in range(1, len(opts) + 1)}:
         die("--options 범위 오류: 번호는 1부터 빠짐없이 2~4개 — 예 '1=가,2=나'")
     if a.recommend not in opts:

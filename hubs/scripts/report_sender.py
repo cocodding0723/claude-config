@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import board_cards  # noqa: E402
 import hub_report  # noqa: E402
+import main_inbox  # noqa: E402
 import hub_status  # noqa: E402
 import ledger  # noqa: E402
 
@@ -838,6 +839,10 @@ def warn_stop(conf: Conf, rep: dict, st: dict, why: str, permanent: "bool | None
            f"- 원인: {cause}\n- 조치: 보고를 고쳐 hub_report.py add 로 다시 기록")
     run_notify(conf, ["--tag", rep["hub"], "--kind", "warn", "--from", "report_sender", "--subject", rep["id"], "--state", "stopped"]
                + (["--thread", thread] if thread else []) + [msg], deadline)
+    try:  # 보낸 허브가 채팅을 안 봐도 알게 그 허브 받은 편지함에도 남김(main_inbox.py read --box <허브>)
+        main_inbox.append("other", msg, "report_sender", ref=rep["id"], box=rep["hub"])
+    except (OSError, ValueError) as e:
+        log(conf, f"전송 중단 허브 알림 실패 보고 {rep['id']}: {e}")
 
 
 def incident(kind: str, cause: str, **fields) -> None:
