@@ -17,7 +17,8 @@ CFG_HUB_REPORT="${LRM_HUB_REPORT:-$HERE/hub_report.py}"   # 기능 Slack 스레�
 
 usage() {
   cat <<'USAGE'
-사용: feature_open.sh --ticket LRM-n --name "<기능 한글>" --base <브랜치> [--slug <영문 작업명>] [--type <타입>] [--long] [--dry-run] [--json]
+사용: feature_open.sh --ticket LRM-n --name "<기능 한글>" --base <브랜치> [--slug <영문 작업명>] [--type <타입>] [--long]
+                       [--goal "<목표 한 문장>" --verify "<확인 방법 한 문장>" [--out "<범위 밖>"]] [--dry-run] [--json]
 기능 하나를 맡을 코디네이터를 만든다. 다시 실행해도 있는 것은 재사용하고 빠진 것만 만든다.
   1 기능 통합 브랜치(없으면 --base 에서 생성). 이름은 게임 저장소 규칙(CLAUDE.md Branch Convention)을 따름:
       스프린트 안에서 끝나는 작업  sprint-<오늘 YYYYMMDD>/<타입>-<티켓>-<작업명>   예 sprint-20261118/feat-LRM-612-mailbox
@@ -37,6 +38,10 @@ usage() {
   --slug 영문     영문 작업명(소문자·숫자·-). 브랜치·허브 이름에 씀. 생략하면 허브 이름은 티켓 소문자(lrm-n), 브랜치는 티켓 번호까지만(경고)
   --type 타입     feat|fix|chore|refactor|docs|design (기본 feat). 버그 수정은 fix
   --long          여러 스프린트에 걸치는 모듈 작업. 브랜치를 feature/<작업명> 으로 만듦
+  --goal 문장     접수: 만들 것 한 문장(사용자 원문 그대로). 기능 카드 설명의 "- 목표:" 칸에 적음
+  --verify 문장   접수: 끝났는지 확인할 방법 한 문장. "- 확인 방법:" 칸에 적음
+  --out 문장      접수: 이번에 하지 않는 것. "- 범위 밖:" 칸에 적음
+                  세 칸은 새 기능 카드를 만들 때만 적음. 안 주면 빈 칸으로 남고 코디네이터가 채워야 접수 단계를 떠날 수 있음(board-stage)
   --dry-run       아무것도 만들지 않고 할 일만 출력
   --json          결과를 JSON 한 줄로 출력
 환경: REPO, WS_ROOT, LRM_BOARD(작업판 폴더), LRM_CREATE_HUB, LRM_FEATURE_ROLE, LRM_ROLES_DIR, LRM_SPRINT_DATE(스프린트 폴더 날짜, 기본 오늘)
@@ -47,14 +52,16 @@ usage() {
 USAGE
 }
 die() { echo "$1" >&2; exit "${2:-2}"; }
+oneline() { printf '%s' "$1" | tr '\n' ' '; }  # 접수 칸은 한 줄(줄이 갈리면 칸 이름 줄에서 떨어짐)
 
-TICKET="" NAME="" BASE="" SLUG="" TYPE="feat" LONG=0 DRY=0 JSON=0
+TICKET="" NAME="" BASE="" SLUG="" TYPE="feat" LONG=0 DRY=0 JSON=0 GOAL="" VERIFY="" OUT_OF=""
 BRANCH_TYPES="feat|fix|chore|refactor|docs|design"  # 게임 저장소 CLAUDE.md 의 타입 접두
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --ticket|--name|--base|--slug|--type) [ $# -ge 2 ] || die "$1 값 필요 — --help 참고"
-      case "$1" in --ticket) TICKET="$2";; --name) NAME="$2";; --base) BASE="$2";; --slug) SLUG="$2";; --type) TYPE="$2";; esac; shift 2 ;;
+    --ticket|--name|--base|--slug|--type|--goal|--verify|--out) [ $# -ge 2 ] || die "$1 값 필요 — --help 참고"
+      case "$1" in --ticket) TICKET="$2";; --name) NAME="$2";; --base) BASE="$2";; --slug) SLUG="$2";; --type) TYPE="$2";;
+        --goal) GOAL="$2";; --verify) VERIFY="$2";; --out) OUT_OF="$2";; esac; shift 2 ;;
     --long) LONG=1; shift ;;
     --dry-run) DRY=1; shift ;;
     --json) JSON=1; shift ;;
@@ -104,7 +111,7 @@ if [ -z "$EPIC" ]; then
   if [ "$DRY" = 1 ]; then EPIC="(생성 예정)"
   else
     EPIC=$(cd "$CFG_BOARD" && bd create "[$TICKET] $NAME" -t epic -l "$LABEL,flow:v1,branch:$BRANCH,repo:$CFG_REPO,base:$BASE_REF" --external-ref "jira-$TICKET" \
-      -d "$(printf -- '- 기능 코디네이터 허브: %s\n- 통합 브랜치: %s' "$HUB" "$BRANCH")" --json | jq -r '.id // empty') || true
+      -d "$(printf -- '- 목표: %s\n- 확인 방법: %s\n- 범위 밖: %s\n- 기능 코디네이터 허브: %s\n- 통합 브랜치: %s' "$(oneline "$GOAL")" "$(oneline "$VERIFY")" "$(oneline "$OUT_OF")" "$HUB" "$BRANCH")" --json | jq -r '.id // empty') || true
     [ -n "$EPIC" ] || die "epic 생성 실패 — cd $CFG_BOARD && bd create ... 를 직접 실행해 오류 확인" 1
   fi
 fi

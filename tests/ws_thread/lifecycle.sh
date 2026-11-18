@@ -52,6 +52,12 @@ chk "여러 스프린트에 걸치는 모듈(--long)은 feature/<이름>" '[ "$(
 chk "작업명을 안 주면 티켓 번호까지만 쓰고 경고" '[ "$(bjson --ticket LRM-713 --name 이름없음)" = "sprint-20261118/feat-LRM-713" ] && grep -q "작업명" "$SB/err"' "$(cat "$SB/err")"
 bash "$SCR/feature_open.sh" --ticket LRM-714 --name x --base dev --slug y --type hotfix --dry-run >/dev/null 2>"$SB/err"; RC=$?
 chk "모르는 타입은 종료 2" '[ "$RC" = 2 ] && grep -q "feat|fix" "$SB/err"' "rc=$RC $(cat "$SB/err")"
+# 접수(0단계): 목표와 확인 방법을 기능 카드 설명에 적어 줌. 안 주면 빈 칸으로 남아 단계 도구가 채우라고 알려 줌
+desc_of() { (cd "$BOARD" && bd show "$1" --json | jq -r '(if type=="array" then .[0] else . end).description'); }
+bash "$SCR/feature_open.sh" --ticket LRM-721 --name "결말" --base dev --slug ending --goal "마지막 날 시작해도 결말이 열린다" --verify "마지막 날 세이브로 시작해 장면이 열리는 캡처" >/dev/null 2>&1
+D=$(desc_of "$(epic_of ending)")
+chk "feature_open --goal·--verify: 기능 카드 설명에 접수 칸으로 적힘(원문 그대로)" 'printf "%s" "$D" | grep -qx -- "- 목표: 마지막 날 시작해도 결말이 열린다" && printf "%s" "$D" | grep -qx -- "- 확인 방법: 마지막 날 세이브로 시작해 장면이 열리는 캡처"' "$D"
+chk "접수 칸을 안 준 기능 카드에는 빈 칸이 남음" 'desc_of "$EPIC" | grep -q -- "^- 목표:[[:space:]]*$" && desc_of "$EPIC" | grep -q -- "^- 확인 방법:[[:space:]]*$"' "$(desc_of "$EPIC")"
 : > "$CALLS"; bash "$SCR/feature_open.sh" --ticket LRM-702 --name "상점" --base dev --slug shop --dry-run >/dev/null 2>&1
 chk "feature_open --dry-run: 예약 없음" '[ ! -s "$CALLS" ]'
 : > "$CALLS"; FAKE_REPORT_FAIL=1 bash "$SCR/feature_open.sh" --ticket LRM-703 --name "랭킹" --base dev --slug rank >/dev/null 2>"$SB/err"; RC=$?
