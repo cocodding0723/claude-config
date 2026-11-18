@@ -17,7 +17,7 @@ cp "$SCRIPTS/lib/py.sh" "$SCRIPTS/lib/chat.sh" "$SB/s/lib/"
 export HOME="$SB/home" LRM_HUB_DIR="$SB/hub"
 VALS="$HOME/.config/claude-config/values.env"
 
-for pair in slack_notify.sh:discord_notify.py slack_poll.sh:discord_poll.py slack_pending.sh:discord_pending.py; do
+for pair in slack_notify.sh:discord_notify.py slack_pending.sh:discord_pending.py; do
   ep=${pair%%:*} impl=${pair#*:}
   cp "$SCRIPTS/$ep" "$SB/s/$ep"
   rm -f "$SB/s/$impl"
@@ -41,6 +41,28 @@ for pair in slack_notify.sh:discord_notify.py slack_poll.sh:discord_poll.py slac
   out=$(bash "$SB/s/$ep" --help 2>&1)
   echo "$out" | grep -q 'IMPL' && ko "$ep 기본 slack" "디스코드로 넘어감" || ok "$ep: CHAT 없으면 슬랙 그대로"
 done
+
+# slack_poll.sh: 수집만 디스코드 구현, 회차 뒤처리(접수·기능 답글·메인 전달·보고 전송)는 공통으로 돎
+P="$SB/s/slack_poll.sh"; L="$SB/calls.log"; mkdir -p "$SB/hub"
+cp "$SCRIPTS/slack_poll.sh" "$P"
+printf 'CHAT=discord\n' > "$VALS"
+out=$(bash "$P" --once 2>&1); rc=$?
+[ "$rc" = 2 ] && echo "$out" | grep -q 'discord_poll.py 없음' && ok "slack_poll.sh: 디스코드 구현 없으면 중단" || ko "poll 구현 없음" "rc=$rc $out"
+printf 'import os,sys\nopen(os.environ["CALLS"],"a").write("discord_poll "+" ".join(sys.argv[1:])+"\\n")\n' > "$SB/s/discord_poll.py"
+for f in intake.py feedback_route.py report_sender.py; do
+  printf 'import os,sys\nopen(os.environ["CALLS"],"a").write("%s "+" ".join(sys.argv[1:])+"\\n")\n' "$f" > "$SB/s/$f"
+done
+printf '#!/bin/bash\necho "slack_push.sh $*" >> "$CALLS"\n' > "$SB/s/slack_push.sh"
+printf '#!/bin/bash\necho "slack_pending.sh" >> "$CALLS"\n' > "$SB/hub/slack_pending.sh"; chmod +x "$SB/hub/slack_pending.sh"
+: > "$L"; CALLS="$L" bash "$P" --once --days 3 >/dev/null 2>&1; rc=$?
+grep -q '^discord_poll --once --days 3$' "$L" && ok "slack_poll.sh: CHAT=discord 면 수집을 discord_poll.py 로" || ko "poll 수집" "$(cat "$L")"
+for f in intake.py feedback_route.py slack_push.sh report_sender.py slack_pending.sh; do
+  grep -q "^$f" "$L" && ok "slack_poll.sh(discord): 뒤처리 $f 호출" || ko "뒤처리 $f" "rc=$rc $(cat "$L")"
+done
+out=$(LRM_CHAT=teams bash "$P" --once 2>&1); rc=$?
+[ "$rc" = 2 ] && echo "$out" | grep -q 'CHAT=teams 은 허용값' && ok "slack_poll.sh: 허용값 밖이면 중단" || ko "poll 허용값" "rc=$rc"
+: > "$VALS"; out=$(bash "$P" --once 2>&1); rc=$?
+echo "$out" | grep -q 'slack-bot' && [ "$rc" = 2 ] && ok "slack_poll.sh: CHAT 없으면 슬랙 그대로(봇 설정 요구)" || ko "poll 기본 slack" "rc=$rc $out"
 
 printf '결과: PASS %d, FAIL %d\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

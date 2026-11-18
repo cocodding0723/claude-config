@@ -4,7 +4,7 @@ export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/cert.pem}"  # python.org 파이�
 # 읽기와 파일 기록만 함. 수신 본문은 데이터로만 다루고 실행·eval 하지 않음.
 set -eu
 . "$(dirname "$0")/lib/py.sh"  # PY = 3.10 이상 python3 (launchd 짧은 PATH 의 3.9 방지)
-. "$(dirname "$0")/lib/chat.sh"; lrm_chat_route discord_poll.py "$@"  # CHAT=discord 면 여기서 넘김
+. "$(dirname "$0")/lib/chat.sh"  # CHAT=discord 면 수집만 discord_poll.py, 회차 뒤처리(접수·전달·보고 전송)는 같이 돎
 usage() {
   cat <<'EOF'
 사용: slack_poll.sh --once [--json] [--days N]
@@ -71,17 +71,25 @@ done
 [ "$ONCE" = 1 ] || { echo "--once 필요 — 반복은 launchd 가 담당" >&2; exit 2; }
 case "$DAYS" in ''|*[!0-9]*) echo "--days 는 정수" >&2; exit 2 ;; esac
 DIR="${LRM_HUB_DIR:-$HOME/.config/lrm-hubs}"
-ENV="$DIR/slack-bot.env"
-[ -f "$ENV" ] || { echo "slack-bot.env 없음 — 사용자 설정 필요" >&2; exit 2; }
-. "$ENV"
-: "${SLACK_BOT_TOKEN:?}" "${SLACK_USER_ID:?}"
+CHAT=$(lrm_chat)
+case "$CHAT" in
+  slack) ;;
+  discord) [ -f "$(dirname "$0")/discord_poll.py" ] || { echo "CHAT=discord 인데 discord_poll.py 없음 — install.sh 를 다시 실행" >&2; exit 2; } ;;
+  *) echo "CHAT=$CHAT 은 허용값(slack|discord) 밖 — values.env 의 CHAT 을 고친 뒤 다시 실행" >&2; exit 2 ;;
+esac
+if [ "$CHAT" = slack ]; then
+  ENV="$DIR/slack-bot.env"
+  [ -f "$ENV" ] || { echo "slack-bot.env 없음 — 사용자 설정 필요" >&2; exit 2; }
+  . "$ENV"
+  : "${SLACK_BOT_TOKEN:?}" "${SLACK_USER_ID:?}"
+fi
 # 동시 실행 방지(launchd 2분 간격·소켓 수신기·수동 실행 겹침)
 LOCK="$DIR/.slack-poll.lock"
 # 5분 넘은 잠금은 죽은 실행의 잔재로 보고 제거
 [ -d "$LOCK" ] && [ -n "$(find "$LOCK" -maxdepth 0 -mmin +5 2>/dev/null)" ] && rmdir "$LOCK" 2>/dev/null
 mkdir "$LOCK" 2>/dev/null || { [ "$JSON" = 1 ] && echo '{"ok":true,"added":0,"skipped":"locked"}'; exit 0; }
 trap 'rmdir "$LOCK"' EXIT
-export SLACK_BOT_TOKEN SLACK_USER_ID
+[ "$CHAT" != slack ] || export SLACK_BOT_TOKEN SLACK_USER_ID
 # 수집 실패(429 포함)여도 아래 즉답·대기 목록 단계는 건너뛰지 않음. 종료 코드만 마지막에 전달
 RC=0
 # 회차 전체 시간 예산(초). 수집·대기 목록·즉답(내부에서 대기 목록 재호출)의 재시도 예산 합이 5분 잠금 만료(300초) 아래여야 동시 실행이 안 생김.
@@ -93,6 +101,38 @@ cap() {  # cap <단계 상한>: 남은 총 예산과 상한 중 작은 값, 최�
   [ "$v" -lt 1 ] && v=1
   echo "$v"
 }
+# 회차 뒤처리: 대기 목록·즉답·접수·기능 답글·메인 전달·허브 보고 전송. 채팅 종류와 무관하게 돎(discord 면 즉답 명령만 생략)
+post_round() {
+  # 2시간마다 미답 결정 목록 전송(11-05 사용자 요청). 마지막 전송 시각은 .pending-last
+  L="$DIR/.pending-last"; now=$(date +%s); last=$(cat "$L" 2>/dev/null || echo 0)
+  if [ $((now - last)) -ge 7200 ]; then echo "$now" > "$L"; LRM_PENDING_BUDGET="$(cap "${LRM_PENDING_BUDGET:-120}")" "$DIR/slack_pending.sh" >/dev/null 2>&1 || true; fi
+
+  # 봇 DM 즉답 명령(대기·PR) 처리. 대기 명령이 대기 목록을 다시 부르므로 남은 예산을 그대로 물려줌
+  [ "$CHAT" != slack ] || LRM_PENDING_BUDGET="$(cap "${LRM_PENDING_BUDGET:-120}")" "$DIR/slack_cmd.sh" >/dev/null 2>&1 || true
+
+  # 새 명령 접수(번호·장부·머리말 라우팅). 접수 실패가 메인 전달을 막지 않게 하고, 같은 줄은 멱등이라 회차마다 불러도 중복 접수 없음
+  LRM_HUB_DIR="$DIR" "$PY" -I "$(dirname "$0")/intake.py" --once >/dev/null 2>&1 || true
+
+  # 기능 스레드 답글 → 그 기능 epic 코멘트·코디네이터 상자(feedback_route.py). 메인 전달보다 먼저 불러 같은 답글이 메인에 가지 않게 함
+  LRM_HUB_DIR="$DIR" "$PY" -I "$(dirname "$0")/feedback_route.py" --once >/dev/null 2>&1 || true
+
+  # 새 메시지 묶음 전달(push). 수집이 실패한 회차에도 대기분을 전달하도록 RC 와 무관하게 호출.
+  # 워커는 분리돼 바로 반환하므로 이 잠금(300초)을 쥐지 않고, 출력 파이프도 닫아 소켓 수신기의 capture_output 이 기다리지 않음
+  LRM_HUB_DIR="$DIR" /bin/bash "$(dirname "$0")/slack_push.sh" --kick >/dev/null 2>&1 || true
+
+  # 허브 보고 전송(outbox → 주제 스레드). 메인 전달 뒤에 불러 Slack 지연이 전달을 막지 않음.
+  # 회차 총 예산(TOTAL)의 남은 만큼만 전송기 시간 상한으로 넘기고, 남은 예산이 없으면 이번 회차는 건너뜀(300초 잠금 만료 방지)
+  left=$((TOTAL - ($(date +%s) - T0)))
+  if [ "$left" -ge 1 ]; then
+    [ "$left" -gt "${LRM_REPORT_BUDGET_S:-40}" ] && left="${LRM_REPORT_BUDGET_S:-40}"
+    LRM_REPORT_BUDGET_S="$left" LRM_HUB_DIR="$DIR" "$PY" -I "$(dirname "$0")/report_sender.py" --once >/dev/null 2>&1 || true
+  fi
+}
+if [ "$CHAT" = discord ]; then  # 수집만 디스코드 구현, 뒤처리는 공통
+  set +e; "$PY" -I "$(dirname "$0")/discord_poll.py" --once $([ "$JSON" = 1 ] && echo --json) --days "$DAYS"; RC=$?; set -e
+  post_round
+  exit "$RC"
+fi
 LRM_PY_DIR="$(cd "$(dirname "$0")" && pwd)" LRM_POLL_BUDGET="$(cap "${LRM_POLL_BUDGET:-90}")" "$PY" -I - "$DIR" "$DAYS" "$JSON" <<'PY' || RC=$?
 import json, os, re, subprocess, sys, time, unicodedata, urllib.error, urllib.parse, urllib.request
 sys.path.insert(0, os.environ["LRM_PY_DIR"])  # -I 는 같은 폴더를 import 경로에 넣지 않음
@@ -939,28 +979,5 @@ except (ApiError, OSError) as e:
 print(json.dumps({"ok": True, "added": n}) if AS_JSON else f"새 항목 {n}건 → {INBOX}")
 PY
 
-# 2시간마다 미답 결정 목록 전송(11-05 사용자 요청). 마지막 전송 시각은 .pending-last
-L="$DIR/.pending-last"; now=$(date +%s); last=$(cat "$L" 2>/dev/null || echo 0)
-if [ $((now - last)) -ge 7200 ]; then echo "$now" > "$L"; LRM_PENDING_BUDGET="$(cap "${LRM_PENDING_BUDGET:-120}")" "$DIR/slack_pending.sh" >/dev/null 2>&1 || true; fi
-
-# 봇 DM 즉답 명령(대기·PR) 처리. 대기 명령이 대기 목록을 다시 부르므로 남은 예산을 그대로 물려줌
-LRM_PENDING_BUDGET="$(cap "${LRM_PENDING_BUDGET:-120}")" "$DIR/slack_cmd.sh" >/dev/null 2>&1 || true
-
-# 새 명령 접수(번호·장부·머리말 라우팅). 접수 실패가 메인 전달을 막지 않게 하고, 같은 줄은 멱등이라 회차마다 불러도 중복 접수 없음
-LRM_HUB_DIR="$DIR" "$PY" -I "$(dirname "$0")/intake.py" --once >/dev/null 2>&1 || true
-
-# 기능 스레드 답글 → 그 기능 epic 코멘트·코디네이터 상자(feedback_route.py). 메인 전달보다 먼저 불러 같은 답글이 메인에 가지 않게 함
-LRM_HUB_DIR="$DIR" "$PY" -I "$(dirname "$0")/feedback_route.py" --once >/dev/null 2>&1 || true
-
-# 새 메시지 묶음 전달(push). 수집이 실패한 회차에도 대기분을 전달하도록 RC 와 무관하게 호출.
-# 워커는 분리돼 바로 반환하므로 이 잠금(300초)을 쥐지 않고, 출력 파이프도 닫아 소켓 수신기의 capture_output 이 기다리지 않음
-LRM_HUB_DIR="$DIR" /bin/bash "$(dirname "$0")/slack_push.sh" --kick >/dev/null 2>&1 || true
-
-# 허브 보고 전송(outbox → 주제 스레드). 메인 전달 뒤에 불러 Slack 지연이 전달을 막지 않음.
-# 회차 총 예산(TOTAL)의 남은 만큼만 전송기 시간 상한으로 넘기고, 남은 예산이 없으면 이번 회차는 건너뜀(300초 잠금 만료 방지)
-left=$((TOTAL - ($(date +%s) - T0)))
-if [ "$left" -ge 1 ]; then
-  [ "$left" -gt "${LRM_REPORT_BUDGET_S:-40}" ] && left="${LRM_REPORT_BUDGET_S:-40}"
-  LRM_REPORT_BUDGET_S="$left" LRM_HUB_DIR="$DIR" "$PY" -I "$(dirname "$0")/report_sender.py" --once >/dev/null 2>&1 || true
-fi
+post_round
 exit "$RC"

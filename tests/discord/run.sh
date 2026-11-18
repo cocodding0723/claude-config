@@ -121,5 +121,10 @@ out=$("$PY" -I "$S/discord_notify.py" --thread "$mid" --broadcast "답글"); rc=
 "$PY" -I "$S/discord_notify.py" --broadcast "x" >/dev/null 2>&1; rc=$?
 [ "$rc" = 2 ] && ok "--broadcast 단독: 종료 코드 2" || ko "--broadcast 단독" "rc=$rc"
 
+"$PY" -I "$S/discord_notify.py" --to-user U0SLACKID "문서" >/dev/null 2>&1; rc=$?
+[ "$rc" = 0 ] && [ "$(q "$LOG" '[x for x in d if x["path"]=="/users/@me/channels"][-1]["body"]["recipient_id"]')" = 42 ] && ok "--to-user Slack ID: 본인 DM 으로" || ko "--to-user Slack ID" "rc=$rc"
+"$PY" -I "$S/discord_notify.py" --to-user 123456789012345678 "문서" >/dev/null 2>&1; rc=$?
+[ "$rc" = 0 ] && [ "$(q "$LOG" '[x for x in d if x["path"]=="/users/@me/channels"][-1]["body"]["recipient_id"]')" = 123456789012345678 ] && ok "--to-user 디스코드 ID: 그 사람 DM" || ko "--to-user 디스코드 ID" "rc=$rc"
+
 printf '결과: PASS %d, FAIL %d\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

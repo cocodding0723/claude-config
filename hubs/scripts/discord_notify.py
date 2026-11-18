@@ -134,7 +134,8 @@ def main():
 
     c = dapi.Client(tok)
     try:
-        ch = c.dm_channel(a.to_user or me)
+        to = a.to_user if re.fullmatch(r"\d{17,20}", a.to_user or "") else me  # Slack ID(U…) 등 디스코드 ID 가 아니면 본인 DM
+        ch = c.dm_channel(to)
         ref = a.link_to or a.quote
         if ref:
             msg += "\n원본: " + dapi.link(ch, ref)
