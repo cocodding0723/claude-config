@@ -496,6 +496,17 @@ wexp "plan-write: 메모리 파일 Write 통과" "{\"tool_name\":\"Write\",\"too
 wexp "plan-write: 변수로 조립한 경로 쓰기 거부" "$(bx 'D=~/.config/lrm-hubs/plan-approvals; echo {} > $D/p.json')" deny
 printf 'echo {} > ~/.config/lrm-hubs/plan-approvals/p.json\n' > "$SB/write_it.sh"
 wexp "plan-write: 설치 밖 스크립트로 쓰기 거부" "$(bx "bash $SB/write_it.sh")" deny
+# 셸·파이썬이 시작할 때 읽는 파일을 환경 변수로 넘기면 신뢰 스크립트 앞에서 그 파일이 먼저 실행됨. 그 파일도 스크립트로 검사
+printf 'echo hi\n' > "$SB/plain_env.sh"
+wexp "plan-write: BASH_ENV 로 넘긴 설치 밖 스크립트 거부" "$(bx "BASH_ENV=$SB/write_it.sh bash ~/.config/lrm-hubs/x.sh")" deny
+wexp "plan-write: env BASH_ENV=… 형태도 거부" "$(bx "env BASH_ENV=$SB/write_it.sh bash -c true")" deny
+wexp "plan-write: export BASH_ENV 뒤 실행도 거부" "$(bx "export BASH_ENV=$SB/write_it.sh; bash -c true")" deny
+wexp "plan-write: PYTHONSTARTUP 으로 넘긴 스크립트 거부" "$(bx "PYTHONSTARTUP=$SB/write_it.sh python3 -i")" deny
+wexp "plan-write: 보호 이름이 없는 BASH_ENV 파일은 통과" "$(bx "BASH_ENV=$SB/plain_env.sh bash -c true")"
+wexp "plan-write: 다른 환경 변수 대입은 통과" "$(bx "LRM_SCRIPT_DIR=$SB/write_it.sh ls")"
+wreason() { printf '%s' "$1" | HOME="$SB/home" bash "$H/plan-approval-write-guard.sh" 2>/dev/null | jq -r '.hookSpecificOutput.permissionDecisionReason // ""'; }
+case "$(wreason "$(bx "bash $SB/write_it.sh")")" in *"test-box <"*) ok "plan-write: 스크립트 거부 안내에 격리 시험 실행기(test-box) 길을 알려 줌" ;; *) ko "plan-write: 거부 안내에 test-box" "안내 없음" ;; esac
+case "$(wreason "$(bx 'D=~/.config/lrm-hubs/plan-approvals; echo {} > $D/p.json')")" in *"test-box <"*) ko "plan-write: 스크립트가 아닌 거부에는 test-box 안내 없음" "안내가 붙음" ;; *) ok "plan-write: 스크립트가 아닌 거부에는 test-box 안내 없음" ;; esac
 wexp "plan-write: rsync 쓰기 거부" "$(bx 'rsync a.json ~/.config/lrm-hubs/plan-approvals/')" deny
 wexp "plan-write: curl -o 쓰기 거부" "$(bx 'curl -s -o ~/.config/lrm-hubs/plan-approvals/p.json https://example.invalid')" deny
 wexp "plan-write: sponge 쓰기 거부" "$(bx 'echo {} | sponge ~/.config/lrm-hubs/plan-approvals/p.json')" deny

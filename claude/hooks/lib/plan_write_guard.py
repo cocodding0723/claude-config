@@ -29,6 +29,8 @@ LAST_ARG = {"cp", "ln", "install", "rsync", "scp", "ditto"}
 INPLACE = {"sed", "perl", "gsed"}
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 INTERP = {"python", "python3", "node", "ruby", "perl", "php"}
+# 셸·파이썬이 시작할 때 읽어 실행하는 파일을 가리키는 환경 변수. 신뢰 스크립트 앞에 붙이면 그 파일이 먼저 실행되므로 스크립트로 검사
+STARTUP_VARS = {"BASH_ENV", "ENV", "PYTHONSTARTUP"}
 WRAPPERS = {"sudo", "env", "exec", "command", "nohup", "time", "nice", "xargs", "builtin", "caffeinate"}
 CODE_WRITE = re.compile(r"open\([^)]*['\"][wax+]|write_text|write_bytes|\.write\(|shutil\.|os\.(rename|replace|remove|unlink|makedirs|mkdir)|"
                         r"json\.dump\(|writeFile|appendFile|\bFile\.write|>\s*\S|\b(cp|mv|rm|tee|touch)\b")
@@ -39,6 +41,7 @@ REASON_LEDGER = ("{name} 은 사람이 낸 승인의 원장이라 세션에서 �
 REASON_TRANSCRIPT = "세션 기록(projects/*/*.jsonl)은 사용자 '!' 승인 대조의 근거라 세션에서 고치지 않음"
 REASON_APPROVE = ("board-approve 는 사용자가 프롬프트에서 직접 '! ~/orca/board/bin/board-approve <repo> <branch> \"<원문>\"' 로 실행함. "
                   "모델은 실행하지 않고 사용자에게 그 한 줄을 안내")
+HINT_TEST = " 시험 스크립트면 ~/.config/lrm-hubs/test-box <스크립트> 로 실행(임시 폴더 안에 묶여 돌아 기록을 못 고침)"
 REASON_OPAQUE = "쓰기 대상을 해석할 수 없음({why}) — 보호 기록({frag}) 쓰기일 수 있어 거부. 경로를 리터럴로 쓰거나 다른 방법으로"
 
 
@@ -217,6 +220,7 @@ def segment(seg, ctx, bodies, depth):
         i += 1
     while words and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[0]):
         k, v = words.pop(0).split("=", 1)
+        startup(k, v, ctx)
         ev = expand_word(v, ctx)
         if ev is None:
             ctx.vars.pop(k, None)
@@ -225,7 +229,9 @@ def segment(seg, ctx, bodies, depth):
     while words and os.path.basename(words[0]) in WRAPPERS:
         name = os.path.basename(words.pop(0))
         while words and (words[0].startswith("-") or (name == "env" and "=" in words[0])):
-            words.pop(0)
+            w = words.pop(0)
+            if name == "env" and "=" in w and not w.startswith("-"):
+                startup(*w.split("=", 1), ctx)
     if not words:
         return
     prog, args = os.path.basename(words[0]), words[1:]
@@ -241,6 +247,7 @@ def segment(seg, ctx, bodies, depth):
         for a in args:
             if "=" in a:
                 k, v = a.split("=", 1)
+                startup(k, v, ctx)
                 ev = expand_word(v, ctx)
                 if ev is not None:
                     ctx.vars[k] = ev
@@ -299,6 +306,11 @@ def segment(seg, ctx, bodies, depth):
                 ctx.hits.append(("code", "heredoc 코드"))
         elif plain:
             script(plain[0], ctx)
+
+
+def startup(key, value, ctx):
+    if key in STARTUP_VARS and value:
+        script(value, ctx)
 
 
 def script(path, ctx):
@@ -369,7 +381,10 @@ def decide(ev):
     if "ledger" in kinds:
         return REASON_LEDGER.format(name=next(n for k, n in ctx.hits if k == "ledger"))
     if ("plan" in kinds or "code" in kinds) and not main:
-        return REASON_PLAN if "plan" in kinds else REASON_OPAQUE.format(why=next(n for k, n in ctx.hits if k == "code"), frag="이름 조각")
+        if "plan" in kinds:
+            return REASON_PLAN
+        why = next(n for k, n in ctx.hits if k == "code")
+        return REASON_OPAQUE.format(why=why, frag="이름 조각") + (HINT_TEST if why.startswith("스크립트") else "")
     if "code" in kinds and main and re.search(r"slack[-_]?inbox|user[-_]?approv|board[-_]?approve", cmd, re.I):
         return REASON_LEDGER.format(name="원장")
     frag = FRAGMENTS.search(cmd)
