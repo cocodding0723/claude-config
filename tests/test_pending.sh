@@ -1,17 +1,16 @@
 #!/bin/bash
 # slack_pending.sh 케이스: 정상·원문 이력·수정 상한·수정 재시도·빈 목록·이력 실패 차단·전송 직후 이력 실패·429·시간 예산·중복 실행
 . "$(dirname "$0")/lib.sh"
-# 설치되는 스크립트(hubs/scripts)를 검사함. lib.sh 기본값($ROOT/lrm-hubs)은 11-06 이후 고치지 않은 옛 사본이라 지금 동작을 검사하지 못함
-PEND="${LRM_SCRIPT_DIR:-$ROOT/hubs/scripts}/slack_pending.sh"
+PEND="$SCRIPTS/slack_pending.sh"
 export LRM_RETRY_CAP=0
 NOW=$(date +%s)
 
 # 결정 3건: D1 미답, D2 답함(반응 a), D3 미답
 seed() {
   cat > "$HUB/slack-sent.jsonl" <<J
-{"at":$NOW,"channel":"DTEST","ts":"1.1","thread_ts":"","kind":"text","title":"결정: 첫째","tag":""}
-{"at":$NOW,"channel":"DTEST","ts":"1.2","thread_ts":"","kind":"text","title":"결정: 둘째","tag":""}
-{"at":$NOW,"channel":"DTEST","ts":"1.3","thread_ts":"","kind":"text","title":"결정: 셋째","tag":""}
+{"at":$NOW,"channel":"DTEST","ts":"1.1","thread_ts":"","kind":"text","title":"결정: 첫째","tag":"","form_kind":"decide"}
+{"at":$NOW,"channel":"DTEST","ts":"1.2","thread_ts":"","kind":"text","title":"결정: 둘째","tag":"","form_kind":"decide"}
+{"at":$NOW,"channel":"DTEST","ts":"1.3","thread_ts":"","kind":"text","title":"결정: 셋째","tag":"","form_kind":"decide"}
 J
   echo '{"type":"reaction","emoji":"a","action":"a","parent_ts":"1.2","received_at":'"$NOW"'}' > "$HUB/slack-inbox.jsonl"
 }
@@ -225,6 +224,58 @@ check "수정 글에 답 내용" 1 "$(grep -c '✅ 계획 승인: 첫째 — 답
 check "대기 항목 2개(글 답 카드는 닫지 않음)" 1 "$(grep -c '답을 기다리는 결정 2개' "$LOG")"
 check "글 답이 온 카드에 표시" 1 "$(grep -c 'D-T2 — 글 답 도착, 담당 확인 중' "$LOG")"
 check "미답 카드는 표시 없음" 0 "$(grep -c 'D-T3 — ' "$LOG")"
+check "머리글은 버튼으로 답(이모지 안내 없음)" 1,0 "$(grep -c '버튼으로 답' "$LOG"),$(grep -c '이모지로 답' "$LOG")"
+stop_stub
+
+# 목록에 들어가면 안 되는 것 4가지와 들어가야 하는 것 1가지. 설정 표(hubs/pending_rules.tsv): 기한 48시간, 머리말 D-ST·D-RS 제외
+OLD=$((NOW - 3 * 86400))
+seed_mixed() {
+  cat > "$HUB/slack-sent.jsonl" <<J
+{"at":$NOW,"channel":"DTEST","ts":"3.1","thread_ts":"","kind":"text","title":"최근 결정","tag":"","form_kind":"decide","decision_id":"D-N1","options":{"1":"A","2":"B"}}
+{"at":$OLD,"channel":"DTEST","ts":"3.2","thread_ts":"","kind":"text","title":"사흘 전 결정","tag":"","form_kind":"decide","decision_id":"D-O1","options":{"1":"A","2":"B"}}
+{"at":$NOW,"channel":"DTEST","ts":"3.3","thread_ts":"","kind":"text","title":"멈춘 워커 감시 — 응답 없음 1건","tag":"","form_kind":"decide","decision_id":"D-ST40a3","options":{"1":"알리기","2":"무시"}}
+{"at":$NOW,"channel":"DTEST","ts":"3.4","thread_ts":"","kind":"text","title":"재시작 감시","tag":"","form_kind":"decide","decision_id":"D-RS1","options":{"1":"재개","2":"무시"}}
+{"at":$NOW,"channel":"DTEST","ts":"3.5","thread_ts":"","kind":"text","title":"Slack 결정 카드를 작업 스레드 안으로","tag":"","form_kind":"progress"}
+J
+  : > "$HUB/slack-inbox.jsonl"
+}
+
+echo "[재알림] 최근 결정만. 오래된 결정·자동 알림·제목에 결정이 든 일반 글은 빠짐"
+new_hub; seed_mixed
+start_stub "{$PERMA,$UPD,$DEL,$POST1}"
+bash "$PEND" >/dev/null; RC=$?
+check "종료 코드" 0 "$RC"
+check "대기 항목 1개" 1 "$(grep -c '답을 기다리는 결정 1개' "$LOG")"
+check "최근 결정은 있음" 1 "$(grep -c 'D-N1' "$LOG")"
+check "오래된 결정·멈춘 워커·재시작 알림·일반 글은 없음" 0,0,0,0 "$(grep -c 'D-O1' "$LOG"),$(grep -c 'D-ST40a3' "$LOG"),$(grep -c 'D-RS1' "$LOG"),$(grep -c '작업 스레드 안으로' "$LOG")"
+check "오래된 결정 수를 한 줄로 알림" 1 "$(grep -c '오래된 결정 1개는 다시 알리지 않음' "$LOG")"
+stop_stub
+
+echo "[대기 명령] --all 이면 오래된 결정도 표시와 함께 보임. 자동 알림은 여전히 빠짐"
+new_hub; seed_mixed
+start_stub "{$PERMA,$UPD,$DEL,$POST1}"
+bash "$PEND" --all >/dev/null; RC=$?
+check "종료 코드" 0 "$RC"
+check "대기 항목 2개" 1 "$(grep -c '답을 기다리는 결정 2개' "$LOG")"
+check "오래된 결정에 표시" 1 "$(grep -c 'D-O1 — 오래됨' "$LOG")"
+check "자동 알림은 없음" 0 "$(grep -c 'D-ST40a3' "$LOG")"
+stop_stub
+
+echo "[오래된 것만] 재알림은 보내지 않고, 감시기 카드는 답하면 여전히 고쳐 씀"
+new_hub; seed_mixed
+python3 - "$HUB/slack-sent.jsonl" <<'PY'
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1], encoding="utf-8")]
+rows = [r for r in rows if r["ts"] in ("3.2", "3.3")]
+open(sys.argv[1], "w", encoding="utf-8").write("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+PY
+echo "3.3" > "$HUB/slack-done.txt"
+start_stub "{$PERMA,$UPD,$DEL,\"conversations.history\":[{\"ok\":true,\"messages\":[{\"ts\":\"3.3\",\"text\":\"멈춘 워커 감시\"}]}],$POST1}"
+OUT=$(bash "$PEND"); RC=$?
+check "종료 코드" 0 "$RC"
+check "새 대기 메시지 0회" 0 "$(count chat.postMessage)"
+check "출력" "대기 0" "$OUT"
+check "답한 감시기 카드는 고쳐 씀" 1 "$(count chat.update)"
 stop_stub
 
 summary

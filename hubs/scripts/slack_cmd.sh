@@ -13,7 +13,7 @@ for l in sys.stdin:
   except Exception: continue
   if d.get("type") in ("command","note") and not d.get("parent_ts"): print((d.get("text") or d.get("command") or "").strip())' | while read -r t; do
   case "$t" in
-    대기|미승인|"승인 대기") O=$("$H/slack_pending.sh" 2>>"$H/slack-poll.log"); R=$?; echo "$O" >>"$H/slack-poll.log"
+    대기|미승인|"승인 대기") O=$("$H/slack_pending.sh" --all 2>>"$H/slack-poll.log"); R=$?; echo "$O" >>"$H/slack-poll.log"  # --all: 2시간 재알림에서 빠진 오래된 결정까지
       # 75 는 대기 목록이 이미 처리 중이라 건너뜀(잠금). 실패와 구분해 안내
       if [ "$R" -eq 75 ]; then "$H/slack_notify.sh" "⏳ 대기 목록을 지금 처리 중 — 잠시 뒤 다시 보내 주세요" >/dev/null
       elif [ "$R" -ne 0 ]; then "$H/slack_notify.sh" "⚠️ 대기 목록 확인 불가 — slack-poll.log 확인" >/dev/null

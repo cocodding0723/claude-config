@@ -40,6 +40,33 @@ DECISION_ID_RE = re.compile(r"D-[0-9A-Za-z]{1,16}", re.ASCII)
 ANSWER_ACTIONS = ("pick", "approve", "hold")
 TOLD_MAX = 60  # 고쳐 쓴 글에 보이는 답 내용 길이
 SAID_NOTE = " — 글 답 도착, 담당 확인 중"  # 선택 표기 없는 글 답이 온 카드. 닫지 않고 표시만
+SHOW_ALL = "--all" in sys.argv[2:]  # 사용자가 '대기' 명령으로 부를 때: 오래된 결정까지 보여 줌. 2시간 재알림은 최근 것만
+RULES_NAME = "pending_rules.tsv"
+
+def load_rules():
+    """대기 목록 설정 표 → (재알림 기한 시간 또는 None, 목록에서 뺄 결정 번호 머리말들). 값은 표 한 곳에만 둠.
+    찾는 순서: 작업 폴더(설치본) → 스크립트 옆 → 저장소의 hubs/. 없으면 제한 없이 만들고 한 줄 경고"""
+    here = os.environ["LRM_PY_DIR"]
+    for p in (os.path.join(H, RULES_NAME), os.path.join(here, RULES_NAME), os.path.join(here, "..", RULES_NAME)):
+        if not os.path.isfile(p):
+            continue
+        age, skip = None, []
+        with open(p, encoding="utf-8") as f:
+            for ln in f:
+                c = ln.rstrip("\n").split("\t")
+                if ln.startswith("#") or len(c) < 2:
+                    continue
+                if c[0] == "max_age_hours":
+                    age = float(c[1])
+                elif c[0] == "exclude_prefix":
+                    skip.append(c[1])
+        return age, tuple(skip)
+    print(f"경고: {RULES_NAME} 없음 — 나이 제한·자동 알림 제외 없이 목록을 만듦", file=sys.stderr)
+    return None, ()
+
+MAX_AGE_H, SKIP_PREFIXES = load_rules()
+OLD_NOTE = " — 오래됨"  # '대기' 명령으로 볼 때 기한 넘은 결정에 붙는 표시
+OLD_FOOT = "오래된 결정 {n}개는 다시 알리지 않음. 전부 보려면 봇에게 `대기`"
 
 class Fail(Exception):
     pass
@@ -153,11 +180,17 @@ def main():
     # 글로 쓴 답(선택 표기 아님)은 결정을 닫지 않음: "잠깐만" 같은 글에 닫히면 그 뒤 버튼이 거절됨. 목록에 남기되 글이 왔다고 표시하고, 담당이 읽고 decide-answer 로 닫음
     said = {d.get("parent_ts") for d in inbox if d.get("type") == "thread_reply" and d.get("kind") == "decide"
             and d.get("action") == "free" and not answer_store.is_question(d.get("text"))}
+    # 결정 = 결정 카드로 보낸 맨 위 메시지(form_kind decide). 제목에 '결정' 낱말이 든 일반 글은 세지 않음: 작업 스레드 첫 글·보고가 결정으로 섞였음
     # 번호 카드 기록이면 번호가 손상됐어도 목록에는 남김(번호 없이 제목만 표시)
-    decisions = [s for s in sent if s.get("ts") and not s.get("thread_ts")
-                 and ("결정" in s.get("title", "") or s["ts"] in cards or (s.get("form_kind") == "decide" and "options" in s))]
+    decisions = [s for s in sent if s.get("ts") and not s.get("thread_ts") and (s["ts"] in cards or s.get("form_kind") == "decide")]
     answered = [s for s in decisions if s["ts"] in done]
-    waiting = [s for s in decisions if s["ts"] not in done]
+    # 자동 알림(감시기 카드)은 버튼이 동작을 실행하는 카드라 그대로 두고, 사람이 정할 결정 목록에서만 뺌
+    waiting = [s for s in decisions if s["ts"] not in done and not str(s.get("decision_id") or "").startswith(SKIP_PREFIXES)]
+    # 기한 넘은 결정은 2시간마다 다시 알리지 않음. '대기' 명령(--all)으로는 전부 보임
+    now = time.time()
+    old = {s["ts"] for s in waiting if MAX_AGE_H is not None and now - float(s.get("at") or now) > MAX_AGE_H * 3600}
+    if not SHOW_ALL:
+        waiting = [s for s in waiting if s["ts"] not in old]
 
     events = jsonl(HIST)
     handled = set()  # 수정 시도가 끝난 메시지
@@ -218,12 +251,16 @@ def main():
         if card:
             st = cards[s["ts"]]
             row += f" · {s.get('decision_id')}" + (f" — {st[1]}" if st else SAID_NOTE if s["ts"] in said else "")
+        if s["ts"] in old:
+            row += OLD_NOTE
         rows.append((s["title"], row))
     channel = waiting[0]["channel"] if waiting else None
 
     new_ts = None
     if rows:
-        text = "🙋 *답을 기다리는 결정 " + str(len(rows)) + "개* — 눌러서 이동, 이모지로 답\n" + "\n".join(r[1] for r in rows)
+        text = "🙋 *답을 기다리는 결정 " + str(len(rows)) + "개* — 눌러서 이동, 버튼으로 답\n" + "\n".join(r[1] for r in rows)
+        if old and not SHOW_ALL:
+            text += f"\n{OLD_FOOT.format(n=len(old))}"
         if DRY:
             print(text)
             return 0

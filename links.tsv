@@ -213,6 +213,7 @@ hubs/launchd/ai.lrm.nightdispatch.plist	.config/lrm-hubs/ai.lrm.nightdispatch.pl
 hubs/scripts/board_sweep.py	.config/lrm-hubs/board_sweep.py	link
 hubs/scripts/board_sweep.sh	.config/lrm-hubs/board_sweep.sh	link
 hubs/board_sweep.tsv	.config/lrm-hubs/board_sweep.tsv	link
+hubs/pending_rules.tsv	.config/lrm-hubs/pending_rules.tsv	link
 hubs/launchd/ai.lrm.boardsweep.plist	Library/LaunchAgents/ai.lrm.boardsweep.plist	copy
 board/bin/board-done	orca/board/bin/board-done	link
 board/bin/board-claim	orca/board/bin/board-claim	link
