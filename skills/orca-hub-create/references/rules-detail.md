@@ -29,7 +29,7 @@
 - Slack 봇으로 보내는 문서는 메시지 본문에 Slack 문구 요약(무엇·왜·결정 목록·답하는 법)을 쓰고 HTML 은 첨부로 함께 — 모바일은 HTML 을 못 연다(11-05).
 - 모바일 B+A(11-05): 봇으로 HTML 보낼 때 ~/.config/lrm-hubs/html_preview.sh 로 390폭 미리보기 PNG 를 만들어 같이 보낸다. 클릭·인터랙티브 문서(PR 리뷰 등)는 Claude 아티팩트 링크도 보낸다(메인이 전체를 읽고 게시).
 - Slack 결정은 결정 1개 = 메시지 1개로 보내고, 선택지를 🅰️(:a:)·🅱️(:b:)·🅲(:regional_indicator_c:)·🅳(:regional_indicator_d:) 이모지로 고르게 한다(11-05, D 는 11-09. 선택지는 2~3개가 기본, 4개는 예외). ✅=추천대로, ❌=보류.
-- Slack 결정은 `python3 ~/.config/lrm-hubs/hub_report.py add --kind decide`(`--options`·`--recommend`·`--decision-id`)로 기록한다. 전송기가 버튼 카드로 올린다. 알림 스크립트는 직접 실행하지 않는다(양식 A: hubs/docs/slack-format.md).
+- Slack 결정은 `python3 ~/.config/lrm-hubs/hub_report.py add --kind decide`(`--options`·`--recommend`·`--decision-id`)로 기록한다. 전송기가 버튼 카드로 올린다. 작업 카드가 있으면 `--card <카드> --ws <작업 공간>` 을 함께 줘 그 작업 스레드 안에 올린다(11-18, 작업 하나 = 스레드 하나). 사용자가 봐야 하는 진행 보고(확인·검수 요청)에는 `--broadcast` 를 준다(결정·완료·경고·차단은 주지 않아도 DM 목록에 보인다). 알림 스크립트는 직접 실행하지 않는다(양식 A: hubs/docs/slack-format.md).
 - 결정 카드 필수(11-13 사용자: '배경 설명을 안 적으니 이해하기 힘들다'): 본문에 `배경:`(지금 무슨 작업 중이고 왜 이 질문이 생겼는지, 처음 보는 사람 기준 1~2줄)·`용어:`(낯선 말·파일·내부 이름 한 줄 풀이, 없으면 `용어: 없음`) 줄, `--options` 는 `'1=문구 => 고르면 달라지는 점,2=…'` 로 선택지마다 결과. 하나라도 없으면 종료 코드 2 로 전송이 거부된다. 예: `--text $'알림 시각 정하기\n배경: 알림 개편 중, 시각이 화면마다 달라 하나로 맞추려 함\n용어: 푸시 — 앱 밖 알림' --options '1=오전 9시 => 출근 전에 도착,2=오전 10시 => 업무 시작 뒤에 도착'`.
 - Slack 에서 온 질문의 답은 그 스레드로(11-13 사용자): 하달문 끝 '답할 곳: Slack thread <ts>' 가 있으면 `python3 ~/.config/lrm-hubs/hub_report.py add --kind info --reply-to <ts> --text '답'`(--thread 와 같음, info·done·warn)로 올린다. 채널에 새 글로 답하지 않는다.
 - 문서·보고 설명은 명사형 압축 한 줄 + 색 배지(🟢추가 🟡변경 🔴삭제 🔵테스트 ⚠️위험) + md 구조. 문장형 서술 단락 금지(11-05 사용자).
