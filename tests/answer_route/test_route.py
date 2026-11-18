@@ -131,6 +131,29 @@ class UnitRoute(Base):
         self.ws_router().route("D-0001", "1.1", "slack", BODY)
         self.assertEqual(self.ws_calls[0][:2], ("t-2", "/w/b"))
 
+    def test_feature_coordinator_decision_without_card_goes_to_that_coordinator(self):
+        """기능 코디네이터(feat-<slug>)가 작업 카드 없이 올린 결정: 허브 목록에 없어도 그 기능의 코디네이터 세션으로"""
+        self.jsonl("hub-reports.jsonl", [{"decision_id": "D-0001", "hub": "feat-mail", "task": "LRM-701"}])
+        r = self.ws_router()
+        r.feature_of = lambda hub: ("t-9", "/w/coord-feat-mail-hub") if hub == "feat-mail" else ("", "")
+        out = r.route("D-0001", "1.1", "slack", BODY)
+        self.assertEqual((out.ok, out.via, out.hub), (True, "ws", "t-9"))
+        self.assertEqual(self.ws_calls[0][:2], ("t-9", "/w/coord-feat-mail-hub"))
+        self.assertEqual(self.main_calls, [])
+
+    def test_feature_hub_known_only_from_the_sent_card_tag(self):
+        self.jsonl("slack-sent.jsonl", [{"decision_id": "D-0001", "form_kind": "decide", "tag": "feat-mail", "ts": "1.1"}])
+        r = self.ws_router()
+        r.feature_of = lambda hub: ("t-9", "/w/h")
+        self.assertEqual(r.route("D-0001", "1.1", "slack", BODY).via, "ws")
+
+    def test_feature_coordinator_that_is_gone_falls_back_to_main(self):
+        self.jsonl("hub-reports.jsonl", [{"decision_id": "D-0001", "hub": "feat-mail"}])
+        r = self.ws_router()
+        r.feature_of = lambda hub: ("", "")
+        out = r.route("D-0001", "1.1", "slack", BODY)
+        self.assertEqual((out.via, self.ws_calls), ("main", []))
+
     def test_decision_without_work_card_keeps_the_old_path(self):
         self.map_decision()
         out = self.ws_router().route("D-0001", "1.1", "slack", BODY)

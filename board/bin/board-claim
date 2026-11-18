@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
 import board_beat as bb  # noqa: E402
+import board_flow as bf  # noqa: E402
 import board_scope as bs  # noqa: E402
 
 EPILOG = """\
@@ -23,8 +24,11 @@ file: 표기는 ~/·상대·./·끝 / 가 섞여도 같은 경로로 맞춘 뒤 
 겹친 카드가 STALE_HOURS(기본 2)시간 넘게 갱신(heartbeat 포함)이 없으면 '해제 후보' 경고를 함께 냄. 자동 해제는 하지 않음.
 
 카드 설명에 '## 지시(사용자 원문 + 뒤 지시)' 칸(또는 '사용자 … 원문: …' 줄)이 비어 있으면 새로 집지 않음.
+새 흐름 기능(기능 카드 label flow:v1)의 구현 카드는 크기(size:small|normal|large)를 정한 뒤, 보통·큼이면 계획 승인 뒤에만 집음(종료 15).
+계획 승인 = 그 기능의 계획 승인 카드에 사용자가 Slack 에서 승인으로 답한 것. 규칙은 lib/board_flow.py 한 곳.
 
 종료 코드: 0 집음 · 2 사용법·file: label 없음·지시 칸 비어 있음 · 3 파일 겹침 · 4 환경(bd 실패) · 13 이미 다른 작업자가 집음 · 14 검수 대기 상한
+          15 계획 승인 전(또는 크기 미정)
 예:
   board-claim lrm-12 ui-worker
   board-claim lrm-12 ui-worker --repo ~/orca/LoveRevolutionMaker
@@ -65,6 +69,23 @@ def age_hours(card):
     return (datetime.now(timezone.utc) - max(ts)).total_seconds() / 3600 if ts else 0.0
 
 
+def feature_epic(card):
+    """이 카드가 속한 기능 카드(epic), 없으면 None. 상위를 epic 이 나올 때까지 따라 올라감(수정 카드를 원래 카드 아래에 만든 손자 카드도 같은 기능).
+    상위가 없으면 label feature:<slug> 의 열린 기능 카드로 봄(기능 label 만 달고 따로 만든 카드)"""
+    cur, seen = card, set()
+    while cur and cur.get("parent") and cur["parent"] not in seen:
+        seen.add(cur["parent"])
+        up = bd_json("show", cur["parent"])
+        cur = up[0] if isinstance(up, list) and up else up
+        if cur and cur.get("issue_type") == "epic":
+            return cur
+    slug = bs.label(card, "feature")
+    if slug and card.get("issue_type") != "epic":
+        rows = [r for r in bd_json("list", "-t", "epic", "-l", f"feature:{slug}", "--limit", "0") if r.get("status") != "closed"]
+        return rows[0] if rows else None
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(prog="board-claim", description="작업판 카드 집기(파일 겹침 검사 포함).",
                                  epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -93,6 +114,11 @@ def main():
         if card.get("status") != "in_progress" and card.get("issue_type") != "epic" and not bs.directive(card):
             die(f"거부: {a.card} 에 '## 지시(사용자 원문 + 뒤 지시)' 칸이 비어 있음. 조치: 사용자 원문과 그 뒤 추가 지시를 그대로 옮겨 "
                 f"bd update {a.card} -d … 로 채운 뒤 다시 집음(양식 board/templates/card-task.md)", 2)
+        epic = feature_epic(card)
+        hub =os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
+        why = bf.claim_block(card, epic, lambda did: bf.plan_approved(hub, did))
+        if why:
+            die(f"거부: {why}", 15)
         repo = os.path.expanduser(a.repo or bs.label(card, "repo"))
         raw = bs.labels(card, "file")
         if not raw:

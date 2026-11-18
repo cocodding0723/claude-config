@@ -161,6 +161,7 @@ hubs/docs/slack-format.md	.config/lrm-hubs/docs/slack-format.md	link
 hubs/docs/slack-push.md	.config/lrm-hubs/docs/slack-push.md	link
 hubs/docs/install-orca-main.md	.config/lrm-hubs/docs/install-orca-main.md	link
 hubs/docs/panel.md	.config/lrm-hubs/docs/panel.md	link
+hubs/docs/work-flow.md	.config/lrm-hubs/docs/work-flow.md	link
 hubs/docs/progress-digest.md	.config/lrm-hubs/docs/progress-digest.md	link
 hubs/docs/ws-gc.md	.config/lrm-hubs/docs/ws-gc.md	link
 hubs/docs/hub-split.md	.config/lrm-hubs/docs/hub-split.md	link
@@ -249,5 +250,7 @@ hubs/gh-watch-actions.example.json	.config/lrm-hubs/gh-watch-actions.example.jso
 hubs/launchd/ai.lrm.ghwatch.plist	Library/LaunchAgents/ai.lrm.ghwatch.plist	copy
 hubs/docs/gh-watch.md	.config/lrm-hubs/docs/gh-watch.md	link
 board/bin/board-beat	orca/board/bin/board-beat	link
+board/bin/board-stage	orca/board/bin/board-stage	link
 board/lib/board_beat.py	orca/board/lib/board_beat.py	link
+board/lib/board_flow.py	orca/board/lib/board_flow.py	link
 board/lib/board_evidence.py	orca/board/lib/board_evidence.py	link

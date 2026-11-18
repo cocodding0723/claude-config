@@ -145,6 +145,56 @@ class ButtonAnswerTest(ReplyBase):
         self.assertEqual(self.box(box)[-1]["kind"], "question")
 
 
+
+class FeatureSessionTest(ReplyBase):
+    """기능 코디네이터가 작업 카드 없이 맨 위 글로 올린 결정: 버튼 답과 그 카드 스레드의 글을 그 코디네이터에게 전달"""
+
+    def setUp(self):
+        super().setUp()
+        self.hubws = "/w/coord-feat-z-hub"
+        self.fe = self.make("기능 z", "-t", "epic", "-l", "feature:z", "-d", f"- 기능 코디네이터 허브: {self.hubws}\n- 통합 브랜치: feature/z")
+        card = {"at": 1, "channel": "D1", "ts": "1794383290.000100", "thread_ts": "", "form_kind": "decide", "tag": "feat-z",
+                "decision_id": "D-ZPLAN", "options": {"1": "승인", "2": "수정 요청"}, "title": "z 계획 컨펌"}
+        self.write(os.path.join(self.hub, "slack-sent.jsonl"), json.dumps(card, ensure_ascii=False) + "\n")
+
+    def session(self, hub):
+        code = "import sys, json; sys.path.insert(0, sys.argv[1]); import feedback_route as f; print(json.dumps(f.feature_session(sys.argv[2])))"
+        p = subprocess.run([sys.executable, "-I", "-c", code, os.path.dirname(SCRIPT), hub], capture_output=True, text=True, env=self.env)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return json.loads(p.stdout)
+
+    def test_feature_hub_name_resolves_to_its_card_and_workspace(self):
+        self.assertEqual(self.session("feat-z"), [self.fe, self.hubws])
+        self.assertEqual(self.session("feat-none"), ["", ""])
+        self.assertEqual(self.session("ui-layer"), ["", ""])
+
+    def test_reply_under_a_top_level_decision_card_reaches_the_feature_coordinator(self):
+        self.reply("1794383291.000001", "1794383290.000100", "지금 샘플로 화면 참조로 쓰는거 구조가 저게 맞아?")
+        got = self.route()["routed"][0]
+        self.assertEqual((got["to"], got["epic"], got.get("decision_id")), ("feature", self.fe, "D-ZPLAN"))
+        line = self.box("feat-z")[-1]["text"]
+        self.assertEqual(line, "[결정 D-ZPLAN 질문] 지금 샘플로 화면 참조로 쓰는거 구조가 저게 맞아?")
+
+    def test_coordinator_session_is_told_about_the_reply(self):
+        """결정에 달린 글은 사용자가 답을 기다리는 것이라, 코디네이터 창에 바로 한 줄 알림"""
+        self.write(os.path.join(self.hub, ".thread-wake.on"), "")
+        self.set_terminals([{"handle": TERM, "worktreePath": self.hubws, "agentIdentity": "claude", "writable": True, "connected": True, "orphaned": False}])
+        self.reply("1794383291.000009", "1794383290.000100", "이건 왜 필요한가요?")
+        self.route()
+        with open(os.path.join(self.fake, "sends.log"), encoding="utf-8") as f:
+            sent = f.read()
+        self.assertIn(self.fe, sent)
+
+    def test_plain_reply_under_such_a_card_is_marked_as_answer(self):
+        self.reply("1794383291.000002", "1794383290.000100", "슬라이더가 다 이동하면 캐릭터를 끄고 싶다")
+        self.route()
+        self.assertEqual(self.box("feat-z")[-1]["text"], "[결정 D-ZPLAN 답] 슬라이더가 다 이동하면 캐릭터를 끄고 싶다")
+
+    def test_reply_under_an_unrelated_top_level_message_is_left_alone(self):
+        self.reply("1794383291.000003", "1794383999.000999", "아무 글")
+        self.assertEqual(self.route()["routed"], [])
+
+
 class DecisionReplyTest(ReplyBase):
     """작업 스레드에 결정 번호로 시작하는 글은 그 결정의 답으로 전달(번호 없는 글은 지금처럼 피드백)"""
 
