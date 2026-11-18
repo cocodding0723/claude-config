@@ -29,7 +29,8 @@ DECISION_CASES = [
     ("선택지 없는 옛 결정 글(반응으로만 닫히던 것)", rec(options=None, decision_id=None), False),
     ("제목에 '결정'이 든 진행 보고", rec(form_kind="progress", options=None, decision_id=None, title="Slack 결정 카드를 작업 스레드 안으로"), False),
     ("종류 표시 없는 옛 글, 제목에 '결정'", rec(form_kind=None, options=None, decision_id=None, title="결정: 첫째"), False),
-    ("스레드 안에 올라간 글", rec(thread_ts="0.9"), False),
+    ("작업 스레드 안에 올라간 결정 카드(작업 하나 = 스레드 하나)", rec(thread_ts="0.9"), True),
+    ("스레드 안의 일반 답글", rec(thread_ts="0.9", form_kind="progress", options=None, decision_id=None), False),
     ("메시지 번호 없는 기록", rec(ts=None), False),
 ]
 

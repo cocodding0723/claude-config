@@ -52,8 +52,9 @@ def load_rules(dirs, warn=to_stderr) -> Rules:
 
 
 def is_decision(s: dict) -> bool:
-    """결정 = 선택지를 달아 결정 카드로 보낸 맨 위 글. 제목의 '결정' 낱말이나 선택지 없는 옛 글은 세지 않음"""
-    return bool(s.get("ts")) and not s.get("thread_ts") and s.get("form_kind") == DECIDE and "options" in s
+    """결정 = 선택지를 달아 결정 카드로 보낸 글. 맨 위 글이든 작업 스레드 안이든 같음(작업 하나 = 스레드 하나, 결정 카드도 그 안).
+    제목의 '결정' 낱말이나 선택지 없는 옛 글은 세지 않음"""
+    return bool(s.get("ts")) and s.get("form_kind") == DECIDE and "options" in s
 
 
 def is_auto(s: dict, rules: Rules) -> bool:
