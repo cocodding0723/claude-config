@@ -64,7 +64,7 @@ HANDOFF_NOTE = "세션에 알리지 못해({why}) {to} 로 넘김"
 HANDOFF_TRIAGE_TITLE = "📥 작업 공간 답 전달 확인 필요: {card}"
 TRIAGE_LABELS = "hub:main,feedback:triage"
 TRIAGE_TITLE = "📥 기능 판별 필요: Slack 스레드 {ts}"
-TS_RE = re.compile(r"^[0-9]{1,12}\.[0-9]{1,9}$")
+TS_RE = re.compile(r"^(?:[0-9]{1,12}\.[0-9]{1,9}|[0-9]{17,20})$")  # Slack ts 또는 Discord 메시지 ID
 SENT_NAME = "slack-sent.jsonl"
 # 작업 스레드에 결정 번호로 시작하는 글. 상자 줄 머리는 짧게(입력창 알림 요약 HEAD_MAX 안에 원문이 남게), 닫는 법은 카드 코멘트에만
 DECIDE_HEAD = "[결정 {did} {kind}] "

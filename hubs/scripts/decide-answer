@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import answer_store  # noqa: E402
 
 EXIT_USAGE, EXIT_MISSING = 2, 4
-TS_RE = re.compile(r"\d{10}\.\d{6}")
+TS_RE = re.compile(r"\d{10}\.\d{6}|\d{17,20}")  # Slack ts 또는 Discord 메시지 ID
 DID_RE = re.compile(r"D-[0-9A-Za-z]{1,16}")
 
 

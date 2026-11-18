@@ -443,7 +443,7 @@ def is_partial(text: str, attached: bool) -> bool:
 
 
 REPLY_NOTE = " (답할 곳: Slack thread {ts} — hub_report.py add --kind info --reply-to {ts} --text '답')"
-TS_RE = re.compile(r"\d{1,12}\.\d{1,9}")
+TS_RE = re.compile(r"\d{1,12}\.\d{1,9}|\d{17,20}")  # Slack ts 또는 Discord 메시지 ID
 
 
 def line_for(rid: str, text: str, attached: bool = False, ts: str = "") -> str:
