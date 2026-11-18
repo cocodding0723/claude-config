@@ -72,6 +72,8 @@ def main(argv):
     except ValueError as e:
         print(e, file=sys.stderr)
         return 2
+    if not repo:  # 저장소 밖에서 부르면 기본값으로 떨어지므로 알림(작업 저장소 경로를 넘겨야 함)
+        print(f"경고: {path} 에서 GitHub 저장소(origin)를 못 찾음 — 작업 저장소 경로를 넘기세요. 기본값(values.env)으로 판정", file=sys.stderr)
     if hit:
         (tracker, key), source = hit, "trackers.tsv"
     else:
