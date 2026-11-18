@@ -37,6 +37,12 @@ out=$(COMMON_FILE="" run --slug none); rc=$?
 out=$(COMMON_FILE="" run --slug none --dry-run); rc=$?
 [ "$rc" = 4 ] && ok "미리 보기 실행도 같은 원인으로 멈춤" || ko "미리 보기 실행" "rc=$rc"
 
+# 잘못 지정한 값은 다른 후보로 넘어가지 않고 멈춤. 빈 --paths 도 작업 공간을 만들기 전에 멈춤
+out=$(COMMON_FILE="$SB/no-such.txt" run --slug typo); rc=$?
+[ "$rc" = 4 ] && [ ! -d "$SB/ws/coord-typo-hub" ] && ok "없는 COMMON_FILE 지정: 종료 4, 작업 공간 없음" || ko "없는 COMMON_FILE" "rc=$rc $out"
+out=$(COMMON_FILE="$SB/common.txt" run --slug empty --paths " "); rc=$?
+[ "$rc" = 2 ] && [ ! -d "$SB/ws/coord-empty-hub" ] && ok "빈 --paths: 종료 2, 작업 공간 없음" || ko "빈 --paths" "rc=$rc $out"
+
 # 2) 저장소 사본으로 실행해도 설치본(~/.claude/…/common-rules.txt)을 읽음
 mkdir -p "$SB/home/.claude/skills/orca-hub-create/references"
 cp "$SB/common.txt" "$SB/home/.claude/skills/orca-hub-create/references/common-rules.txt"

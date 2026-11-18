@@ -14,6 +14,8 @@ while [ $# -gt 0 ]; do case "$1" in
 # 공통 규칙은 설치 때 값을 채워 만든 파일이라 저장소에는 틀(.tmpl)만 있음. 저장소 사본으로 실행돼도 설치본을 읽고,
 # 작업 공간을 만들기 전에 확인함(만든 뒤 실패하면 반쯤 만들어진 허브가 남음). 종료 3 은 feature_open.sh 가 '이미 실행 중'으로 읽으므로 4
 COMMON_FILE="${COMMON_FILE:-}"
+[ -z "$COMMON_FILE" ] || [ -f "$COMMON_FILE" ] || { echo "COMMON_FILE 로 지정한 공통 규칙 파일 없음: $COMMON_FILE" >&2; exit 4; }   # 오타면 다른 규칙으로 기동하지 않고 멈춤
+[ -n "${PATHS// /}" ] || { echo "--paths 가 비어 있음 — 받을 경로를 하나 이상 지정" >&2; exit 2; }
 for c in "$COMMON_FILE" "$(dirname "$0")/../references/common-rules.txt" "$HOME/.claude/skills/orca-hub-create/references/common-rules.txt"; do
   if [ -n "$c" ] && [ -f "$c" ]; then COMMON_FILE="$c"; break; fi
 done
