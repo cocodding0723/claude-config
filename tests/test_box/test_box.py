@@ -49,8 +49,10 @@ RUN_CASES = [
     ("heredoc 자리(/var/tmp)의 다른 파일은 못 씀", "t.sh", 'echo a > /private/var/tmp/cc-box-probe 2>/dev/null; [ ! -e /private/var/tmp/cc-box-probe ]', [], 0),
     ("mktemp 로 만든 폴더와 파일은 상자 안에 생김", "t.sh", 'inbox() { ' + IN_BOX + '; }; d=$(mktemp -d) && inbox "$d" && f=$(mktemp) && inbox "$f" && echo a > "$d/x"', [], 0),
     ("mktemp -t 도 상자 안에, 틀을 준 mktemp 는 그 자리에", "t.sh", 'inbox() { ' + IN_BOX + '; }; a=$(mktemp -d -t cc) && inbox "$a" && b=$(mktemp "$TMPDIR/q.XXXXXX") && [ -f "$b" ] && c=$(mktemp -t cc) && inbox "$c"', [], 0),
-    ("시스템 도구 대리 실행 파일(xcrun)이 캐시를 못 써서 경고를 출력에 섞지 않음", "t.sh", '[ -x /usr/bin/python3 ] || exit 0; h=$(mktemp -d); out=$(HOME="$h" /usr/bin/python3 -c "print(1)" 2>&1); [ "$out" = 1 ]', [], 0),
+    ("/usr/bin 의 시스템 도구(Xcode 대리 실행 파일)는 캐시를 못 써도 동작함(HOME 을 바꾸면 stderr 에 경고만)", "t.sh", '[ -x /usr/bin/python3 ] || exit 0; h=$(mktemp -d); out=$(HOME="$h" /usr/bin/python3 -c "print(1)" 2>/dev/null); [ "$out" = 1 ]', [], 0),
     ("사용자 임시 폴더(상자 밖)에는 못 씀", "t.sh", 'echo a > "{utmp}/cc-box-probe-{pid}" 2>/dev/null; [ ! -e "{utmp}/cc-box-probe-{pid}" ]', [], 0),
+    ("사용자 임시 폴더로 파일을 옮겨 넣지 못함(상자 밖 git 이 읽는 도구 경로 캐시 xcrun_db 이름 포함)", "t.sh", 'echo x > "$TMPDIR/xx"; mv "$TMPDIR/xx" "{utmp}/xcrun_db-ccprobe{pid}" 2>/dev/null; [ ! -e "{utmp}/xcrun_db-ccprobe{pid}" ]', [], 0),
+    ("mktemp -dt 처럼 묶어 쓴 옵션도 상자 안에", "t.sh", 'inbox() { ' + IN_BOX + '; }; a=$(mktemp -dt cc) && inbox "$a" && [ -d "$a" ] && b=$(mktemp -qt cc) && inbox "$b"', [], 0),
     ("상자 밖 쓰기는 막힘", "t.sh", 'echo a > "{out}/canary" 2>/dev/null; [ ! -e "{out}/canary" ]', [], 0),
     ("상자 밖 파일 지우기도 막힘", "t.sh", 'rm -f "{out}/keep" 2>/dev/null; [ -e "{out}/keep" ]', [], 0),
     ("하드링크로 바깥 파일에 닿기 막힘", "t.sh", 'ln "{out}/keep" "$TMPDIR/l" 2>/dev/null; [ ! -e "$TMPDIR/l" ]', [], 0),
@@ -107,7 +109,9 @@ class BoxTest(unittest.TestCase):
         # 상자 밖에서 도는 것들: 프로세스 하나, 유닉스 소켓 하나, 사용자 임시 폴더의 비밀 파일 하나
         self.proc = subprocess.Popen(["sleep", "120"])
         self.addCleanup(self.proc.kill)
-        self.addCleanup(lambda p=os.path.join(USER_TMP, f"cc-box-probe-{self.proc.pid}"): os.path.exists(p) and os.remove(p))
+        for left in (os.path.join(USER_TMP, f"cc-box-probe-{self.proc.pid}"), os.path.join(USER_TMP, f"xcrun_db-ccprobe{self.proc.pid}"),
+                     f"/private/var/tmp/sh-thd-{self.proc.pid}"):
+            self.addCleanup(lambda p=left: os.path.exists(p) and os.remove(p))
         self.sock = socket.socket(socket.AF_UNIX)
         self.sock.bind(os.path.join(self.out, "s.sock"))
         self.sock.listen(1)
@@ -167,6 +171,13 @@ class BoxTest(unittest.TestCase):
                 r = self.run_box([script], box=os.path.join(d, "test-box"))
                 self.assertEqual((r.returncode, r.stdout), (4, ""))
                 self.assertIn(ERR, r.stderr)
+
+    def test_heredoc_spot_leaves_nothing_behind(self):
+        """heredoc 자리(/var/tmp/sh-thd-숫자)는 쓰기가 열려 있음. 시험이 거기 남긴 파일은 상자가 끝날 때 지워짐"""
+        left = f"/private/var/tmp/sh-thd-{self.proc.pid}"
+        r = self.run_box([self.write("t.sh", f'printf x > {left} && chmod +x {left}; [ -e {left} ]')])
+        self.assertEqual(r.returncode, 0, r.stderr[-300:])
+        self.assertFalse(os.path.exists(left))
 
     def test_file_name_starting_with_dash(self):
         self.write("-x.sh", "exit 0")
