@@ -32,7 +32,7 @@ printf '#!/bin/bash\nexit 0\n' > "$BIN/ws_gc.sh"
 printf '#!/usr/bin/env python3\nimport os, sys\nif os.environ.get("FAKE_REPORT_FAIL") == "1": sys.exit(1)\nopen(os.environ["CALLS"], "a").write(" ".join(sys.argv[1:]) + "\\n")\n' > "$BIN/hub_report.py"
 chmod +x "$BIN/orca" "$BIN/create_hub.sh" "$BIN/ws_gc.sh" "$BIN/hub_report.py"
 export PATH="$BIN:$PATH" CALLS="$SB/calls" REPO WS_ROOT="$WSR" LRM_BOARD="$BOARD" BOARD_DIR="$BOARD" LRM_CREATE_HUB="$BIN/create_hub.sh" LRM_ROLES_DIR="$ROLES" LRM_HUB_REPORT="$BIN/hub_report.py" LRM_WS_GC="$BIN/ws_gc.sh"
-export LRM_SPRINT_DATE=20261118   # 브랜치의 스프린트 폴더 날짜(기본은 오늘). 시험은 고정
+export LRM_SPRINT_DATE=20261118   # 브랜치의 스프린트 폴더 날짜 = 스프린트 시작일. 시험은 고정
 : > "$CALLS"
 epic_of() { (cd "$BOARD" && bd list -t epic -l "feature:$1" --all --json | jq -r '.[0].id // empty'); }
 
@@ -44,7 +44,7 @@ chk "feature_open: epic 주제로 시작 한 줄 예약(허브 feat-mail)" '[ "$
 chk "feature_open 재실행: 같은 내용을 다시 예약(중복은 hub_report 가 무시)" '[ "$(wc -l < "$CALLS" | tr -d " ")" = 1 ]'
 # 브랜치 이름은 게임 저장소 규칙(CLAUDE.md): 스프린트 안에서 끝나면 sprint-YYYYMMDD/타입-티켓-작업명, 여러 스프린트에 걸치는 모듈만 feature/<이름>
 : > "$CALLS"; LRM_SPRINT_DATE=20261125 bash "$SCR/feature_open.sh" --ticket LRM-701 --name "우편함" --base dev --slug mail >/dev/null 2>&1
-chk "feature_open 을 다른 날 다시 실행해도 처음 만든 브랜치를 그대로 씀" 'grep -q "통합 브랜치 sprint-20261118/feat-LRM-701-mail)" "$CALLS"' "$(cat "$CALLS")"
+chk "스프린트가 바뀐 뒤 다시 실행해도 처음 만든 브랜치를 그대로 씀" 'grep -q "통합 브랜치 sprint-20261118/feat-LRM-701-mail)" "$CALLS"' "$(cat "$CALLS")"
 chk "새 기능 카드에 새 흐름 표시(flow:v1)와 브랜치가 적힘" '(cd "$BOARD" && bd show "$EPIC" --json | jq -e "(if type==\"array\" then .[0] else . end).labels | (index(\"flow:v1\") != null) and (index(\"branch:sprint-20261118/feat-LRM-701-mail\") != null)") >/dev/null'
 bjson() { bash "$SCR/feature_open.sh" "$@" --base dev --dry-run --json 2>"$SB/err" | jq -r .branch; }
 chk "버그 작업은 타입 fix" '[ "$(bjson --ticket LRM-711 --name 버그 --slug gauge-overflow --type fix)" = "sprint-20261118/fix-LRM-711-gauge-overflow" ]'
@@ -52,6 +52,17 @@ chk "여러 스프린트에 걸치는 모듈(--long)은 feature/<이름>" '[ "$(
 chk "작업명을 안 주면 티켓 번호까지만 쓰고 경고" '[ "$(bjson --ticket LRM-713 --name 이름없음)" = "sprint-20261118/feat-LRM-713" ] && grep -q "작업명" "$SB/err"' "$(cat "$SB/err")"
 bash "$SCR/feature_open.sh" --ticket LRM-714 --name x --base dev --slug y --type hotfix --dry-run >/dev/null 2>"$SB/err"; RC=$?
 chk "모르는 타입은 종료 2" '[ "$RC" = 2 ] && grep -q "feat|fix" "$SB/err"' "rc=$RC $(cat "$SB/err")"
+# 스프린트 폴더의 날짜는 스프린트 시작일(사용자 11-18). 오늘 날짜가 아니므로 계산하지 않고 정해 둔 값을 읽음: --sprint > LRM_SPRINT_DATE > 설정 파일
+nosprint() { env -u LRM_SPRINT_DATE LRM_SPRINT_FILE="$SB/sprint-start" bash "$SCR/feature_open.sh" "$@" --base dev --dry-run --json 2>"$SB/err"; }
+rm -f "$SB/sprint-start"; nosprint --ticket LRM-715 --name x --slug nodate >/dev/null; RC=$?
+chk "스프린트 시작일을 모르면 만들지 않고 멈춤(오늘 날짜로 지어내지 않음)" '[ "$RC" = 2 ] && grep -q "스프린트 시작일" "$SB/err" && ! grep -q "$(date +%Y%m%d)" "$SB/err"' "rc=$RC $(cat "$SB/err")"
+echo 20261107 > "$SB/sprint-start"
+chk "설정 파일의 스프린트 시작일을 씀" '[ "$(nosprint --ticket LRM-715 --name x --slug nodate | jq -r .branch)" = "sprint-20261107/feat-LRM-715-nodate" ]' "$(cat "$SB/err")"
+chk "--sprint 로 준 날짜가 우선" '[ "$(nosprint --ticket LRM-715 --name x --slug nodate --sprint 20261125 | jq -r .branch)" = "sprint-20261125/feat-LRM-715-nodate" ]' "$(cat "$SB/err")"
+nosprint --ticket LRM-715 --name x --slug nodate --sprint 2026-11-25 >/dev/null; RC=$?
+chk "날짜 형식이 틀리면 종료 2" '[ "$RC" = 2 ] && grep -q "YYYYMMDD" "$SB/err"' "rc=$RC $(cat "$SB/err")"
+rm -f "$SB/sprint-start"
+chk "여러 스프린트에 걸치는 모듈(--long)은 스프린트 시작일이 없어도 됨" '[ "$(nosprint --ticket LRM-716 --name x --slug longmod --long | jq -r .branch)" = "feature/longmod" ]' "$(cat "$SB/err")"
 # 접수(0단계): 목표와 확인 방법을 기능 카드 설명에 적어 줌. 안 주면 빈 칸으로 남아 단계 도구가 채우라고 알려 줌
 desc_of() { (cd "$BOARD" && bd show "$1" --json | jq -r '(if type=="array" then .[0] else . end).description'); }
 bash "$SCR/feature_open.sh" --ticket LRM-721 --name "결말" --base dev --slug ending --goal "마지막 날 시작해도 결말이 열린다" --verify "마지막 날 세이브로 시작해 장면이 열리는 캡처" >/dev/null 2>&1

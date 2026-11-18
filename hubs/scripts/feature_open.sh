@@ -13,6 +13,7 @@ CFG_CREATE_HUB="${LRM_CREATE_HUB:-$HERE/../../skills/orca-hub-create/scripts/cre
 CFG_ROLE_TMPL="${LRM_FEATURE_ROLE:-$HERE/../roles/role-feature.txt}"
 CFG_ROLE_OUT="${LRM_ROLES_DIR:-$HOME/.config/lrm-hubs/roles}"   # restart_hub.sh 가 role-<이름>.txt 로 읽는 곳
 CFG_MODEL="claude-opus-5-5"
+CFG_SPRINT_FILE="${LRM_SPRINT_FILE:-$HOME/.config/lrm-hubs/sprint-start}"   # 이 스프린트의 시작일 한 줄(YYYYMMDD). 스프린트가 바뀔 때 한 번 고침
 CFG_HUB_REPORT="${LRM_HUB_REPORT:-$HERE/hub_report.py}"   # 기능 Slack 스레드 시작 보고를 예약하는 CLI
 
 usage() {
@@ -21,9 +22,10 @@ usage() {
                        [--goal "<목표 한 문장>" --verify "<확인 방법 한 문장>" [--out "<범위 밖>"]] [--dry-run] [--json]
 기능 하나를 맡을 코디네이터를 만든다. 다시 실행해도 있는 것은 재사용하고 빠진 것만 만든다.
   1 기능 통합 브랜치(없으면 --base 에서 생성). 이름은 게임 저장소 규칙(CLAUDE.md Branch Convention)을 따름:
-      스프린트 안에서 끝나는 작업  sprint-<오늘 YYYYMMDD>/<타입>-<티켓>-<작업명>   예 sprint-20261118/feat-LRM-612-mailbox
+      스프린트 안에서 끝나는 작업  sprint-<스프린트 시작일 YYYYMMDD>/<타입>-<티켓>-<작업명>   예 sprint-20261107/feat-LRM-612-mailbox
       여러 스프린트에 걸치는 모듈(--long)  feature/<작업명>                    예 feature/localization
-    다시 실행하면 처음 만든 이름을 기능 카드(label branch:)에서 읽어 그대로 씀(날짜가 바뀌어도 같은 브랜치)
+    스프린트 시작일은 오늘 날짜가 아님. --sprint > 환경 LRM_SPRINT_DATE > 설정 파일(~/.config/lrm-hubs/sprint-start, 한 줄 YYYYMMDD) 순으로 읽고, 없으면 만들지 않고 멈춤
+    다시 실행하면 처음 만든 이름을 기능 카드(label branch:)에서 읽어 그대로 씀(스프린트가 바뀌어도 같은 브랜치)
   2 허브 작업 공간 <WS_ROOT>/coord-feat-<slug>-hub (그 브랜치 체크아웃)
   3 작업판 epic 카드 (bd create -t epic, label feature:<slug>·branch:<통합 브랜치>·repo:<저장소>·base:<기준>. 범위 검사 기준·완료 증거 커밋 묶기·병합 기록 대조에 씀)
   4 역할 파일 ~/.config/lrm-hubs/roles/role-feat-<slug>.txt 와 Opus 코디네이터 기동
@@ -38,13 +40,14 @@ usage() {
   --slug 영문     영문 작업명(소문자·숫자·-). 브랜치·허브 이름에 씀. 생략하면 허브 이름은 티켓 소문자(lrm-n), 브랜치는 티켓 번호까지만(경고)
   --type 타입     feat|fix|chore|refactor|docs|design (기본 feat). 버그 수정은 fix
   --long          여러 스프린트에 걸치는 모듈 작업. 브랜치를 feature/<작업명> 으로 만듦
+  --sprint 날짜   이 스프린트의 시작일 YYYYMMDD. 생략하면 LRM_SPRINT_DATE, 그다음 설정 파일
   --goal 문장     접수: 만들 것 한 문장(사용자 원문 그대로). 기능 카드 설명의 "- 목표:" 칸에 적음
   --verify 문장   접수: 끝났는지 확인할 방법 한 문장. "- 확인 방법:" 칸에 적음
   --out 문장      접수: 이번에 하지 않는 것. "- 범위 밖:" 칸에 적음
                   세 칸은 새 기능 카드를 만들 때만 적음. 안 주면 빈 칸으로 남고 코디네이터가 채워야 접수 단계를 떠날 수 있음(board-stage)
   --dry-run       아무것도 만들지 않고 할 일만 출력
   --json          결과를 JSON 한 줄로 출력
-환경: REPO, WS_ROOT, LRM_BOARD(작업판 폴더), LRM_CREATE_HUB, LRM_FEATURE_ROLE, LRM_ROLES_DIR, LRM_SPRINT_DATE(스프린트 폴더 날짜, 기본 오늘)
+환경: REPO, WS_ROOT, LRM_BOARD(작업판 폴더), LRM_CREATE_HUB, LRM_FEATURE_ROLE, LRM_ROLES_DIR, LRM_SPRINT_DATE(스프린트 시작일), LRM_SPRINT_FILE(스프린트 시작일 설정 파일, 기본 ~/.config/lrm-hubs/sprint-start)
 종료 코드: 0 성공, 1 단계 실패, 2 인자 오류, 3 환경 오류(bd·orca·jq·git 없음, 기준 브랜치 없음), 5 사용자 검수 대기 상한(REVIEW_WIP_MAX, 기본 3)
 예:
   feature_open.sh --ticket LRM-612 --name "우편함" --base dev --dry-run
@@ -54,14 +57,14 @@ USAGE
 die() { echo "$1" >&2; exit "${2:-2}"; }
 oneline() { printf '%s' "$1" | tr '\n' ' '; }  # 접수 칸은 한 줄(줄이 갈리면 칸 이름 줄에서 떨어짐)
 
-TICKET="" NAME="" BASE="" SLUG="" TYPE="feat" LONG=0 DRY=0 JSON=0 GOAL="" VERIFY="" OUT_OF=""
+TICKET="" NAME="" BASE="" SLUG="" TYPE="feat" LONG=0 DRY=0 JSON=0 GOAL="" VERIFY="" OUT_OF="" SPRINT_ARG=""
 BRANCH_TYPES="feat|fix|chore|refactor|docs|design"  # 게임 저장소 CLAUDE.md 의 타입 접두
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --ticket|--name|--base|--slug|--type|--goal|--verify|--out) [ $# -ge 2 ] || die "$1 값 필요 — --help 참고"
+    --ticket|--name|--base|--slug|--type|--goal|--verify|--out|--sprint) [ $# -ge 2 ] || die "$1 값 필요 — --help 참고"
       case "$1" in --ticket) TICKET="$2";; --name) NAME="$2";; --base) BASE="$2";; --slug) SLUG="$2";; --type) TYPE="$2";;
-        --goal) GOAL="$2";; --verify) VERIFY="$2";; --out) OUT_OF="$2";; esac; shift 2 ;;
+        --goal) GOAL="$2";; --verify) VERIFY="$2";; --out) OUT_OF="$2";; --sprint) SPRINT_ARG="$2";; esac; shift 2 ;;
     --long) LONG=1; shift ;;
     --dry-run) DRY=1; shift ;;
     --json) JSON=1; shift ;;
@@ -83,14 +86,20 @@ HUB_SLUG="feat-$SLUG"
 HUB="$CFG_WS_ROOT/coord-${HUB_SLUG}-hub"
 LABEL="feature:$SLUG"
 # 통합 브랜치 이름. 이미 연 기능이면 기능 카드에 적힌 이름을 그대로 씀: 스프린트 날짜로 만든 이름이라 다시 계산하면 날이 바뀔 때 다른 브랜치가 됨
-SPRINT="${LRM_SPRINT_DATE:-$(date +%Y%m%d)}"
+sprint_start() { # 스프린트 시작일. 오늘 날짜로 지어내지 않음: 폴더 이름이 스프린트마다 하나여야 스프린트가 끝날 때 한 덩어리로 정리됨
+  local v="${SPRINT_ARG:-${LRM_SPRINT_DATE:-}}"
+  [ -n "$v" ] || { [ -f "$CFG_SPRINT_FILE" ] && v=$(tr -d '[:space:]' < "$CFG_SPRINT_FILE"); }
+  [ -n "$v" ] || die "스프린트 시작일을 모름 — --sprint <YYYYMMDD> 로 주거나 $CFG_SPRINT_FILE 에 한 줄로 적은 뒤 다시 실행(여러 스프린트에 걸치는 모듈이면 --long)"
+  [[ "$v" =~ ^20[0-9]{6}$ ]] || die "스프린트 시작일 형식 오류: $v — YYYYMMDD 여덟 자리(예 20261107)"
+  printf '%s' "$v"
+}
 KNOWN=$(cd "$CFG_BOARD" && bd list -t epic -l "$LABEL" --json 2>/dev/null | jq -r '[.[] | select(.status != "closed")][0].labels // [] | map(select(startswith("branch:")))[0] // "" | sub("^branch:"; "")' 2>/dev/null) || KNOWN=""
 if [ -n "$KNOWN" ]; then BRANCH="$KNOWN"
 elif [ "$NAMED" = 0 ]; then
   echo "⚠️ 영문 작업명 없음 — 브랜치를 티켓 번호까지만으로 만듦. --slug <작업명> 을 주면 규칙대로 <타입>-<티켓>-<작업명> 이 됨" >&2
-  if [ "$LONG" = 1 ]; then BRANCH="feature/$SLUG"; else BRANCH="sprint-$SPRINT/$TYPE-$TICKET"; fi
+  if [ "$LONG" = 1 ]; then BRANCH="feature/$SLUG"; else SPRINT=$(sprint_start) || exit $?; BRANCH="sprint-$SPRINT/$TYPE-$TICKET"; fi
 elif [ "$LONG" = 1 ]; then BRANCH="feature/$SLUG"
-else BRANCH="sprint-$SPRINT/$TYPE-$TICKET-$SLUG"; fi
+else SPRINT=$(sprint_start) || exit $?; BRANCH="sprint-$SPRINT/$TYPE-$TICKET-$SLUG"; fi
 ROLE_OUT="$CFG_ROLE_OUT/role-${HUB_SLUG}.txt"
 
 # 기준: origin/<base> 우선, 없으면 로컬
