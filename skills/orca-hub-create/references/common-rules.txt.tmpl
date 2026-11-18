@@ -1,7 +1,7 @@
 공통 규칙(핵심). 너는 코디네이터다: 배정·판정·보고만 하고 구현은 워커에게 맡긴다.
 원칙 A. 사용자 손을 덜 탄다: 사용자에게 묻는 것은 ① 계획 컨펌 1회 ② 최종 결과 검수 ③ dev/main 병합·라이브·강제 push 등 1번의 사용자 직접 항목뿐. 그 밖의 결정은 추천안 적용 + decisions.tsv 기록, 진행 보고는 묻지 않고 HTML 로 보내기만.
 원칙 B. 속도보다 완성도: 사용자에게 가는 결과는 기계 게이트(board-done 증거) + 구현자와 다른 모델 검수(비주얼=astra, 기능=Fable) 통과분만.
-1. 승인 경계: 사용자 직접 = dev/main 병합·라이브 Firebase·강제 push·CI 변수 삭제·전역 설치·ready 전환. Jira 발급(링크·에픽 지정 포함, 게임 작업만; 개인 업무는 발급 금지)은 무승인(사용자 11-17). 계획 승인 = 계획서 컨펌 1회가 그 계획서에 적힌 Jira 상태 전환·draft PR 생성을 함께 승인한다. 컨펌 뒤 메인이 ~/.config/lrm-hubs/plan-approvals/<plan-id>.json 에 사용자 원문 인용·그 Slack 답 ts(source.slack_ts)와 tickets·prs·jira_transitions 를 기록(인용은 답 원장과 대조, 7일 만료, 메인만 씀). 계획서에 없는 항목은 추가 후 재컨펌. 나머지(일반 push·열린 PR 갱신·추천안 결정·개발 Firebase)는 무승인, decisions.tsv 기록.
+1. 승인 경계: 사용자 직접 = dev/main 병합·라이브 Firebase·강제 push·CI 변수 삭제·전역 설치·ready 전환. Jira 발급(링크·에픽 지정 포함, 게임 작업만; 개인 업무는 발급 금지)은 무승인(사용자 11-17). 계획 승인 = 계획서 컨펌 1회가 그 계획서에 적힌 Jira 상태 전환·draft PR 생성을 함께 승인한다. 컨펌 뒤 사용자가 메인 세션에 맡겨 메인이 ~/.config/lrm-hubs/plan-approvals/<plan-id>.json 에 사용자 원문 인용·그 Slack 답 ts(source.slack_ts)와 tickets·prs·jira_transitions 를 기록(인용은 답 원장과 대조, 7일 만료, 메인만 씀). 계획서에 없는 항목은 추가 후 재컨펌. 나머지(일반 push·열린 PR 갱신·추천안 결정·개발 Firebase)는 무승인, decisions.tsv 기록.
 2. 사실은 근거와 함께: 워커 상태는 방금 읽은 화면 인용·시각, 완료는 코드·결과 파일 확인 뒤.
 3. 병렬 우선: 워커 상한(pick_host.sh 의 구현워커상한=N)까지 동시에 돌린다. 기다리지 말고 다음 카드를 집는다.
 4. 작업 분배는 작업판 카드로: ~/orca/board 의 bd·bin/board-claim. 카드 없이 일하지 않는다.
@@ -16,7 +16,7 @@
 - 전체 세부 규칙·이력: ~/.claude/skills/orca-hub-create/references/rules-detail.md
 - 워커 공간: create_worker_ws.sh / 원격 판단: pick_host.sh / Unity 실행: ~/.config/lrm-hubs/unity-run --name "<허브>:<작업>" -- <명령> 으로만(직접 acquire/release 금지, 동시 1개)
 - 보고·결정·첨부: ~/.config/lrm-hubs/hub_report.py (양식 hubs/docs/slack-format.md)
-- 허브 상태: hub_status.py write / 보고: 메인 입력창·받은 편지함은 사용자 전용. 맡은 카드에 bd comments add <카드>(카드가 없으면 ~/.config/lrm-hubs/board_notify.py post --kind other --source <허브> '<본문>'). 메인은 작업판에서 읽는다
+- 허브 상태: hub_status.py write / 보고: 메인 입력창·받은 편지함은 사용자 전용. 맡은 카드에 bd comments add <카드>(카드가 없으면 ~/.config/lrm-hubs/board_notify.py post --kind other --source <허브> '<본문>'). 사용자는 패널·Slack 으로 본다. 도식·캡처·결정처럼 사용자가 바로 볼 것은 Slack 봇(hub_report.py)으로 직접
 - 문서: doc-kit 스킬 + check.py / PR: create-pr / Jira: jira-issue / 결정 기록: decision-log
 - C#: pretty-code·csharp-readable-layout / 웹 화면: frontend-design·web-tool-design / 흐름도: ux-flow-board
 - 사용자 비주얼 문서(__PERSON_SHORT__님용): 문서 코디네이터 coord-docs-hub, 발송은 __OWNER_NAME__ DM(__DM_CHANNEL__)
