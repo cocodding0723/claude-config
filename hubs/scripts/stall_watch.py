@@ -185,8 +185,8 @@ def screen_summary(dispatch: str) -> str:
         return "화면 요약 불가(worker-read 실패)"
     lines = [rw.clean(x) for x in mask_lines([pc.ANSI_RE.sub("", str(x)) if pc else str(x) for x in tail])]
     lines = [ln for ln in lines if ln and not RULE_RE.match(ln)][-SUMMARY_LINES:]
-    text = " / ".join(ln[:80] for ln in lines)
-    return text[:SUMMARY_MAX] or "화면 요약 불가(빈 화면)"
+    text = " / ".join(ln[:80] for ln in lines)[:SUMMARY_MAX].replace("`", "'")
+    return f"`{text}`" if text else "화면 요약 불가(빈 화면)"  # 화면 글은 원문이라 코드 표시로 감쌈(알림 스크립트 줄 검사는 코드 안의 ' / ' 를 보지 않음)
 
 
 def detect(limits: Limits, now: float):
@@ -261,7 +261,8 @@ def build(items: list, names: dict, dups: dict) -> tuple:
              "• 용어: 워커 — 허브가 일을 맡긴 작업 세션 · 허브 — 작업 묶음을 맡는 코디네이터 세션",
              f"• 무엇: 종료 보고 없이 멈췄거나 응답이 없는 워커 {len(items)}건(허브 {len(by_hub)}곳)"]
     for slug, ts in sorted(dups.items()):
-        lines.append(f"• 중복 코디네이터: {names.get(slug, slug)} · {' / '.join(t or '제목 없음' for _h, t in ts)} ({len(ts)}개)")
+        lines.append(f"• 중복 코디네이터: {names.get(slug, slug)} ({len(ts)}개)")
+        lines += [f"  - {t or '제목 없음'}" for _h, t in ts]  # 제목마다 줄을 나눔(' / ' 이음은 알림 스크립트가 거부)
     lines += ["", "참고:"]
     notify = {}
     for slug, its in sorted(by_hub.items(), key=lambda kv: kv[0] or "~"):

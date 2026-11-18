@@ -140,7 +140,7 @@ def xml_cause(run_id):
 
 def message(pr, fails):
     lines = [f"PR #{pr['number']} CI 실패 원인", ""]
-    lines += [f"• {c['key']}: {c.get('cause') or '원인 줄 못 찾음 — 로그 확인'}" for c in fails]
+    lines += [f"• `{c['key']}`: {c.get('cause') or '원인 줄 못 찾음 — 로그 확인'}" for c in fails]
     lines += ["", "👉 답: 고칠 곳 확인 뒤 다시 실행"]
     ref = [TICKET.sub("", pr.get("title", "")).strip()] + [c["link"] for c in fails if c.get("link")]
     lines += ["", "참고: " + " · ".join(x for x in ref if x)]  # 제목의 티켓 번호는 양식 검사 대상이라 뺌
