@@ -8,9 +8,9 @@ NOW=$(date +%s)
 # 결정 3건: D1 미답, D2 답함(반응 a), D3 미답
 seed() {
   cat > "$HUB/slack-sent.jsonl" <<J
-{"at":$NOW,"channel":"DTEST","ts":"1.1","thread_ts":"","kind":"text","title":"결정: 첫째","tag":"","form_kind":"decide"}
-{"at":$NOW,"channel":"DTEST","ts":"1.2","thread_ts":"","kind":"text","title":"결정: 둘째","tag":"","form_kind":"decide"}
-{"at":$NOW,"channel":"DTEST","ts":"1.3","thread_ts":"","kind":"text","title":"결정: 셋째","tag":"","form_kind":"decide"}
+{"at":$NOW,"channel":"DTEST","ts":"1.1","thread_ts":"","kind":"text","title":"결정: 첫째","tag":"","form_kind":"decide","options":{"1":"A","2":"B"}}
+{"at":$NOW,"channel":"DTEST","ts":"1.2","thread_ts":"","kind":"text","title":"결정: 둘째","tag":"","form_kind":"decide","options":{"1":"A","2":"B"}}
+{"at":$NOW,"channel":"DTEST","ts":"1.3","thread_ts":"","kind":"text","title":"결정: 셋째","tag":"","form_kind":"decide","options":{"1":"A","2":"B"}}
 J
   echo '{"type":"reaction","emoji":"a","action":"a","parent_ts":"1.2","received_at":'"$NOW"'}' > "$HUB/slack-inbox.jsonl"
 }
@@ -227,15 +227,18 @@ check "미답 카드는 표시 없음" 0 "$(grep -c 'D-T3 — ' "$LOG")"
 check "머리글은 버튼으로 답(이모지 안내 없음)" 1,0 "$(grep -c '버튼으로 답' "$LOG"),$(grep -c '이모지로 답' "$LOG")"
 stop_stub
 
-# 목록에 들어가면 안 되는 것 4가지와 들어가야 하는 것 1가지. 설정 표(hubs/pending_rules.tsv): 기한 48시간, 머리말 D-ST·D-RS 제외
+# 목록에 들어가면 안 되는 것 5가지와 들어가야 하는 것 2가지. 설정 표(hubs/pending_rules.tsv): 기한 48시간, 감시기 번호(머리말 + 해시 10자리) 제외
+# 판정 경우 자체는 tests/pending_judge 의 표에 있음. 여기는 스크립트가 그 판정을 실제 목록에 쓰는지만 봄
 OLD=$((NOW - 3 * 86400))
 seed_mixed() {
   cat > "$HUB/slack-sent.jsonl" <<J
 {"at":$NOW,"channel":"DTEST","ts":"3.1","thread_ts":"","kind":"text","title":"최근 결정","tag":"","form_kind":"decide","decision_id":"D-N1","options":{"1":"A","2":"B"}}
 {"at":$OLD,"channel":"DTEST","ts":"3.2","thread_ts":"","kind":"text","title":"사흘 전 결정","tag":"","form_kind":"decide","decision_id":"D-O1","options":{"1":"A","2":"B"}}
-{"at":$NOW,"channel":"DTEST","ts":"3.3","thread_ts":"","kind":"text","title":"멈춘 워커 감시 — 응답 없음 1건","tag":"","form_kind":"decide","decision_id":"D-ST40a3","options":{"1":"알리기","2":"무시"}}
-{"at":$NOW,"channel":"DTEST","ts":"3.4","thread_ts":"","kind":"text","title":"재시작 감시","tag":"","form_kind":"decide","decision_id":"D-RS1","options":{"1":"재개","2":"무시"}}
+{"at":$NOW,"channel":"DTEST","ts":"3.3","thread_ts":"","kind":"text","title":"멈춘 워커 감시 — 응답 없음 1건","tag":"","form_kind":"decide","decision_id":"D-ST40a3edd6b4","options":{"1":"알리기","2":"무시"}}
+{"at":$NOW,"channel":"DTEST","ts":"3.4","thread_ts":"","kind":"text","title":"재시작 감시","tag":"","form_kind":"decide","decision_id":"D-RS0123456789","options":{"1":"재개","2":"무시"}}
 {"at":$NOW,"channel":"DTEST","ts":"3.5","thread_ts":"","kind":"text","title":"Slack 결정 카드를 작업 스레드 안으로","tag":"","form_kind":"progress"}
+{"at":$NOW,"channel":"DTEST","ts":"3.6","thread_ts":"","kind":"text","title":"매점은 몇 일차부터 보일까","tag":"","form_kind":"decide","decision_id":"D-STOREDAY","options":{"1":"1일차","2":"3일차"}}
+{"at":$NOW,"channel":"DTEST","ts":"3.7","thread_ts":"","kind":"text","title":"선택지 없는 옛 선택 글","tag":"","form_kind":"decide"}
 J
   : > "$HUB/slack-inbox.jsonl"
 }
@@ -245,9 +248,10 @@ new_hub; seed_mixed
 start_stub "{$PERMA,$UPD,$DEL,$POST1}"
 bash "$PEND" >/dev/null; RC=$?
 check "종료 코드" 0 "$RC"
-check "대기 항목 1개" 1 "$(grep -c '답을 기다리는 결정 1개' "$LOG")"
+check "대기 항목 2개" 1 "$(grep -c '답을 기다리는 결정 2개' "$LOG")"
 check "최근 결정은 있음" 1 "$(grep -c 'D-N1' "$LOG")"
-check "오래된 결정·멈춘 워커·재시작 알림·일반 글은 없음" 0,0,0,0 "$(grep -c 'D-O1' "$LOG"),$(grep -c 'D-ST40a3' "$LOG"),$(grep -c 'D-RS1' "$LOG"),$(grep -c '작업 스레드 안으로' "$LOG")"
+check "감시기와 머리말만 같은 사람 결정은 남음" 1 "$(grep -c 'D-STOREDAY' "$LOG")"
+check "오래된 결정·멈춘 워커·재시작 알림·일반 글·선택지 없는 옛 글은 없음" 0,0,0,0,0 "$(grep -c 'D-O1' "$LOG"),$(grep -c 'D-ST40a3edd6b4' "$LOG"),$(grep -c 'D-RS0123456789' "$LOG"),$(grep -c '작업 스레드 안으로' "$LOG"),$(grep -c '선택지 없는 옛 선택 글' "$LOG")"
 check "오래된 결정 수를 한 줄로 알림" 1 "$(grep -c '오래된 결정 1개는 다시 알리지 않음' "$LOG")"
 stop_stub
 
@@ -256,9 +260,9 @@ new_hub; seed_mixed
 start_stub "{$PERMA,$UPD,$DEL,$POST1}"
 bash "$PEND" --all >/dev/null; RC=$?
 check "종료 코드" 0 "$RC"
-check "대기 항목 2개" 1 "$(grep -c '답을 기다리는 결정 2개' "$LOG")"
+check "대기 항목 3개" 1 "$(grep -c '답을 기다리는 결정 3개' "$LOG")"
 check "오래된 결정에 표시" 1 "$(grep -c 'D-O1 — 오래됨' "$LOG")"
-check "자동 알림은 없음" 0 "$(grep -c 'D-ST40a3' "$LOG")"
+check "자동 알림은 없음" 0 "$(grep -c 'D-ST40a3edd6b4' "$LOG")"
 stop_stub
 
 echo "[오래된 것만] 재알림은 보내지 않고, 감시기 카드는 답하면 여전히 고쳐 씀"

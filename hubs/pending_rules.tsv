@@ -1,6 +1,6 @@
-# 대기 목록(slack_pending.sh) 설정. 칸은 탭으로 나눔. 값은 여기 한 곳에만 둠
-# max_age_hours<TAB>시간            보낸 지 이 시간이 넘은 결정은 2시간 재알림에서 뺌('대기' 명령으로는 보임)
-# exclude_prefix<TAB>결정 번호 머리말<TAB>설명   사람이 정할 결정이 아닌 자동 알림 카드. 카드와 버튼 동작은 그대로 두고 목록에서만 뺌
+# 대기 목록 설정(판정은 pending_judge.py). 칸은 탭으로 나눔. 값은 여기 한 곳에만 둠
+# max_age_hours<TAB>시간                       보낸 지 이 시간이 넘은 결정은 2시간 재알림에서 뺌('대기' 명령으로는 보임)
+# exclude_pattern<TAB>결정 번호 정규식<TAB>설명   번호 전체가 맞는 카드는 사람이 정할 결정이 아닌 자동 알림. 카드와 버튼 동작은 그대로 두고 목록에서만 뺌
 max_age_hours	48
-exclude_prefix	D-ST	멈춘 워커 감시(stall_watch)
-exclude_prefix	D-RS	재시작 감시(restart_watch)
+exclude_pattern	D-ST[0-9a-f]{10}	멈춘 워커 감시(stall_watch: 머리말 + 해시 10자리)
+exclude_pattern	D-RS[0-9a-f]{10}	재시작 감시(restart_watch: 머리말 + 해시 10자리)

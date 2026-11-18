@@ -22,6 +22,7 @@ import json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 sys.path.insert(0, os.environ["LRM_PY_DIR"])  # -I 는 같은 폴더를 import 경로에 넣지 않음
 import tls_ctx
 import answer_store
+import pending_judge
 SSL_CTX = tls_ctx.ssl_context()
 H = sys.argv[1]
 DRY = "--dry-run" in sys.argv[2:]
@@ -41,30 +42,8 @@ ANSWER_ACTIONS = ("pick", "approve", "hold")
 TOLD_MAX = 60  # 고쳐 쓴 글에 보이는 답 내용 길이
 SAID_NOTE = " — 글 답 도착, 담당 확인 중"  # 선택 표기 없는 글 답이 온 카드. 닫지 않고 표시만
 SHOW_ALL = "--all" in sys.argv[2:]  # 사용자가 '대기' 명령으로 부를 때: 오래된 결정까지 보여 줌. 2시간 재알림은 최근 것만
-RULES_NAME = "pending_rules.tsv"
-
-def load_rules():
-    """대기 목록 설정 표 → (재알림 기한 시간 또는 None, 목록에서 뺄 결정 번호 머리말들). 값은 표 한 곳에만 둠.
-    찾는 순서: 작업 폴더(설치본) → 스크립트 옆 → 저장소의 hubs/. 없으면 제한 없이 만들고 한 줄 경고"""
-    here = os.environ["LRM_PY_DIR"]
-    for p in (os.path.join(H, RULES_NAME), os.path.join(here, RULES_NAME), os.path.join(here, "..", RULES_NAME)):
-        if not os.path.isfile(p):
-            continue
-        age, skip = None, []
-        with open(p, encoding="utf-8") as f:
-            for ln in f:
-                c = ln.rstrip("\n").split("\t")
-                if ln.startswith("#") or len(c) < 2:
-                    continue
-                if c[0] == "max_age_hours":
-                    age = float(c[1])
-                elif c[0] == "exclude_prefix":
-                    skip.append(c[1])
-        return age, tuple(skip)
-    print(f"경고: {RULES_NAME} 없음 — 나이 제한·자동 알림 제외 없이 목록을 만듦", file=sys.stderr)
-    return None, ()
-
-MAX_AGE_H, SKIP_PREFIXES = load_rules()
+# 무엇이 사람이 정할 결정인가·자동 알림인가·오래됐는가는 pending_judge 한 곳(옆 패널과 같은 판정). 설정 표를 찾는 순서: 작업 폴더(설치본) → 스크립트 옆 → 저장소의 hubs/
+RULES = pending_judge.load_rules([H, os.environ["LRM_PY_DIR"], os.path.join(os.environ["LRM_PY_DIR"], "..")])
 OLD_NOTE = " — 오래됨"  # '대기' 명령으로 볼 때 기한 넘은 결정에 붙는 표시
 OLD_FOOT = "오래된 결정 {n}개는 다시 알리지 않음. 전부 보려면 봇에게 `대기`"
 
@@ -182,13 +161,13 @@ def main():
             and d.get("action") == "free" and not answer_store.is_question(d.get("text"))}
     # 결정 = 결정 카드로 보낸 맨 위 메시지(form_kind decide). 제목에 '결정' 낱말이 든 일반 글은 세지 않음: 작업 스레드 첫 글·보고가 결정으로 섞였음
     # 번호 카드 기록이면 번호가 손상됐어도 목록에는 남김(번호 없이 제목만 표시)
-    decisions = [s for s in sent if s.get("ts") and not s.get("thread_ts") and (s["ts"] in cards or s.get("form_kind") == "decide")]
+    decisions = [s for s in sent if pending_judge.is_decision(s)]
     answered = [s for s in decisions if s["ts"] in done]
     # 자동 알림(감시기 카드)은 버튼이 동작을 실행하는 카드라 그대로 두고, 사람이 정할 결정 목록에서만 뺌
-    waiting = [s for s in decisions if s["ts"] not in done and not str(s.get("decision_id") or "").startswith(SKIP_PREFIXES)]
+    waiting = [s for s in decisions if s["ts"] not in done and not pending_judge.is_auto(s, RULES)]
     # 기한 넘은 결정은 2시간마다 다시 알리지 않음. '대기' 명령(--all)으로는 전부 보임
     now = time.time()
-    old = {s["ts"] for s in waiting if MAX_AGE_H is not None and now - float(s.get("at") or now) > MAX_AGE_H * 3600}
+    old = {s["ts"] for s in waiting if pending_judge.is_old(s, RULES, now)}
     if not SHOW_ALL:
         waiting = [s for s in waiting if s["ts"] not in old]
 
