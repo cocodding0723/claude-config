@@ -383,7 +383,9 @@ chmod -x "$SB8D/noexec"; out=$(py_install "$SB8D/noexec"); rc=$?; [ "$rc" != 0 ]
 out=$(py_install "$SB8D/old/python3"); rc=$?;     [ "$rc" != 0 ] && echo "$out" | grep -q "ERROR: python3 버전 3.9 은 3.10 미만" && echo "$out" | grep -q "brew install python" && ok "__PYTHON3__: 3.9 거부(버전·조치 메시지)" || ko "3.9 거부" "rc=$rc $(echo "$out" | tail -2 | tr '\n' ' ')"
 out=$(py_install "$SB8D/broken"); rc=$?;         [ "$rc" != 0 ] && echo "$out" | grep -q "ERROR: python3 실행 실패" && ok "__PYTHON3__: 실행이 실패하는 python3 거부" || ko "실행 실패" "rc=$rc"
 if [ -x /usr/bin/python3 ] && /usr/bin/python3 -c 'import sys; sys.exit(0 if sys.version_info < (3, 10) else 1)' 2>/dev/null; then
-  out=$(py_install /usr/bin/python3); rc=$?;      [ "$rc" != 0 ] && echo "$out" | grep -q "ERROR: python3 버전 3.9 은 3.10 미만" && ok "__PYTHON3__: 시스템 /usr/bin/python3(3.9) 거부" || ko "시스템 3.9" "rc=$rc"
+  # 격리 실행기(test-box) 안에서는 시스템 python3 가 도구 경로 캐시를 못 써 경고를 먼저 찍음 → 버전 대신 '실행 실패'로 거부됨. 거부 자체는 같음
+  want="ERROR: python3 버전 3.9 은 3.10 미만"; [ -n "${LRM_TEST_BOX:-}" ] && want="ERROR: python3 \(버전 3.9 은 3.10 미만\|실행 실패\)"
+  out=$(py_install /usr/bin/python3); rc=$?;      [ "$rc" != 0 ] && echo "$out" | grep -q "$want" && ok "__PYTHON3__: 시스템 /usr/bin/python3(3.9) 거부" || ko "시스템 3.9" "rc=$rc"
 fi
 out=$(py_install "$PYREAL"); rc=$?;               [ "$rc" = 0 ] && ok "__PYTHON3__: 3.10 이상 절대 경로는 통과" || ko "정상 python3 통과" "rc=$rc $(echo "$out" | tail -2 | tr '\n' ' ')"
 before=$(snapshot "$SB8D"); py_install python3 >/dev/null; [ "$before" = "$(snapshot "$SB8D")" ] && ok "__PYTHON3__ 거부 시 HOME 무변경" || ko "거부 시 무변경" "변경됨"
