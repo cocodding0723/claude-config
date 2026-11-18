@@ -1,8 +1,9 @@
 #!/bin/bash
 # 셸 테스트 공통 도구. 가짜 토큰·로컬 스텁만 사용하고 실제 Slack·운영 폴더는 건드리지 않음.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# 검사 대상 스크립트 폴더. 변이 검증이 변형 사본을 가리킬 때 덮어씀
-SCRIPTS="${LRM_SCRIPT_DIR:-$ROOT/lrm-hubs}"
+# 검사 대상 스크립트 폴더 = 설치되는 hubs/scripts. 변이 검증이 변형 사본을 가리킬 때 덮어씀
+# (11-18 까지는 저장소 최상위의 옛 사본을 가리켜, 설치되는 스크립트의 변경이 이 시험들로 검사되지 않았음)
+SCRIPTS="${LRM_SCRIPT_DIR:-$ROOT/hubs/scripts}"
 PASS=0 FAIL=0
 STUB_PID=""
 

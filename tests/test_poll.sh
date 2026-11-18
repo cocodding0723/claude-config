@@ -133,7 +133,9 @@ printf '{"seen": {broken' > "$HUB/slack-poll-state.json"
 swap_stub "{$OPEN,\"conversations.history\":[{\"_status\":429,\"_headers\":{\"Retry-After\":\"0\"},\"ok\":false}]}"
 bash "$POLL" --once >/dev/null 2>&1; RC=$?
 check "실패 회차 종료 코드 1" 1 "$RC"
-check "상태 파일 없음(백업만 남음)" no "$([ -e "$HUB/slack-poll-state.json" ] && echo yes || echo no)"
+# 폴러는 수집 시작 시각을 API 호출 전에 저장하므로 실패 회차에도 상태 파일이 다시 생김(손상본은 .corrupt-* 로 옮겨짐)
+check "실패 회차 뒤 상태 파일은 읽을 수 있는 새 파일" yes "$(python3 -c 'import json,sys;json.load(open(sys.argv[1]))' "$HUB/slack-poll-state.json" 2>/dev/null && echo yes || echo no)"
+check "손상본은 따로 보관" 1 "$(ls "$HUB" | grep -c 'slack-poll-state.json.corrupt-')"
 swap_stub "{$OPEN,$HIST,$REPLIES}"
 bash "$POLL" --once >/dev/null 2>&1; RC=$?
 check "다음 회차 종료 코드" 0 "$RC"
