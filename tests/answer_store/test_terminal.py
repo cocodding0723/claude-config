@@ -55,6 +55,15 @@ class TerminalAnswerTest(unittest.TestCase):
     def ans(self, source, did="D-0001", ts="1.1"):
         return self.st.Answer(did, ts, "C1", "시험 결정", "승인", source, {"action": "custom", "text": "승인"})
 
+    @unittest.skipUnless(os.path.exists("/usr/bin/python3"), "시스템 python 없음")
+    def test_cli_under_old_python_reexecs(self):
+        """셸에서 시스템 python(3.9)이 잡혀도 3.10 이상으로 다시 실행해 동작(11-19 TypeError 회귀)"""
+        self.card()
+        p = subprocess.run(["/usr/bin/python3", CLI, "D-0001", "승인", "--pick", "1", "--dry-run"], capture_output=True, text=True,
+                           env={**os.environ, "LRM_HUB_DIR": self.hub})
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("미리 보기", p.stdout)
+
     def test_record_writes_same_shape_with_terminal_source_and_closes(self):
         self.assertEqual(self.store.record(self.ans(self.st.TERMINAL), now=100), "")
         rec = json.loads(self.lines("slack-inbox.jsonl")[0])

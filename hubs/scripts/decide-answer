@@ -9,11 +9,21 @@
       decide-answer D-B12ab "둘 다 아니고 다음 주에 다시 보자"
 환경: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs)
 종료 코드: 0 기록함(이미 답한 카드는 그대로 두고 0), 2 인자 오류, 4 그 번호·ts 의 결정 카드 없음"""
-import argparse
-import json
 import os
-import re
 import sys
+
+if sys.version_info < (3, 10):  # 하위 모듈이 3.10 문법(X | None)을 씀. 셸에서 시스템 python(3.9)이 잡히면 3.10 이상으로 다시 실행
+    import shutil
+    for cand in [os.environ.get("LRM_PYTHON3", ""), "/opt/homebrew/bin/python3", "/usr/local/bin/python3",
+                 *(shutil.which(f"python3.{m}") or "" for m in range(14, 9, -1))]:
+        if cand and os.access(cand, os.X_OK) and os.path.realpath(cand) != os.path.realpath(sys.executable):
+            os.execv(cand, [cand, os.path.realpath(__file__), *sys.argv[1:]])
+    print(f"ERROR: Python 3.10 이상 필요(현재 {sys.version_info.major}.{sys.version_info.minor}). LRM_PYTHON3 에 3.10 이상 절대 경로를 지정", file=sys.stderr)
+    sys.exit(2)
+
+import argparse  # noqa: E402
+import json  # noqa: E402
+import re  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import answer_store  # noqa: E402
