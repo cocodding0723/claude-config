@@ -86,6 +86,7 @@ hubs/scripts/hub_dups.py	.config/lrm-hubs/hub_dups.py	link
 hubs/scripts/hub_split.py	.config/lrm-hubs/hub_split.py	link
 hubs/scripts/card_actions.py	.config/lrm-hubs/card_actions.py	link
 hubs/scripts/answer_store.py	.config/lrm-hubs/answer_store.py	link
+hubs/scripts/pending_judge.py	.config/lrm-hubs/pending_judge.py	link
 hubs/scripts/decide-answer	.config/lrm-hubs/decide-answer	link
 hubs/scripts/answer_route.py	.config/lrm-hubs/answer_route.py	link
 hubs/scripts/restart_watch.py	.config/lrm-hubs/restart_watch.py	link
@@ -213,6 +214,7 @@ hubs/launchd/ai.lrm.nightdispatch.plist	.config/lrm-hubs/ai.lrm.nightdispatch.pl
 hubs/scripts/board_sweep.py	.config/lrm-hubs/board_sweep.py	link
 hubs/scripts/board_sweep.sh	.config/lrm-hubs/board_sweep.sh	link
 hubs/board_sweep.tsv	.config/lrm-hubs/board_sweep.tsv	link
+hubs/pending_rules.tsv	.config/lrm-hubs/pending_rules.tsv	link
 hubs/launchd/ai.lrm.boardsweep.plist	Library/LaunchAgents/ai.lrm.boardsweep.plist	copy
 board/bin/board-done	orca/board/bin/board-done	link
 board/bin/board-claim	orca/board/bin/board-claim	link

@@ -84,6 +84,7 @@ try:  # 입력 칸·대화상자 판별은 slack_push.py 의 것을 그대로 �
     from slack_push import screen_state  # noqa: E402
 except Exception:  # noqa: BLE001 — 가져오기 실패가 수집 전체를 막지 않게 함
     screen_state = None
+import pending_judge  # noqa: E402  대기 목록 대상 판정(재알림과 같은 한 곳)
 
 
 class SourceError(Exception):
@@ -379,10 +380,13 @@ def card_state(s, reactions):
 
 
 def collect_pending(now):
-    """slack_pending.sh 와 같은 판정(시험이 두 규칙을 대조). 대상: 최상위 보낸 메시지 중 제목에 '결정'이 들었거나 번호 카드인 것.
+    """slack_pending.sh 와 같은 판정. 대상(무엇이 사람이 정할 결정인가)은 pending_judge 한 곳을 같이 씀: 선택지 단 결정 카드만, 자동 알림 제외.
+    패널은 재알림이 아니라 현황이라 오래된 결정도 그대로 보임(나이는 ageMin 으로 표시).
     옛 카드는 반응이 하나라도 있으면 닫힘, 번호 카드는 card_state 가 closed 일 때만 닫힘(보류·충돌은 대기). slack-done.txt 는 둘 다 닫음.
     같은 제목은 한 건(번호 카드는 메시지마다 따로). 메인 형식(번호 카드 없음)이면 옛 규칙과 같은 결과"""
     sent, inbox = jsonl(SENT), jsonl(INBOX)
+    here = os.path.dirname(os.path.realpath(__file__))
+    rules = pending_judge.load_rules([DIR, here, os.path.join(here, "..")])
     reactions = {}
     for d in inbox:
         if d.get("type") == "reaction" and isinstance(d.get("parent_ts"), str):
@@ -403,8 +407,8 @@ def collect_pending(now):
     for s in sent:
         ts, title = s.get("ts"), str(s.get("title", ""))
         card = isinstance(ts, str) and ts in cards
-        form_card = s.get("form_kind") == "decide" and "options" in s  # 번호가 손상돼도 번호 카드 기록이면 목록 대상
-        if not isinstance(ts, str) or not ts or s.get("thread_ts") or not (card or form_card or "결정" in title) or ts in done:
+        # 번호가 손상돼도 선택지 단 결정 카드면 목록 대상(제목만 표시)
+        if not isinstance(ts, str) or not pending_judge.is_decision(s) or pending_judge.is_auto(s, rules) or ts in done:
             continue
         key = ("card", ts) if card else title
         if key in seen:

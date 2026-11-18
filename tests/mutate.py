@@ -2,7 +2,8 @@
 """변이 검증. 스크립트 사본의 핵심 방어 코드를 하나씩 망가뜨려 테스트가 잡는지 확인.
 
 사용: python3 tests/mutate.py
-미검출 변이가 하나라도 있으면 종료 코드 1. 원본 lrm-hubs/ 는 수정하지 않고 임시 사본만 변형함.
+미검출 변이가 하나라도 있으면 종료 코드 1. 원본 hubs/ 는 수정하지 않고 임시 사본만 변형함.
+스크립트가 옆 모듈과 상위 폴더의 설정 표를 읽으므로 hubs/ 를 통째로 복사하고 그 안의 scripts/ 를 변형함.
 """
 import glob
 import os
@@ -12,7 +13,8 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "lrm-hubs")
+SRC = os.path.join(ROOT, "hubs")  # 설치되는 스크립트의 원본(scripts/)과 설정 표
+SCRIPTS = "scripts"
 
 # (이름, 파일, [(원문, 변형)])
 MUTANTS = [
@@ -53,7 +55,7 @@ def main():
     work = tempfile.mkdtemp(prefix="lrm-mutate-")
     base = os.path.join(work, "base")
     shutil.copytree(SRC, base)
-    if not run_tests(base):
+    if not run_tests(os.path.join(base, SCRIPTS)):
         print("기준 사본이 테스트를 통과하지 못함 — 변이 검증 중단")
         return 2
     missed = 0
@@ -62,7 +64,7 @@ def main():
         if os.path.exists(d):
             shutil.rmtree(d)
         shutil.copytree(SRC, d)
-        path = os.path.join(d, fname)
+        path = os.path.join(d, SCRIPTS, fname)
         text = open(path, encoding="utf-8").read()
         for old, new in edits:
             if old not in text:
@@ -70,7 +72,7 @@ def main():
                 return 2
             text = text.replace(old, new, 1)
         open(path, "w", encoding="utf-8").write(text)
-        caught = not run_tests(d)
+        caught = not run_tests(os.path.join(d, SCRIPTS))
         print(f"{name} → {'검출' if caught else '미검출'}")
         missed += 0 if caught else 1
     shutil.rmtree(work)
