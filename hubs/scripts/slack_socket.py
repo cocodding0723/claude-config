@@ -53,6 +53,7 @@ NOTIFY = os.environ.get("LRM_NOTIFY", os.path.join(DIR, "slack_notify.sh"))
 BLOCK_RE = re.compile(r"^lrm_decide:([A-Za-z0-9-]{1,32})$")
 MODAL_ID = "lrm_custom"
 CUSTOM_MAX = 500  # 직접 입력 글자 상한
+REPLY_LOOKUP = 5  # 스레드에서 카드 하나를 찾을 때 받을 글 수(부모 글이 함께 오므로 1보다 커야 함)
 ASK_MARK = "💬 질문 받음"
 ASK_LINE = ASK_MARK + " ({at}) — 답을 받은 뒤 버튼으로 고르세요"
 
@@ -142,7 +143,10 @@ class Decide:
         did, msg = m.group(1), p.get("message") or {}
         ch, ts = (p.get("channel") or {}).get("id", ""), msg.get("ts", "")
         if act.get("action_id") == "custom":
-            meta = json.dumps({"did": did, "channel": ch, "ts": ts})
+            meta = {"did": did, "channel": ch, "ts": ts}
+            if msg.get("thread_ts") and msg["thread_ts"] != ts:  # 작업 스레드 안의 카드. 제출 때 카드 원문을 그 스레드에서 읽어야 함
+                meta["thread_ts"] = msg["thread_ts"]
+            meta = json.dumps(meta)
             self.web.views_open(trigger_id=p["trigger_id"], view={
                 "type": "modal", "callback_id": MODAL_ID, "private_metadata": meta,
                 "title": {"type": "plain_text", "text": "직접 입력"}, "submit": {"type": "plain_text", "text": "보내기"},
@@ -160,20 +164,34 @@ class Decide:
         text = " ".join(text.split())[:CUSTOM_MAX]
         if not text:
             return
-        hist = self.web.conversations_history(channel=meta["channel"], latest=meta["ts"], inclusive=True, limit=1)
-        msg = next((x for x in hist.get("messages", []) if x.get("ts") == meta["ts"]), {"ts": meta["ts"]})
+        msg = self.card_message(meta["channel"], meta["ts"], meta.get("thread_ts") or "")
         if answer_route.is_question(text) and not STORE.first_answer(meta["did"], meta["ts"]):
             self.ask(meta["did"], meta["channel"], meta["ts"], msg, text)  # 질문은 답이 아님: 기록(claim)·카드 닫기 없이 버튼 유지
             return
         self.finish(meta["did"], meta["channel"], meta["ts"], msg, "직접 입력: " + text, {"action": "custom", "text": text})
 
+    def card_message(self, ch: str, ts: str, thread_ts: str) -> dict:
+        """카드 원문. 맨 위 글은 채널 이력에서, 스레드 안 카드는 그 스레드의 답글에서 읽음(채널 이력에는 스레드 답글이 안 나옴). 못 찾으면 ts 만 든 dict"""
+        if thread_ts:
+            found = self.web.conversations_replies(channel=ch, ts=thread_ts, oldest=ts, latest=ts, inclusive=True, limit=REPLY_LOOKUP)
+        else:
+            found = self.web.conversations_history(channel=ch, latest=ts, inclusive=True, limit=1)
+        return next((x for x in found.get("messages", []) if x.get("ts") == ts), {"ts": ts})
+
+    def update_card(self, ch: str, ts: str, msg: dict, fallback: str, attachments: list, on_fail: str) -> None:
+        """카드를 고쳐 씀. 원문을 못 읽은 카드(본문 블록 없음)는 건드리지 않음: 빈 내용으로 덮어쓰면 카드 본문이 지워짐"""
+        if not msg.get("attachments"):
+            log(f"카드 원문을 못 읽음 — 카드는 그대로 둠({on_fail})")
+            return
+        try:
+            self.web.chat_update(channel=ch, ts=ts, text=card_title(msg) or fallback, attachments=attachments)
+        except Exception as err:
+            log(f"카드 갱신 실패 {type(err).__name__} — {on_fail}")
+
     def ask(self, did: str, ch: str, ts: str, msg: dict, text: str) -> None:
         """질문: 카드에 안내 한 줄만 달고 원문을 허브·메인에 전달(답 경로와 같은 라우터, kind=question)"""
         title = card_title(msg)
-        try:
-            self.web.chat_update(channel=ch, ts=ts, text=title or did, attachments=noted(msg, ASK_LINE.format(at=time.strftime("%m-%d %H:%M"))))
-        except Exception as err:
-            log(f"카드 갱신 실패 {type(err).__name__} — 질문은 전달함")
+        self.update_card(ch, ts, msg, did, noted(msg, ASK_LINE.format(at=time.strftime("%m-%d %H:%M"))), "질문은 전달함")
         self.start(self.send_ask, did, ts, title, text)
 
     def send_ask(self, did: str, ts: str, title: str, text: str) -> None:
@@ -199,10 +217,7 @@ class Decide:
             line = f"ℹ️ 이전 답의 전달 기록이 없어 다시 전달함 — 이번 선택은 반영하지 않음 ({at})"
         else:
             line = f"ℹ️ {claim.late_text()} — 이번 선택은 반영하지 않음 ({at})" if claim.late else f"✅ {label} 선택됨 ({at})"
-        try:
-            self.web.chat_update(channel=ch, ts=ts, text=title or did, attachments=answered(msg, line))
-        except Exception as err:
-            log(f"카드 갱신 실패 {type(err).__name__} — 버튼은 남음")
+        self.update_card(ch, ts, msg, did, answered(msg, line), "버튼은 남음")
         if claim.redeliver:
             extra0, label0 = claim.replay()
             log(f"결정 {did} 전달 기록 없는 이전 답 — 원문 다시 전달")

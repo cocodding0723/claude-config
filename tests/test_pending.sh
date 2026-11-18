@@ -282,4 +282,19 @@ check "출력" "대기 0" "$OUT"
 check "답한 감시기 카드는 고쳐 씀" 1 "$(count chat.update)"
 stop_stub
 
+echo "[스레드 안 카드] 대기 목록에 뜨고, 답하면 수정 전 원문을 그 스레드에서 읽어 이력에 남김(채널 이력에는 스레드 답글이 없음)"
+new_hub
+cat > "$HUB/slack-sent.jsonl" <<J
+{"at":$NOW,"channel":"DTEST","ts":"4.2","thread_ts":"4.1","kind":"text","title":"스레드 결정 하나","tag":"","form_kind":"decide","decision_id":"D-TH1","options":{"1":"A","2":"B"}}
+{"at":$NOW,"channel":"DTEST","ts":"4.3","thread_ts":"4.1","kind":"text","title":"스레드 결정 둘","tag":"","form_kind":"decide","decision_id":"D-TH2","options":{"1":"A","2":"B"}}
+J
+echo "4.2" > "$HUB/slack-done.txt"
+start_stub "{$PERMA,$UPD,$DEL,\"conversations.history\":[{\"ok\":true,\"messages\":[{\"ts\":\"4.1\",\"text\":\"스레드 부모 글\"}]}],\"conversations.replies\":[{\"ok\":true,\"messages\":[{\"ts\":\"4.1\",\"text\":\"스레드 부모 글\"},{\"ts\":\"4.2\",\"text\":\"스레드 결정 하나\n스레드 카드 원문\"}]}],$POST1}"
+bash "$PEND" >/dev/null; RC=$?
+check "종료 코드" 0 "$RC"
+check "답 없는 스레드 카드는 대기 목록에" 1,1 "$(grep -c '답을 기다리는 결정 1개' "$LOG"),$(grep -c 'D-TH2' "$LOG")"
+check "원문은 스레드 답글에서 읽음" 1,4.1 "$(count conversations.replies),$(grep '"conversations.replies"' "$LOG" | jq -r '.query.ts // .body' | grep -o '4\.1' | head -1)"
+check "이력: 스레드 카드의 수정 전 원문 보존" 1 "$(grep '"answered_update"' "$(H_FILE)" | grep -c '스레드 카드 원문')"
+stop_stub
+
 summary
