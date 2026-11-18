@@ -21,7 +21,7 @@ SIZES = {SMALL: "작음", NORMAL: "보통", LARGE: "큼"}
 PLAN_HEAD = "D-PLAN"
 ID_BODY_MAX = 16 - len("PLAN")  # 결정 번호는 D- 뒤 16자까지(hub_report.DECISION_ID_RE)
 APPROVE_WORD = "승인"            # 계획 승인 카드의 1번 선택지는 이 말로 시작
-USER_SOURCES = ("slack", "docsite")  # 사용자가 직접 누른 답만. 터미널 기록은 코디네이터가 쓸 수 있음
+USER_SOURCES = ("slack", "docsite", "discord")  # 사용자가 직접 낸 답만(discord 는 폴러만 씀). 터미널 기록은 코디네이터가 쓸 수 있음
 POLLED_TYPES = ("reaction", "thread_reply")  # 폴러가 Slack 에서 읽어 온 사용자 반응·카드 스레드 글(출처 칸 없이 기록됨)
 SENT_NAME, INBOX_NAME = "slack-sent.jsonl", "slack-inbox.jsonl"
 

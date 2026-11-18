@@ -62,6 +62,8 @@ APPROVAL_CASES = [
     ("2번(수정 요청)", [SENT_OK], [answer(pick=2)], False),
     ("답 없음", [SENT_OK], [], False),
     ("다른 결정의 답", [SENT_OK], [answer(did="D-OTHER")], False),
+    ("Discord 반응 ✅(폴러가 source=discord 로 기록)", [SENT_OK], [answer(source="discord", type="reaction", action="approve")], True),
+    ("Discord 반응 1️⃣", [SENT_OK], [answer(source="discord", type="reaction")], True),
     ("터미널에서 남긴 답은 승인이 아님(코디네이터가 스스로 승인하지 못하게)", [SENT_OK], [answer(source="terminal")], False),
     ("직접 입력 글은 승인이 아님", [SENT_OK], [answer(action="custom", pick=None, text="좋아요")], False),
     ("1번이 '승인'이 아닌 카드는 계획 승인 카드가 아님", [{**SENT_OK, "options": {"1": "보류", "2": "승인"}}], [answer()], False),
