@@ -160,7 +160,7 @@ def main():
         if key in seen:
             return
         seen[key] = now
-        item.update({"channel": ch, "received_at": now})
+        item.update({"channel": ch, "received_at": now, "source": "discord"})  # 답 출처 표시(answer_store SOURCE_NAME)
         new.append(item)
 
     c = dapi.Client(tok)

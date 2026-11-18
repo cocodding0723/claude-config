@@ -22,9 +22,9 @@ from dataclasses import dataclass, field
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import card_actions as actions  # noqa: E402
 
-SLACK, DOCSITE, TERMINAL = "slack", "docsite", "terminal"
-SOURCE_NAME = {SLACK: "Slack", DOCSITE: "문서 사이트", TERMINAL: "터미널"}
-LATE_TEXT = {SLACK: "이미 Slack 에서 답함", DOCSITE: "이미 문서 사이트에서 답함", TERMINAL: "이미 터미널에서 답함"}  # 늦은 쪽에 보여 주는 사유
+SLACK, DOCSITE, TERMINAL, DISCORD = "slack", "docsite", "terminal", "discord"
+SOURCE_NAME = {SLACK: "Slack", DOCSITE: "문서 사이트", TERMINAL: "터미널", DISCORD: "Discord"}
+LATE_TEXT = {SLACK: "이미 Slack 에서 답함", DOCSITE: "이미 문서 사이트에서 답함", TERMINAL: "이미 터미널에서 답함", DISCORD: "이미 Discord 에서 답함"}  # 늦은 쪽에 보여 주는 사유
 # 글로 쓴 답이 질문인지 판정하는 규칙(한 곳). 끝이 물음표, 또는 끝말이 아래 어미. 끝의 공백·마침표·느낌표·물결은 무시. 질문은 답이 아니라 카드를 열어 둠
 QUESTION_RE = re.compile(r"[?？]\s*$|(?:뭐야|뭔데|어떻게|왜|인가|나요|까)[\s.!~]*$")
 ANSWER_KINDS = ("pick", "approve")  # 이 동작의 반응·글은 답. 보류(hold)는 카드가 열려 있어 답이 아님

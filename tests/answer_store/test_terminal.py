@@ -64,6 +64,11 @@ class TerminalAnswerTest(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn("미리 보기", p.stdout)
 
+    def test_discord_reaction_answer_named_discord(self):
+        rec = {"decision_id": "D-1", "kind": "decide", "parent_ts": "1572627312849985536", "type": "reaction", "action": "pick", "pick": 1, "source": "discord"}
+        by, _ = self.st.AnswerStore.judge([rec], set(), "D-1", "1572627312849985536")
+        self.assertEqual(self.st.SOURCE_NAME[by], "Discord")
+
     def test_record_writes_same_shape_with_terminal_source_and_closes(self):
         self.assertEqual(self.store.record(self.ans(self.st.TERMINAL), now=100), "")
         rec = json.loads(self.lines("slack-inbox.jsonl")[0])
