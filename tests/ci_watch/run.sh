@@ -407,4 +407,12 @@ grep -q "담당 허브 UI 계층 통합 설계 (근거: 제목 티켓 LRM-1 · �
 fresh; prs "$(pj 731 b1 5050505050505050),$(pj 732 b2 6060606060606060)"; wt feat/other; cycle 731 732
 [ "$(grep -c '^worktree list' "$D/orca.log")" = 1 ] && ok "작업 공간 조회 회차당 1회(PR 2개 → 1회)" || ko "조회 횟수" "$(grep -c '^worktree list' "$D/orca.log")"
 
+# 원인 줄은 CI 로그·시험 이름을 그대로 옮긴 글이라 ' / ' 가 들어올 수 있음. 감싸지 않으면 줄 검사가 실패 알림 전체를 거부함
+python3 -c '
+import sys;sys.path.insert(0,sys.argv[1]);import ci_watch as w, board_cards as b
+t=w.message({"number":7,"title":"x"},[{"key":"U","cause":"Game.Tests / EditMode: 1 / 2","link":""}])[1]
+assert "`Game.Tests / EditMode: 1 / 2`" in t, t
+assert not [g for g in b.text_gaps(t,skip_first=True) if g[2]=="reject"], t
+assert w.cause_text("리뷰어 오류(재실행 대상)")=="리뷰어 오류(재실행 대상)" and "못 찾음" in w.cause_text("")' "$S" && ok "원인 줄의 ' / ' 는 코드 표시로 감싸 줄 검사 통과, 우리 문구는 그대로" || ko "원인 줄 줄 검사"
+
 echo "통과 $PASS / 실패 $FAIL"; [ "$FAIL" = 0 ]

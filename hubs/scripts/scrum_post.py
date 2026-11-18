@@ -451,7 +451,7 @@ def send_threaded(args, path, media, intent):
 
 
 def failure_message(date, fails):
-    why = redact(" / ".join(fails)[:300]) or "collect_failed"
+    why = redact(", ".join(fails)[:300]) or "collect_failed"  # ' / ' 로 이으면 알림 스크립트의 줄 검사가 실패 알림을 거부함
     return "\n".join(["스크럼 초안 작성 실패",
                       "• 무엇: %s 스크럼 초안을 못 만들었음" % date.strftime("%m-%d"),
                       "• 왜: %s" % why,
