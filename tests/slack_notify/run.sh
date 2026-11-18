@@ -549,9 +549,25 @@ run_n --kind todo --todo-id T-0002 $'설정 파일 넣기\n\n👉 답: 끝나면
 [ "$(text | grep -c '👉')" = 1 ] && [ "$(text | tail -n 1)" = "참고: 할 일 T-0002" ] && ok "H --todo-id: 답 줄이 있으면 안내 줄은 안 붙이고 번호만" || ko "H todo 답 줄" "$(text)"
 run_n --kind todo $'설정 파일 넣기\n\n• 무엇: 키'
 grep -q "👉 답:' 줄이 없음" "$SB/err" && ! text | grep -q '👉' && ! lastrec | jq -e 'has("todo_id")' >/dev/null && ok "H --todo-id 없는 todo 는 기존 동작(no-answer 경고·안내 줄 없음·todo_id 없음)" || ko "H todo 기존" "$(cat "$SB/err") / $(lastrec)"
-# 스레드 답글의 반응은 수집되지 않으므로 번호 카드·할 일 번호 카드는 --thread 와 함께 보내지 않음. 옛 --choices 카드·글 호출은 불변
-rej "--options + --thread" '^--thread 는 --options·--todo-id 카드와 함께 쓸 수 없음' -- "${D[@]}" --options "$OK3" --thread 1730000000.000001 "$CBODY"
-rej "--todo-id + --thread" '^--thread 는 --options·--todo-id 카드와 함께 쓸 수 없음' -- --kind todo --todo-id T-0300 --thread 1730000000.000001 "할 일"
+# 결정 카드는 작업 스레드 안에 올릴 수 있음(작업 하나 = 스레드 하나). 버튼은 스레드에서도 동작함.
+# 이모지 반응은 스레드에서 수집되지 않으므로 스레드 카드의 답 줄은 버튼 안내. 할 일 번호 카드는 반응으로만 답하므로 여전히 거부
+TH=1730000000.000001
+run_n --kind decide --no-doc --recommend 1 --decision-id D-0551 --options "$OK3" --thread "$TH" "$CBODY"
+[ "$RC" = 0 ] && [ "$(payload '.thread_ts')" = "$TH" ] && [ "$(payload '.attachments[0].blocks[1].type')" = actions ] \
+  && [ "$(lastrec | jq -r '[.thread_ts,.decision_id,.form_kind,(has("options")|tostring)] | join(",")')" = "$TH,D-0551,decide,true" ] \
+  && ok "H --options + --thread: 스레드 답글로 버튼 카드 전송, 기록에 스레드·결정 번호" || ko "H options+thread" "rc=$RC $(cat "$SB/err") / $(lastrec)"
+[ "$(payload 'has("reply_broadcast")')" = false ] && ! lastrec | jq -e 'has("broadcast")' >/dev/null && ok "H --broadcast 없으면 스레드에만(기록 모양 불변)" || ko "H broadcast 기본" "$(cat "$LOG/post.json")"
+text | grep -q '^👉 답: 아래 버튼' && ! text | grep -q '추천대로 · :x: 보류' && ok "H 스레드 카드의 답 줄은 버튼 안내(이모지 답 안내 없음)" || ko "H 스레드 답 줄" "$(text)"
+run_n --kind decide --no-doc --recommend 1 --decision-id D-0552 --options "$OK3" "$CBODY"
+text | grep -q '추천대로 · :x: 보류' && ok "H 맨 위 카드의 답 줄은 그대로(이모지 안내 유지)" || ko "H 맨 위 답 줄" "$(text)"
+run_n --kind decide --no-doc --recommend 1 --decision-id D-0553 --options "$OK3" --thread "$TH" --broadcast "$CBODY"
+[ "$RC" = 0 ] && [ "$(payload '.reply_broadcast')" = true ] && [ "$(payload '.thread_ts')" = "$TH" ] && [ "$(lastrec | jq -r '.broadcast')" = true ] \
+  && ok "H --broadcast: 스레드 답글이 DM 목록에도 보임(reply_broadcast), 기록에 broadcast" || ko "H broadcast" "rc=$RC $(cat "$SB/err") / $(cat "$LOG/post.json")"
+run_n --kind done --thread "$TH" --broadcast $'끝남\n\n• 무엇: 반영'
+[ "$RC" = 0 ] && [ "$(payload '.reply_broadcast')" = true ] && ok "H --broadcast 는 일반 스레드 답글에도 적용" || ko "H broadcast 일반" "rc=$RC $(cat "$SB/err")"
+rej "--broadcast 인데 --thread 없음" '^--broadcast 는 --thread 와 함께' -- --kind progress --broadcast $'진행\n\n• 무엇: x'
+rej "--broadcast + --update" '^--broadcast 는 --thread 와 함께' -- --kind progress --broadcast --update 1700000000.000900 "x"
+rej "--todo-id + --thread" '^--thread 는 --todo-id 카드와 함께 쓸 수 없음' -- --kind todo --todo-id T-0300 --thread 1730000000.000001 "할 일"
 run_n --kind decide --no-doc --choices 2 --thread 1730000000.000001 "$CBODY"
 [ "$RC" = 0 ] && posted && [ "$(jq -r '.thread_ts' "$LOG/post.json")" = 1730000000.000001 ] && ok "H --choices + --thread 는 기존대로 전송(옛 카드 불변)" || ko "H choices+thread" "rc=$RC $(cat "$SB/err")"
 # todo 카드: 줄 중간 ✅·❌ 도 표준 이름. 강비서 이름으로 바뀌면 사용자가 그 이모지를 눌러도 완료·보류로 안 읽힘
