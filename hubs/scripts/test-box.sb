@@ -1,0 +1,33 @@
+; 격리 시험 실행기(test-box)의 상자 규칙. 뒤 줄이 앞 줄보다 우선함
+; 목적: 작업 공간의 시험이 무엇을 하든 승인 기록·운영 폴더를 못 고치고, 실제 Slack 에 못 닿고, 비밀 파일을 못 읽게 함
+; 막지 않는 것: 이 컴퓨터 안의 포트(localhost) 연결. 가짜 서버가 임의 포트를 쓰기 때문이며, 세션의 일반 셸도 할 수 있는 일임.
+;   전제: 세션의 셸(Bash 도구)이 격리 없이 같은 포트에 닿음. 그 셸에 격리를 씌우게 되면 이 허용이 구멍이 되므로 다시 볼 것
+(version 1)
+(allow default)
+
+; 쓰기는 상자(임시 폴더 하나) 안에만. 사용자 임시 폴더 전체는 열지 않음(다른 도구의 작업물이 있음)
+(deny file-write*)
+(allow file-write* (subpath (param "BOX")) (literal "/dev/null") (literal "/dev/tty") (literal "/dev/dtracehelper") (regex #"^/dev/fd/"))
+; bash 3.2 는 heredoc 임시 파일을 TMPDIR 과 무관하게 /var/tmp/sh-thd-숫자 로 만듦. 그 이름만 허용(폴더 자체는 쓰기 가능 여부 확인에 필요).
+; 시험이 이 이름으로 남긴 파일은 실행기가 끝날 때 지움
+(allow file-write* (literal "/private/var/tmp") (regex #"^/private/var/tmp/sh-thd-[0-9]+$"))
+; 쓰기 예외를 더할 때는 "상자 밖에서 그 파일을 읽거나 실행하는 프로그램이 있는가"를 먼저 볼 것
+; (11-18: 사용자 임시 폴더의 도구 경로 캐시 xcrun_db 를 열었다가, 상자 밖 git 이 그 캐시의 경로를 실행한다는 검수 지적으로 뺌.
+;  그래서 HOME 을 바꾼 채 /usr/bin/python3·git 을 부르면 stderr 에 캐시 경고가 남음. 환경 변수로는 끌 수 없음)
+
+; 밖으로 나가는 연결은 이 컴퓨터 안의 포트와 상자 안에 만든 유닉스 소켓만. 다른 프로세스의 제어 소켓(편집기·ssh-agent)은 막음
+(deny network-outbound)
+(allow network-outbound (remote ip "localhost:*") (subpath (param "BOX")))
+
+; 신호는 같은 상자 안 프로세스(시험이 띄운 가짜 서버)에만
+(deny signal)
+(allow signal (target same-sandbox))
+
+; 상주 작업 등록·다른 앱 조종 도구는 실행 못 함
+(deny process-exec (literal "/bin/launchctl") (literal "/usr/bin/osascript"))
+
+; 비밀 파일은 상자 안에 시험이 만든 가짜만 읽음
+(deny file-read-data (regex #"\.(env|pem|keystore)$") (regex #"/\.ssh/"))
+(allow file-read-data (subpath (param "BOX")))
+; 공개 인증서 묶음은 비밀이 아니고 HTTPS 준비(가짜 서버 호출 전 단계)에 필요함
+(allow file-read-data (regex #"/(cacert|cert)\.pem$"))

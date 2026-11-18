@@ -88,6 +88,8 @@ hubs/scripts/card_actions.py	.config/lrm-hubs/card_actions.py	link
 hubs/scripts/answer_store.py	.config/lrm-hubs/answer_store.py	link
 hubs/scripts/pending_judge.py	.config/lrm-hubs/pending_judge.py	link
 hubs/scripts/decide-answer	.config/lrm-hubs/decide-answer	link
+hubs/scripts/test-box	.config/lrm-hubs/test-box	link
+hubs/scripts/test-box.sb	.config/lrm-hubs/test-box.sb	link
 hubs/scripts/answer_route.py	.config/lrm-hubs/answer_route.py	link
 hubs/scripts/restart_watch.py	.config/lrm-hubs/restart_watch.py	link
 hubs/docs/restart-watch.md	.config/lrm-hubs/docs/restart-watch.md	link
