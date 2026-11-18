@@ -55,7 +55,7 @@ usage() {
 예:
   feature_open.sh --ticket LRM-612 --name "우편함" --base dev --dry-run
   feature_open.sh --ticket LRM-612 --name "우편함" --base dev --slug mailbox --json
-  REPO=~/project/AllAdrift feature_open.sh --ticket '#124' --name "성능" --base dev --slug perf-visibility --type fix --dry-run
+  REPO=~/project/my-game feature_open.sh --ticket '#12' --name "성능" --base dev --slug perf --type fix --dry-run
 USAGE
 }
 die() { echo "$1" >&2; exit "${2:-2}"; }
