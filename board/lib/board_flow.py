@@ -41,8 +41,45 @@ STAGES = (Stage("intake", "접수"), Stage("understand", "이해"), Stage("desig
 BUILD = "build"
 
 
+HAND_OFF = ("review", "ship")  # 완료 검사(board-done --epic)와 사용자 검수 답이 옮기는 단계. 손으로 옮기지 않음
+INTAKE_FIELDS = ("목표", "확인 방법")  # 접수에서 반드시 정할 두 문장. 이후 보고·계획서의 첫 줄이 됨
+
+
 def stage(key: str) -> "Stage | None":
-    return next((s for s in STAGES if s.key == key), None)
+    """단계 찾기. 영문 이름·한글 이름·번호(0~6) 모두 받음"""
+    k = str(key or "").strip()
+    if k.isdigit() and int(k) < len(STAGES):
+        return STAGES[int(k)]
+    return next((s for s in STAGES if k in (s.key, s.name)), None)
+
+
+def order(st: Stage) -> int:
+    return STAGES.index(st)
+
+
+def intake_gaps(desc: str) -> list:
+    """기능 카드 설명에서 비어 있는 접수 칸 이름들('- 목표: …' 꼴의 줄, 내용이 있어야 채운 것)"""
+    return [f for f in INTAKE_FIELDS if not re.search(rf"^[ \t>*-]*{re.escape(f)}[ \t]*:[ \t]*\S", desc or "", re.M)]
+
+
+def stage_block(epic: dict, target: str, approved) -> str:
+    """기능을 이 단계로 옮기면 안 되는 이유(원인 — 조치). 옮겨도 되면 ''. 옛 방식 기능(flow:v1 없음)은 표시만 하고 막지 않음"""
+    st = stage(target)
+    if st is None:
+        return f"모르는 단계 '{target}' — {' · '.join(f'{i} {x.name}({x.key})' for i, x in enumerate(STAGES))} 중 하나"
+    if st.key in HAND_OFF:
+        return f"{st.name} 단계는 손으로 옮기지 않음 — 완료 검사 board-done --epic {epic.get('id')} <이름> 이 검수로 옮기고, 사용자 검수 답(--user-ok)이 그다음으로 옮김"
+    if FLOW_LABEL not in labels(epic) or st.key == STAGES[0].key:
+        return ""
+    gaps = intake_gaps(epic.get("description") or "")
+    if gaps:
+        return (f"접수 칸이 비어 있음: {', '.join(gaps)} — 기능 카드 설명에 '- 목표: <만들 것 한 문장>' 과 "
+                f"'- 확인 방법: <끝났는지 확인할 방법 한 문장>' 을 사용자 원문대로 적은 뒤 다시 실행(bd update {epic.get('id')} -d …)")
+    if not size_of(epic):
+        return f"크기를 정하지 않음 — --size {SMALL}|{NORMAL}|{LARGE} 를 함께 주거나 bd label add {epic.get('id')} {SIZE_HEAD}<크기>"
+    if order(st) >= order(stage(BUILD)):
+        return claim_block({"id": "", "issue_type": "task", "status": "open"}, epic, approved)
+    return ""
 
 
 def labels(card: "dict | None") -> list:

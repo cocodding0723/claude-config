@@ -249,6 +249,7 @@ hubs/gh-watch-actions.example.json	.config/lrm-hubs/gh-watch-actions.example.jso
 hubs/launchd/ai.lrm.ghwatch.plist	Library/LaunchAgents/ai.lrm.ghwatch.plist	copy
 hubs/docs/gh-watch.md	.config/lrm-hubs/docs/gh-watch.md	link
 board/bin/board-beat	orca/board/bin/board-beat	link
+board/bin/board-stage	orca/board/bin/board-stage	link
 board/lib/board_beat.py	orca/board/lib/board_beat.py	link
 board/lib/board_flow.py	orca/board/lib/board_flow.py	link
 board/lib/board_evidence.py	orca/board/lib/board_evidence.py	link

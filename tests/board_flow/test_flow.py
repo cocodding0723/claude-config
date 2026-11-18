@@ -66,7 +66,42 @@ APPROVAL_CASES = [
 ]
 
 
+INTAKE = "- 목표: 마지막 날 시작해도 결말이 열린다\n- 확인 방법: 마지막 날 세이브로 시작해 그 장면이 열리는 캡처\n- 범위 밖: 다른 결말"
+
+
+def feature(*labels, drop=(), desc=INTAKE):
+    return {**epic(*labels, drop=drop), "description": desc}
+
+
+# (설명, 기능 카드, 옮기려는 단계, 계획 승인됐나, 막혀야 하나)
+STAGE_CASES = [
+    ("접수로 되돌리기는 언제나 됨", feature(desc=""), "intake", False, False),
+    ("목표·확인 방법 없이 이해로 넘어가기", feature(desc="- 범위 밖: 없음"), "understand", False, True),
+    ("확인 방법만 빠짐", feature(desc="- 목표: 결말이 열린다"), "understand", False, True),
+    ("칸 이름만 있고 내용이 빔", feature(desc="- 목표:\n- 확인 방법: "), "understand", False, True),
+    ("접수를 채우면 이해로", feature(), "understand", False, False),
+    ("크기를 안 정하고 넘어가기", feature(drop=("size:normal",)), "understand", False, True),
+    ("설계까지는 승인 없이", feature(), "design", False, False),
+    ("보통 크기, 승인 전 구현으로", feature(), "build", False, True),
+    ("보통 크기, 승인 뒤 구현으로", feature(), "build", True, False),
+    ("승인 전 검증으로 건너뛰기", feature(), "verify", False, True),
+    ("작은 일은 접수에서 바로 구현으로", feature("size:small", drop=("size:normal",)), "build", False, False),
+    ("검수 단계는 완료 검사가 옮김(손으로 못 옮김)", feature(), "review", True, True),
+    ("반영 단계도 손으로 못 옮김", feature(), "ship", True, True),
+    ("모르는 단계", feature(), "coding", True, True),
+    ("옛 방식 기능도 단계 표시는 할 수 있고 막지 않음", feature(drop=("flow:v1", "size:normal"), desc=""), "build", False, False),
+]
+
+
 class FlowTest(unittest.TestCase):
+    def test_which_stage_moves_are_blocked(self):
+        for name, e, target, approved, want in STAGE_CASES:
+            with self.subTest(name):
+                self.assertEqual(bool(bf.stage_block(e, target, lambda did: approved)), want)
+
+    def test_stage_can_be_named_by_number_or_korean(self):
+        self.assertEqual([bf.stage(x).key for x in ("3", "구현", "build")], ["build"] * 3)
+
     def test_which_cards_are_blocked_until_the_plan_is_approved(self):
         for name, c, e, approved, want in GATE_CASES:
             with self.subTest(name):
