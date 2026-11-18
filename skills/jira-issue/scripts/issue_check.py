@@ -13,6 +13,8 @@ import re
 import sys
 
 KEY_RE = re.compile(r"^LRM-\d+$")
+KEY_HINT = "LRM-숫자"  # github-issue 가 KEY_RE 와 함께 바꿔 씀
+ASSIGNEE_HINT = "accountId"
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 SUMMARY_RE = re.compile(r"^\[[^\]]+\] .+")
 SUMMARY_MAX = 40
@@ -65,7 +67,7 @@ def check_pre(d):
     parent, epic = d.get("parent"), d.get("new_epic")
     if parent:
         if not KEY_RE.match(parent.get("key") or ""):
-            errs.append("상위 키 형식 오류 (LRM-숫자)")
+            errs.append(f"상위 키 형식 오류 ({KEY_HINT})")
         if not (parent.get("reason") or "").strip():
             errs.append("상위를 고른 근거 한 줄 없음")
     elif epic:
@@ -76,7 +78,7 @@ def check_pre(d):
     elif d.get("type") != EPIC:
         errs.append("상위 없음: parent 또는 new_epic 필수")
     if not (d.get("assignee") or "").strip():
-        errs.append("담당자 accountId 없음")
+        errs.append(f"담당자 {ASSIGNEE_HINT} 없음")
     if not DATE_RE.match(d.get("due") or ""):
         errs.append("기한 YYYY-MM-DD 없음")
     if not (d.get("due_reason") or "").strip():
