@@ -1,0 +1,5 @@
+# 저장소별 티켓 트래커. install.sh 가 처음 한 번 ~/.config/claude-config/trackers.tsv 로 복사하고 이후에는 덮어쓰지 않음.
+# 열(탭 구분): 저장소(owner/repo, * 패턴 가능, 대소문자 무시) · 트래커(jira:<프로젝트 키> 또는 github)
+# 위에서부터 처음 맞는 줄을 씀. 어느 줄에도 안 맞으면 values.env 의 TRACKER(jira 면 키 없음 → 스킬이 물음).
+# 판정: ~/.config/lrm-hubs/tracker_of.py [저장소 경로]
+Basakansoft/LoveRevolutionMaker	jira:LRM

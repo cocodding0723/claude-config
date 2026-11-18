@@ -387,6 +387,17 @@ install_repo_hook() {
   N_LINK=$((N_LINK + 1)); log "LINK   저장소 commit-msg 훅 -> $dst"
 }
 
+# 저장소별 트래커 표를 처음 한 번만 만듦. 이후에는 사용자가 고친 표를 덮어쓰지 않음(값 파일과 같은 로컬 설정)
+seed_trackers() {
+  local src="$REPO/trackers.example.tsv" dst="$HOME/.config/claude-config/trackers.tsv"
+  [ -f "$src" ] || return 0
+  if [ -f "$dst" ]; then N_SKIP=$((N_SKIP + 1)); say "SKIP   ~/.config/claude-config/trackers.tsv (이미 있음, 덮어쓰지 않음)"; return; fi
+  if [ "$DRY" = 1 ]; then log "[dry-run] SEED   ~/.config/claude-config/trackers.tsv"; N_COPY=$((N_COPY + 1)); return; fi
+  mkdir -p "$(dirname "$dst")"
+  cp "$src" "$dst" && chmod 600 "$dst"
+  N_COPY=$((N_COPY + 1)); log "SEED   ~/.config/claude-config/trackers.tsv (저장소별 트래커 표. 필요하면 줄 추가)"
+}
+
 do_install() {
   validate
   guard_live_diff
@@ -401,6 +412,7 @@ do_install() {
   done < <(entries)
   apply_git_config
   install_repo_hook
+  seed_trackers
   log "---"
   log "요약: 링크 $N_LINK, 병합 $N_MERGE, 복사 $N_COPY, 건너뜀 $N_SKIP"
   if [ -n "$BACKUP" ]; then log "백업: $BACKUP (되돌리기: ./install.sh --restore $BACKUP)"; fi

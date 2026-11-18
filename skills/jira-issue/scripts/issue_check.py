@@ -12,8 +12,8 @@ import json
 import re
 import sys
 
-KEY_RE = re.compile(r"^LRM-\d+$")
-KEY_HINT = "LRM-숫자"  # github-issue 가 KEY_RE 와 함께 바꿔 씀
+KEY_RE = re.compile(r"^[A-Z][A-Z0-9]{1,9}-\d+$")  # 프로젝트 키는 trackers.tsv 로 정함(예 LRM)
+KEY_HINT = "프로젝트키-숫자"  # github-issue 가 KEY_RE 와 함께 바꿔 씀
 ASSIGNEE_HINT = "accountId"
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 SUMMARY_RE = re.compile(r"^\[[^\]]+\] .+")

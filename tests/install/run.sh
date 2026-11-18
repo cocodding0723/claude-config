@@ -466,6 +466,18 @@ out=$(HOME="$SB6G" "$INSTALL" --dry-run 2>&1); rc2=$?
 [ "$rc1" = 0 ] && [ "$rc2" != 0 ] && echo "$out" | grep -q 'CHAT=teams 는 허용값' && ok "택1 키: 없으면 기본값, 허용값 밖이면 중단" || ko "택1 키" "rc1=$rc1 rc2=$rc2"
 rm -rf "${SB6G:?}"
 
+# ---- 6h. 트래커 표: 처음 한 번 만들고 이후 덮어쓰지 않음 --------------------------
+SB6H=$(mktemp -d "${TMPDIR:-/tmp}/cc-sandbox6h.XXXXXX")
+mkdir -p "$SB6H/.config/claude-config"; cp "$SB/.config/claude-config/values.env" "$SB6H/.config/claude-config/values.env"
+TT="$SB6H/.config/claude-config/trackers.tsv"
+HOME="$SB6H" "$INSTALL" --dry-run >/dev/null 2>&1; [ -e "$TT" ] && d=1 || d=0
+HOME="$SB6H" "$INSTALL" >/dev/null 2>&1; rc=$?
+p=$(stat -f '%Lp' "$TT" 2>/dev/null || stat -c '%a' "$TT")
+echo 'my/repo	github' >> "$TT"; HOME="$SB6H" "$INSTALL" >/dev/null 2>&1
+[ "$d" = 0 ] && [ "$rc" = 0 ] && [ "$p" = 600 ] && grep -q '^my/repo	github$' "$TT" && cmp -s <(grep -v '^my/repo' "$TT") "$REPO/trackers.example.tsv" \
+  && ok "트래커 표: dry-run 무변경·첫 설치 생성(600)·재설치가 사용자 줄 보존" || ko "트래커 표" "d=$d rc=$rc p=$p"
+rm -rf "${SB6H:?}"
+
 # ---- 7. 임의 설정 사본 검증(선택) -------------------------------------------
 if [ -n "${SETTINGS_SAMPLE:-}" ] && [ -f "$SETTINGS_SAMPLE" ]; then
   sed "s#$REAL_HOME#$SB#g" "$SETTINGS_SAMPLE" > "$SB/.claude/settings.json"; cp "$SB/.claude/settings.json" "$SB/settings.sample"

@@ -1,13 +1,13 @@
 ---
 name: github-issue
-description: "TRACKER=github 인 컴퓨터에서 버그·작업을 다른 사람이 이슈만 보고 재현·착수·확인할 수 있게 상세한 한국어 GitHub Issue 로 등록하고 Project 보드에 올린다. 'GitHub 이슈 등록', '이슈 만들어줘', '티켓 발급'(TRACKER=github 일 때) 요청과 허브의 작업 선발급에 사용한다. 진행 댓글 규칙도 포함한다. TRACKER=jira 면 jira-issue, 규칙 없이 초안만 필요하면 manage-issues 가 맡는다."
+description: "tracker_of.py 가 github 인 저장소에서 버그·작업을 다른 사람이 이슈만 보고 재현·착수·확인할 수 있게 상세한 한국어 GitHub Issue 로 등록하고 Project 보드에 올린다. 'GitHub 이슈 등록', '이슈 만들어줘', '티켓 발급'(그 저장소 트래커가 github 일 때) 요청과 허브의 작업 선발급에 사용한다. 진행 댓글 규칙도 포함한다. Jira 저장소면 jira-issue, 규칙 없이 초안만 필요하면 manage-issues 가 맡는다."
 ---
 
 # GitHub 이슈 등록
 
 `jira-issue` 의 GitHub 판. 원칙·제목·본문 템플릿·작업 댓글·금지 항목은 **`jira-issue` SKILL.md 와 같다**(그 파일의 「제목」「본문 템플릿」「작업 댓글」「금지」를 그대로 따른다). 여기는 달라지는 것만 적는다.
 
-먼저 확인: `grep -E '^TRACKER=' ~/.config/claude-config/values.env` 가 `github` 가 아니면 이 스킬을 쓰지 않고 `jira-issue` 로 간다.
+먼저 확인: `~/.config/lrm-hubs/tracker_of.py <저장소 경로>` 가 `github` 가 아니면 이 스킬을 쓰지 않고 `jira-issue` 로 간다.
 
 ## 기본값
 

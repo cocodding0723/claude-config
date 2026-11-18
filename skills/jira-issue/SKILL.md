@@ -11,7 +11,7 @@ description: "버그·작업을 다른 사람이 티켓만 보고 재현·착수
 ## 기본값
 
 - 사이트 `basakansoft.atlassian.net`, cloudId `a59b16fd-c171-4342-97ca-1f4ae9841192`
-- 프로젝트 `LRM`. 유형은 `버그` 또는 `작업`(영문 Bug·Task 아님)
+- 프로젝트 키: `~/.config/lrm-hubs/tracker_of.py <저장소 경로>` 가 `jira <키>` 로 준 키(아래 예시의 `LRM` 자리). `github` 이 나오면 이 스킬이 아니라 `github-issue`. 키 없이 `jira` 만 나오면 사용자에게 묻고 `trackers.tsv` 에 줄을 추가한다. 유형은 `버그` 또는 `작업`(영문 Bug·Task 아님)
 - 담당자: 사용자 본인(`atlassianUserInfo` 의 accountId). 누락 금지
 - 기한(끝나는 날짜): 발급 때 반드시 넣는다(11-06 사용자). 작업 크기로 추정하고 근거를 설명에 한 줄
 - 상위(에픽·부모): 필수(11-13). 상위 없이 발급 금지. 상위 결정·실제 상태·발급 뒤 점검은 「절차」
