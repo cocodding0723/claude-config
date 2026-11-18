@@ -18,10 +18,10 @@ kind=decide 는 스레드 답글이 아니라 slack_notify.sh --kind decide --op
 복사본이 없는 옛 기록은 원본을 읽는데, launchd 에서는 macOS 개인정보 보호(TCC)가 ~/Documents 등 읽기를 막아 curl 이 종료 코드 26 으로 실패함.
 올리기 전에 직접 열어 보고 막히면 재시도 없이 'UNREADABLE' 한 줄만 스레드에 남김(다시 hub_report.py add 로 보고하면 접수 때 복사됨).
 없는 파일·폴더·크기 초과는 입력 문제라 재시도 없이 스레드에 '첨부 실패: 이유' 한 줄만 남기고 보고는 계속함. 네트워크 등 일시 실패는 보고 재시도 규칙(BACKOFF)을 따르고 올린 파일은 다시 올리지 않음.
-HTML 은 html_preview.sh 로 390폭 미리보기 PNG 를 만들어 이어서 올림. 미리보기를 못 만들면 생략하고 계속함.
+HTML 은 html_pdf.sh 로 PDF(Slack 에서 바로 열림), html_preview.sh 로 390폭 미리보기 PNG 를 만들어 이어서 올림. 못 만든 것은 생략하고 계속함.
 본문에 로컬 경로만 있고 첨부가 없으면 로그에 경고(접수 경고와 같은 판정 hub_report.unattached_paths).
 
-환경: LRM_HUB_DIR 작업 폴더 · LRM_REPORT_OUTBOX outbox · LRM_REPORT_STATE 상태 파일 · LRM_REPORT_NOTIFY 전송 스크립트(기본 같은 폴더 slack_notify.sh) · LRM_REPORT_PREVIEW HTML 미리보기 스크립트(기본 같은 폴더 html_preview.sh)
+환경: LRM_HUB_DIR 작업 폴더 · LRM_REPORT_OUTBOX outbox · LRM_REPORT_STATE 상태 파일 · LRM_REPORT_NOTIFY 전송 스크립트(기본 같은 폴더 slack_notify.sh) · LRM_REPORT_PREVIEW HTML 미리보기 스크립트(기본 같은 폴더 html_preview.sh) · LRM_REPORT_PDF HTML→PDF 스크립트(기본 같은 폴더 html_pdf.sh)
       LRM_LEDGER 장부(주제 제목용) · LRM_LEDGER_STATE ledger_sync 상태(진행 스레드 부모 ts) · LRM_REPORT_SENT 전송 기록(채널 조회) · LRM_REPORT_BUDGET_S 회차 시간 예산
 종료 코드: 0 성공(처리할 것 없음·busy 포함), 1 일부 전송 실패(재시도 대상), 2 설정·입력 오류·상태 파일 손상(전송 중단, 복구 안내 출력)
 """
@@ -54,7 +54,10 @@ NOTIFY_TIMEOUT_S = 30
 UPLOAD_TIMEOUT_S = 120  # 파일 업로드는 본문 전송보다 오래 걸릴 수 있음
 PREVIEW_TIMEOUT_S = 30
 PREVIEW_SUFFIX = "#preview:"  # 미리보기 단계 키 = 원본 경로 + 이 접미사 + 원본 내용 해시(att_done). 임시 경로에 기대지 않아 회차가 바뀌어도 같은 키
+PDF_SUFFIX = "#pdf:"  # PDF 단계 키. 미리보기와 같은 규칙(원본 경로 + 접미사 + 내용 해시)
 HTML_EXTS = (".html", ".htm")
+# HTML 한 개에 딸려 올라가는 파일(올리는 순서대로): 키 접미사 → (Conf 의 스크립트 칸, 로그·안내에 쓰는 이름)
+DERIVED = {PDF_SUFFIX: ("pdf", "PDF"), PREVIEW_SUFFIX: ("preview", "미리보기")}
 DEFAULT_BUDGET_S = 40.0  # 회차 시간 예산. 넘기면 새 전송을 시작하지 않고 다음 회차로 넘김
 MAX_PER_RUN = 10
 LINE_MAX = 60
@@ -93,6 +96,7 @@ class Conf:
     state: str = ""
     notify: str = ""
     preview: str = ""
+    pdf: str = ""
     ledger: str = ""
     sync_state: str = ""
     sent: str = ""
@@ -114,6 +118,7 @@ class Conf:
         self.state = self.state or env("LRM_REPORT_STATE") or join("report-sender.state.json")
         self.notify = self.notify or env("LRM_REPORT_NOTIFY") or os.path.join(os.path.dirname(os.path.realpath(__file__)), "slack_notify.sh")
         self.preview = self.preview or env("LRM_REPORT_PREVIEW") or os.path.join(os.path.dirname(os.path.realpath(__file__)), "html_preview.sh")
+        self.pdf = self.pdf or env("LRM_REPORT_PDF") or os.path.join(os.path.dirname(os.path.realpath(__file__)), "html_pdf.sh")
         self.ledger = self.ledger or env("LRM_LEDGER") or join("feedback-ledger.tsv")  # intake.py 와 같은 기본 경로
         self.sync_state = self.sync_state or env("LRM_LEDGER_STATE") or join("ledger-sync.state.json")
         self.sent = self.sent or env("LRM_REPORT_SENT") or join("slack-sent.jsonl")
@@ -570,6 +575,25 @@ def make_preview(conf: Conf, path: str, digest: str, deadline: float) -> str:
     return out if p.returncode == 0 and os.path.isfile(out) else ""
 
 
+def make_pdf(conf: Conf, path: str, digest: str, deadline: float) -> str:
+    """HTML → PDF 경로. Slack 이 HTML 을 웹 페이지로 열지 않아 바로 열리는 PDF 를 함께 올림.
+    파일 이름이 Slack 에 그대로 보이므로 해시는 폴더 이름에만 둠. 스크립트·Chrome 이 없거나 실패하면 빈 문자열(첨부는 계속)"""
+    left = deadline - time.monotonic()
+    if not (os.access(conf.pdf, os.X_OK) and left > 0):
+        return ""
+    out = os.path.join(os.path.dirname(os.path.abspath(conf.state)), "report-previews", digest, os.path.splitext(os.path.basename(path))[0] + ".pdf")
+    with contextlib.suppress(OSError):
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+    try:
+        p = subprocess.run([conf.pdf, os.path.abspath(os.path.expanduser(path)), out], capture_output=True, text=True, timeout=min(PREVIEW_TIMEOUT_S, left))
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+    return out if p.returncode == 0 and os.path.isfile(out) and os.path.getsize(out) > 0 else ""
+
+
+MAKERS = {PDF_SUFFIX: make_pdf, PREVIEW_SUFFIX: make_preview}
+
+
 def attach_failed(conf: Conf, rep: dict, target: str, name: str, why: str, deadline: float) -> None:
     """스레드에 '첨부 실패: 이유' 한 줄. 이 줄 전송이 실패해도 보고는 계속함(원인은 로그에 남음)"""
     line = f"첨부 실패: {name} — {why}"
@@ -609,16 +633,17 @@ def send_files(conf: Conf, rep: dict, rs: dict, st: dict, target: str, deadline:
         origin = source_of(rep, path)
         digest = content_hash(origin) if path.lower().endswith(HTML_EXTS) else ""
         if digest:
-            jobs.append((path + PREVIEW_SUFFIX + digest, ""))
+            jobs += [(path + suffix + digest, "") for suffix in DERIVED]
         for key, label in jobs:
             if key in done:
                 continue
             src = origin
-            if PREVIEW_SUFFIX in key:  # 미리보기는 업로드 직전에 만듦. 못 만들면 생략으로 기록
-                src = make_preview(conf, origin, digest, deadline)
+            made = next((s for s in DERIVED if key == path + s + digest), "") if digest else ""
+            if made:  # 딸린 파일은 업로드 직전에 만듦. 못 만들면 생략으로 기록
+                src = MAKERS[made](conf, origin, digest, deadline)
                 label = os.path.basename(src)
                 if not src:
-                    log(conf, f"{rep['id']} 미리보기 생략: {name}")
+                    log(conf, f"{rep['id']} {DERIVED[made][1]} 생략: {name}")
                     done[key] = ""
                     save_state(conf.state, st)
                     continue
@@ -637,9 +662,12 @@ def send_files(conf: Conf, rep: dict, rs: dict, st: dict, target: str, deadline:
                     raise NotifyError(f"첨부 실패: {label} — {err}", counts=err.counts)
                 attach_failed(conf, rep, target, label, str(err), deadline)
                 done[key] = ""
-            if PREVIEW_SUFFIX in key:
+            if made:
                 with contextlib.suppress(OSError):
-                    os.unlink(src)  # 올렸거나 포기한 미리보기 파일 정리
+                    os.unlink(src)  # 올렸거나 포기한 딸린 파일 정리
+                if made == PDF_SUFFIX:
+                    with contextlib.suppress(OSError):
+                        os.rmdir(os.path.dirname(src))  # 해시 폴더는 비었을 때만 지워짐
             save_state(conf.state, st)
 
 
