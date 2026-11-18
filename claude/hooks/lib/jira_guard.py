@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import pr_guard as pg  # noqa: E402  승인 기록 조회 재사용
 import plan_approval as pa  # noqa: E402
 
-TOOL = "mcp__atlassian__"
+TOOLS = ("mcp__atlassian__", "mcp__claude_ai_Atlassian_MCP__")  # 로컬 MCP · claude.ai 커넥터. 도구 이름은 같고 머리말만 다름
 CARD = ("slack_notify.sh --kind decide --decision-id {did} --options '1=승인 => {what},2=보류 => 하지 않음' "
         "--recommend 1 --no-doc $'{title}\\n배경: …\\n용어: 없음'")
 STATUS_FIELDS = {"status", "resolution"}
@@ -41,9 +41,10 @@ def main():
         return
     tool = h.get("tool_name", "")
     inp = h.get("tool_input") or {}
-    if not tool.startswith(TOOL):
+    prefix = next((p for p in TOOLS if tool.startswith(p)), None)
+    if prefix is None:
         return
-    name = tool[len(TOOL):]
+    name = tool[len(prefix):]
     if name in ("executeWrite", "executeDestructive"):  # discover 경유 우회
         name, inp = inp.get("name", ""), inp.get("inputs") or {}
     try:

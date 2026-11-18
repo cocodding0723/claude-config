@@ -148,7 +148,7 @@
         ]
       },
       {
-        "matcher": "mcp__atlassian__createJiraIssue|mcp__atlassian__transitionJiraIssue|mcp__atlassian__editJiraIssue|mcp__atlassian__executeWrite|mcp__atlassian__executeDestructive",
+        "matcher": "mcp__(atlassian|claude_ai_Atlassian_MCP)__(createJiraIssue|transitionJiraIssue|editJiraIssue|executeWrite|executeDestructive)",
         "hooks": [
           {
             "type": "command",

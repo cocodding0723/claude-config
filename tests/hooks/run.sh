@@ -278,6 +278,12 @@ jexp "jira: 상태 변경 승인 없음 거부" '{"tool_name":"mcp__atlassian__t
 jexp "jira: edit 의 status 필드 거부" '{"tool_name":"mcp__atlassian__editJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","fields":{"status":{"name":"완료"}}}}' deny
 jexp "jira: edit 의 일반 필드는 통과" '{"tool_name":"mcp__atlassian__editJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","fields":{"summary":"x"}}}'
 jexp "jira: 읽기 도구는 통과" '{"tool_name":"mcp__atlassian__getJiraIssue","tool_input":{"issueIdOrKey":"LRM-12"}}'
+# claude.ai 커넥터는 도구 머리말만 다름. 같은 판정이 걸려야 함
+jexp "jira: 커넥터 상태 변경 승인 없음 거부" '{"tool_name":"mcp__claude_ai_Atlassian_MCP__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","transition":{"id":"31"}}}' deny
+jexp "jira: 커넥터 edit 의 status 필드 거부" '{"tool_name":"mcp__claude_ai_Atlassian_MCP__editJiraIssue","tool_input":{"issueIdOrKey":"LRM-12","fields":{"status":{"name":"완료"}}}}' deny
+jexp "jira: 커넥터 executeWrite 경유 상태 변경 거부" '{"tool_name":"mcp__claude_ai_Atlassian_MCP__executeWrite","tool_input":{"name":"transitionJiraIssue","cloudId":"c","inputs":{"issueIdOrKey":"LRM-12","transition":{"id":"31"}}}}' deny
+jexp "jira: 커넥터 생성은 통과" '{"tool_name":"mcp__claude_ai_Atlassian_MCP__createJiraIssue","tool_input":{"projectKey":"LRM","summary":"버튼 안 눌림"}}'
+jexp "jira: 커넥터 읽기 도구는 통과" '{"tool_name":"mcp__claude_ai_Atlassian_MCP__getJiraIssue","tool_input":{"issueIdOrKey":"LRM-12"}}'
 jexp "jira: 요약 없는 생성도 통과(11-17)" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"projectKey":"LRM"}}'
 cardrow 300.1 "Jira 이슈 발급 승인" "$JID" 1 >> "$HUB/slack-inbox.jsonl"
 cardrow 300.2 "Jira LRM-12 상태 변경 승인" D-JSTLRM12 1 >> "$HUB/slack-inbox.jsonl"
