@@ -17,7 +17,7 @@ usage() {
   cat <<'USAGE'
 사용: feature_close.sh --slug <slug> [--result <결과 문서>] [--yes] [--dry-run] [--json]
 기능 코디네이터를 끝낸다. 기본은 점검만 하고 멈춘다(아무것도 바꾸지 않음).
-점검: 작업판의 진행 중 카드(label feature:<slug>, epic 하위)와 기능 통합 브랜치(feature/<slug>)에 머지되지 않은 작업자 브랜치.
+점검: 작업판의 진행 중 카드(label feature:<slug>, epic 하위)와 기능 통합 브랜치(기능 카드의 label branch:, 없으면 feature/<slug>)에 머지되지 않은 작업자 브랜치.
 --yes 를 주면 실행:
   1 허브 하위 작업자마다 release_ws.sh 로 반납(결과물 보관 규칙 동일)
   2 남은 하위 작업 공간을 ws_gc.sh --parent 로 정리(코드 변경이 있는 곳은 남김)
@@ -67,6 +67,9 @@ LABEL="feature:$SLUG"
 ALL=$(cd "$CFG_BOARD" && bd list --all -l "$LABEL" --json 2>/dev/null) || ALL="[]"
 EPIC=$(echo "$ALL" | jq -r '[.[] | select(.issue_type == "epic")] | (map(select(.status != "closed"))[0] // .[0]) | .id // empty')
 EPIC_STATUS=$(echo "$ALL" | jq -r --arg e "$EPIC" '.[] | select(.id == $e) | .status' | head -1)
+# 통합 브랜치 이름은 열 때 기능 카드에 적어 둔 것이 기준(스프린트 날짜가 든 이름이라 slug 만으로는 못 만듦). 옛 기능은 feature/<slug>
+KNOWN=$(echo "$ALL" | jq -r --arg e "$EPIC" '[.[] | select(.id == $e) | (.labels // [])[] | select(startswith("branch:"))][0] // "" | sub("^branch:"; "")')
+[ -z "$KNOWN" ] || BRANCH="$KNOWN"
 KIDS="[]"; [ -n "$EPIC" ] && KIDS=$(cd "$CFG_BOARD" && bd list --all --parent "$EPIC" --json 2>/dev/null) || KIDS="[]"
 OPEN_CARDS=$(jq -nc --argjson a "$ALL" --argjson k "${KIDS:-[]}" \
   '[$a[], $k[]] | unique_by(.id) | map(select(.issue_type != "epic" and (.status == "in_progress" or .status == "open" or .status == "blocked"))) | map({id, title, status, assignee})')
