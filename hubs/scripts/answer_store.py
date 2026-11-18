@@ -131,7 +131,7 @@ class AnswerStore:
     def judge(inbox: list, done: set, did: str, ts: str) -> tuple:
         """카드 한 장의 답 판정. 버튼 답은 그 자체로 확정(충돌 카드를 버튼으로 정리할 수 있음). 그다음 done 에 ts 가 있으면(사용자가 직접 닫음) 답한 것으로 봄.
         그 밖에 반응·스레드의 pick/approve 가 한 가지면 답, 서로 다르거나 conflict 표시가 있으면 충돌이라 답 없음.
-        선택 표기가 없을 때는 스레드에 글로 쓴 답(action free)도 답으로 봄. 질문 꼴(is_question)은 답이 아님.
+        스레드에 글로 쓴 답(action free)은 답으로 보지 않음: "잠깐만" 같은 글에 카드가 닫히면 그 뒤 버튼이 늦은 답으로 거절됨. 담당이 읽고 decide-answer 로 닫음.
         source 가 없는 옛 기록은 Slack 에서 온 것"""
         recs = [d for d in inbox if d.get("decision_id") == did and d.get("kind") == "decide" and d.get("parent_ts") == ts]
         src = lambda d: d.get("source") if d.get("source") in SOURCE_NAME else SLACK  # noqa: E731
@@ -141,12 +141,9 @@ class AnswerStore:
         if ts and ts in done:
             return SLACK, {}
         votes = [d for d in recs if d.get("type") in ("reaction", "thread_reply") and d.get("action") in ANSWER_KINDS]
-        if votes:
-            if any(d.get("conflict") is True for d in votes) or len({str(d.get("pick")) for d in votes}) > 1:
-                return "", {}
-            return src(votes[0]), votes[0]
-        said = [d for d in recs if d.get("type") == "thread_reply" and d.get("action") == "free" and not is_question(d.get("text"))]
-        return (src(said[0]), said[0]) if said else ("", {})
+        if not votes or any(d.get("conflict") is True for d in votes) or len({str(d.get("pick")) for d in votes}) > 1:
+            return "", {}
+        return src(votes[0]), votes[0]
 
     def cards(self, did: str = "") -> list:
         """번호 카드 기록(slack-sent.jsonl) 전부, 오래된 순. did 를 주면 그 번호만. 같은 번호로 다시 올린 카드는 각각 한 건.
@@ -159,7 +156,7 @@ class AnswerStore:
                         s = json.loads(line)
                     except ValueError:
                         continue
-                    if isinstance(s, dict) and s.get("form_kind") == "decide" and isinstance(s.get("ts"), str) and "options" in s \
+                    if isinstance(s, dict) and s.get("form_kind") == "decide" and isinstance(s.get("ts"), str) and isinstance(s.get("options"), dict) \
                             and re.fullmatch(r"D-[0-9A-Za-z]{1,16}", str(s.get("decision_id") or "")) and (not did or s["decision_id"] == did):
                         out.append({**s, "by": self.judge(inbox, done, s["decision_id"], s["ts"])[0]})
         except OSError:

@@ -201,4 +201,29 @@ check "전송 0회" 0 "$(count chat.postMessage)"
 check "이력 파일 없음" no "$([ -e "$(H_FILE)" ] && echo yes || echo no)"
 stop_stub
 
+# 번호 카드 3장: T1 터미널에서 답함(버튼 줄 모양, source terminal), T2 글 답만 옴, T3 미답
+seed_cards() {
+  cat > "$HUB/slack-sent.jsonl" <<J
+{"at":$NOW,"channel":"DTEST","ts":"2.1","thread_ts":"","kind":"text","title":"계획 승인: 첫째","tag":"","form_kind":"decide","decision_id":"D-T1","options":{"1":"승인","2":"보류"}}
+{"at":$NOW,"channel":"DTEST","ts":"2.2","thread_ts":"","kind":"text","title":"둘째 정하기","tag":"","form_kind":"decide","decision_id":"D-T2","options":{"1":"A 안","2":"B 안"}}
+{"at":$NOW,"channel":"DTEST","ts":"2.3","thread_ts":"","kind":"text","title":"셋째 정하기","tag":"","form_kind":"decide","decision_id":"D-T3","options":{"1":"A 안","2":"B 안"}}
+J
+  cat > "$HUB/slack-inbox.jsonl" <<J
+{"type":"button","parent_ts":"2.1","channel":"DTEST","title":"계획 승인: 첫째","decision_id":"D-T1","kind":"decide","option_text":"승인","received_at":$NOW,"action":"pick","pick":1,"text":"승인할게","source":"terminal"}
+{"type":"thread_reply","ts":"2.25","parent_ts":"2.2","kind":"decide","decision_id":"D-T2","action":"free","text":"잠깐만 보고 답할게","received_at":$NOW}
+J
+}
+
+echo "[터미널 답] 닫힘 기록 파일 없이도 답 기록만으로 대기에서 빠지고, 고쳐 쓴 글에 답 내용이 보임"
+new_hub; seed_cards
+start_stub "{$PERMA,$UPD,$DEL,\"conversations.history\":[{\"ok\":true,\"messages\":[{\"ts\":\"2.1\",\"text\":\"계획 승인: 첫째\"}]}],$POST1}"
+bash "$PEND" >/dev/null; RC=$?
+check "종료 코드" 0 "$RC"
+check "터미널에서 답한 카드만 수정 1회" 1 "$(count chat.update)"
+check "수정 글에 답 내용" 1 "$(grep -c '✅ 계획 승인: 첫째 — 답: 승인' "$LOG")"
+check "대기 항목 2개(글 답 카드는 닫지 않음)" 1 "$(grep -c '답을 기다리는 결정 2개' "$LOG")"
+check "글 답이 온 카드에 표시" 1 "$(grep -c 'D-T2 — 글 답 도착, 담당 확인 중' "$LOG")"
+check "미답 카드는 표시 없음" 0 "$(grep -c 'D-T3 — ' "$LOG")"
+stop_stub
+
 summary

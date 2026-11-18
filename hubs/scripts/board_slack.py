@@ -393,7 +393,7 @@ def answer(did, text, keep_open=False):
     cid = card_for(did)
     if cid is None:
         return None
-    ns = argparse.Namespace(id=cid, text=text, keep_open=keep_open, dry_run=False)
+    ns = argparse.Namespace(id=cid, text=text, keep_open=keep_open, dry_run=False, from_slack=True)
     return cards.answer(ns)
 
 

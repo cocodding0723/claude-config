@@ -80,16 +80,41 @@ class TerminalAnswerTest(unittest.TestCase):
         self.assertTrue(c.late)
         self.assertEqual(c.late_text(), "이미 터미널에서 답함")
 
-    def test_free_text_reply_counts_as_answer_but_question_does_not(self):
+    def test_free_text_reply_does_not_close_the_card(self):
+        """글로 쓴 답은 닫지 않음: '잠깐만' 같은 글에 닫히면 그 뒤 버튼이 거절됨. 담당이 읽고 decide-answer 로 닫음"""
         reply = {"type": "thread_reply", "kind": "decide", "decision_id": "D-0001", "parent_ts": "1.1", "action": "free"}
-        self.assertEqual(self.st.AnswerStore.judge([{**reply, "text": "이건 뭐야?"}], set(), "D-0001", "1.1")[0], "")
-        self.assertEqual(self.st.AnswerStore.judge([{**reply, "text": "둘 다 말고 다음 주에 다시 보자"}], set(), "D-0001", "1.1")[0], "slack")
+        for text in ("잠깐만", "둘 다 말고 다음 주에 다시 보자", "이건 뭐야?"):
+            self.assertEqual(self.st.AnswerStore.judge([{**reply, "text": text}], set(), "D-0001", "1.1")[0], "", text)
 
-    def test_conflicting_picks_stay_open_even_with_free_text(self):
-        """선택 표기가 서로 다르면 충돌. 글 답이 있어도 사람이 정리할 때까지 열어 둠"""
+    def test_hold_then_free_text_stays_open(self):
         base = {"type": "thread_reply", "kind": "decide", "decision_id": "D-0001", "parent_ts": "1.1"}
-        inbox = [{**base, "action": "pick", "pick": 1}, {**base, "action": "pick", "pick": 2}, {**base, "action": "free", "text": "아무거나"}]
+        inbox = [{"type": "reaction", "kind": "decide", "decision_id": "D-0001", "parent_ts": "1.1", "action": "hold"}, {**base, "action": "free", "text": "나중에"}]
         self.assertEqual(self.st.AnswerStore.judge(inbox, set(), "D-0001", "1.1")[0], "")
+
+    def test_button_after_free_text_is_claimed(self):
+        """글 답이 온 카드도 버튼으로 결정할 수 있어야 함(늦은 답으로 거절되지 않음)"""
+        self.write("slack-inbox.jsonl", [{"type": "thread_reply", "kind": "decide", "decision_id": "D-0001", "parent_ts": "1.1", "action": "free", "text": "잠깐만"}])
+        self.assertEqual(self.store.claim(self.ans(self.st.SLACK), now=100).status, "claimed")
+
+    def test_cli_pick_invalid_on_second_card_writes_nothing(self):
+        """같은 번호의 카드가 여럿일 때 뒤 카드에 그 선택지가 없으면 앞 카드도 기록하지 않음"""
+        self.card("D-0001", "1.1")
+        self.write("slack-sent.jsonl", [{"ts": "2.2", "channel": "C1", "title": "다시 올린 결정", "form_kind": "decide", "decision_id": "D-0001", "options": {"1": "A 안"}}])
+        self.assertEqual(self.cli("D-0001", "B 로", "--pick", "2")[0], 2)
+        self.assertEqual((self.lines("slack-inbox.jsonl"), self.lines("slack-done.txt")), ([], []))
+
+    def test_cli_text_starting_with_dash_needs_double_dash(self):
+        self.card()
+        self.assertEqual(self.cli("D-0001", "--", "-1 은 아니다")[0], 0)
+        self.assertEqual(json.loads(self.lines("slack-inbox.jsonl")[0])["text"], "-1 은 아니다")
+
+    def test_slack_button_path_does_not_record_terminal_answer(self):
+        """Slack 버튼 답이 작업판 카드를 닫을 때(board_slack 경유)는 이미 기록돼 있으므로 다시 남기지 않음"""
+        sys.modules.pop("board_cards", None)
+        import board_cards
+        src = open(board_cards.__file__, encoding="utf-8").read()
+        self.assertIn('getattr(a, "from_slack", False)', src)
+        self.assertIn("from_slack=True", open(os.path.join(SCRIPTS, "board_slack.py"), encoding="utf-8").read())
 
     def test_cli_records_pick_with_card_option_text(self):
         self.card()

@@ -478,7 +478,8 @@ def answer(a):
         return {"id": a.id, "closed": False, "commented": True}
     reason = text if len(text) <= REASON_MAX else text[:REASON_MAX - 1] + "…"
     bd("close", a.id, "--reason", f"답: {reason}")
-    return {"id": a.id, "closed": True, "commented": True, "slack": close_slack_cards(card, text)}
+    # Slack 버튼으로 온 답(board_slack 경유)은 이미 기록돼 있음. 여기서 또 남기면 같은 번호의 다른 카드에 '터미널' 답이 생김
+    return {"id": a.id, "closed": True, "commented": True, "slack": 0 if getattr(a, "from_slack", False) else close_slack_cards(card, text)}
 
 
 def main(argv):

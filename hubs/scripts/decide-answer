@@ -3,7 +3,7 @@
 기록은 answer_store 한 곳(Slack 버튼과 같은 줄 모양, source=terminal). Slack 호출 없음 — 카드 글은 다음 대기 목록 회차가 '답함'으로 고침.
 감시기 카드(버튼이 동작을 실행하는 카드)의 등록은 건드리지 않음: 그 동작은 Slack 버튼으로만 실행됨.
 
-사용: decide-answer <결정 번호 D-…> "<사용자 원문>" [--pick N] [--dry-run] [--json]
+사용: decide-answer <결정 번호 D-…> "<사용자 원문>" [--pick N] [--dry-run] [--json]     원문이 - 로 시작하면 옵션 뒤에 -- 를 두고 씀
       decide-answer --ts <메시지 ts> "<사용자 원문>" [--dry-run] [--json]     결정 번호가 없는 옛 카드
 예:   decide-answer D-GEN1PLAN "승인, 알림 규칙도 추천대로" --pick 1
       decide-answer D-B12ab "둘 다 아니고 다음 주에 다시 보자"
@@ -42,12 +42,13 @@ def by_did(store: answer_store.AnswerStore, did: str, pick, text: str, dry: bool
     cards = store.cards(did)
     if not cards:
         fail(EXIT_MISSING, f"결정 {did} 의 카드 기록 없음. 조치: 번호를 확인하거나 결정 번호 없는 옛 카드면 --ts <메시지 ts>")
+    plans = {c["ts"]: pick_extra(c, pick, text) for c in cards if not c["by"]}  # 쓰기 전에 전부 검증: 카드가 여럿일 때 앞 카드만 기록하고 실패하지 않게
     out = []
     for c in cards:
         if c["by"]:
             out.append({"ts": c["ts"], "recorded": False, "already": answer_store.SOURCE_NAME.get(c["by"], c["by"])})
             continue
-        extra, label = pick_extra(c, pick, text)
+        extra, label = plans[c["ts"]]
         ans = answer_store.Answer(did, c["ts"], c.get("channel", ""), c.get("title", ""), label, answer_store.TERMINAL, extra)
         late = "" if dry else store.record(ans)
         out.append({"ts": c["ts"], "recorded": not late and not dry, "already": answer_store.SOURCE_NAME.get(late, late), "dryRun": dry})
