@@ -162,7 +162,7 @@ hubs/docs/hub-split.md	.config/lrm-hubs/docs/hub-split.md	link
 hubs/docs/scrum-auto.md	.config/lrm-hubs/docs/scrum-auto.md	link
 hubs/launchd/ai.lrm.slackpoll.plist	Library/LaunchAgents/ai.lrm.slackpoll.plist	copy
 hubs/launchd/ai.lrm.panelcollect.plist	Library/LaunchAgents/ai.lrm.panelcollect.plist	copy
-hubs/launchd/ai.lrm.progressdigest.plist	Library/LaunchAgents/ai.lrm.progressdigest.plist	copy
+hubs/launchd/ai.lrm.progressdigest.plist	.config/lrm-hubs/ai.lrm.progressdigest.plist	copy
 hubs/launchd/ai.lrm.wsgc.plist	Library/LaunchAgents/ai.lrm.wsgc.plist	copy
 hubs/launchd/ai.lrm.scrum.plist	Library/LaunchAgents/ai.lrm.scrum.plist	copy
 hubs/launchd/ai.lrm.cinotify.plist	Library/LaunchAgents/ai.lrm.cinotify.plist	copy
