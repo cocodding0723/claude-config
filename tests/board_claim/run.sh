@@ -114,5 +114,25 @@ REPO_TOP=$(cd "$HERE/../.." && pwd -P); miss=""
 for f in "$REPO_TOP"/board/bin/* "$REPO_TOP"/board/lib/*.py; do [ -f "$f" ] || continue; r=${f#"$REPO_TOP"/}; grep -q "^$r	orca/$r	link$" "$REPO_TOP/links.tsv" || miss="$miss $r"; done
 [ -z "$miss" ] && ok "board/bin·board/lib 파일이 모두 links.tsv 에 있음" || ko "links.tsv 누락" "$miss"
 
+# 작업 흐름: 새 흐름 기능(label flow:v1)의 구현 카드는 크기를 정하고, 보통·큼이면 계획 승인 뒤에만 집음(판정 경우는 tests/board_flow 의 표)
+export LRM_HUB_DIR="$SB/hub"; mkdir -p "$LRM_HUB_DIR"
+new_epic() { bd create "$1" -t epic --labels "$2" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'; }
+kid() { bd create "$1" --parent "$2" --labels "file:$3,repo:$SB/r" -d $'## 지시(사용자 원문 + 뒤 지시)\n- 원문: "고쳐줘"' --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'; }
+planid() { python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import board_flow; print(board_flow.plan_id(sys.argv[2]))' "$REPO_TOP/board/lib" "$1"; }
+fe=$(new_epic "새 흐름 기능" "feature:fa,flow:v1,size:normal"); fk=$(kid fk "$fe" flow/a/)
+expect "새 흐름: 계획 승인 전에는 구현 카드 집기 거부(15)" 15 "$BIN" "$fk" fw1
+grep -q "$(planid "$fe")" "$SB/out" && ok "거부 안내에 올릴 계획 승인 결정 번호가 있음" || ko "거부 안내" "$(head -c 200 "$SB/out")"
+printf '{"decision_id":"%s","form_kind":"decide","options":{"1":"승인","2":"수정 요청"}}\n' "$(planid "$fe")" > "$LRM_HUB_DIR/slack-sent.jsonl"
+printf '{"type":"button","decision_id":"%s","action":"pick","pick":1,"source":"terminal"}\n' "$(planid "$fe")" > "$LRM_HUB_DIR/slack-inbox.jsonl"
+expect "새 흐름: 터미널에서 남긴 답은 승인이 아님(스스로 승인 방지)" 15 "$BIN" "$fk" fw1
+printf '{"type":"button","decision_id":"%s","action":"pick","pick":1,"source":"slack"}\n' "$(planid "$fe")" >> "$LRM_HUB_DIR/slack-inbox.jsonl"
+expect "새 흐름: 사용자가 Slack 에서 승인하면 집음" 0 "$BIN" "$fk" fw1
+se=$(new_epic "작은 일" "feature:fs,flow:v1,size:small"); sk=$(kid sk "$se" flow/s/)
+expect "새 흐름: 작은 일은 계획 승인 없이 집음" 0 "$BIN" "$sk" fw2
+ne=$(new_epic "크기 없음" "feature:fn,flow:v1"); nk=$(kid nk "$ne" flow/n/)
+expect "새 흐름: 크기를 안 정했으면 거부(15)" 15 "$BIN" "$nk" fw3
+oe=$(new_epic "옛 방식" "feature:fo"); ok_=$(kid ok "$oe" flow/o/)
+expect "옛 방식 기능(flow:v1 없음)은 그대로 집음" 0 "$BIN" "$ok_" fw4
+
 printf '통과 %d · 실패 %d\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
