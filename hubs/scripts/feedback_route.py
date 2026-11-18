@@ -285,6 +285,23 @@ def place(rec, hits, text, dry_run, head="", note=""):
     return to_triage(rec, hits, why + note, text, dry_run)
 
 
+def answer_to_ws(card_id, ws, ts, text, kind="answer"):
+    """결정 버튼 답(kind answer)이나 직접 입력 질문(question)을 그 결정을 올린 세션에 전달. 스레드 글 답과 같은 길: 세션 상자 한 줄 → 카드 코멘트 → 입력창 알림.
+    기능 카드(epic)로 올린 결정은 기능 코디네이터 상자, 그 밖은 작업 공간 카드 상자. 반환 = 상자 이름. 상자·코멘트 쓰기 실패는 예외(부르는 쪽이 메인으로 넘김).
+    입력창 알림은 실패해도 대기열에 남아 폴러 회차가 다시 시도하므로 전달 실패로 치지 않음"""
+    row = card_row(card_id)
+    box = BOX_HEAD + slug_of(row) if row and is_feature(row) else box_of(card_id)
+    main_inbox.append(kind, text, SOURCE, ref=f"{card_id} slack:{ts}", box=box)
+    cards.bd("comments", "add", card_id, f"Slack 결정 {'질문' if kind == 'question' else '답'}: {text}")
+    if ws:
+        queue_wake(card_id, ws, ts, text)
+        try:
+            run_wakes()
+        except (cards.Fail, OSError, ValueError):
+            pass
+    return box
+
+
 # ---- 세션 입력창 알림 ------------------------------------------------------------------------
 def wake_on():
     return os.path.exists(os.path.join(hub_dir(), WAKE_SWITCH))
