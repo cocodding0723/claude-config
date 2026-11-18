@@ -7,7 +7,7 @@ SRC="${BASH_SOURCE[0]}"
 while [ -L "$SRC" ]; do T=$(readlink "$SRC"); case "$T" in /*) SRC="$T" ;; *) SRC="$(dirname "$SRC")/$T" ;; esac; done
 HERE=$(cd "$(dirname "$SRC")" && pwd -P)
 CFG_REPO="${REPO:-$HOME/orca/LoveRevolutionMaker}"
-CFG_WS_ROOT="${WS_ROOT:-$HOME/orca/workspaces/LoveRevolutionMaker}"
+CFG_WS_ROOT="${WS_ROOT:-$HOME/orca/workspaces/$(basename "$CFG_REPO")}"   # 저장소 폴더 이름과 같은 작업 공간 묶음
 CFG_BOARD="${LRM_BOARD:-$HOME/orca/board}"
 CFG_CREATE_HUB="${LRM_CREATE_HUB:-$HERE/../../skills/orca-hub-create/scripts/create_hub.sh}"
 CFG_ROLE_TMPL="${LRM_FEATURE_ROLE:-$HERE/../roles/role-feature.txt}"
@@ -18,7 +18,7 @@ CFG_HUB_REPORT="${LRM_HUB_REPORT:-$HERE/hub_report.py}"   # 기능 Slack 스레�
 
 usage() {
   cat <<'USAGE'
-사용: feature_open.sh --ticket LRM-n --name "<기능 한글>" --base <브랜치> [--slug <영문 작업명>] [--type <타입>] [--long]
+사용: feature_open.sh --ticket <LRM-n | #n | owner/repo#n> --name "<기능 한글>" --base <브랜치> [--slug <영문 작업명>] [--type <타입>] [--long]
                        [--goal "<목표 한 문장>" --verify "<확인 방법 한 문장>" [--out "<범위 밖>"]] [--dry-run] [--json]
 기능 하나를 맡을 코디네이터를 만든다. 다시 실행해도 있는 것은 재사용하고 빠진 것만 만든다.
   1 기능 통합 브랜치(없으면 --base 에서 생성). 이름은 게임 저장소 규칙(CLAUDE.md Branch Convention)을 따름:
@@ -34,7 +34,10 @@ usage() {
     스레드를 열고 epic 에 label slack-thread:<ts> 를 붙이는 일은 report_sender 가 함. 예약 실패는 경고만 하고 종료 코드에 영향 없음
 
 옵션:
-  --ticket LRM-n  Jira 티켓(필수)
+  --ticket 티켓   필수. Jira 키(LRM-612) 또는 GitHub 이슈(#124 · owner/repo#124). 형식으로 트래커를 정함.
+                  GitHub 이슈면 브랜치는 <타입>/<번호>-<작업명>(예 fix/124-perf-visibility), --long 이면 feat/<작업명>.
+                  스프린트 시작일이 필요 없고 타입은 feat|fix 만(git-guard 작업 브랜치 접두사). owner/repo 는 REPO 의 origin 과 같아야 함.
+                  저장소 트래커(tracker_of.py)와 형식이 다르면 경고만 함
   --name 이름     기능 이름, 한글 가능(필수)
   --base 브랜치   통합 브랜치를 만들 기준(필수). 예 dev → origin/dev 가 있으면 그것을 씀
   --slug 영문     영문 작업명(소문자·숫자·-). 브랜치·허브 이름에 씀. 생략하면 허브 이름은 티켓 소문자(lrm-n), 브랜치는 티켓 번호까지만(경고)
@@ -47,11 +50,12 @@ usage() {
                   세 칸은 새 기능 카드를 만들 때만 적음. 안 주면 빈 칸으로 남고 코디네이터가 채워야 접수 단계를 떠날 수 있음(board-stage)
   --dry-run       아무것도 만들지 않고 할 일만 출력
   --json          결과를 JSON 한 줄로 출력
-환경: REPO, WS_ROOT, LRM_BOARD(작업판 폴더), LRM_CREATE_HUB, LRM_FEATURE_ROLE, LRM_ROLES_DIR, LRM_SPRINT_DATE(스프린트 시작일), LRM_SPRINT_FILE(스프린트 시작일 설정 파일, 기본 ~/.config/lrm-hubs/sprint-start)
+환경: REPO(게임 저장소, 기본 ~/orca/LoveRevolutionMaker), WS_ROOT(기본 ~/orca/workspaces/<REPO 폴더 이름>), LRM_BOARD(작업판 폴더), LRM_CREATE_HUB, LRM_FEATURE_ROLE, LRM_ROLES_DIR, LRM_SPRINT_DATE(스프린트 시작일), LRM_SPRINT_FILE(스프린트 시작일 설정 파일, 기본 ~/.config/lrm-hubs/sprint-start)
 종료 코드: 0 성공, 1 단계 실패, 2 인자 오류, 3 환경 오류(bd·orca·jq·git 없음, 기준 브랜치 없음), 5 사용자 검수 대기 상한(REVIEW_WIP_MAX, 기본 3)
 예:
   feature_open.sh --ticket LRM-612 --name "우편함" --base dev --dry-run
   feature_open.sh --ticket LRM-612 --name "우편함" --base dev --slug mailbox --json
+  REPO=~/project/AllAdrift feature_open.sh --ticket '#124' --name "성능" --base dev --slug perf-visibility --type fix --dry-run
 USAGE
 }
 die() { echo "$1" >&2; exit "${2:-2}"; }
@@ -72,10 +76,25 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$TICKET" ] && [ -n "$NAME" ] && [ -n "$BASE" ] || die "--ticket·--name·--base 필요 — 예 feature_open.sh --ticket LRM-612 --name \"우편함\" --base dev"
-[[ "$TICKET" =~ ^LRM-[0-9]+$ ]] || die "티켓 형식 오류: $TICKET — LRM-숫자 로 지정"
+# 트래커는 티켓 형식으로 정함: Jira 키 → 기존 스프린트 브랜치 규칙, GitHub 이슈 → 작업 브랜치 접두사 규칙
+GH_NUM=""
+if [[ "$TICKET" =~ ^[A-Z][A-Z0-9]{1,9}-[0-9]+$ ]]; then TRACKER=jira
+elif [[ "$TICKET" =~ ^(([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+))?#([0-9]+)$ ]]; then
+  TRACKER=github GH_NUM="${BASH_REMATCH[3]}" GH_GIVEN="${BASH_REMATCH[2]}"
+  GH_REPO=$(git -C "$CFG_REPO" remote get-url origin 2>/dev/null | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##; s#/$##') || GH_REPO=""
+  [ -n "$GH_REPO" ] || die "GitHub 이슈인데 $CFG_REPO 의 origin 이 GitHub 이 아님 — REPO 로 게임 저장소를 지정" 3
+  if [ -n "$GH_GIVEN" ] && [ "$(echo "$GH_GIVEN" | tr 'A-Z' 'a-z')" != "$(echo "$GH_REPO" | tr 'A-Z' 'a-z')" ]; then
+    die "티켓 저장소 $GH_GIVEN 와 REPO 저장소 $GH_REPO 가 다름 — REPO 를 그 저장소로 지정"
+  fi
+  TICKET="$GH_REPO#$GH_NUM"
+  [[ "$TYPE" =~ ^(feat|fix)$ ]] || die "타입 오류: $TYPE — GitHub 이슈 작업은 feat|fix(전역 git-guard 작업 브랜치 접두사)"
+else die "티켓 형식 오류: $TICKET — Jira 키(LRM-612) 또는 GitHub 이슈(#124 · owner/repo#124)"; fi
 [[ "$TYPE" =~ ^($BRANCH_TYPES)$ ]] || die "타입 오류: $TYPE — $BRANCH_TYPES 중 하나"
+TRK=$(python3 "$HERE/tracker_of.py" "$CFG_REPO" 2>/dev/null | cut -d' ' -f1) || TRK=""
+[ -z "$TRK" ] || [ "$TRK" = "$TRACKER" ] || echo "⚠️ 저장소 트래커는 $TRK 인데 티켓 형식은 $TRACKER — trackers.tsv 와 티켓을 확인" >&2
 NAMED=1; [ -n "$SLUG" ] || NAMED=0
-SLUG="${SLUG:-$(echo "$TICKET" | tr 'A-Z' 'a-z')}"
+if [ "$TRACKER" = github ]; then SLUG="${SLUG:-$(basename "$GH_REPO" | tr 'A-Z' 'a-z')-$GH_NUM}"
+else SLUG="${SLUG:-$(echo "$TICKET" | tr 'A-Z' 'a-z')}"; fi
 [[ "$SLUG" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "slug 형식 오류: $SLUG — 영문 소문자·숫자·- 만"
 for c in bd orca jq git; do command -v "$c" >/dev/null 2>&1 || die "$c 없음 — 설치하거나 PATH 확인. 아무것도 만들지 않음" 3; done
 [ -f "$CFG_CREATE_HUB" ] || die "create_hub.sh 없음: $CFG_CREATE_HUB — LRM_CREATE_HUB 로 지정" 3
@@ -95,6 +114,10 @@ sprint_start() { # 스프린트 시작일. 오늘 날짜로 지어내지 않음:
 }
 KNOWN=$(cd "$CFG_BOARD" && bd list -t epic -l "$LABEL" --json 2>/dev/null | jq -r '[.[] | select(.status != "closed")][0].labels // [] | map(select(startswith("branch:")))[0] // "" | sub("^branch:"; "")' 2>/dev/null) || KNOWN=""
 if [ -n "$KNOWN" ]; then BRANCH="$KNOWN"
+elif [ "$TRACKER" = github ]; then
+  if [ "$LONG" = 1 ]; then BRANCH="feat/$SLUG"
+  elif [ "$NAMED" = 0 ]; then echo "⚠️ 영문 작업명 없음 — 브랜치를 $TYPE/$GH_NUM 으로 만듦. --slug 를 주면 $TYPE/$GH_NUM-<작업명>" >&2; BRANCH="$TYPE/$GH_NUM"
+  else BRANCH="$TYPE/$GH_NUM-$SLUG"; fi
 elif [ "$NAMED" = 0 ]; then
   echo "⚠️ 영문 작업명 없음 — 브랜치를 티켓 번호까지만으로 만듦. --slug <작업명> 을 주면 규칙대로 <타입>-<티켓>-<작업명> 이 됨" >&2
   if [ "$LONG" = 1 ]; then BRANCH="feature/$SLUG"; else SPRINT=$(sprint_start) || exit $?; BRANCH="sprint-$SPRINT/$TYPE-$TICKET"; fi
@@ -119,7 +142,7 @@ if [ -z "$EPIC" ]; then
   EPIC_STATE=new
   if [ "$DRY" = 1 ]; then EPIC="(생성 예정)"
   else
-    EPIC=$(cd "$CFG_BOARD" && bd create "[$TICKET] $NAME" -t epic -l "$LABEL,flow:v1,stage:intake,branch:$BRANCH,repo:$CFG_REPO,base:$BASE_REF" --external-ref "jira-$TICKET" \
+    EPIC=$(cd "$CFG_BOARD" && bd create "[$TICKET] $NAME" -t epic -l "$LABEL,flow:v1,stage:intake,branch:$BRANCH,repo:$CFG_REPO,base:$BASE_REF" --external-ref "$([ "$TRACKER" = github ] && echo "github-$TICKET" || echo "jira-$TICKET")" \
       -d "$(printf -- '- 목표: %s\n- 확인 방법: %s\n- 범위 밖: %s\n- 기능 코디네이터 허브: %s\n- 통합 브랜치: %s' "$(oneline "$GOAL")" "$(oneline "$VERIFY")" "$(oneline "$OUT_OF")" "$HUB" "$BRANCH")" --json | jq -r '.id // empty') || true
     [ -n "$EPIC" ] || die "epic 생성 실패 — cd $CFG_BOARD && bd create ... 를 직접 실행해 오류 확인" 1
   fi
