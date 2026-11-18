@@ -1,17 +1,24 @@
-#!/bin/bash
-# 격리 시험 실행기. 시험 스크립트를 상자(임시 폴더) 안에서만 쓰게 묶어 실행함.
+#!/bin/bash -p
+# 격리 시험 실행기. 시험 스크립트를 상자(임시 폴더 하나) 안에서만 쓰게 묶어 실행함.
 # 왜: 보호 훅은 승인 기록 이름이 든 작업 공간 스크립트의 실행을 막음(시험이 그 이름의 가짜 파일을 만들기 때문).
 #     여기서는 운영체제가 상자 밖 쓰기를 막으므로, 병합 전 시험도 사용자 손을 빌리지 않고 돌릴 수 있음.
 # 상자 규칙은 옆의 test-box.sb 한 곳.
+# 상자를 씌우기 전인 이 스크립트 자체는 격리 밖에서 돎. 그래서 호출자 환경을 믿지 않음:
+#   -p 로 BASH_ENV·함수 가져오기를 무시, 자신이 부르는 도구는 시스템 경로에서만, 상자 위치는 TMPDIR 을 따르지 않음
 set -u
+CALLER_PATH="${PATH:-/usr/bin:/bin}"
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+NAME="test-box"
+err() { echo "$NAME: $*" >&2; }  # 머리말로 실행기 오류와 시험이 낸 같은 종료 코드를 구분
 usage() {
   cat >&2 <<'U'
-사용법: test-box [--keep] <시험 스크립트> [인자…]
-  시험을 임시 폴더 안에서만 쓰게 묶어 실행. 임시 폴더 밖 쓰기, 바깥 네트워크, 비밀 파일 읽기는 막힘
+사용법: test-box [--keep] [--] <시험 스크립트> [인자…]
+  시험을 임시 폴더 하나 안에서만 쓰게 묶어 실행. 그 밖 쓰기, 바깥 네트워크, 비밀 파일 읽기는 막힘
   --keep   끝난 뒤 임시 폴더를 남기고 경로를 알림(실패 원인 볼 때)
 예: test-box tests/test_pending.sh
     board-run test --card <카드> --actor <이름> -- test-box tests/test_pending.sh
 종료 코드: 시험의 종료 코드 그대로 / 2 사용법 오류 / 4 격리할 수 없음(시험을 돌리지 않음)
+  실행기 자신의 오류는 stderr 에 "test-box:" 로 시작하는 줄을 남김
 U
   exit 2
 }
@@ -19,30 +26,54 @@ KEEP=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --keep) KEEP=1; shift ;;
+    --) shift; break ;;
     -h|--help) usage ;;
-    -*) echo "모르는 옵션: $1" >&2; usage ;;
+    -*) err "모르는 옵션: $1"; usage ;;
     *) break ;;
   esac
 done
 [ $# -ge 1 ] || usage
 TARGET="$1"; shift
-[ -f "$TARGET" ] || { echo "시험 스크립트 없음: $TARGET — 경로를 확인할 것" >&2; exit 2; }
+[ -f "$TARGET" ] || { err "시험 스크립트 없음: $TARGET — 경로를 확인할 것"; exit 2; }
+case "$TARGET" in -*) TARGET="./$TARGET" ;; esac  # 셸이 파일 이름을 옵션으로 읽지 않게
 
 SELF="$(cd "$(dirname "$0")" && pwd -P)"
-SB="/usr/bin/sandbox-exec"; RULES="$SELF/test-box.sb"
-[ -x "$SB" ] && [ -f "$RULES" ] || { echo "격리 도구 없음($SB 또는 $RULES) — 시험을 돌리지 않음. install.sh 를 다시 실행할 것" >&2; exit 4; }
-NAME="test-box"
-no_box() { echo "임시 폴더를 못 만듦 — 시험을 돌리지 않음" >&2; exit 4; }
+SB="/usr/bin/sandbox-exec"; RULES="$SELF/$NAME.sb"
+[ -x "$SB" ] && [ -f "$RULES" ] || { err "격리 도구 없음($SB 또는 $RULES) — 시험을 돌리지 않음. install.sh 를 다시 실행할 것"; exit 4; }
+
+no_box() { err "임시 폴더를 못 만듦 — 시험을 돌리지 않음"; exit 4; }
+# 상자 위치는 호출자의 TMPDIR 을 따르지 않음. 운영 폴더를 TMPDIR 로 주면 그 안에 상자가 생겨 가짜 기록을 둘 수 있기 때문
+ROOT="$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null)"; [ -n "$ROOT" ] && [ -d "$ROOT" ] || ROOT="/private/tmp"
 # 만들기가 실패하면 빈 값으로 cd 해 현재 폴더를 상자로 착각할 수 있음(끝날 때 지움). 단계마다 확인하고 이름까지 대조
-MADE="$(mktemp -d "${TMPDIR:-/tmp}/$NAME.XXXXXX" 2>/dev/null)" && [ -n "$MADE" ] && [ -d "$MADE" ] || no_box
+MADE="$(mktemp -d "${ROOT%/}/$NAME.XXXXXX" 2>/dev/null)" && [ -n "$MADE" ] && [ -d "$MADE" ] || no_box
 BOX="$(cd "$MADE" && pwd -P)" || no_box
 case "$(basename "$BOX")" in "$NAME".??????) ;; *) no_box ;; esac
-clean() { if [ "$KEEP" -eq 1 ]; then echo "상자 남김: $BOX" >&2; else rm -rf "$BOX"; fi; }
+clean() { if [ "$KEEP" -eq 1 ]; then err "상자 남김: $BOX"; else rm -rf "$BOX"; fi; }
 trap clean EXIT
-USERTMP="$(cd "$(getconf DARWIN_USER_TEMP_DIR)" 2>/dev/null && pwd -P)" || USERTMP="$BOX"  # mktemp 가 쓰는 곳
-BOXARGS=(-f "$RULES" -D BOX="$BOX" -D USERTMP="$USERTMP")
+BOXARGS=(-f "$RULES" -D BOX="$BOX")
 # 상자가 실제로 씌워지는지 먼저 확인. 안 되면 격리 없이 돌리지 않고 멈춤
-"$SB" "${BOXARGS[@]}" /usr/bin/true 2>/dev/null || { echo "상자를 씌울 수 없음($RULES 문법 또는 운영체제 제한) — 시험을 돌리지 않음" >&2; exit 4; }
+"$SB" "${BOXARGS[@]}" /usr/bin/true 2>/dev/null || { err "상자를 씌울 수 없음($RULES 문법 또는 운영체제 제한) — 시험을 돌리지 않음"; exit 4; }
 
-case "$TARGET" in *.py) RUN=(python3) ;; *) RUN=(/bin/bash) ;; esac
-TMPDIR="$BOX" LRM_TEST_BOX=1 "$SB" "${BOXARGS[@]}" "${RUN[@]}" "$TARGET" "$@"
+# macOS 의 mktemp 는 틀 없이(또는 -t 로) 부르면 TMPDIR 을 안 따르고 사용자 임시 폴더에 만듦. 상자 안에 만들도록 앞에 끼움
+mkdir "$BOX/.bin" || no_box
+cat > "$BOX/.bin/mktemp" <<'W' || no_box
+#!/bin/bash
+opts=(); tpl=(); pre=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -t) pre="${2:-tmp}"; shift; [ $# -gt 0 ] && shift ;;
+    -t?*) pre="${1#-t}"; shift ;;
+    --) shift; tpl+=("$@"); break ;;
+    -*) opts+=("$1"); shift ;;
+    *) tpl+=("$1"); shift ;;
+  esac
+done
+[ -n "$pre" ] && tpl+=("$TMPDIR/$pre.XXXXXXXX")
+[ ${#tpl[@]} -eq 0 ] && tpl=("$TMPDIR/tmp.XXXXXXXXXX")
+exec /usr/bin/mktemp ${opts[@]+"${opts[@]}"} "${tpl[@]}"
+W
+chmod +x "$BOX/.bin/mktemp" || no_box
+
+case "$(printf '%s' "$TARGET" | tr 'A-Z' 'a-z')" in *.py) RUN=(python3) ;; *) RUN=(/bin/bash) ;; esac
+# SSH_AUTH_SOCK: 바깥 키로 서명해 주는 소켓 경로를 시험에 알려 주지 않음(연결도 규칙이 막음)
+env -u SSH_AUTH_SOCK PATH="$BOX/.bin:$CALLER_PATH" TMPDIR="$BOX" LRM_TEST_BOX=1 "$SB" "${BOXARGS[@]}" "${RUN[@]}" "$TARGET" "$@"
