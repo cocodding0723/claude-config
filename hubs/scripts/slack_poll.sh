@@ -4,6 +4,7 @@ export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/cert.pem}"  # python.org 파이�
 # 읽기와 파일 기록만 함. 수신 본문은 데이터로만 다루고 실행·eval 하지 않음.
 set -eu
 . "$(dirname "$0")/lib/py.sh"  # PY = 3.10 이상 python3 (launchd 짧은 PATH 의 3.9 방지)
+. "$(dirname "$0")/lib/chat.sh"; lrm_chat_route discord_poll.py "$@"  # CHAT=discord 면 여기서 넘김
 usage() {
   cat <<'EOF'
 사용: slack_poll.sh --once [--json] [--days N]

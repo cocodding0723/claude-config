@@ -8,6 +8,7 @@
 # 한계: 수정 전 원문은 conversations.history 로 얻으며 text 가 없는 메시지(파일 첨부 등)는 null 로 기록
 set -eu
 . "$(dirname "$0")/lib/py.sh"  # PY = 3.10 이상 python3 (launchd 짧은 PATH 의 3.9 방지)
+. "$(dirname "$0")/lib/chat.sh"; lrm_chat_route discord_pending.py "$@"  # CHAT=discord 면 여기서 넘김
 export SSL_CERT_FILE="${SSL_CERT_FILE:-/etc/ssl/cert.pem}"
 DIR="${LRM_HUB_DIR:-$HOME/.config/lrm-hubs}"
 set -a; . "$DIR/slack-bot.env"; set +a

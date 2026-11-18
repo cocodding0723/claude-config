@@ -8,6 +8,7 @@ set -eu
 # 설정: 파일 메시지 ts 조회(files.info). 파일 공유는 비동기라 바로 안 나올 수 있어 짧게 재시도. 환경 변수는 시험용 재정의
 FILE_TS_TRIES="${LRM_FILE_TS_TRIES:-5}" FILE_TS_WAIT="${LRM_FILE_TS_WAIT:-1}"
 CARD_ID_RE='^[a-z][a-z0-9]{1,15}-[a-z0-9]{1,12}(\.[0-9]{1,3})*$'  # 작업판 카드 id(예 lrm-q5o.2)
+. "$(dirname "$0")/lib/chat.sh"; lrm_chat_route discord_notify.py "$@"  # CHAT=discord 면 여기서 넘김
 usage() {
   cat <<'EOF'
 사용: slack_notify.sh [--tag 허브] [--title 제목] [--thread TS] [--kind 종류 [--choices N] [--emoji-set 종류]] [--card 카드id] [--no-check] "메시지" [파일경로]
