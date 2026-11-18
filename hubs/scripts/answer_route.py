@@ -26,6 +26,7 @@ import main_inbox  # noqa: E402
 
 HUB_LINE = "사용자 원문: {body} (출처: {source})"
 REPORTS_NAME = "hub-reports.jsonl"  # 허브 보고 outbox. 결정을 올린 허브·작업 카드·작업 공간이 적힘
+SENT_NAME = "slack-sent.jsonl"
 MAIN_LINE = "[{source}→메인] {body} ({ts})"
 MAIN_NOTE = "[{source}→메인 참고] {note}: {body} ({ts})"
 
@@ -60,6 +61,15 @@ class Outcome:
     note: str = ""
 
 
+FEATURE_HEAD = "feat-"  # 기능 코디네이터 허브 이름 머리(feature_open.sh 의 HUB_SLUG)
+
+
+def feature_lookup(hub: str) -> tuple:
+    """기능 코디네이터 허브 이름 → (기능 카드, 코디네이터 작업 공간). 지연 가져오기는 session_sender 와 같은 이유"""
+    import feedback_route
+    return tuple(feedback_route.feature_session(hub))
+
+
 def session_sender(card: str, ws: str, ts: str, text: str, kind: str) -> str:
     """작업 카드 세션 전달의 기본 구현(스레드 글 답과 같은 길). 지연 가져오기: 작업판 도구를 쓰는 모듈이라 이 길을 탈 때만 읽음"""
     import feedback_route
@@ -73,6 +83,7 @@ class Router:
                  redeliver: Callable = actions.redeliver, to_ws: Callable | None = None) -> None:
         self.store, self.to_main, self.deliver, self.redeliver = store, to_main, deliver, redeliver
         self.to_ws = to_ws or session_sender  # (카드, 작업 공간, ts, 본문, 종류) -> 상자 이름. 실패는 예외
+        self.feature_of = feature_lookup      # 기능 코디네이터 허브 이름 -> (기능 카드, 작업 공간). 없으면 ('', '')
 
     def ws_of(self, did: str) -> tuple:
         """결정을 올린 보고에 적힌 (작업 카드, 작업 공간). 없으면 ('', ''). 같은 번호를 다시 올렸으면 최근 보고.
@@ -91,9 +102,35 @@ class Router:
             pass
         return hit
 
+    def raised_by(self, did: str) -> str:
+        """결정을 올린 허브 이름 그대로(허브 목록에 없어도). 보고 기록이 우선, 없으면 보낸 카드의 tag. 못 읽으면 ''"""
+        hub = ""
+        for name, key in ((REPORTS_NAME, "hub"), (SENT_NAME, "tag")):
+            try:
+                with open(os.path.join(self.store.dir, name), encoding="utf-8", errors="replace") as f:
+                    for ln in f:
+                        try:
+                            r = json.loads(ln)
+                        except ValueError:
+                            continue
+                        if isinstance(r, dict) and r.get("decision_id") == did and isinstance(r.get(key), str) and r[key]:
+                            hub = r[key]
+            except OSError:
+                pass
+            if hub:
+                break
+        return hub
+
     def send_to(self, did: str, ts: str, source: str, body: str, done: Callable[["Outcome"], None] | None = None, kind: str = "answer") -> Outcome:
         """받을 곳을 정해 전달: 작업 카드로 올린 결정이면 그 세션, 아니면 허브 목록 → 메인(옛 길). 세션 전달이 실패하면 메인에 원문을 남김"""
         card, ws = self.ws_of(did)
+        if not card:  # 기능 코디네이터가 작업 카드 없이 올린 결정(옛 방식): 허브 이름으로 그 기능의 카드와 세션을 찾음
+            hub = self.raised_by(did)
+            if hub.startswith(FEATURE_HEAD):
+                try:
+                    card, ws = self.feature_of(hub)
+                except Exception:  # noqa: BLE001 — 작업판 조회 실패는 옛 길로
+                    card, ws = "", ""
         if not card:
             return self.send_hub(self.hub_of(did), ts, source, body, done)
         src = answer_store.SOURCE_NAME.get(source, source)

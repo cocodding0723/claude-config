@@ -249,7 +249,7 @@ def route(rec, by_ts, dry_run):
     """한 답글의 전달 결과 dict, 등록된 스레드가 아니면 None. 결정 번호로 시작하는 글은 그 결정의 답으로 표시해 같은 곳에 전달"""
     hits = by_ts.get(str(rec.get("parent_ts") or ""))
     if not hits:
-        return None
+        return route_card_reply(rec, dry_run)
     did = decision_of(rec)
     if not did:
         return place(rec, hits, body(rec), dry_run)
@@ -257,6 +257,21 @@ def route(rec, by_ts, dry_run):
     kind = DECIDE_ASK if answer_store.is_question(rec.get("text")) else DECIDE_ANSWER
     got = place(rec, hits, body(rec), dry_run, head=DECIDE_HEAD.format(did=did, kind=kind), note=DECIDE_NOTE[kind].format(did=did))
     return dict(got, decision_id=did)
+
+
+def route_card_reply(rec, dry_run):
+    """등록된 작업 스레드가 아닌 곳의 답글. 기능 코디네이터가 맨 위 글로 올린 결정 카드의 스레드 글이면 그 코디네이터에게 전달, 아니면 None(손대지 않음).
+    그 코디네이터는 허브 목록(hubs.tsv)에 없어 옛 길로는 메인에서 끝남"""
+    hub, did = card_decision(rec)
+    if not did or not hub.startswith(BOX_HEAD):
+        return None
+    epic_id, ws = feature_session(hub)
+    epic = card_row(epic_id) if epic_id else None
+    if not epic:
+        return None
+    kind = DECIDE_ASK if answer_store.is_question(rec.get("text")) else DECIDE_ANSWER
+    got = to_feature(epic, rec, body(rec), dry_run, note=DECIDE_NOTE[kind].format(did=did), head=DECIDE_HEAD.format(did=did, kind=kind))
+    return dict(got, decision_id=did, wake_ws=ws)  # wake_ws: 결정에 달린 글은 사용자가 답을 기다리므로 코디네이터 창에 바로 알림
 
 
 def place(rec, hits, text, dry_run, head="", note=""):
@@ -283,6 +298,41 @@ def place(rec, hits, text, dry_run, head="", note=""):
     else:
         why = "담당 작업 공간 없는 카드"
     return to_triage(rec, hits, why + note, text, dry_run)
+
+
+HUB_LINE_RE = re.compile(r"^[ \t>*-]*기능 코디네이터 허브[ \t]*:[ \t]*(\S+)", re.M)  # feature_open.sh 가 기능 카드 설명에 적는 줄
+
+
+def feature_session(hub):
+    """기능 코디네이터 허브 이름(feat-<slug>) → [열린 기능 카드 id, 코디네이터 작업 공간 경로]. 못 찾으면 ['', ''].
+    작업 공간 경로는 기능 카드 설명의 '기능 코디네이터 허브:' 줄. 없으면 ''(상자·코멘트는 남기고 입력창 알림만 생략)"""
+    if not str(hub or "").startswith(BOX_HEAD):
+        return ["", ""]
+    rows = [r for r in cards.bd_json("list", "-t", "epic", "-l", f"feature:{hub[len(BOX_HEAD):]}", "--limit", "0") or []
+            if isinstance(r, dict) and r.get("status") != "closed"]
+    if not rows:
+        return ["", ""]
+    row = card_row(rows[0]["id"]) or rows[0]
+    m = HUB_LINE_RE.search(str(row.get("description") or ""))
+    return [row["id"], m.group(1) if m else ""]
+
+
+def card_decision(rec):
+    """맨 위 글로 올라간 결정 카드의 스레드에 쓴 글이면 (그 카드를 올린 허브 이름, 결정 번호), 아니면 ('', '')"""
+    parent = str(rec.get("parent_ts") or "")
+    try:
+        with open(os.path.join(hub_dir(), SENT_NAME), encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return "", ""
+    for ln in reversed(lines):
+        try:
+            s = json.loads(ln)
+        except ValueError:
+            continue
+        if isinstance(s, dict) and s.get("ts") == parent and pending_judge.is_decision(s) and not s.get("thread_ts"):
+            return str(s.get("tag") or ""), str(s.get("decision_id") or "")
+    return "", ""
 
 
 def answer_to_ws(card_id, ws, ts, text, kind="answer"):
@@ -464,6 +514,8 @@ def once(dry_run=False):
                 finally:
                     os.close(fd)
                 done.add(got["ts"])
+                if got.get("wake_ws"):
+                    queue_wake(got["epic"], got["wake_ws"], r.get("ts"), body(r))
                 if got["to"] == "ws":
                     queue_wake(got["card"], ws_of(next(c for c in by_ts[got["parent_ts"]] if c["id"] == got["card"])), r.get("ts"), body(r))
         if not dry_run:
