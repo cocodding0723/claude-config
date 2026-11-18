@@ -110,6 +110,41 @@ class ReplyBase(unittest.TestCase):
 
 
 
+
+class ButtonAnswerTest(ReplyBase):
+    """결정 버튼 답을 그 결정을 올린 세션에 전달(스레드 글 답과 같은 길: 상자 한 줄 + 카드 코멘트 + 입력창 알림)"""
+
+    def call(self, card, ws, text="사용자 원문: 결정 D-TH1 = 선택 2(나) (버튼) (출처: Slack)", kind="answer"):
+        code = ("import sys, json; sys.path.insert(0, sys.argv[1]); import feedback_route as f; "
+                "print(json.dumps(f.answer_to_ws(sys.argv[2], sys.argv[3], '1794383275.5', sys.argv[4], sys.argv[5])))")
+        p = subprocess.run([sys.executable, "-I", "-c", code, os.path.dirname(SCRIPT), card, ws, text, kind], capture_output=True, text=True, env=self.env)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return json.loads(p.stdout)
+
+    def test_answer_lands_in_the_work_card_session_box_and_card_comment(self):
+        box = self.call(self.ws_card, WS)
+        row = self.box(box)[-1]
+        self.assertEqual((row["kind"], row["text"]), ("answer", "사용자 원문: 결정 D-TH1 = 선택 2(나) (버튼) (출처: Slack)"))
+        self.assertTrue(any("선택 2(나)" in c for c in self.comments(self.ws_card)))
+
+    def test_feature_coordinator_gets_it_in_the_feature_box(self):
+        """기능 코디네이터가 기능 카드(epic)로 올린 결정: 코디네이터가 읽는 기능 상자로"""
+        self.assertEqual(self.call(self.epic, "/w/hub"), "feat-x")
+        self.assertIn("선택 2(나)", self.box("feat-x")[-1]["text"])
+
+    def test_session_is_told_right_away(self):
+        self.write(os.path.join(self.hub, ".thread-wake.on"), "")
+        self.call(self.ws_card, WS)
+        with open(os.path.join(self.fake, "sends.log"), encoding="utf-8") as f:
+            sent = f.read()
+        self.assertIn(TERM, sent)
+        self.assertIn(self.ws_card, sent)
+
+    def test_question_is_kept_as_question(self):
+        box = self.call(self.ws_card, WS, "사용자 원문: 결정 D-TH1 질문: 왜? (출처: Slack)", "question")
+        self.assertEqual(self.box(box)[-1]["kind"], "question")
+
+
 class DecisionReplyTest(ReplyBase):
     """작업 스레드에 결정 번호로 시작하는 글은 그 결정의 답으로 전달(번호 없는 글은 지금처럼 피드백)"""
 

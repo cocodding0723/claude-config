@@ -86,6 +86,56 @@ class UnitRoute(Base):
             return main_ok
         return self.route_mod.Router(self.store, to_main, deliver)
 
+    def ws_router(self, fail=False):
+        """작업 카드로 올린 결정의 전달 함수를 가짜로 바꿈. fail 이면 그 길이 실패"""
+        r = self.router("sent")
+        self.ws_calls = []
+
+        def to_ws(card, ws, ts, text, kind):
+            self.ws_calls.append((card, ws, ts, text, kind))
+            if fail:
+                raise OSError("box")
+            return "ws-t-1"
+        r.to_ws = to_ws
+        return r
+
+    def map_card_decision(self, did="D-0001", hub="newhub", card="t-1", ws="/w/a"):
+        """작업 카드와 작업 공간을 적어 올린 결정. 허브 이름은 등록 목록(hubs.tsv)에 없음 — 새로 연 코디네이터가 그렇음"""
+        self.jsonl("hub-reports.jsonl", [{"decision_id": did, "hub": hub, "card": card, "ws": ws}])
+
+    def test_decision_raised_with_a_work_card_is_answered_to_that_session(self):
+        self.map_card_decision()
+        out = self.ws_router().route("D-0001", "1.1", "slack", BODY)
+        self.assertEqual((out.ok, out.via, out.hub), (True, "ws", "t-1"))
+        self.assertEqual(self.ws_calls, [("t-1", "/w/a", "1.1", f"사용자 원문: {BODY} (출처: Slack)", "answer")])
+        self.assertEqual((self.hub_calls, self.main_calls), ([], []), "허브 목록·메인을 거치지 않음")
+        self.assertEqual([r["state"] for r in self.store.deliveries("D-0001", "1.1")], ["ws"])
+
+    def test_question_about_a_card_decision_also_goes_to_that_session(self):
+        self.map_card_decision()
+        out = self.ws_router().ask("D-0001", "1.1", "slack", "결정 D-0001 질문: 왜?")
+        self.assertEqual((out.ok, out.via), (True, "ws"))
+        self.assertEqual(self.ws_calls[0][4], "question")
+        self.assertEqual(self.store.deliveries("D-0001", "1.1"), [], "질문은 전달 기록을 남기지 않음")
+
+    def test_when_the_session_path_fails_the_answer_still_reaches_main(self):
+        self.map_card_decision()
+        out = self.ws_router(fail=True).route("D-0001", "1.1", "slack", BODY)
+        self.assertEqual((out.ok, out.via), (True, "main"))
+        self.assertIn(BODY, self.main_calls[0])
+        self.assertIn("t-1", self.main_calls[0], "어느 작업 카드로 못 보냈는지 적음")
+
+    def test_latest_report_decides_the_work_card(self):
+        self.jsonl("hub-reports.jsonl", [{"decision_id": "D-0001", "hub": "newhub", "card": "t-1", "ws": "/w/a"},
+                                         {"decision_id": "D-0001", "hub": "newhub", "card": "t-2", "ws": "/w/b"}])
+        self.ws_router().route("D-0001", "1.1", "slack", BODY)
+        self.assertEqual(self.ws_calls[0][:2], ("t-2", "/w/b"))
+
+    def test_decision_without_work_card_keeps_the_old_path(self):
+        self.map_decision()
+        out = self.ws_router().route("D-0001", "1.1", "slack", BODY)
+        self.assertEqual((out.via, self.ws_calls), ("hub", []))
+
     def test_no_mapping_goes_to_main_as_before(self):
         out = self.router("sent").route("D-0001", "1.1", "slack", BODY)
         self.assertEqual((out.ok, out.via, self.hub_calls), (True, "main", []))

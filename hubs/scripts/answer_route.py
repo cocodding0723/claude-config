@@ -11,6 +11,7 @@
 전달이 끝나면 결과를 answer_store 의 전달 기록(answer-delivery.jsonl)에 남김.
 결정→허브: hub-reports.jsonl(허브 보고 outbox)의 decision_id·hub 가 우선, 없으면 보낸 카드 기록의 tag (todo_facts.decision_hubs 규칙).
 """
+import json
 import os
 import re
 import sys
@@ -24,6 +25,7 @@ import card_actions as actions  # noqa: E402
 import main_inbox  # noqa: E402
 
 HUB_LINE = "사용자 원문: {body} (출처: {source})"
+REPORTS_NAME = "hub-reports.jsonl"  # 허브 보고 outbox. 결정을 올린 허브·작업 카드·작업 공간이 적힘
 MAIN_LINE = "[{source}→메인] {body} ({ts})"
 MAIN_NOTE = "[{source}→메인 참고] {note}: {body} ({ts})"
 
@@ -51,19 +53,57 @@ def asked_text(did: str, text: str) -> str:
 
 @dataclass(frozen=True)
 class Outcome:
-    """전달 결과. ok 는 답이 허브나 메인 중 어딘가에 도착했다는 뜻. via: hub | proxy(메인 대리) | main(허브 기록 없음) | unknown(시간 초과) | lost | pending(막힘 재시도 중, 끝나면 on_done 으로 최종 결과)"""
+    """전달 결과. ok 는 답이 세션·허브·메인 중 어딘가에 도착했다는 뜻. via: ws(작업 카드 세션, hub 칸에 카드 id) | hub | proxy(메인 대리) | main(허브 기록 없음) | unknown(시간 초과) | lost | pending(막힘 재시도 중, 끝나면 on_done 으로 최종 결과)"""
     ok: bool
     via: str
     hub: str = ""
     note: str = ""
 
 
+def session_sender(card: str, ws: str, ts: str, text: str, kind: str) -> str:
+    """작업 카드 세션 전달의 기본 구현(스레드 글 답과 같은 길). 지연 가져오기: 작업판 도구를 쓰는 모듈이라 이 길을 탈 때만 읽음"""
+    import feedback_route
+    return feedback_route.answer_to_ws(card, ws, ts, text, kind)
+
+
 class Router:
     """to_main: 메인 받은 편지함 기록 함수(text) -> 성공 여부. deliver: 허브 전송 함수(slug, text) -> (상태, 시도 수, 실패 코드, 후보 수)"""
 
     def __init__(self, store: answer_store.AnswerStore, to_main: Callable[[str], bool], deliver: Callable = actions.deliver,
-                 redeliver: Callable = actions.redeliver) -> None:
+                 redeliver: Callable = actions.redeliver, to_ws: Callable | None = None) -> None:
         self.store, self.to_main, self.deliver, self.redeliver = store, to_main, deliver, redeliver
+        self.to_ws = to_ws or session_sender  # (카드, 작업 공간, ts, 본문, 종류) -> 상자 이름. 실패는 예외
+
+    def ws_of(self, did: str) -> tuple:
+        """결정을 올린 보고에 적힌 (작업 카드, 작업 공간). 없으면 ('', ''). 같은 번호를 다시 올렸으면 최근 보고.
+        작업 카드로 올린 결정의 답은 그 세션으로 바로 감: 새로 연 코디네이터는 허브 목록(hubs.tsv)에 없어 옛 길로는 메인에서 끝남"""
+        hit = ("", "")
+        try:
+            with open(os.path.join(self.store.dir, REPORTS_NAME), encoding="utf-8", errors="replace") as f:
+                for ln in f:
+                    try:
+                        r = json.loads(ln)
+                    except ValueError:
+                        continue
+                    if isinstance(r, dict) and r.get("decision_id") == did and isinstance(r.get("card"), str) and r["card"] and isinstance(r.get("ws"), str) and r["ws"]:
+                        hit = (r["card"], r["ws"])
+        except OSError:
+            pass
+        return hit
+
+    def send_to(self, did: str, ts: str, source: str, body: str, done: Callable[["Outcome"], None] | None = None, kind: str = "answer") -> Outcome:
+        """받을 곳을 정해 전달: 작업 카드로 올린 결정이면 그 세션, 아니면 허브 목록 → 메인(옛 길). 세션 전달이 실패하면 메인에 원문을 남김"""
+        card, ws = self.ws_of(did)
+        if not card:
+            return self.send_hub(self.hub_of(did), ts, source, body, done)
+        src = answer_store.SOURCE_NAME.get(source, source)
+        line = HUB_LINE.format(body=body, source=src)
+        try:
+            self.to_ws(card, ws, ts, line, kind)
+            return Outcome(True, "ws", card)
+        except Exception as err:  # noqa: BLE001 — 답을 잃지 않는 것이 먼저. 종류만 남기고 메인으로
+            ok = self.to_main(MAIN_LINE.format(source=src, body=f"(작업 카드 {card} 세션에 전달하지 못해 대리 전달: {type(err).__name__}) " + line, ts=ts))
+            return Outcome(ok, "main" if ok else "lost", card, f"작업 카드 {card} 세션 전달 실패({type(err).__name__})" + ("" if ok else " · 메인 대리 전달도 실패"))
 
     def hub_of(self, did: str) -> str:
         """결정을 올린 허브 slug. 기록을 못 읽거나 근거가 없으면 빈 문자열(= 메인으로)"""
@@ -93,7 +133,7 @@ class Router:
             self.store.record_delivery(did, ts, out.via, out.ok)
             if on_done:
                 on_done(out)
-        out = self.send_hub(self.hub_of(did), ts, source, " ".join(body.split()), done)
+        out = self.send_to(did, ts, source, " ".join(body.split()), done)
         if out.via == "pending":
             self.store.record_delivery(did, ts, answer_store.PENDING, False)  # 재시도 시작 시각 갱신(pending 만료 계산 기준)
         else:
@@ -102,10 +142,10 @@ class Router:
 
     def ask(self, did: str, ts: str, source: str, body: str) -> Outcome:
         """질문 한 건을 허브(없으면 메인)에 전달. 답이 아니므로 전달 기록(answer-delivery)을 남기지 않음 — 나중 답의 재전달 판정을 흐리지 않기 위함"""
-        return self.send_hub(self.hub_of(did), ts, source, " ".join(body.split()))
+        return self.send_to(did, ts, source, " ".join(body.split()), kind="question")
 
     def send(self, did: str, ts: str, source: str, body: str) -> Outcome:
-        return self.send_hub(self.hub_of(did), ts, source, body)
+        return self.send_to(did, ts, source, body)
 
     def tell(self, hub: str, ref: str, source: str, body: str) -> Outcome:
         """결정이 아닌 한 줄(확인 완료 등)을 담당 허브에 전달. 허브를 모르면(빈 값) 메인으로. 전달 기록은 남기지 않음(호출자가 따로 기록).
