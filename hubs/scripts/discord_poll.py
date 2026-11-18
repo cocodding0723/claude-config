@@ -12,13 +12,16 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # -I 는 같은 폴더를 import 경로에 넣지 않음
+import discord_answers  # noqa: E402
 import discord_api as dapi
 
 DECIDE, TODO, REVIEW = "decide", "todo", "review"
 OPTION_TEXT_MAX = 80
+ROUTE_WAIT_S = 90  # 허브 전달 재시도 대기 상한. 폴러 회차 예산(270초) 안
 PICK_EMOJI = {"one": 1, "two": 2, "three": 3, "four": 4}
 REACTION_ACTION = {"white_check_mark": "approve", "x": "hold"}
 REVIEW_ACTION = {"white_check_mark": "pass", "x": "fail"}
@@ -221,7 +224,12 @@ def main():
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f)
     os.replace(tmp, state_path)
-    print(json.dumps({"ok": True, "added": len(new)}) if a.json else f"새 항목 {len(new)}건 → {inbox}")
+    routed = discord_answers.route_new(hub, new, log=lambda m: print(m, file=sys.stderr)) if new else []
+    for t in threading.enumerate():  # 허브 창 막힘 재시도(백그라운드)가 끝날 때까지 기다림. 프로세스가 먼저 끝나면 재시도가 사라짐
+        if t is not threading.main_thread():
+            t.join(timeout=ROUTE_WAIT_S)
+    print(json.dumps({"ok": True, "added": len(new), "routed": len(routed)}) if a.json
+          else f"새 항목 {len(new)}건 → {inbox}" + (f" · 결정 답 {len(routed)}건 허브 전달" if routed else ""))
 
 
 if __name__ == "__main__":
