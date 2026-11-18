@@ -1,0 +1,21 @@
+; 격리 시험 실행기(test-box)의 상자 규칙. 뒤 줄이 앞 줄보다 우선함
+; 목적: 작업 공간의 시험이 무엇을 하든 승인 기록·운영 폴더를 못 고치고, 실제 Slack 에 못 닿고, 비밀 파일을 못 읽게 함
+(version 1)
+(allow default)
+
+; 쓰기는 상자(임시 폴더)와 사용자 임시 폴더 안에만. macOS 의 mktemp 는 TMPDIR 을 안 따르고 사용자 임시 폴더에 만들기 때문(보호할 기록은 거기 없음)
+(deny file-write*)
+(allow file-write* (subpath (param "BOX")) (subpath (param "USERTMP")) (literal "/dev/null") (literal "/dev/tty") (literal "/dev/dtracehelper")
+       (regex #"^/dev/fd/") (regex #"^/dev/ttys[0-9]+$"))
+; bash 3.2 는 heredoc 임시 파일을 TMPDIR 과 무관하게 /var/tmp/sh-thd-숫자 로 만듦. 그 이름만 허용(폴더 자체는 쓰기 가능 여부 확인에 필요)
+(allow file-write* (literal "/private/var/tmp") (regex #"^/private/var/tmp/sh-thd-[0-9]+$"))
+
+; 밖으로 나가는 연결은 이 컴퓨터 안(가짜 서버)만
+(deny network-outbound)
+(allow network-outbound (remote ip "localhost:*") (remote unix-socket))
+
+; 비밀 파일은 시험이 임시 폴더에 만든 가짜만 읽음
+(deny file-read-data (regex #"\.(env|pem|keystore)$") (regex #"/\.ssh/"))
+(allow file-read-data (subpath (param "BOX")) (subpath (param "USERTMP")))
+; 공개 인증서 묶음은 비밀이 아니고 HTTPS 준비(가짜 서버 호출 전 단계)에 필요함
+(allow file-read-data (regex #"/(cacert|cert)\.pem$"))
