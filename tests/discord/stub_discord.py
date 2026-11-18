@@ -37,6 +37,9 @@ class H(BaseHTTPRequestHandler):
             return self.send(200, [{"id": u} for u in reactors.get(m.group(1) + "|" + unquote(m.group(2)), [])])
         m = re.fullmatch(r"/channels/\d+/messages/(\d+)", path)
         if m and method == "DELETE": msgs.pop(m.group(1), None); return self.send(204)
+        if m and method == "PATCH":
+            if m.group(1) not in msgs: return self.send(404, {"message": "Unknown Message"})
+            msgs[m.group(1)]["content"] = rec["body"]["content"]; return self.send(200, msgs[m.group(1)])
         return self.send(404, {"message": "no route"})
     def do_GET(self): self.handle_any("GET")
     def do_POST(self): self.handle_any("POST")

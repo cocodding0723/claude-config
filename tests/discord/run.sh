@@ -102,5 +102,24 @@ echo "$out" | grep -q 'D-0002' && ! echo "$out" | grep -q 'D-0001' && ok "대기
 mkdir "$HUB/.slack-pending.lock"; "$PY" -I "$S/discord_pending.py" >/dev/null; rc=$?; rmdir "$HUB/.slack-pending.lock"
 [ "$rc" = 75 ] && ok "대기 목록: 실행 중 잠금이면 종료 코드 75" || ko "잠금" "rc=$rc"
 
+# ---- 새 인자(--card·--update·--broadcast) ------------------------------------
+start '{}'
+out=$("$PY" -I "$S/discord_notify.py" --card lrm-q5o.2 "카드 연결"); rc=$?
+[ "$rc" = 0 ] && [ "$(q "$HUB/slack-sent.jsonl" 'd[-1].get("card")')" = "lrm-q5o.2" ] && ok "--card: sent 기록에 card 칸" || ko "--card" "rc=$rc"
+"$PY" -I "$S/discord_notify.py" --card 'Bad Id' "x" >/dev/null 2>&1; rc=$?
+[ "$rc" = 2 ] && ok "--card 형식 오류: 종료 코드 2" || ko "--card 형식" "rc=$rc"
+mid=${out#ok }; n=$(wc -l < "$HUB/slack-sent.jsonl")
+out=$("$PY" -I "$S/discord_notify.py" --update "$mid" "고친 본문"); rc=$?
+[ "$rc" = 0 ] && [ "$out" = "ok $mid" ] && [ "$(q "$LOG" 'd[-1]["method"]+" "+d[-1]["path"]+" "+d[-1]["body"]["content"]')" = "PATCH /channels/500/messages/$mid 고친 본문" ] \
+  && [ "$(wc -l < "$HUB/slack-sent.jsonl")" = "$n" ] && ok "--update: 본문 PATCH·sent 기록 안 함" || ko "--update" "rc=$rc $out"
+"$PY" -I "$S/discord_notify.py" --update "$mid" --thread 1 "x" >/dev/null 2>&1; rc=$?
+[ "$rc" = 2 ] && ok "--update + --thread: 종료 코드 2" || ko "--update 조합" "rc=$rc"
+"$PY" -I "$S/discord_notify.py" --update 99999 "x" >/dev/null 2>&1; rc=$?
+[ "$rc" = 1 ] && ok "--update 없는 메시지: 종료 코드 1" || ko "--update 없음" "rc=$rc"
+out=$("$PY" -I "$S/discord_notify.py" --thread "$mid" --broadcast "답글"); rc=$?
+[ "$rc" = 0 ] && [ "$(q "$LOG" 'd[-1]["body"]["message_reference"]["message_id"]')" = "$mid" ] && ok "--broadcast: 받고 답장으로 보냄" || ko "--broadcast" "rc=$rc"
+"$PY" -I "$S/discord_notify.py" --broadcast "x" >/dev/null 2>&1; rc=$?
+[ "$rc" = 2 ] && ok "--broadcast 단독: 종료 코드 2" || ko "--broadcast 단독" "rc=$rc"
+
 printf '결과: PASS %d, FAIL %d\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

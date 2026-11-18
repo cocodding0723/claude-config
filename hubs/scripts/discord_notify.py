@@ -3,11 +3,13 @@
 봇 DM 에 글·파일을 올리고 slack-sent.jsonl 에 슬랙과 같은 모양으로 기록함(ts 자리에 메시지 ID).
 결정 카드(--options)는 선택지 줄과 번호·✅·❌ 반응을 미리 달아 반응으로 답하게 함. 버튼은 없음(Gateway 수신기 필요).
 슬랙 전용 표시(색 띠·맞춤 이모지·미리보기 펼침)와 양식 A 검사·경로 첨부 검사는 하지 않음.
+--broadcast 는 받기만 함: 디스코드 답장은 원래 DM 목록에 보임.
 종료 코드: 0 성공, 1 API 실패, 2 설정·인자 오류
 """
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -18,6 +20,7 @@ import discord_api as dapi
 KIND_EMOJI = {"decide": "🟠", "todo": "📌", "done": "✅", "progress": "🔵", "warn": "🔴", "doc": "📄"}
 OPT_KEYS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
 CONTENT_MAX = 2000  # 디스코드 메시지 글자 상한
+CARD_ID_RE = re.compile(r"[a-z][a-z0-9]{1,15}-[a-z0-9]{1,12}(\.[0-9]{1,3})*")  # 작업판 카드 id. slack_notify.sh 와 같음
 
 
 def die(msg, code=2):
@@ -29,10 +32,10 @@ def parse():
     p = argparse.ArgumentParser(prog="slack_notify.sh (discord)", add_help=True)
     for a in ("--tag", "--title", "--thread", "--kind", "--choices", "--emoji-set", "--options", "--recommend",
               "--decision-id", "--reversible", "--seq", "--todo-id", "--link-to", "--quote", "--to-user",
-              "--from", "--subject", "--state"):
+              "--from", "--subject", "--state", "--card", "--update"):
         p.add_argument(a, default="")
     p.add_argument("--attached", action="append", default=[])
-    for a in ("--alive", "--no-doc", "--no-check"):
+    for a in ("--alive", "--no-doc", "--no-check", "--broadcast"):
         p.add_argument(a, action="store_true")
     p.add_argument("message")
     p.add_argument("file", nargs="?")
@@ -85,9 +88,28 @@ def dedup(a, hub, title):
     return out[5:] if r.returncode == 0 and out.startswith("send ") and out[5:] != "-" else ""
 
 
+def update(tok, me, mid, msg):
+    """--update: 이 봇이 보낸 글 본문 교체. 새 글·sent 기록 없음. 같은 본문으로 다시 불러도 결과가 같음"""
+    c = dapi.Client(tok)
+    try:
+        c.edit(c.dm_channel(me), mid, msg[:CONTENT_MAX])
+    except dapi.ApiError as e:
+        print(e)
+        sys.exit(1)
+    print("ok " + mid)
+
+
 def main():
     a = parse()
     a.from_ = getattr(a, "from")
+    if a.card and not CARD_ID_RE.fullmatch(a.card):
+        die("--card 형식 오류: %s — 작업판 카드 id(예 lrm-q5o.2)로 지정" % a.card)
+    if a.broadcast and (not a.thread or a.update):
+        die("--broadcast 는 --thread 와 함께 새 답글을 보낼 때만 사용 — --thread <스레드 ts> 를 함께 지정")
+    if a.update and (a.thread or a.to_user or a.options or a.file):
+        die("--update 는 본문만 고침 — --thread·--to-user·--options·파일 인자를 빼고 다시 부르세요")
+    if a.update and not a.update.isdigit():
+        die("--update 형식 오류 — 디스코드 메시지 ID(숫자)")
     hub = os.environ.get("LRM_HUB_DIR", os.path.expanduser("~/.config/lrm-hubs"))
     if a.file and not os.path.isfile(a.file):
         die("첨부 파일 없음: " + a.file)
@@ -105,6 +127,9 @@ def main():
     if a.todo_id:
         msg += "\n👉 끝나면 ✅ 반응 · 할 일 번호: " + a.todo_id
     title = (a.title or a.message.split("\n", 1)[0])[:200]
+    if a.update:
+        update(tok, me, a.update, msg)
+        return
     rid = dedup(a, hub, title)
 
     c = dapi.Client(tok)
@@ -140,6 +165,8 @@ def main():
     rec.update(rec_card)
     if a.todo_id:
         rec["todo_id"] = a.todo_id
+    if a.card:
+        rec["card"] = a.card
     if a.file:
         rec["file_id"] = d["id"]
         rec["path"] = a.file
