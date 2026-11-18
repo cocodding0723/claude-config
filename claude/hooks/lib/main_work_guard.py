@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """메인 직접 작업 차단(PreToolUse 훅). stdin: hook JSON. 출력: 거부·확인이면 hook JSON 한 줄, 통과면 빈 출력.
-메인 세션(main_role.is_main)은 계획 카드를 적고 feature_open.sh 로 기능 코디네이터를 띄우는 창구라 직접 구현·조사하지 않음.
+메인 세션(main_role.is_main)은 질문·조회·작은 일 창구. 기능 구현은 사용자가 직접 만든 코디네이터 허브 몫(11-18).
 대상 세션은 메인뿐. 허브·작업자·그 밖 세션은 즉시 통과.
-- 거부: Agent·Task 도구, 게임 저장소 Write·Edit, 게임 저장소를 고치는 Bash(리다이렉트·rm·mv·sed -i·git 쓰기·빌드), orca worker-start
-- 통과: 읽기 도구, 읽기·현황 명령, bd·board-ask·board-answer·feature_open.sh, 게임 저장소 밖 쓰기(메모리·문서·승인 기록)
+- 거부: 쓰기 도구를 가진 하위 에이전트(Agent·Task), 게임 저장소 Write·Edit, 게임 저장소를 고치는 Bash(리다이렉트·rm·mv·sed -i·git 쓰기·빌드), orca worker-start
+- 통과: 읽기 도구, 읽기 전용 하위 에이전트(READ_AGENTS), 읽기·현황 명령, bd·board-ask·board-answer, 게임 저장소 밖 쓰기(메모리·문서·승인 기록)
 - 확인(ask): 허용·거부 표에 없는 Bash, 쓰기 대상을 못 푸는 명령($VAR·$( )). 오탐이 가장 큰 비용이라 판단 불가는 거부하지 않음
 - 임시 허용: 사용자가 만든 허용 파일(ALLOW_FILE)이 TTL 안이면 전부 통과. 모델이 그 파일을 쓰려 하면 상시 거부
 - 훅이 안 보는 경로: 변수로 만든 경로·스크립트 안의 쓰기·하위 에이전트 안의 도구 호출. 실수 방지 장치라 범위 밖
@@ -28,17 +28,18 @@ ALLOW_TTL = 3600  # 초. 파일 수정 시각 기준
 GAME_ROOTS = ["~/orca/LoveRevolutionMaker", "~/orca/workspaces/LoveRevolutionMaker"]  # env LRM_GAME_ROOTS(: 구분)로 바꿈
 GAME_ROOTS_ENV = "LRM_GAME_ROOTS"
 AGENT_TOOLS = {"Agent", "Task"}
+READ_AGENTS = {"Explore", "Plan", "claude-code-guide", "web-fetch"}  # 쓰기 도구 없는 하위 에이전트만. 조사는 메인이 직접 함
 FILE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 FILE_KEYS = ("file_path", "notebook_path", "path")
-OPEN_CMD = "bash ~/.config/lrm-hubs/feature_open.sh --ticket LRM-n --name \"<기능 이름>\" --base dev --dry-run"
-REASON_TAIL = (f"메인은 계획 카드만 적음 — 게임 작업은 기능 코디네이터로 넘김: {OPEN_CMD} (먼저 --dry-run). "
+REASON_TAIL = ("기능 작업은 사용자가 만든 코디네이터 허브 몫 — 사용자에게 맡길 문장(목표 + 확인 방법)을 한 줄로 알림. "
                f"급히 직접 해야 하면 사용자가 `! touch {ALLOW_FILE}` 로 1시간 허용. 메인이 아닌 개발 세션이면 ORCA_ROLE=dev 로 시작")
-REASON_AGENT = "메인은 하위 에이전트(Agent·Task)로 조사·구현하지 않음. " + REASON_TAIL
+REASON_AGENT = ("메인은 쓰기 도구를 가진 하위 에이전트({t})로 구현하지 않음. 조사는 "
+                + "·".join(sorted(READ_AGENTS)) + " 로. " + REASON_TAIL)
 REASON_FILE = "메인은 게임 저장소 파일을 직접 고치지 않음({p}). " + REASON_TAIL
 REASON_BASH = "메인은 게임 저장소를 직접 수정·빌드하지 않음({c}). " + REASON_TAIL
-REASON_WORKER = "메인은 워커를 직접 기동하지 않음(worker-start) — 워커 배정은 기능 코디네이터 몫. " + REASON_TAIL
+REASON_WORKER = "메인은 워커를 직접 기동하지 않음(worker-start) — 워커 배정은 코디네이터 허브 몫. " + REASON_TAIL
 REASON_ALLOW = f"임시 허용 파일({ALLOW_FILE})은 사용자만 만들고 지움 — 모델은 쓰지 않음"
-REASON_ASK = "메인 직접 작업 차단 훅이 판단하지 못한 명령({c}) — 읽기·작업판 조회가 아니면 기능 코디네이터로 넘길 것. 괜찮으면 승인"
+REASON_ASK = "메인 직접 작업 차단 훅이 판단하지 못한 명령({c}) — 읽기·작업판 조회·작은 일이 아니면 코디네이터 허브 몫. 괜찮으면 승인"
 
 # 읽기·현황 명령(어디서든 통과). 인자 검사 없음
 READ_CMDS = {"ls", "cat", "head", "tail", "wc", "rg", "grep", "egrep", "fgrep", "jq", "awk", "gawk", "echo", "printf", "pwd", "date", "stat", "file",
@@ -46,7 +47,7 @@ READ_CMDS = {"ls", "cat", "head", "tail", "wc", "rg", "grep", "egrep", "fgrep", 
              "du", "df", "open", "pbcopy", "ps", "uname", "whoami", "id", "env", "printenv", "tree", "column", "nl", "less", "more", "type", "command", "export",
              "set", "unset", "sleep", "sed", "find", "ag", "lsof", "pgrep", "md5", "shasum", "uptime", "hostname", "git"}
 # 작업판·메인 도구(인자 없이 통과). 스크립트는 `bash <이름>` 으로 불러도 같은 이름이면 통과
-BOARD_CMDS = {"bd", "board-ask", "board-answer", "feature_open.sh", "patrol.sh", "board_notify.py", "main_inbox.py", "plan_check.py", "board-run"}
+BOARD_CMDS = {"bd", "board-ask", "board-answer", "patrol.sh", "board_notify.py", "main_inbox.py", "plan_check.py", "board-run"}
 SHELL_RUNNERS = main_send_guard.SHELLS | {"python", "python3"}
 # 쓰기 명령: 모든 위치 인자가 대상 / 마지막 인자만 대상
 WRITE_ALL = {"rm", "rmdir", "mv", "touch", "mkdir", "tee", "chmod", "chown", "truncate", "unlink", "shred", "patch", "sponge"}
@@ -318,7 +319,10 @@ def judge(ev):
         return None
     tool = ev.get("tool_name") or ""
     if tool in AGENT_TOOLS:
-        return None if allow_active() else ("deny", REASON_AGENT)
+        kind = (ev.get("tool_input") or {}).get("subagent_type") or "general-purpose"
+        if kind in READ_AGENTS or allow_active():
+            return None
+        return "deny", REASON_AGENT.format(t=kind)
     if tool in FILE_TOOLS:
         return judge_file(ev)
     if tool == "Bash":
