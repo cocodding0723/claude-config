@@ -5,6 +5,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -180,6 +181,15 @@ class AttachTest(unittest.TestCase):
         self.assertEqual((names[0], len(names), names[1].endswith("-b-preview.png")), ("b.html", 2, True))  # PDF 만 빠지고 미리보기는 감
         self.assertIn("PDF 생략", self.log_text())
         self.assertEqual(self.state()["reports"][rep["id"]]["att_done"][self.html + "#pdf:" + report_sender.content_hash(self.html)], "")
+
+    def test_out_of_budget_defers_derived_files_instead_of_skipping(self):
+        """회차 시간이 다 돼 PDF·미리보기를 못 만든 것은 '생략'으로 기록하지 않고 다음 회차로 넘김"""
+        rep = {"id": "r1", "hub": "ui-layer", "files": [self.html]}
+        rs, st = {"att_done": {self.html: "F1"}}, {"reports": {}}
+        with self.assertRaises(report_sender.NotifyError) as ctx:
+            report_sender.send_files(self.conf, rep, rs, st, TOPIC_TS, time.monotonic() - 1)
+        self.assertFalse(ctx.exception.counts)  # 실패 횟수에 세지 않음
+        self.assertEqual(set(rs["att_done"]), {self.html})
 
     def test_missing_pdf_script_is_skipped(self):
         self.conf.pdf = self.p("no-such.sh")

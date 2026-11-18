@@ -640,8 +640,10 @@ def send_files(conf: Conf, rep: dict, rs: dict, st: dict, target: str, deadline:
             src = origin
             made = next((s for s in DERIVED if key == path + s + digest), "") if digest else ""
             if made:  # 딸린 파일은 업로드 직전에 만듦. 못 만들면 생략으로 기록
-                src = MAKERS[made](conf, origin, digest, deadline)
+                src = "" if deadline - time.monotonic() <= 0 else MAKERS[made](conf, origin, digest, deadline)
                 label = os.path.basename(src)
+                if not src and deadline - time.monotonic() <= 0:
+                    raise NotifyError("회차 시간 예산 초과", counts=False)  # 시간이 없어 못 만든 것은 생략으로 굳히지 않고 다음 회차로
                 if not src:
                     log(conf, f"{rep['id']} {DERIVED[made][1]} 생략: {name}")
                     done[key] = ""
