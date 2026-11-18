@@ -26,10 +26,16 @@ expect "번호로도 옮김(2 = 설계)" 0 "$BIN" "$E" 2 co
 [ "$(labels "$E")" = "feature:end,flow:v1,size:normal,stage:design" ] && ok "단계 label 은 하나만 남음" || ko "단계 하나" "$(labels "$E")"
 expect "계획 승인 전에는 구현으로 못 넘어감(15)" 15 "$BIN" "$E" build co
 grep -q "$(planid "$E")" "$SB/out" && ok "거부 안내에 올릴 계획 승인 결정 번호가 있음" || ko "승인 안내" "$(cat "$SB/out")"
-printf '{"decision_id":"%s","form_kind":"decide","options":{"1":"승인","2":"수정 요청"}}\n' "$(planid "$E")" > "$LRM_HUB_DIR/slack-sent.jsonl"
-printf '{"type":"button","decision_id":"%s","action":"pick","pick":1,"source":"slack"}\n' "$(planid "$E")" > "$LRM_HUB_DIR/slack-inbox.jsonl"
+printf '{"decision_id":"%s","ts":"9.1","form_kind":"decide","options":{"1":"승인","2":"수정 요청"}}\n' "$(planid "$E")" > "$LRM_HUB_DIR/slack-sent.jsonl"
+printf '{"type":"button","decision_id":"%s","parent_ts":"9.1","action":"pick","pick":1,"source":"slack"}\n' "$(planid "$E")" > "$LRM_HUB_DIR/slack-inbox.jsonl"
 expect "사용자가 승인하면 구현으로" 0 "$BIN" "$E" 구현 co
 expect "검수 단계는 손으로 못 옮김(2)" 2 "$BIN" "$E" review co
+# 크기를 낮추면 계획 승인을 건너뛰게 되므로 코디네이터 혼자 못 낮춤. 사용자 원문을 함께 줄 때만
+expect "보통에서 작음으로 낮추기는 사용자 원문 없이 거부(2)" 2 "$BIN" "$E" build co --size small
+grep -q -- '--user-said' "$SB/out" && ok "거부 안내가 낮추는 법을 알려 줌" || ko "낮추기 안내" "$(cat "$SB/out")"
+expect "사용자 원문을 함께 주면 낮춤" 0 "$BIN" "$E" build co --size small --user-said "이건 문구만 바꾸는 거라 작게 가자"
+bd comments "$E" --json | jq -r '.[].text' | grep -q '크기 변경: 보통 → 작음 (사용자 원문: 이건 문구만 바꾸는 거라 작게 가자)' && ok "크기를 낮춘 근거가 코멘트로 남음" || ko "낮춘 근거" "$(bd comments "$E" --json | jq -r '.[].text' | tail -2)"
+expect "작음에서 보통으로 올리기는 그냥 됨" 0 "$BIN" "$E" build co --size normal
 "$BIN" "$E" >"$SB/out" 2>&1; RC=$?
 [ "$RC" = 0 ] && grep -q '3 구현' "$SB/out" && grep -q '보통' "$SB/out" && grep -q '계획 승인: 됨' "$SB/out" && ok "단계만 물으면 지금 단계·크기·계획 승인 여부를 보여 줌" || ko "조회" "rc=$RC $(cat "$SB/out")"
 "$BIN" "$E" --json >"$SB/out" 2>&1

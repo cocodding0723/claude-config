@@ -22,6 +22,7 @@ PLAN_HEAD = "D-PLAN"
 ID_BODY_MAX = 16 - len("PLAN")  # 결정 번호는 D- 뒤 16자까지(hub_report.DECISION_ID_RE)
 APPROVE_WORD = "승인"            # 계획 승인 카드의 1번 선택지는 이 말로 시작
 USER_SOURCES = ("slack", "docsite")  # 사용자가 직접 누른 답만. 터미널 기록은 코디네이터가 쓸 수 있음
+POLLED_TYPES = ("reaction", "thread_reply")  # 폴러가 Slack 에서 읽어 온 사용자 반응·카드 스레드 글(출처 칸 없이 기록됨)
 SENT_NAME, INBOX_NAME = "slack-sent.jsonl", "slack-inbox.jsonl"
 
 
@@ -58,8 +59,12 @@ def order(st: Stage) -> int:
 
 
 def intake_gaps(desc: str) -> list:
-    """기능 카드 설명에서 비어 있는 접수 칸 이름들('- 목표: …' 꼴의 줄, 내용이 있어야 채운 것)"""
-    return [f for f in INTAKE_FIELDS if not re.search(rf"^[ \t>*-]*{re.escape(f)}[ \t]*:[ \t]*\S", desc or "", re.M)]
+    """기능 카드 설명에서 비어 있는 접수 칸 이름들('- 목표: …' 꼴의 줄, 내용이 있어야 채운 것).
+    흔한 표기는 같은 것으로 봄: 굵게 쓴 이름(**목표**:), 전각 쌍점(：), 낱말 사이를 붙여 쓴 이름(확인방법)"""
+    def filled(name: str) -> bool:
+        words = r"[ \t]*".join(re.escape(w) for w in name.split())
+        return bool(re.search(rf"^[ \t>*-]*{words}\**[ \t]*[:：][ \t]*\S", desc or "", re.M))
+    return [f for f in INTAKE_FIELDS if not filled(f)]
 
 
 def stage_block(epic: dict, target: str, approved) -> str:
@@ -120,16 +125,25 @@ def read_jsonl(path: str) -> list:
 
 def plan_approved(hub_dir: str, did: str) -> bool:
     """계획 승인 카드에 사용자가 승인으로 답했는가. 기록을 못 읽으면 승인 아님.
-    같은 번호로 계획을 다시 올렸으면 가장 최근 답이 기준(고친 계획에 수정 요청이 오면 승인이 풀림)"""
+    답은 가장 최근에 올린 카드(메시지)에 달린 것만 봄: 계획을 고쳐 같은 번호로 다시 올리면 옛 카드의 승인은 새 계획의 승인이 아님.
+    그 카드의 답이 여럿이면 가장 최근 것이 기준(승인 뒤 수정 요청으로 바꾸면 승인이 풀림)"""
     card = next((s for s in reversed(read_jsonl(os.path.join(hub_dir, SENT_NAME)))
                  if s.get("decision_id") == did and s.get("form_kind") == "decide" and isinstance(s.get("options"), dict)), None)
-    if card is None or not str(card["options"].get("1", "")).strip().startswith(APPROVE_WORD):
+    if card is None or not card.get("ts") or not str(card["options"].get("1", "")).strip().startswith(APPROVE_WORD):
         return False
     last = next((r for r in reversed(read_jsonl(os.path.join(hub_dir, INBOX_NAME)))
-                 if r.get("decision_id") == did and r.get("source") in USER_SOURCES and r.get("action") in ("pick", "approve", "custom", "hold")), None)
-    if last is None:
-        return False
-    return last["action"] == "approve" or (last["action"] == "pick" and last.get("pick") == 1)
+                 if r.get("decision_id") == did and r.get("parent_ts") == card["ts"] and by_user(r)
+                 and r.get("action") in ("pick", "approve", "custom", "hold")), None)
+    # 추천대로(approve)도 pick 에 추천 번호가 들어 있음. 1번(승인)일 때만 승인
+    return last is not None and last["action"] in ("pick", "approve") and last.get("pick") == 1
+
+
+def by_user(rec: dict) -> bool:
+    """사용자가 직접 낸 답인가. 버튼·문서 사이트 답은 출처 칸으로, 이모지 반응·카드 스레드 글은 폴러가 출처 칸 없이 쓴 기록 종류로 앎.
+    둘 다 수신 프로세스만 쓰는 기록이라 세션이 만들 수 없음. 터미널에서 남긴 답(source terminal)과 출처를 모르는 버튼 기록은 세지 않음"""
+    if rec.get("source") in USER_SOURCES:
+        return True
+    return "source" not in rec and rec.get("type") in POLLED_TYPES
 
 
 def claim_block(card: dict, epic: "dict | None", approved) -> str:

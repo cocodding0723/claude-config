@@ -69,6 +69,23 @@ def age_hours(card):
     return (datetime.now(timezone.utc) - max(ts)).total_seconds() / 3600 if ts else 0.0
 
 
+def feature_epic(card):
+    """이 카드가 속한 기능 카드(epic), 없으면 None. 상위를 epic 이 나올 때까지 따라 올라감(수정 카드를 원래 카드 아래에 만든 손자 카드도 같은 기능).
+    상위가 없으면 label feature:<slug> 의 열린 기능 카드로 봄(기능 label 만 달고 따로 만든 카드)"""
+    cur, seen = card, set()
+    while cur and cur.get("parent") and cur["parent"] not in seen:
+        seen.add(cur["parent"])
+        up = bd_json("show", cur["parent"])
+        cur = up[0] if isinstance(up, list) and up else up
+        if cur and cur.get("issue_type") == "epic":
+            return cur
+    slug = bs.label(card, "feature")
+    if slug and card.get("issue_type") != "epic":
+        rows = [r for r in bd_json("list", "-t", "epic", "-l", f"feature:{slug}", "--limit", "0") if r.get("status") != "closed"]
+        return rows[0] if rows else None
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(prog="board-claim", description="작업판 카드 집기(파일 겹침 검사 포함).",
                                  epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -97,11 +114,8 @@ def main():
         if card.get("status") != "in_progress" and card.get("issue_type") != "epic" and not bs.directive(card):
             die(f"거부: {a.card} 에 '## 지시(사용자 원문 + 뒤 지시)' 칸이 비어 있음. 조치: 사용자 원문과 그 뒤 추가 지시를 그대로 옮겨 "
                 f"bd update {a.card} -d … 로 채운 뒤 다시 집음(양식 board/templates/card-task.md)", 2)
-        epic = None
-        if card.get("parent"):
-            up = bd_json("show", card["parent"])
-            epic = up[0] if isinstance(up, list) and up else up
-        hub = os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
+        epic = feature_epic(card)
+        hub =os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
         why = bf.claim_block(card, epic, lambda did: bf.plan_approved(hub, did))
         if why:
             die(f"거부: {why}", 15)

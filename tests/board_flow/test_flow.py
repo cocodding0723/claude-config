@@ -45,16 +45,20 @@ PLAN_ID_CASES = [
 ]
 
 
-def answer(did=PLAN, source="slack", **over):
-    return {"type": "button", "decision_id": did, "kind": "decide", "action": "pick", "pick": 1, "source": source, **over}
+def answer(did=PLAN, source="slack", parent="1.1", **over):
+    """받은 답 한 줄. 기본은 첫 계획 카드(메시지 1.1)에 Slack 버튼으로 1번. source=None 이면 그 칸이 없는 기록(폴러가 쓴 반응·스레드 글)"""
+    out = {"type": "button", "decision_id": did, "kind": "decide", "action": "pick", "pick": 1, "source": source, "parent_ts": parent, **over}
+    return {k: v for k, v in out.items() if not (k == "source" and v is None)}
 
 
-SENT_OK = {"decision_id": PLAN, "form_kind": "decide", "options": {"1": "승인", "2": "수정 요청"}}
+SENT_OK = {"decision_id": PLAN, "ts": "1.1", "form_kind": "decide", "options": {"1": "승인", "2": "수정 요청"}}
+SENT_AGAIN = {**SENT_OK, "ts": "2.2"}  # 계획을 고쳐 같은 번호로 다시 올린 카드
 
 # (설명, 보낸 기록들, 받은 기록들, 승인으로 보나)
 APPROVAL_CASES = [
     ("Slack 버튼으로 1번(승인)", [SENT_OK], [answer()], True),
     ("추천대로(1번이 추천)", [SENT_OK], [answer(action="approve")], True),
+    ("추천대로인데 추천이 2번인 카드", [SENT_OK], [answer(action="approve", pick=2)], False),
     ("2번(수정 요청)", [SENT_OK], [answer(pick=2)], False),
     ("답 없음", [SENT_OK], [], False),
     ("다른 결정의 답", [SENT_OK], [answer(did="D-OTHER")], False),
@@ -62,7 +66,13 @@ APPROVAL_CASES = [
     ("직접 입력 글은 승인이 아님", [SENT_OK], [answer(action="custom", pick=None, text="좋아요")], False),
     ("1번이 '승인'이 아닌 카드는 계획 승인 카드가 아님", [{**SENT_OK, "options": {"1": "보류", "2": "승인"}}], [answer()], False),
     ("보낸 기록이 없으면 승인 아님", [], [answer()], False),
-    ("나중에 고친 계획으로 다시 올린 카드의 답이 기준", [SENT_OK, SENT_OK], [answer(), answer(pick=2)], False),
+    ("승인한 뒤 수정 요청으로 바꿈(같은 카드의 최근 답이 기준)", [SENT_OK], [answer(), answer(pick=2)], False),
+    ("계획을 고쳐 다시 올리면 옛 카드의 승인은 새 계획의 승인이 아님", [SENT_OK, SENT_AGAIN], [answer()], False),
+    ("다시 올린 카드에 승인", [SENT_OK, SENT_AGAIN], [answer(), answer(parent="2.2")], True),
+    ("다시 올린 카드에 수정 요청(옛 카드의 승인은 남아 있어도)", [SENT_OK, SENT_AGAIN], [answer(), answer(parent="2.2", pick=2)], False),
+    ("카드에 단 이모지 반응 ✅(폴러 기록, 출처 칸 없음)", [SENT_OK], [answer(source=None, type="reaction", action="approve")], True),
+    ("카드 스레드에 쓴 '1'(폴러 기록, 출처 칸 없음)", [SENT_OK], [answer(source=None, type="thread_reply")], True),
+    ("출처를 모르는 버튼 기록은 세지 않음", [SENT_OK], [answer(source=None)], False),
 ]
 
 
@@ -80,6 +90,7 @@ STAGE_CASES = [
     ("확인 방법만 빠짐", feature(desc="- 목표: 결말이 열린다"), "understand", False, True),
     ("칸 이름만 있고 내용이 빔", feature(desc="- 목표:\n- 확인 방법: "), "understand", False, True),
     ("접수를 채우면 이해로", feature(), "understand", False, False),
+    ("굵게 쓴 칸 이름·전각 쌍점·붙여 쓴 '확인방법'도 채운 것으로 봄", feature(desc="**목표**: 결말이 열린다\n확인방법：세이브로 시작해 캡처"), "understand", False, False),
     ("크기를 안 정하고 넘어가기", feature(drop=("size:normal",)), "understand", False, True),
     ("설계까지는 승인 없이", feature(), "design", False, False),
     ("보통 크기, 승인 전 구현으로", feature(), "build", False, True),

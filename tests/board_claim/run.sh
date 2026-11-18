@@ -122,15 +122,20 @@ planid() { python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import board
 fe=$(new_epic "새 흐름 기능" "feature:fa,flow:v1,size:normal"); fk=$(kid fk "$fe" flow/a/)
 expect "새 흐름: 계획 승인 전에는 구현 카드 집기 거부(15)" 15 "$BIN" "$fk" fw1
 grep -q "$(planid "$fe")" "$SB/out" && ok "거부 안내에 올릴 계획 승인 결정 번호가 있음" || ko "거부 안내" "$(head -c 200 "$SB/out")"
-printf '{"decision_id":"%s","form_kind":"decide","options":{"1":"승인","2":"수정 요청"}}\n' "$(planid "$fe")" > "$LRM_HUB_DIR/slack-sent.jsonl"
-printf '{"type":"button","decision_id":"%s","action":"pick","pick":1,"source":"terminal"}\n' "$(planid "$fe")" > "$LRM_HUB_DIR/slack-inbox.jsonl"
+printf '{"decision_id":"%s","ts":"9.1","form_kind":"decide","options":{"1":"승인","2":"수정 요청"}}\n' "$(planid "$fe")" > "$LRM_HUB_DIR/slack-sent.jsonl"
+printf '{"type":"button","decision_id":"%s","parent_ts":"9.1","action":"pick","pick":1,"source":"terminal"}\n' "$(planid "$fe")" > "$LRM_HUB_DIR/slack-inbox.jsonl"
 expect "새 흐름: 터미널에서 남긴 답은 승인이 아님(스스로 승인 방지)" 15 "$BIN" "$fk" fw1
-printf '{"type":"button","decision_id":"%s","action":"pick","pick":1,"source":"slack"}\n' "$(planid "$fe")" >> "$LRM_HUB_DIR/slack-inbox.jsonl"
+printf '{"type":"button","decision_id":"%s","parent_ts":"9.1","action":"pick","pick":1,"source":"slack"}\n' "$(planid "$fe")" >> "$LRM_HUB_DIR/slack-inbox.jsonl"
 expect "새 흐름: 사용자가 Slack 에서 승인하면 집음" 0 "$BIN" "$fk" fw1
 se=$(new_epic "작은 일" "feature:fs,flow:v1,size:small"); sk=$(kid sk "$se" flow/s/)
 expect "새 흐름: 작은 일은 계획 승인 없이 집음" 0 "$BIN" "$sk" fw2
 ne=$(new_epic "크기 없음" "feature:fn,flow:v1"); nk=$(kid nk "$ne" flow/n/)
 expect "새 흐름: 크기를 안 정했으면 거부(15)" 15 "$BIN" "$nk" fw3
+# 기능 카드 바로 아래가 아니어도 같은 기능이면 막음: 수정 카드를 원래 카드 아래에 만든 손자 카드, 상위 없이 기능 label 만 단 카드
+gk=$(bd create "손자 카드" --parent "$nk" --labels "file:flow/n/sub/,repo:$SB/r" -d $'## 지시(사용자 원문 + 뒤 지시)\n- 원문: "고쳐줘"' --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+expect "새 흐름: 손자 카드도 그 기능의 규칙으로 거부(15)" 15 "$BIN" "$gk" fw5
+lk=$(new_card "상위 없는 카드" "feature:fn,file:flow/n/loose/,repo:$SB/r")
+expect "새 흐름: 상위 없이 기능 label 만 단 카드도 거부(15)" 15 "$BIN" "$lk" fw6
 oe=$(new_epic "옛 방식" "feature:fo"); ok_=$(kid ok "$oe" flow/o/)
 expect "옛 방식 기능(flow:v1 없음)은 그대로 집음" 0 "$BIN" "$ok_" fw4
 
