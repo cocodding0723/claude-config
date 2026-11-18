@@ -225,6 +225,24 @@ grep -q '"kind":"question"' "$SB/s30/hub/hub-inbox/main.jsonl" && grep -q '결�
 [ "$(grep -c '"state": "main"' "$SB/s30/hub/answer-delivery.jsonl")" = 1 ] && ok "질문은 전달 기록(answer-delivery)을 남기지 않음" || ko "질문 전달 기록" "$(cat "$SB/s30/hub/answer-delivery.jsonl")"
 stop s30
 
+# 작업 스레드 안의 카드: 스레드 답글은 채널 이력(conversations.history)에 안 나옴. 카드 원문을 스레드에서 읽어야 직접 입력 뒤에도 본문이 남음
+TMSG='{"ts":"1794383300.000200","thread_ts":"1794383300.000100","text":"주제","attachments":[{"color":"#F2994A","blocks":[{"type":"section","text":{"type":"mrkdwn","text":"*스레드 결정*\n스레드 배경"}},{"type":"actions","block_id":"lrm_decide:D-T7","elements":[]}]}]}'
+tact() { MSG="$TMSG" act "$1" "$2" "$3" "$4" "$5" "$6" | sed 's/D-T1/D-T7/g'; }
+tsub() { printf '{"at":%s,"type":"interactive","envelope_id":"%s","payload":{"type":"view_submission","user":{"id":"%s"},"view":{"callback_id":"lrm_custom","private_metadata":"{\\"did\\":\\"%s\\",\\"channel\\":\\"Dch1\\",\\"ts\\":\\"%s\\",\\"thread_ts\\":\\"1794383300.000100\\"}","state":{"values":{"answer":{"text":{"value":"%s"}}}}}}}' "$1" "$2" "$ME" "$3" "$4" "$5"; }
+mkdir -p "$SB/s50/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/s50/hub/main.env"
+start s50 "{\"events\":[$(tact 0.4 t1 $ME custom 'D-T7|custom' '직접 입력'),$(tsub 0.8 t2 D-T7 1794383300.000200 '둘을 합쳐서')],\"history\":[$MSG],\"replies\":[$TMSG]}" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s50/orca.calls"
+waitfor s50 calls 'web chat_update' 4 && sleep 0.5
+grep 'web views_open' "$SB/s50/calls" | grep -q 'thread_ts.*1794383300.000100' && ok "스레드 카드의 '직접 입력' → 모달이 스레드 번호를 기억" || ko "스레드 모달" "$(grep 'web views_open' "$SB/s50/calls" | cut -c1-200)"
+grep 'web chat_update' "$SB/s50/calls" | grep '1794383300.000200' | grep -q '스레드 배경' && grep 'web chat_update' "$SB/s50/calls" | grep -q '직접 입력: 둘을 합쳐서 선택됨' && ok "스레드 카드에 직접 입력으로 답해도 카드 본문이 남음" || ko "스레드 카드 본문" "$(grep 'web chat_update' "$SB/s50/calls" | cut -c1-260)"
+grep -q '결정 D-T7 답(자유 글): 둘을 합쳐서' "$SB/s50/hub/hub-inbox/main.jsonl" && ok "스레드 카드의 직접 입력 답도 전달" || ko "스레드 답 전달" "$(cut -c1-200 "$SB/s50/hub/hub-inbox/main.jsonl" 2>/dev/null)"
+stop s50
+# 카드 원문을 어디서도 못 읽으면 카드를 빈 내용으로 덮어쓰지 않음(본문이 지워짐). 답 기록·전달은 그대로
+mkdir -p "$SB/s51/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/s51/hub/main.env"
+start s51 "{\"events\":[$(tsub 0.4 u1 D-T8 1794383300.000900 '원문 없는 카드')],\"history\":[$MSG],\"replies\":[]}" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s51/orca.calls"
+waitfor s51 hub/hub-inbox/main.jsonl 'D-T8' 4 && sleep 0.3
+! grep -q 'web chat_update' "$SB/s51/calls" && grep -q '결정 D-T8 답(자유 글): 원문 없는 카드' "$SB/s51/hub/hub-inbox/main.jsonl" && ok "카드 원문을 못 읽으면 카드는 그대로 두고 답만 기록·전달" || ko "원문 없는 카드" "$(grep 'web chat_update' "$SB/s51/calls" | cut -c1-200)"
+stop s51
+
 # 같은 결정에 먼저 온 답만 인정: Slack 끼리 겹침, 문서 사이트가 먼저 답한 경우 모두 기록·전달 없이 카드에 사유만 남김
 mkdir -p "$SB/s22/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/s22/hub/main.env"
 printf '%s\n' '{"type":"button","parent_ts":"1794383274.541929","decision_id":"D-T3","kind":"decide","action":"pick","pick":1,"source":"docsite"}' > "$SB/s22/hub/slack-inbox.jsonl"

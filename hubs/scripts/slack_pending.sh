@@ -40,6 +40,7 @@ HIST = os.path.join(H, "slack-pending-history.jsonl")
 DECISION_ID_RE = re.compile(r"D-[0-9A-Za-z]{1,16}", re.ASCII)
 ANSWER_ACTIONS = ("pick", "approve", "hold")
 TOLD_MAX = 60  # 고쳐 쓴 글에 보이는 답 내용 길이
+REPLY_LOOKUP = 5  # 스레드에서 카드 하나를 찾을 때 받을 글 수(부모 글이 함께 옴)
 SAID_NOTE = " — 글 답 도착, 담당 확인 중"  # 선택 표기 없는 글 답이 온 카드. 닫지 않고 표시만
 SHOW_ALL = "--all" in sys.argv[2:]  # 사용자가 '대기' 명령으로 부를 때: 오래된 결정까지 보여 줌. 2시간 재알림은 최근 것만
 # 무엇이 사람이 정할 결정인가·자동 알림인가·오래됐는가는 pending_judge 한 곳(옆 패널과 같은 판정). 설정 표를 찾는 순서: 작업 폴더(설치본) → 스크립트 옆 → 저장소의 hubs/
@@ -76,9 +77,13 @@ def call(method, body=None, **params):
             time.sleep(wait)
 
 def original_text(s):
-    """수정 직전 원문. 조회 실패면 False(다음 주기에 재시도), 메시지에 text 가 없으면 None."""
+    """수정 직전 원문. 조회 실패면 False(다음 주기에 재시도), 메시지에 text 가 없으면 None.
+    작업 스레드 안의 카드는 그 스레드의 답글에서 읽음(채널 이력에는 스레드 답글이 안 나옴)"""
     try:
-        d = call("conversations.history", channel=s["channel"], latest=s["ts"], inclusive="true", limit=1)
+        if s.get("thread_ts"):
+            d = call("conversations.replies", channel=s["channel"], ts=s["thread_ts"], oldest=s["ts"], latest=s["ts"], inclusive="true", limit=REPLY_LOOKUP)
+        else:
+            d = call("conversations.history", channel=s["channel"], latest=s["ts"], inclusive="true", limit=1)
     except Fail:
         return False
     if not d.get("ok"):
@@ -159,6 +164,9 @@ def main():
     # 글로 쓴 답(선택 표기 아님)은 결정을 닫지 않음: "잠깐만" 같은 글에 닫히면 그 뒤 버튼이 거절됨. 목록에 남기되 글이 왔다고 표시하고, 담당이 읽고 decide-answer 로 닫음
     said = {d.get("parent_ts") for d in inbox if d.get("type") == "thread_reply" and d.get("kind") == "decide"
             and d.get("action") == "free" and not answer_store.is_question(d.get("text"))}
+    # 작업 스레드 안 카드: 그 스레드에 결정 번호로 시작하는 글이 글 답(판정은 pending_judge, 답글 전달기와 같은 규칙)
+    replies = [d for d in inbox if d.get("type") == "thread_reply" and not answer_store.is_question(d.get("text"))]
+    said |= {s["ts"] for s in sent if s.get("thread_ts") and pending_judge.is_decision(s) and any(pending_judge.written_answer(s, d) for d in replies)}
     # 결정 = 결정 카드로 보낸 맨 위 메시지(form_kind decide). 제목에 '결정' 낱말이 든 일반 글은 세지 않음: 작업 스레드 첫 글·보고가 결정으로 섞였음
     # 번호 카드 기록이면 번호가 손상됐어도 목록에는 남김(번호 없이 제목만 표시)
     decisions = [s for s in sent if pending_judge.is_decision(s)]

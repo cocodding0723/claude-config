@@ -9,6 +9,8 @@ outbox: 한 줄 = 보고 1건(JSON). 쓰기는 flock 아래 추가 전용이라 
 이 CLI 는 사용자 터미널·허브 세션에서 돌아 읽을 수 있으므로, add 가 접수 때 첨부를 <outbox 폴더>/outbox-files/<보고 id>/<번호>/<원본 이름> 으로 복사하고
 기록의 staged(원본 경로 → 복사본 경로)에 남김. 전송기는 복사본을 올리고 끝나면 지움.
 카드 주제(--card): 작업판 카드 하나 = Slack 스레드 하나. 같은 카드의 보고는 그 카드 스레드의 답글로 감(전송기가 첫 보고 때 스레드를 열고 카드에 label slack-thread:<ts> 를 붙임).
+결정 카드(decide)도 --card 를 주면 그 스레드 안에 올라감.
+알림: 스레드 답글은 팔로우해야 알림이 옴. BROADCAST_KINDS 의 보고와 --broadcast 를 준 보고는 DM 목록에도 보임. 진행 보고(info)는 스레드에만.
 작업 공간 카드는 --ws 로 담당 작업 공간 경로를 같이 남김(스레드 답을 그 세션에 전달하는 근거). 봇 토큰은 이 CLI 도 작업자도 보지 않음.
 환경: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs) · LRM_REPORT_OUTBOX outbox 경로(기본 <작업 폴더>/hub-reports.jsonl) · LRM_REPORT_FILES 첨부 복사 폴더(기본 <outbox 폴더>/outbox-files)
 종료 코드: 0 기록(중복 무시 포함), 1 파일 읽기·쓰기 실패, 2 인자·입력 오류(비밀 값 포함)
@@ -41,7 +43,8 @@ KINDS = {
     "info": ("🔄", "정보", "progress"),
     "warn": ("⚠️", "경고", "warn"),
 }
-THREAD_KINDS = ("info", "done", "warn")  # 기존 스레드에 답글로 올릴 수 있는 종류. Slack 에서 온 질문의 답(info·done·warn)이 그 스레드로 감. decide 버튼 카드는 스레드 답글이 안 됨
+THREAD_KINDS = ("info", "done", "warn")  # --thread(지정 스레드)에 답글로 올릴 수 있는 종류. Slack 에서 온 질문의 답(info·done·warn)이 그 스레드로 감. decide 는 --card 스레드로만
+BROADCAST_KINDS = ("decide", "done", "warn", "block")  # 사용자가 봐야 하는 보고. 스레드 답글이어도 DM 목록에 함께 보임. info 는 --broadcast 를 줄 때만
 DECISION_ID_RE = re.compile(r"D-[0-9A-Za-z]{1,16}", re.A)  # slack_notify.sh 의 decision_id 규칙과 같은 정의. 접수·전송 양쪽이 이걸 씀
 DECISION_ID_ERR = "--decision-id 형식 오류: D-영문·숫자 1~16자 — 예 D-0001"
 TS_RE = re.compile(r"^\d{1,12}\.\d{1,9}$")
@@ -270,7 +273,7 @@ def line_gaps_split(text: str, kind: str) -> tuple:
 
 
 def make_report(hub, task, kind, text, files, options=None, recommend=None, decision_id=None, reversible=None,
-                thread=None, no_doc=False, card=None, ws=None) -> dict:
+                thread=None, no_doc=False, card=None, ws=None, broadcast=False) -> dict:
     """입력 검증 → 보고 dict(id·at 제외). 잘못되면 ReportError.
     비밀 검사는 모든 입력 필드(hub·task·kind 포함)에 가장 먼저 함. 형식 오류 메시지가 입력을 되비추기 전에 걸러야 비밀이 출력·로그로 새지 않음"""
     if has_secret(*[str(v) for v in (hub, task, kind, text, options, recommend, decision_id, reversible, thread, card, ws, *(files or [])) if v]):
@@ -281,8 +284,6 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
         raise ReportError(f"--task '{task}' 형식 오류 — 작업 번호(예: C0012) 또는 '{NO_TASK}'")
     if kind not in KINDS:
         raise ReportError(f"--kind '{kind}' 오류 — {'|'.join(KINDS)} 중 하나")
-    if card and kind == "decide":
-        raise ReportError("--card 는 --kind decide 와 함께 쓰지 않음 — 결정 버튼 카드는 스레드 밖에 올라감")
     lines = [ln.strip() for ln in (text or "").strip().splitlines() if ln.strip()]
     if not lines:
         raise ReportError("--text 비어 있음 — 보고 내용을 3줄 이내로 지정")
@@ -339,6 +340,8 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
         if not os.path.isabs(ws) or "\n" in ws or "," in ws:
             raise ReportError("--ws 형식 오류 — 한 줄 절대 경로(쉼표 없음). 예 ~/orca/workspaces/claude-config/feat-x")
         rep["ws"] = ws
+    if broadcast:
+        rep["broadcast"] = True
     return rep
 
 
@@ -370,7 +373,9 @@ def valid_record(d) -> bool:
         return False
     if d.get("thread") is not None and not (isinstance(d["thread"], str) and TS_RE.match(d["thread"]) and d["kind"] in THREAD_KINDS):
         return False
-    if d.get("card") is not None and not (isinstance(d["card"], str) and CARD_RE.match(d["card"]) and d["kind"] != "decide" and not d.get("thread")):
+    if d.get("card") is not None and not (isinstance(d["card"], str) and CARD_RE.match(d["card"]) and not d.get("thread")):
+        return False
+    if d.get("broadcast") is not None and d["broadcast"] is not True:
         return False
     if d.get("ws") is not None and not (isinstance(d["ws"], str) and d["ws"].startswith("/") and d.get("card")):
         return False
@@ -522,7 +527,8 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--decision-id", help="(decide) 결정 번호 D-영문·숫자")
     a.add_argument("--reversible", help="(decide) 쉬움|보통|어려움")
     a.add_argument("--thread", "--reply-to", dest="thread", help="봇 DM 안의 기존 Slack 스레드 ts(숫자.숫자)에 답글로 올림(채널 지정 불가). info·done·warn 만. 하달문 '답할 곳: thread <ts>' 의 ts 를 씀. 진행 스레드 한 줄은 생략")
-    a.add_argument("--card", help="작업판 카드 id. 그 카드의 Slack 스레드 답글로 올라감(스레드는 카드의 첫 보고 때만 열림). decide·--thread 와 함께 쓰지 않음")
+    a.add_argument("--card", help="작업판 카드 id. 그 카드의 Slack 스레드 답글로 올라감(스레드는 카드의 첫 보고 때만 열림). decide 도 그 스레드 안에 올라감. --thread 와 함께 쓰지 않음")
+    a.add_argument("--broadcast", action="store_true", help=f"스레드 답글을 DM 목록에도 보이게 함. 사용자가 봐야 하는 진행 보고(확인·검수 요청)에 사용. {'·'.join(BROADCAST_KINDS)} 는 주지 않아도 보임")
     a.add_argument("--ws", help="(--card 와 함께) 담당 작업 공간 절대 경로. 카드 스레드 답을 그 작업 공간 세션에 전달하는 근거")
     a.add_argument("--no-doc", action="store_true", help="(decide) 근거 문서 없는 결정임을 명시. decide 는 --file 없이는 이게 있어야 기록됨")
     a.add_argument("--now", action="store_true", help="기록 직후 전송기를 1회 실행. 다른 전송기가 돌고 있으면 다음 폴러 회차가 올림")
@@ -548,7 +554,7 @@ def main(argv=None) -> int:
     try:
         if args.cmd == "add":
             rep = make_report(args.hub, args.task, args.kind, args.text, args.files,
-                              args.options, args.recommend, args.decision_id, args.reversible, args.thread, args.no_doc, args.card, os.path.expanduser(args.ws) if args.ws else None)
+                              args.options, args.recommend, args.decision_id, args.reversible, args.thread, args.no_doc, args.card, os.path.expanduser(args.ws) if args.ws else None, args.broadcast)
             rep["files"] = [resolve_file(f) for f in rep["files"]]
             for f in rep["files"]:
                 if why := file_problem(f):

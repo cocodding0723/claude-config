@@ -1,6 +1,6 @@
 """대기 목록 판정(한 곳): 어떤 보낸 글이 사람이 정할 결정인가, 자동 알림인가, 다시 알리기엔 오래됐는가.
 2시간 재알림·'대기' 명령(slack_pending.sh)과 옆 패널(panel_collect.py)이 같이 씀. 두 곳이 판정을 따로 들고 있으면 목록이 서로 달라짐.
-답했는지 판정은 여기가 아니라 answer_store.judge.
+답했는지 판정은 여기가 아니라 answer_store.judge. 작업 스레드에 글로 쓴 답을 알아보는 것(written_answer)은 여기.
 
 설정 표 pending_rules.tsv(탭 구분, 값은 표 한 곳):
   max_age_hours<TAB>시간                   이 시간이 넘은 결정은 재알림에서 뺌
@@ -52,8 +52,24 @@ def load_rules(dirs, warn=to_stderr) -> Rules:
 
 
 def is_decision(s: dict) -> bool:
-    """결정 = 선택지를 달아 결정 카드로 보낸 맨 위 글. 제목의 '결정' 낱말이나 선택지 없는 옛 글은 세지 않음"""
-    return bool(s.get("ts")) and not s.get("thread_ts") and s.get("form_kind") == DECIDE and "options" in s
+    """결정 = 선택지를 달아 결정 카드로 보낸 글. 맨 위 글이든 작업 스레드 안이든 같음(작업 하나 = 스레드 하나, 결정 카드도 그 안).
+    제목의 '결정' 낱말이나 선택지 없는 옛 글은 세지 않음"""
+    return bool(s.get("ts")) and s.get("form_kind") == DECIDE and "options" in s
+
+
+# 번호 앞에 올 수 있는 것: 인용 표시(>), 봇을 부른 말(<@U…>), '결정' 낱말(카드 아래 참고 줄이 '결정 D-…' 꼴, 붙여 쓰기도 함)
+ID_LEAD = re.compile(r"\s*(?:>\s*)?(?:<@[A-Z0-9]+>\s*)?(?:결정\s*)?")
+
+
+def written_answer(card: dict, rec: dict) -> bool:
+    """작업 스레드 안의 결정 카드에 글로 쓴 답인가: 그 스레드의 답글이고 카드의 결정 번호로 시작함.
+    스레드에는 다른 얘기도 오가므로 번호로 시작하는 글만 답으로 봄(글 중간의 번호는 언급일 뿐). 글 답은 카드를 닫지 않음(담당이 확인하고 닫음)"""
+    did, thread = card.get("decision_id"), card.get("thread_ts")
+    if not (thread and isinstance(did, str) and rec.get("type") == "thread_reply" and str(rec.get("parent_ts") or "") == thread):
+        return False
+    text = str(rec.get("text") or "")
+    rest = text[ID_LEAD.match(text).end():]
+    return rest[:len(did)].lower() == did.lower() and not re.match(r"[0-9A-Za-z]", rest[len(did):])  # 소문자로 쓴 번호도 같은 번호
 
 
 def is_auto(s: dict, rules: Rules) -> bool:

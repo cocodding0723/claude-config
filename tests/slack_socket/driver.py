@@ -156,7 +156,7 @@ class SocketModeClient:
 
 
 class WebClient:
-    """웹 API 가짜. 호출을 'web 메서드 JSON' 한 줄로 남김. 시나리오 history 가 conversations_history 응답"""
+    """웹 API 가짜. 호출을 'web 메서드 JSON' 한 줄로 남김. 시나리오 history 가 conversations_history 응답(맨 위 글만), replies 가 conversations_replies 응답"""
 
     def __init__(self, token=None, **kwargs):
         pass
@@ -174,6 +174,11 @@ class WebClient:
     def conversations_history(self, **kw):
         self._call("conversations_history", kw)
         return {"ok": True, "messages": SCEN.get("history", [])}
+
+    def conversations_replies(self, **kw):
+        """스레드 답글 조회. 시나리오 replies 가 그 스레드의 답글들"""
+        self._call("conversations_replies", kw)
+        return {"ok": True, "messages": SCEN.get("replies", [])}
 
 
 def install_fakes() -> None:

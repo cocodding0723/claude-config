@@ -16,6 +16,8 @@ usage() {
   --tag        관련 허브 태그(기록용)
   --title      기록용 제목(기본: 메시지 첫 줄)
   --thread     해당 ts 메시지의 스레드 답글로 게시
+  --broadcast  (--thread 전용) 스레드 답글을 DM 목록에도 보이게 함(reply_broadcast). 스레드 답글은 팔로우해야 알림이 오므로,
+               사용자가 봐야 하는 글(결정 카드·확인 요청·완료 보고)에만 사용. 진행 보고에는 쓰지 않음
   --update     해당 ts 메시지(이 봇이 보낸 최상위 글)의 본문을 새 본문으로 고쳐 씀(chat.update). 새 글을 만들지 않고 sent 기록도 남기지 않음.
                --thread·파일·--options·--to-user 와 함께 못 씀. 출력 'ok <ts>'. 같은 본문으로 다시 불러도 결과가 같음
   --kind       decide|todo|done|progress|warn|doc. 첫 줄에 종류 이모지가 없으면 붙이고 양식 A 를 검사.
@@ -23,7 +25,7 @@ usage() {
   --choices    2~4(--kind decide 전용). 메시지 끝에 '👉 답:' 이모지 안내 줄을 붙임(본문에 👉 줄이 있으면 생략)
   --emoji-set  custom(기본, :비서-a: 등)|std(표준 :a: :regional_indicator_c: 등). 안내 줄 이모지 종류
   --options    (--kind decide 전용) 버튼·번호 이모지로 고르는 카드(파일 첨부 시 카드를 먼저 올리고 파일은 그 스레드에 붙임). '번호=문구 => 고르면 달라지는 점' 을 쉼표로 이음(결과 칸 필수). 번호는 1부터 연속 2~4개, 문구 1~80자, 결과 1~100자.
-               문구에 :이름:·👉·✅·❌·키캡은 못 씀(답 이모지로 오인). --thread 와 함께 못 씀(스레드 답글의 반응은 수집 안 됨).
+               문구에 :이름:·👉·✅·❌·키캡은 못 씀(답 이모지로 오인). --thread 와 함께 쓰면 작업 스레드 안에 카드가 올라감(버튼으로 답. 스레드 답글의 이모지 반응은 수집 안 됨).
                선택지 줄(:one: 등, 결과 포함)·추천 줄·'👉 답:' 줄·결정 번호 줄을 도구가 붙임. 본문에는 제목·'배경:'·'용어:' 줄만 씀(본문 '👉 답:' 줄은 거부).
                카드 순서: 제목 → 배경 → 선택지(각 결과) → 추천(+본문 '이유:' 줄) → 용어 → 답 줄
   --recommend  (--options 필수) 추천 선택지 번호
@@ -64,7 +66,7 @@ usage() {
 EOF
 }
 die() { echo "$1" >&2; exit 2; }
-CARD="" CARD_SET=0
+CARD="" CARD_SET=0 BROADCAST=0
 ATTACHED=() LINK_TO="" QUOTE="" NO_DOC=0 TO_USER=""
 FROM="" SUBJECT="" STATE="" DEDUP_RID=""
 TAG="" TITLE="" THREAD="" UPDATE="" KIND="" NOCHECK=0 ALIVE=0CHOICES="" CHOICES_SET=0 EMOJISET=custom
@@ -77,6 +79,7 @@ while [ $# -gt 0 ]; do
     --update) UPDATE="${2:?--update 값 필요 — 고칠 메시지 ts}"; shift 2 ;;
     --title) TITLE="${2:?--title 값 필요}"; shift 2 ;;
     --thread) THREAD="${2:?--thread 값 필요}"; shift 2 ;;
+    --broadcast) BROADCAST=1; shift ;;
     --kind) [ $# -ge 2 ] || die "--kind 값 필요 — decide|todo|done|progress|warn|doc 중 하나"; KIND="$2"; shift 2 ;;
     --choices) [ $# -ge 2 ] || die "--choices 값 필요 — 2~4 사이 숫자"; CHOICES="$2" CHOICES_SET=1; shift 2 ;;
     --emoji-set) [ $# -ge 2 ] || die "--emoji-set 값 필요 — custom|std 중 하나"; EMOJISET="$2"; shift 2 ;;
@@ -130,7 +133,10 @@ if [ "$OPT_SET$REC_SET$REV_SET$DID_SET$SEQ_SET" != 00000 ]; then
 fi
 if [ "$TID_SET" = 1 ] && [ "$KIND" != todo ]; then die "--todo-id 는 --kind todo 와만 사용 — --kind todo 를 함께 지정"; fi
 # 폴러·대기 목록은 최상위 메시지의 반응만 읽음. 스레드 답글로 나간 카드는 답할 수 없으므로 미전송
-if [ -n "$THREAD" ] && { [ "$OPT_SET" = 1 ] || [ "$TID_SET" = 1 ]; }; then die "--thread 는 --options·--todo-id 카드와 함께 쓸 수 없음 — 스레드 답글의 반응은 수집되지 않으므로 --thread 를 빼고 보내세요"; fi
+# 결정 버튼 카드(--options)는 스레드 안에서도 버튼으로 답함. 할 일 번호 카드는 반응으로만 답하므로 스레드에 못 올림
+if [ -n "$THREAD" ] && [ "$TID_SET" = 1 ]; then die "--thread 는 --todo-id 카드와 함께 쓸 수 없음 — 스레드 답글의 반응은 수집되지 않으므로 --thread 를 빼고 보내세요"; fi
+if [ "$BROADCAST" = 1 ] && { [ -z "$THREAD" ] || [ -n "$UPDATE" ]; }; then die "--broadcast 는 --thread 와 함께 새 답글을 보낼 때만 사용 — --thread <스레드 ts> 를 함께 지정"; fi
+[ "$BROADCAST" = 1 ] && export LRM_BROADCAST=1
 # 결정은 근거 문서 첨부가 계약(hub_report.py 와 같음). 문서 없는 결정만 --no-doc 로 명시
 if [ "$NO_DOC" = 1 ] && [ "$KIND" != decide ]; then die "--no-doc 는 --kind decide 와만 사용 — --kind decide 를 함께 지정"; fi
 if [ "$KIND" = decide ] && [ "$NO_DOC" = 0 ] && [ $# -lt 2 ] && [ ${#ATTACHED[@]} -eq 0 ]; then
@@ -372,7 +378,7 @@ def buttons(spec):
                 "text": {"type": "plain_text", "text": "직접 입력", "emoji": True}})
     return {"type": "actions", "block_id": "lrm_decide:%s" % did, "elements": els}
 
-def build_payload(msg, kind, channel, thread, card="", unfurl=""):
+def build_payload(msg, kind, channel, thread, card="", unfurl="", broadcast=""):
     """chat.postMessage 본문 JSON. kind 가 색 표에 있으면 attachment 색 띠에 본문을 담고, 알림 미리보기용 text 에는 제목만 둠.
     번호 카드(card 에 options)면 색 띠 안을 section + 버튼 블록으로 바꿈. 이모지 답 줄은 버튼이 안 될 때를 위해 남김"""
     body = {"channel": channel, "text": msg}
@@ -390,6 +396,8 @@ def build_payload(msg, kind, channel, thread, card="", unfurl=""):
         body["attachments"] = [att]
     if thread:
         body["thread_ts"] = thread
+        if broadcast == "1":  # 스레드 답글은 팔로우해야 알림이 옴. DM 목록에도 보이게
+            body["reply_broadcast"] = True
     return json.dumps(body)
 
 def given(arg):
@@ -438,7 +446,9 @@ def parse_card(raw, rec, rev, did, seq, tid):
         out["seq"] = seq
     return out
 
-def build_card(msg, spec):
+THREAD_ANSWER = "👉 답: 아래 버튼으로 고르기"
+
+def build_card(msg, spec, threaded=False):
     """검사를 마친 본문에 카드 줄을 붙여 (본문, 경고 목록) 반환. 카드의 답 줄은 1개여야 해서 본문 답 줄은 ValueError.
     선택지·추천·답 줄은 마지막 '참고:' 줄 앞(없으면 끝). 번호 줄은 메시지 맨 끝 = 참고 블록 끝('참고:' 줄 뒤에 다른 줄이 더 있어도 그 뒤. 없으면 '참고:' 줄을 새로 만듦)"""
     terms, why = "", ""
@@ -463,7 +473,8 @@ def build_card(msg, spec):
         block.append(rec + (" · 이유: %s" % why if why else "") + (" · 되돌리기: %s" % spec["reversible"] if "reversible" in spec else ""))
         if terms:
             block.append(terms)
-        block.append("👉 답: %s 중 하나 · :white_check_mark: 추천대로 · :x: 보류" % " ".join(OPT_EMOJI[n] for n in nums))
+        # 스레드 답글의 이모지 반응은 수집되지 않음. 스레드 안 카드는 버튼으로만 답하게 안내
+        block.append(THREAD_ANSWER if threaded else "👉 답: %s 중 하나 · :white_check_mark: 추천대로 · :x: 보류" % " ".join(OPT_EMOJI[n] for n in nums))
         ref = "결정 %s" % spec["decision_id"] + (" · %s" % spec["seq"] if "seq" in spec else "")
     else:
         if not has_answer:
@@ -503,13 +514,13 @@ elif sys.argv[1] == "check":
     for lvl, code, text in check_form(data, sys.argv[2], sys.argv[3] == "1"):
         sys.stdout.buffer.write(("%s\t%s\t%s\n" % (lvl, code, text)).encode("utf-8"))
 elif sys.argv[1] == "payload":
-    sys.stdout.buffer.write(build_payload(data, *sys.argv[2:7]).encode("utf-8"))
+    sys.stdout.buffer.write(build_payload(data, *sys.argv[2:8]).encode("utf-8"))
 elif sys.argv[1] in ("opts", "card"):
     try:
         if sys.argv[1] == "opts":
             out, warns = json.dumps(parse_card(data, *sys.argv[2:7]), ensure_ascii=False), []
         else:
-            out, warns = build_card(data, json.loads(sys.argv[2]))
+            out, warns = build_card(data, json.loads(sys.argv[2]), bool(sys.argv[3:] and sys.argv[3]))
     except ValueError as e:
         sys.stderr.buffer.write(("%s\n" % e).encode("utf-8"))
         sys.exit(2)
@@ -609,7 +620,7 @@ if [ "$CHOICES_SET" = 1 ]; then
 fi
 # 번호 카드·할 일 줄도 검사 뒤에 부착(선택지 문구의 '결정'을 결정 개수로 세지 않음). 실패하면 미전송
 if [ -n "$CARD_JSON" ]; then
-  CARDED="$(printf '%s' "$MSG" | "$PY" -c "$FORM_PY" card "$CARD_JSON")" \
+  CARDED="$(printf '%s' "$MSG" | "$PY" -c "$FORM_PY" card "$CARD_JSON" "$THREAD")" \
     || { rc=$?; [ "$rc" = 2 ] || echo "카드 줄 부착 실패(전송 안 함) — python3 동작 확인 뒤 다시 보내세요" >&2; exit 2; }
   MSG="$CARDED"
 fi
@@ -709,6 +720,7 @@ if fkind: rec["form_kind"]=fkind
 if unchecked=="1": rec["unchecked"]=True
 if os.environ.get("LRM_TO_USER"): rec["to_user"]=os.environ["LRM_TO_USER"]
 if os.environ.get("LRM_CARD"): rec["card"]=os.environ["LRM_CARD"]
+if os.environ.get("LRM_BROADCAST")=="1" and thread: rec["broadcast"]=True
 if card: rec.update(json.loads(card))
 if kind=="file":
     rec["ts"]=os.environ.get("LRM_FILE_TS","")
@@ -722,7 +734,7 @@ print("ok file_id=" + rec["file_id"] if kind=="file" else "ok " + rec["ts"])
 
 # 텍스트 게시. 번호 카드면 색 띠 안에 버튼 블록이 들어감
 post_text() {
-  PAYLOAD="$(printf '%s' "$MSG" | "$PY" -c "$FORM_PY" payload "$KIND" "$CH" "$THREAD" "$CARD_JSON" "$UNFURL")" \
+  PAYLOAD="$(printf '%s' "$MSG" | "$PY" -c "$FORM_PY" payload "$KIND" "$CH" "$THREAD" "$CARD_JSON" "$UNFURL" "$BROADCAST")" \
     || die "페이로드 생성 실패(전송 안 함) — python3 동작 확인 뒤 다시 보내세요"
   curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H 'Content-Type: application/json' \
     -d "$PAYLOAD" $API/chat.postMessage | record text
@@ -780,11 +792,11 @@ if [ -n "$UPDATE" ]; then
   update_text
 elif [ $# -ge 2 ] && [ "$OPT_SET" = 1 ]; then
   # 파일 업로드 메시지에는 버튼 블록을 달 수 없음(Slack API 한계). 버튼 카드를 먼저 올리고 파일은 그 스레드에 붙임.
-  # 카드가 최상위 메시지라 버튼·반응·스레드 글 답이 모두 카드 ts 에 묶임
+  # 카드가 최상위 메시지면 버튼·반응·스레드 글 답이 모두 카드 ts 에 묶임. 카드가 스레드 안이면 파일도 같은 스레드에(답글의 답글은 없음)
   OUT="$(post_text)" || { echo "$OUT"; exit 1; }
   echo "$OUT"
   case "$OUT" in "ok "?*) ;; *) exit 1 ;; esac
-  FOUT="$(upload_file "$2" "첨부: $(basename "$2")" "${OUT#ok }" "")" || true
+  FOUT="$(upload_file "$2" "첨부: $(basename "$2")" "${THREAD:-${OUT#ok }}" "")" || true
   case "$FOUT" in ok*) ;; *) echo "경고: 카드는 보냈지만 파일 첨부 실패(${FOUT:-응답 없음}) — 파일을 따로 보내세요" >&2 ;; esac
 elif [ $# -ge 2 ]; then
   upload_file "$2" "$MSG" "$THREAD" "$CARD_JSON"

@@ -885,7 +885,10 @@ def main():
                     mark_on(state, ts, now)
                     if why:  # 새 반응일 때만 1줄(주기 재조회에서 반복 안 함)
                         print(f"반응 해석 안 함({SKIP_WHY[why]}) — 이모지 이름 그대로 전달", file=sys.stderr)
-        collect_replies(m, meta, card=rec)
+        # DM 목록에도 보이게 올린 스레드 답글(작업 스레드 안의 결정 카드)은 이력에 맨 위 글처럼 나옴. 그 글의 "답글"을 물으면
+        # 작업 스레드 전체가 돌아와 스레드의 다른 글이 이 카드의 답으로 잡힘. 스레드 글은 진짜 부모 글 쪽에서 수집됨
+        if m.get("thread_ts", ts) == ts:
+            collect_replies(m, meta, card=rec)
 
     # 같은 카드(parent_ts·decision_id)의 결정 답은 반응·스레드 글을 함께 충돌 판정. 앞 회차 답은 inbox 에서 읽음(아래에서 추가 기록하기 전)
     groups = {}

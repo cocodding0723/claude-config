@@ -517,6 +517,11 @@ def attached_args(rep: dict) -> list:
     return [x for f in rep["files"] for x in ("--attached", f)]
 
 
+def broadcast_args(rep: dict) -> list:
+    """스레드 답글을 DM 목록에도 보이게 할 보고인가. 규칙은 hub_report.BROADCAST_KINDS 한 곳, 그 밖은 보고가 직접 요청(--broadcast)한 것만"""
+    return ["--broadcast"] if rep.get("broadcast") or rep["kind"] in hub_report.BROADCAST_KINDS else []
+
+
 def decide_args(rep: dict) -> list:
     a = ["--tag", rep["hub"], "--kind", "decide", "--options", rep["options"], "--recommend", rep["recommend"], "--decision-id", rep["decision_id"]]
     a += ["--no-doc"] if rep.get("no_doc") and not rep["files"] else []
@@ -767,28 +772,33 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
         if "body_ts" not in rs:
             _, _, kind = hub_report.KINDS[rep["kind"]]
             warn_unattached(conf, rep)
-            rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind, "--thread", rep["thread"]] + attached_args(rep) + [body_text(rep)], deadline)
+            pinned = ["--broadcast"] if rep.get("broadcast") else []  # 지정 스레드는 질문에 답하는 자리라 요청한 것만
+            rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind, "--thread", rep["thread"]] + pinned + attached_args(rep) + [body_text(rep)], deadline)
             save_state(conf.state, st)
         send_files(conf, rep, rs, st, rep["thread"], deadline)
         rs["line_ts"] = ""
         rs["sent"] = int(time.time())
         save_state(conf.state, st)
         return {"topic_ts": rep["thread"], "body_ts": rs["body_ts"], "line_ts": "", "pinned": True}
-    if not decide and key not in st["topics"]:
+    threaded = not decide or bool(rep.get("card"))  # 카드를 준 결정은 그 작업 스레드 안에. 카드 없는 결정은 맨 위 글
+    if threaded and key not in st["topics"]:
         open_topic(conf, rep, st, deadline)
-    elif not decide:
+    elif threaded:
         refresh_parent(conf, rep, st, deadline)
     topic = st["topics"].get(key, {})
     shared = bool(topic.get("shared"))
+    # 상한 밖 카드가 같이 쓰는 기능 스레드에는 결정 카드를 올리지 않음: 그 스레드의 글 답이 어느 작업 공간 것인지 가릴 수 없어 기능 코디네이터로 감
+    threaded = threaded and not (decide and shared)
     if "body_ts" not in rs:
         warn_unattached(conf, rep)
         if decide:
-            rs["body_ts"] = run_notify(conf, decide_args(rep) + attached_args(rep) + [body_text(rep)], deadline)
+            where = ["--thread", topic["ts"]] + broadcast_args(rep) if threaded else []
+            rs["body_ts"] = run_notify(conf, decide_args(rep) + where + attached_args(rep) + [body_text(rep)], deadline)
         else:
             _, _, kind = hub_report.KINDS[rep["kind"]]
-            rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind, "--thread", topic["ts"]] + attached_args(rep) + [body_text(rep, shared)], deadline)
+            rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind, "--thread", topic["ts"]] + broadcast_args(rep) + attached_args(rep) + [body_text(rep, shared)], deadline)
         save_state(conf.state, st)
-    send_files(conf, rep, rs, st, rs["body_ts"] if decide else topic["ts"], deadline)
+    send_files(conf, rep, rs, st, topic["ts"] if threaded else rs["body_ts"], deadline)
     if "line_ts" not in rs:
         parent = read_json_file(conf.sync_state).get("ts", "")
         if parent:

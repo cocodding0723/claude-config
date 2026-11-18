@@ -109,6 +109,50 @@ class ReplyBase(unittest.TestCase):
         self.assertEqual(self.comments(self.epic), [])
 
 
+
+class DecisionReplyTest(ReplyBase):
+    """작업 스레드에 결정 번호로 시작하는 글은 그 결정의 답으로 전달(번호 없는 글은 지금처럼 피드백)"""
+
+    def setUp(self):
+        super().setUp()
+        card = {"at": 1, "channel": "D1", "ts": "1794383274.300000", "thread_ts": PARENT_TS, "form_kind": "decide",
+                "decision_id": "D-TH1", "options": {"1": "가", "2": "나"}, "title": "배포 순서"}
+        self.write(os.path.join(self.hub, "slack-sent.jsonl"), json.dumps(card, ensure_ascii=False) + "\n")
+
+    def test_reply_starting_with_decision_id_is_delivered_as_that_decisions_answer(self):
+        self.reply("1794383275.000001", PARENT_TS, "D-TH1 나 먼저로 갑니다")
+        got = self.route()["routed"][0]
+        self.assertEqual((got["to"], got.get("decision_id")), ("ws", "D-TH1"))
+        line = self.box(self.box_name())[-1]["text"]
+        self.assertEqual(line, "[결정 D-TH1 답] D-TH1 나 먼저로 갑니다")  # 머리는 짧게(입력창 알림 요약에 원문이 남게), 원문은 그대로
+        note = next(c for c in self.comments(self.ws_card) if "나 먼저로 갑니다" in c)
+        self.assertIn("decide-answer D-TH1", note)  # 닫는 법은 카드 코멘트에
+        self.assertTrue(note.endswith(": D-TH1 나 먼저로 갑니다"), note)  # 코멘트의 원문 자리에는 원문만
+
+    def test_question_about_a_decision_is_marked_as_question_not_answer(self):
+        self.reply("1794383275.000004", PARENT_TS, "D-TH1 은 왜 가 가 추천이야?")
+        got = self.route()["routed"][0]
+        self.assertEqual(got.get("decision_id"), "D-TH1")
+        line = self.box(self.box_name())[-1]["text"]
+        self.assertTrue(line.startswith("[결정 D-TH1 질문] "), line)
+        note = next(c for c in self.comments(self.ws_card) if "추천이야" in c)
+        self.assertNotIn("decide-answer", note)  # 질문에 답으로 닫으라고 안내하지 않음
+
+    def test_reply_without_decision_id_stays_plain_feedback(self):
+        self.reply("1794383275.000002", PARENT_TS, "색을 좀 더 진하게")
+        got = self.route()["routed"][0]
+        self.assertNotIn("decision_id", got)
+        self.assertEqual(self.box(self.box_name())[-1]["text"], "색을 좀 더 진하게")
+
+    def test_unknown_decision_id_stays_plain_feedback(self):
+        self.reply("1794383275.000003", PARENT_TS, "D-ZZZ9 이건 뭐지")
+        self.assertNotIn("decision_id", self.route()["routed"][0])
+
+    def box_name(self):
+        import re
+        return ("ws-" + re.sub(r"[^a-z0-9]+", "-", self.ws_card.lower()).strip("-"))
+
+
 class ReplyToSessionTest(ReplyBase):
     RAW = "버튼 색이 *진해요* — `#FFB` 로\n둘째 줄도 그대로"
 

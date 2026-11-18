@@ -97,7 +97,6 @@ class IntakeTest(unittest.TestCase):
         self.assertTrue(hub_report.valid_record(dict(rep, id="a1")))
 
     def test_card_rules(self):
-        self.assertIn("decide", self.err(kind="decide", card="t-1", options="1=가 => 나,2=다 => 라", recommend="1", decision_id="D-0001", no_doc=True))
         self.assertIn("--thread", self.err(card="t-1", thread="1.1"))
         self.assertIn("형식 오류", self.err(card="bad card"))
         self.assertIn("--card 와 함께", self.err(ws="/w/a"))
@@ -109,6 +108,73 @@ class IntakeTest(unittest.TestCase):
         self.assertFalse(hub_report.add(self.outbox, dict(rep), 2.0, False)[1])
         self.assertEqual(len(hub_report.read_outbox(self.outbox)), 1)
 
+
+DECIDE_TEXT = "배포 순서\n배경: 묶음 둘이 같은 파일을 고쳐 순서를 정해야 함\n용어: 없음"
+DECIDE_OPTS = "1=가 먼저 => 가 묶음이 먼저 반영됨,2=나 먼저 => 나 묶음이 먼저 반영됨"
+
+# 알림 규칙: 스레드 답글은 팔로우해야 알림이 옴. 사용자가 봐야 하는 글만 DM 목록에도 보이게 함
+# (보고 종류, --broadcast 를 줬나, DM 목록에도 보여야 하나)
+BROADCAST_CASES = [
+    ("info", False, False),   # 진행 보고는 스레드에만
+    ("info", True, True),     # 확인·검수 요청처럼 사용자가 봐야 하는 진행 보고
+    ("done", False, True),
+    ("warn", False, True),
+    ("block", False, True),
+]
+
+
+class DecideInThreadTest(Base):
+    """결정 카드도 그 작업의 스레드 안에(작업 하나 = 스레드 하나)"""
+
+    def decide(self, card=None, ws=None, did="D-T001"):
+        rep = hub_report.make_report("feat-x", "없음", "decide", DECIDE_TEXT, [], options=DECIDE_OPTS, recommend="1", decision_id=did,
+                                     no_doc=True, card=card, ws=ws)
+        self.assertTrue(hub_report.valid_record(dict(rep, id="a1")))
+        return hub_report.add(self.conf.outbox, rep, time.time(), False)[0]
+
+    def body_call(self, did):
+        return next(a for a in self.calls() if did in a)
+
+    def test_card_decision_goes_into_the_card_thread_and_shows_in_dm(self):
+        c = self.make("작업", "-t", "task")
+        self.report(c, "시작", ws="/w/a")
+        self.run_sender()
+        ts = self.topics()[f"card:{c}"]["ts"]
+        self.decide(c, "/w/a")
+        self.assertEqual(self.run_sender()["sent"], 1)
+        a = self.body_call("D-T001")
+        self.assertEqual(a[a.index("--thread") + 1], ts)
+        self.assertIn("--broadcast", a)
+        self.assertIn("--options", a)
+
+    def test_decision_as_first_report_opens_the_thread_first(self):
+        c = self.make("작업", "-t", "task")
+        self.decide(c, "/w/a")
+        self.assertEqual(self.run_sender()["sent"], 1)
+        ts = self.topics()[f"card:{c}"]["ts"]
+        a = self.body_call("D-T001")
+        self.assertEqual(a[a.index("--thread") + 1], ts)
+        self.assertIn(THREAD + ts, self.labels(c))
+
+    def test_decision_without_card_stays_top_level(self):
+        self.decide()
+        self.assertEqual(self.run_sender()["sent"], 1)
+        a = self.body_call("D-T001")
+        self.assertNotIn("--thread", a)
+        self.assertNotIn("--broadcast", a)
+
+    def test_which_thread_reports_also_show_in_dm(self):
+        c = self.make("작업", "-t", "task")
+        self.report(c, "시작", ws="/w/a")
+        self.run_sender()
+        for i, (kind, flag, want) in enumerate(BROADCAST_CASES):
+            with self.subTest(kind=kind, flag=flag):
+                text = f"보고 {i}"
+                rep = hub_report.make_report("feat-x", "없음", kind, text, [], card=c, ws="/w/a", broadcast=flag)
+                hub_report.add(self.conf.outbox, rep, time.time(), False)
+                self.run_sender()
+                a = next(x for x in self.calls() if any(text in y for y in x) and "--quote" not in x)
+                self.assertEqual("--broadcast" in a, want, a)
 
 class CardThreadTest(Base):
     def test_first_report_opens_thread_and_registers_ts_and_session(self):
@@ -221,6 +287,20 @@ class CapTest(Base):
         last = self.calls()[-1]
         self.assertEqual(last[last.index("--thread") + 1], et)
         self.assertIn(k3, last[-1], "어느 카드 글인지 머리에 카드 id")
+
+    def test_decision_from_a_card_sharing_the_feature_thread_stays_top_level(self):
+        """상한 밖 카드는 기능 스레드를 같이 씀. 거기에 결정 카드를 올리면 스레드 글 답이 어느 작업 공간 것인지 가릴 수 없어 맨 위 글로 보냄"""
+        self.open_first_two()
+        k3 = self.kids[2]
+        self.report(k3, "시작", ws="/w/2")
+        self.run_sender()
+        rep = hub_report.make_report("feat-x", "없음", "decide", DECIDE_TEXT, [], options=DECIDE_OPTS, recommend="1", decision_id="D-SH01",
+                                     no_doc=True, card=k3, ws="/w/2")
+        hub_report.add(self.conf.outbox, rep, time.time(), False)
+        self.assertEqual(self.run_sender()["sent"], 1)
+        a = next(x for x in self.calls() if "D-SH01" in x)
+        self.assertNotIn("--thread", a)
+        self.assertNotIn("--broadcast", a)
 
     def test_over_cap_decision_is_made_once(self):
         self.open_first_two()
