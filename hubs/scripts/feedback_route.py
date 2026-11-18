@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import board_cards as cards  # noqa: E402
 import card_actions as actions  # noqa: E402
 import main_inbox  # noqa: E402
+import pending_judge  # noqa: E402
 
 THREAD = "slack-thread:"
 FEATURE = "feature:"
@@ -63,6 +64,9 @@ HANDOFF_TRIAGE_TITLE = "📥 작업 공간 답 전달 확인 필요: {card}"
 TRIAGE_LABELS = "hub:main,feedback:triage"
 TRIAGE_TITLE = "📥 기능 판별 필요: Slack 스레드 {ts}"
 TS_RE = re.compile(r"^[0-9]{1,12}\.[0-9]{1,9}$")
+SENT_NAME = "slack-sent.jsonl"
+# 작업 스레드에 결정 번호로 시작하는 글. 원문 앞에 붙여 담당이 결정 답임을 알게 함(글 답은 카드를 닫지 않으므로 닫는 법도 함께)
+DECIDE_HEAD = "결정 {did} 답(스레드 글, 카드는 열려 있음. 확인 뒤 decide-answer {did} 로 닫음): "
 SOURCE = "feedback_route"
 EXIT_CONFLICT = 5
 
@@ -220,13 +224,35 @@ def route_guarded(rec, by_ts, dry_run):
         return got
 
 
+def decision_of(rec):
+    """이 답글이 그 스레드 안 결정 카드에 쓴 글 답이면 결정 번호, 아니면 ''. 판정은 pending_judge 한 곳(대기 목록과 같은 규칙)"""
+    try:
+        with open(os.path.join(hub_dir(), SENT_NAME), encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return ""
+    for ln in reversed(lines):  # 같은 번호를 다시 보낸 경우 최근 카드
+        try:
+            s = json.loads(ln)
+        except ValueError:
+            continue
+        if isinstance(s, dict) and pending_judge.is_decision(s) and pending_judge.written_answer(s, rec):
+            return s["decision_id"]
+    return ""
+
+
 def route(rec, by_ts, dry_run):
-    """한 답글의 전달 결과 dict, 등록된 스레드가 아니면 None"""
-    parent = str(rec.get("parent_ts") or "")
-    hits = by_ts.get(parent)
+    """한 답글의 전달 결과 dict, 등록된 스레드가 아니면 None. 결정 번호로 시작하는 글은 그 결정의 답으로 표시해 같은 곳에 전달"""
+    hits = by_ts.get(str(rec.get("parent_ts") or ""))
     if not hits:
         return None
-    text = body(rec)
+    did = decision_of(rec)
+    got = place(rec, hits, (DECIDE_HEAD.format(did=did) if did else "") + body(rec), dry_run)
+    return dict(got, decision_id=did) if did else got
+
+
+def place(rec, hits, text, dry_run):
+    """답글을 받을 곳(작업 공간 카드·기능 epic·확인 카드)에 넣음"""
     if len(hits) == 1:
         c = hits[0]
         if ws_of(c) is not None:

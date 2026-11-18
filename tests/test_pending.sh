@@ -297,4 +297,23 @@ check "원문은 스레드 답글에서 읽음" 1,4.1 "$(count conversations.rep
 check "이력: 스레드 카드의 수정 전 원문 보존" 1 "$(grep '"answered_update"' "$(H_FILE)" | grep -c '스레드 카드 원문')"
 stop_stub
 
+echo "[스레드 글 답] 작업 스레드에 결정 번호로 시작하는 글이 오면 그 카드에 '글 답 도착' 표시(닫지는 않음). 번호 없는 글·질문은 표시 없음"
+new_hub
+cat > "$HUB/slack-sent.jsonl" <<J
+{"at":$NOW,"channel":"DTEST","ts":"5.2","thread_ts":"5.1","kind":"text","title":"스레드 결정 가","tag":"","form_kind":"decide","decision_id":"D-TW1","options":{"1":"A","2":"B"}}
+{"at":$NOW,"channel":"DTEST","ts":"5.3","thread_ts":"5.1","kind":"text","title":"스레드 결정 나","tag":"","form_kind":"decide","decision_id":"D-TW2","options":{"1":"A","2":"B"}}
+{"at":$NOW,"channel":"DTEST","ts":"5.4","thread_ts":"5.1","kind":"text","title":"스레드 결정 다","tag":"","form_kind":"decide","decision_id":"D-TW3","options":{"1":"A","2":"B"}}
+J
+cat > "$HUB/slack-inbox.jsonl" <<J
+{"type":"thread_reply","ts":"5.5","parent_ts":"5.1","text":"D-TW1 둘을 합쳐서 갑니다","channel":"DTEST"}
+{"type":"thread_reply","ts":"5.6","parent_ts":"5.1","text":"색을 더 진하게","channel":"DTEST"}
+{"type":"thread_reply","ts":"5.7","parent_ts":"5.1","text":"D-TW3 이건 왜 필요한가요?","channel":"DTEST"}
+J
+start_stub "{$PERMA,$UPD,$DEL,$POST1}"
+bash "$PEND" >/dev/null; RC=$?
+check "종료 코드" 0 "$RC"
+check "세 카드 모두 대기(글 답은 닫지 않음)" 1 "$(grep -c '답을 기다리는 결정 3개' "$LOG")"
+check "번호로 시작하는 글이 온 카드에만 표시" 1,0,0 "$(grep -c 'D-TW1 — 글 답 도착' "$LOG"),$(grep -c 'D-TW2 — ' "$LOG"),$(grep -c 'D-TW3 — ' "$LOG")"
+stop_stub
+
 summary

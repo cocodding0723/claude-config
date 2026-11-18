@@ -55,7 +55,33 @@ OLD_CASES = [
 ]
 
 
+THREAD_CARD = rec(ts="2.2", thread_ts="2.1", decision_id="D-TH1")
+
+
+def reply(text, parent="2.1", kind="thread_reply"):
+    return {"type": kind, "ts": "2.9", "parent_ts": parent, "text": text}
+
+
+# 작업 스레드에 결정 번호로 시작하는 글 = 그 카드에 쓴 글 답. (설명, 카드, 받은 글, 글 답인가)
+WRITTEN_CASES = [
+    ("결정 번호로 시작하는 스레드 글", THREAD_CARD, reply("D-TH1 2번으로 갑니다"), True),
+    ("'결정' 낱말을 앞에 붙인 글", THREAD_CARD, reply("결정 D-TH1: 가 먼저"), True),
+    ("번호만 적은 글", THREAD_CARD, reply("D-TH1"), True),
+    ("번호가 글 중간에 있는 글(다른 얘기 중 언급)", THREAD_CARD, reply("그건 D-TH1 이랑 상관없어"), False),
+    ("머리만 같은 다른 번호", THREAD_CARD, reply("D-TH12 로 하자"), False),
+    ("번호 없는 일반 피드백", THREAD_CARD, reply("색을 좀 더 진하게"), False),
+    ("다른 스레드의 글", THREAD_CARD, reply("D-TH1 2번", parent="9.9"), False),
+    ("스레드 글이 아닌 기록(반응)", THREAD_CARD, reply("D-TH1 2번", kind="reaction"), False),
+    ("맨 위 카드는 해당 없음(자기 스레드의 글은 다른 길로 기록됨)", rec(ts="2.2", decision_id="D-TH1"), reply("D-TH1 2번", parent="2.2"), False),
+]
+
+
 class JudgeTest(unittest.TestCase):
+    def test_which_thread_replies_are_written_answers(self):
+        for name, card, got, want in WRITTEN_CASES:
+            with self.subTest(name):
+                self.assertEqual(pj.written_answer(card, got), want)
+
     def test_which_sent_records_are_decisions(self):
         for name, s, want in DECISION_CASES:
             with self.subTest(name):
