@@ -103,27 +103,45 @@ def link_parent(child_url, parent_url):
 
 
 def board_values(c, url):
-    """보드에서 이 이슈의 상태·기한 조회. 보드에 없으면 (None, None)"""
+    """보드에서 이 이슈의 (상태, 기한, 상위 URL). 보드에 없으면 상태·기한 None.
+    이슈 쪽 projectItems 는 개인 보드 항목을 돌려주지 않아 보드 항목을 직접 훑어 URL 로 맞춤"""
     o, r, n = parse_url(url)
-    q = """query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){
-      parent{url} projectItems(first:20){nodes{project{number owner{... on User{login} ... on Organization{login}}}
-      fieldValues(first:30){nodes{... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2FieldCommon{name}}}
-      ... on ProjectV2ItemFieldDateValue{date field{... on ProjectV2FieldCommon{name}}}}}}}}}}"""
-    d = gh("api", "graphql", "-f", f"query={q}", "-f", f"o={o}", "-f", f"r={r}", "-F", f"n={n}")
-    issue = d["data"]["repository"]["issue"]
+    parent = gh("api", "graphql", "-f", "query=query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){parent{url}}}}",
+                "-f", f"o={o}", "-f", f"r={r}", "-F", f"n={n}")["data"]["repository"]["issue"].get("parent") or {}
     owner = c["owner"].lstrip("@")
-    status = due = None
-    for it in issue["projectItems"]["nodes"]:
-        p = it["project"]
-        if p["number"] != int(c["number"]) or (owner != "me" and p["owner"]["login"] != owner):
-            continue
-        for v in it["fieldValues"]["nodes"]:
-            name = (v.get("field") or {}).get("name")
-            if name == c["status_field"]:
-                status = v.get("name")
-            elif name == c.get("due_field"):
-                due = v.get("date")
-    return status, due, (issue.get("parent") or {}).get("url")
+    items_q = ("items(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{content{... on Issue{url}} "
+               "fieldValues(first:30){nodes{"
+               "... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2FieldCommon{name}}} "
+               "... on ProjectV2ItemFieldDateValue{date field{... on ProjectV2FieldCommon{name}}}}}}}")
+    if owner == "me":
+        q = "query($num:Int!,$after:String){viewer{projectV2(number:$num){" + items_q + "}}}"
+    else:
+        q = ("query($login:String!,$num:Int!,$after:String){repositoryOwner(login:$login){"
+             "... on ProjectV2Owner{projectV2(number:$num){" + items_q + "}}}}")
+    after = None
+    while True:
+        args = ["api", "graphql", "-f", f"query={q}", "-F", f"num={int(c['number'])}"]
+        if owner != "me":
+            args += ["-f", f"login={owner}"]
+        if after:
+            args += ["-f", f"after={after}"]
+        d = gh(*args)["data"]
+        node = d["viewer"] if owner == "me" else d["repositoryOwner"]
+        items = node["projectV2"]["items"]
+        for it in items["nodes"]:
+            if (it.get("content") or {}).get("url") != url:
+                continue
+            status = due = None
+            for v in it["fieldValues"]["nodes"]:
+                name = (v.get("field") or {}).get("name")
+                if name == c["status_field"]:
+                    status = v.get("name")
+                elif name == c.get("due_field"):
+                    due = v.get("date")
+            return status, due, parent.get("url")
+        if not items["pageInfo"]["hasNextPage"]:
+            return None, None, parent.get("url")
+        after = items["pageInfo"]["endCursor"]
 
 
 def cmd_get(c, url):

@@ -13,9 +13,14 @@ if a[:2] == ["project", "item-add"]:
     url = a[a.index("--url") + 1]; st["items"].setdefault(url, "ITEM_%d" % (len(st["items"]) + 1)); out({"id": st["items"][url]})
 if a[:2] == ["project", "item-edit"]: out({})
 if a[0] == "api" and a[1] == "graphql":
-    out({"data": {"repository": {"issue": {"parent": {"url": "https://github.com/me/r/issues/1"},
-        "projectItems": {"nodes": [{"project": {"number": 6, "owner": {"login": "me"}}, "fieldValues": {"nodes": [
-            {"name": "진행 중", "field": {"name": "Status"}}, {"date": "2026-11-30", "field": {"name": "기한"}}]}}]}}}}})
+    q = a[3]
+    if "parent{url}" in q:
+        out({"data": {"repository": {"issue": {"parent": {"url": "https://github.com/me/r/issues/1"}}}}})
+    node = {"projectV2": {"items": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [
+        {"content": {"url": "https://github.com/me/r/issues/9"}, "fieldValues": {"nodes": [{"name": "보류", "field": {"name": "Status"}}]}},
+        {"content": {"url": "https://github.com/me/r/issues/5"}, "fieldValues": {"nodes": [{},
+            {"name": "진행 중", "field": {"name": "Status"}}, {"date": "2026-11-30", "field": {"name": "기한"}}]}}]}}}
+    out({"data": {"viewer": node} if "viewer" in q else {"repositoryOwner": node}})
 if a[0] == "api":
     if a[1] == "-X":
         path = a[3]; cid = int(a[5].split("=")[1]); st["subs"].setdefault(path.rsplit("/", 1)[0], []).append(cid); out({})
