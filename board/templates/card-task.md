@@ -21,6 +21,10 @@ labels: `kind:task`(생략 가능) · `file:<고칠 경로 접두>`
 - [ ] 컴파일 → `~/orca/board/bin/board-run compile -- <컴파일 명령>` 이 출력한 `evidence:compile=… commit=…` 줄
 - [ ] 관련 EditMode → `board-run editmode --result <xml> -- <EditMode 명령>` 이 출력한 `evidence:editmode=…` 줄(통과 1개 이상, 전부 건너뜀 거부)
 
+## 살아 있음 표시(heartbeat)
+
+단계가 바뀔 때(조사 끝·구현 끝·시험 통과)와 30분 넘게 길어질 때 `~/orca/board/bin/board-beat <카드 id> <작업자> "<한 줄>"` 로 갱신한다. 시험은 `~/orca/board/bin/board-run … --card <카드 id> --actor <작업자> -- …` 로 돌리면 갱신과 증거 기록이 함께 된다. 30분 넘게 갱신이 없으면 패널에 ⚠ 가 뜬다.
+
 ## 완료
 
 ```bash

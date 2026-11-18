@@ -21,6 +21,10 @@ export const PANEL_CONFIG = {
   epicKidsMax: 5,
   /** 하위 줄 제목 글자 수 상한(넘으면 …). 패널 폭을 렌더에서 알 수 없어 고정값으로 한 줄을 지킴 */
   kidTitleMax: 16,
+  /** 하위 줄 담당 이름 글자 수 상한(넘으면 …). 긴 이름 하나가 폭 40 에서 줄을 3줄로 꺾는 것을 막음 */
+  kidWhoMax: 12,
+  /** 진행 중 카드의 마지막 heartbeat 가 이만큼 지나면 '오래됨' 표시. 오래됨 기준은 여기 한 곳 */
+  beatStaleMin: 30,
   /** 진행률 막대 칸 수 */
   barCells: 8,
   /** 데스크톱 알림: 시간당 상한, 같은 항목 다시 알림 간격 */
@@ -263,7 +267,7 @@ const ageOf = (sec: number | null | undefined, nowMs: number) =>
   sec === null || sec === undefined ? undefined : ageMin(sec * 1000, nowMs)
 
 /** 진행 중 카드가 이만큼 갱신(heartbeat) 없으면 ⚠ */
-export const BEAT_STALE_MIN = 30
+export const BEAT_STALE_MIN = PANEL_CONFIG.beatStaleMin
 
 /** 🔄 진행 줄: id 제목 · 담당 · 경과 · 마지막 신호. 신호가 BEAT_STALE_MIN 넘으면 warn */
 export const boardLines = (v: AutoWorkBoard | null | undefined, nowMs = 0): Array<{ text: string; warn: boolean }> | undefined => {
@@ -579,13 +583,27 @@ export const epicBar = (done: number, total: number, cells = PANEL_CONFIG.barCel
 
 const KID_MARK: Record<AutoKid['st'], string> = { todo: '○', doing: '◐', blocked: '✕', done: '✓' }
 
-/** 펼친 에픽의 하위 카드 줄: ○◐✓ 제목 · 담당 · 마지막 갱신 (하위 N). epicKidsMax 넘으면 '외 N개' */
-export const kidLines = (kids: AutoKid[] | undefined, nowMs: number, cfg = PANEL_CONFIG): Array<{ mark: string; text: string; age: string }> => {
+const EVIDENCE_TEXT: Record<NonNullable<AutoKid['ev']>, string> = { none: '증거 없음', ok: '증거 ✓', stale: '증거 낡음', unk: '증거 ?' }
+
+/**
+ * 진행 중 하위 카드의 둘째 줄 `갱신 12분 · 증거 ✓`. 담당은 첫 줄에 있어 되풀이하지 않음.
+ * 짧게 고정(최대 약 26칸)해 폭 40 에서도 한 줄. 오래됨이면 '⚠' 를 붙이고 warn
+ */
+export const kidBeat = (k: AutoKid, nowMs: number, cfg = PANEL_CONFIG): { text: string; warn: boolean } | undefined => {
+  if (k.st !== 'doing') return undefined
+  const m = ageOf(k.beatAt ?? k.at, nowMs)
+  const warn = m === undefined || m >= cfg.beatStaleMin
+  return { text: `갱신 ${fmtMin(k.beatAt ?? k.at, nowMs)}${warn ? ' ⚠' : ''} · ${EVIDENCE_TEXT[k.ev ?? 'none'] ?? EVIDENCE_TEXT.none}`, warn }
+}
+
+/** 펼친 에픽의 하위 카드 줄: ○◐✓ 제목 · 담당 · 마지막 갱신 (하위 N). 진행 중이면 sub(heartbeat·증거). epicKidsMax 넘으면 '외 N개' */
+export const kidLines = (kids: AutoKid[] | undefined, nowMs: number, cfg = PANEL_CONFIG): Array<{ mark: string; text: string; age: string; sub?: string; warn?: boolean }> => {
   const ks = kids ?? []
   const out = ks.slice(0, cfg.epicKidsMax).map(k => ({
     mark: KID_MARK[k.st] ?? '○',
-    text: [k.title.length > cfg.kidTitleMax ? `${k.title.slice(0, cfg.kidTitleMax)}…` : k.title, k.who ?? undefined, k.subs > 0 ? `하위 ${k.subs}` : undefined].filter(x => x !== undefined).join(' · '),
+    text: [k.title.length > cfg.kidTitleMax ? `${k.title.slice(0, cfg.kidTitleMax)}…` : k.title, k.who === null ? undefined : (k.who.length > cfg.kidWhoMax ? `${k.who.slice(0, cfg.kidWhoMax)}…` : k.who), k.subs > 0 ? `하위 ${k.subs}` : undefined].filter(x => x !== undefined).join(' · '),
     age: fmtMin(k.at, nowMs),
+    ...(() => { const b = kidBeat(k, nowMs, cfg); return b === undefined ? {} : { sub: b.text, warn: b.warn } })(),
   }))
   if (ks.length > cfg.epicKidsMax) out.push({ mark: '', text: `외 ${ks.length - cfg.epicKidsMax}개`, age: '' })
   return out

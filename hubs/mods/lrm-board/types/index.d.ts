@@ -121,7 +121,9 @@ export type AutoCard = {
 }
 
 /** 에픽 하위 카드 한 줄 원료 */
-export type AutoKid = { id: string; title: string; st: 'done' | 'doing' | 'blocked' | 'todo'; who: string | null; at: number | null; subs: number }
+/** 진행 중(doing) 카드만 beatAt(마지막 heartbeat, epoch 초)·ev(증거 상태)를 가짐. 옛 파일에는 없음 */
+export type KidEvidence = 'none' | 'ok' | 'stale' | 'unk'
+export type AutoKid = { id: string; title: string; st: 'done' | 'doing' | 'blocked' | 'todo'; who: string | null; at: number | null; subs: number; beatAt?: number | null; ev?: KidEvidence }
 
 /** 에픽 펼침 상태 파일(panel-view.json). all 이 기본, epics 는 에픽별 예외 */
 export type EpicView = { all: boolean; epics: Record<string, boolean> }

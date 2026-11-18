@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""작업판 카드 heartbeat. 집은 작업자가 '살아 있음'을 남김. 패널은 마지막 갱신이 오래되면 표시함."""
+import argparse
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
+import board_beat as bb  # noqa: E402
+
+EPILOG = """\
+갱신 시각은 beads 임대(bd heartbeat)의 heartbeat_at 에 남고, 한 줄 메모·증거는 카드 metadata(beat_note·evidence_<종류>)에 남음.
+코멘트는 쓰지 않음. board-claim(집을 때)·board-run --card(시험 뒤)가 자동으로 부름. 긴 작업은 단계마다 손으로 한 번씩 부름.
+오래됨 표시 기준(기본 30분)은 패널 설정 PANEL_CONFIG.beatStaleMin(hubs/mods/lrm-board/hooks/board.ts) 한 곳.
+반복 실행해도 안전함(갱신 시각만 앞으로 감).
+종료 코드: 0 갱신 · 2 사용법·증거 형식·카드 없음 · 4 환경(bd 실패) · 13 담당이 아니거나 집힌 카드가 아님
+예:
+  board-beat lrm-12 ui-worker
+  board-beat lrm-12 ui-worker "시험 작성 중"
+환경: BOARD_DIR(기본 ~/orca/board)
+"""
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="board-beat", description="집은 카드 heartbeat(갱신 시각·한 줄 메모).",
+                                 epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("card", help="카드 id")
+    ap.add_argument("actor", help="작업자 이름(집을 때 쓴 이름)")
+    ap.add_argument("note", nargs="?", default=None, help=f"한 줄 메모(개행 제거, {bb.NOTE_MAX}자까지)")
+    ap.add_argument("--evidence", metavar="KIND=COMMIT", help="증거 기록(board-run --card 가 씀). 예: test=1a2b3c4")
+    try:
+        a = ap.parse_args()
+    except SystemExit as e:
+        sys.exit(0 if e.code == 0 else 2)
+    ev = None
+    if a.evidence:
+        kind, _, commit = a.evidence.partition("=")
+        ev = (kind, commit)
+    board = os.environ.get("BOARD_DIR", os.path.expanduser("~/orca/board"))
+    if not os.path.isdir(board):
+        print(f"실패: 작업판 폴더 {board} 없음. 조치: BOARD_DIR=<경로> board-beat …", file=sys.stderr)
+        sys.exit(4)
+    os.chdir(board)
+    try:
+        bb.beat(a.card, a.actor, a.note, ev)
+    except bb.BeatError as e:
+        print(e, file=sys.stderr)
+        sys.exit(e.code)
+    print(f"갱신: {a.card} ← {a.actor}")
+
+
+if __name__ == "__main__":
+    main()
