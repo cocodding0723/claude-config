@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""Slack 밖(터미널 대화)에서 받은 결정 답을 결정 기록에 남김. 남기지 않으면 2시간 재알림이 이미 정한 결정을 계속 물음.
+기록은 answer_store 한 곳(Slack 버튼과 같은 줄 모양, source=terminal). Slack 호출 없음 — 카드 글은 다음 대기 목록 회차가 '답함'으로 고침.
+감시기 카드(버튼이 동작을 실행하는 카드)의 등록은 건드리지 않음: 그 동작은 Slack 버튼으로만 실행됨.
+
+사용: decide-answer <결정 번호 D-…> "<사용자 원문>" [--pick N] [--dry-run] [--json]     원문이 - 로 시작하면 옵션 뒤에 -- 를 두고 씀
+      decide-answer --ts <메시지 ts> "<사용자 원문>" [--dry-run] [--json]     결정 번호가 없는 옛 카드
+예:   decide-answer D-GEN1PLAN "승인, 알림 규칙도 추천대로" --pick 1
+      decide-answer D-B12ab "둘 다 아니고 다음 주에 다시 보자"
+환경: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs)
+종료 코드: 0 기록함(이미 답한 카드는 그대로 두고 0), 2 인자 오류, 4 그 번호·ts 의 결정 카드 없음"""
+import argparse
+import json
+import os
+import re
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import answer_store  # noqa: E402
+
+EXIT_USAGE, EXIT_MISSING = 2, 4
+TS_RE = re.compile(r"\d{10}\.\d{6}")
+DID_RE = re.compile(r"D-[0-9A-Za-z]{1,16}")
+
+
+def fail(code: int, msg: str) -> "NoReturn":  # noqa: F821
+    print(msg, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def pick_extra(card: dict, pick: "int | None", text: str) -> tuple:
+    """(inbox 에 합칠 값, 기록할 문구). --pick 이면 카드의 그 선택지 문구, 아니면 사용자 원문"""
+    if pick is None:
+        return {"action": "custom", "text": text}, text
+    label = (card.get("options") or {}).get(str(pick))
+    if not label:
+        fail(EXIT_USAGE, f"선택지 {pick} 가 그 카드에 없음. 조치: --pick 을 빼고 원문만 남기거나 카드의 번호(1~{len(card.get('options') or {})})를 지정")
+    return {"action": "pick", "pick": pick, "text": text}, label
+
+
+def by_did(store: answer_store.AnswerStore, did: str, pick, text: str, dry: bool) -> list:
+    cards = store.cards(did)
+    if not cards:
+        fail(EXIT_MISSING, f"결정 {did} 의 카드 기록 없음. 조치: 번호를 확인하거나 결정 번호 없는 옛 카드면 --ts <메시지 ts>")
+    plans = {c["ts"]: pick_extra(c, pick, text) for c in cards if not c["by"]}  # 쓰기 전에 전부 검증: 카드가 여럿일 때 앞 카드만 기록하고 실패하지 않게
+    out = []
+    for c in cards:
+        if c["by"]:
+            out.append({"ts": c["ts"], "recorded": False, "already": answer_store.SOURCE_NAME.get(c["by"], c["by"])})
+            continue
+        extra, label = plans[c["ts"]]
+        ans = answer_store.Answer(did, c["ts"], c.get("channel", ""), c.get("title", ""), label, answer_store.TERMINAL, extra)
+        late = "" if dry else store.record(ans)
+        out.append({"ts": c["ts"], "recorded": not late and not dry, "already": answer_store.SOURCE_NAME.get(late, late), "dryRun": dry})
+    return out
+
+
+def by_ts(store: answer_store.AnswerStore, ts: str, text: str, dry: bool) -> list:
+    """결정 번호 없는 옛 카드: 닫힘 기록에만 남김(판정 규칙상 닫힘 기록의 ts 는 답한 것)"""
+    if ts in store.read_done():
+        return [{"ts": ts, "recorded": False, "already": "닫힘 기록"}]
+    if not dry:
+        store.append(store.done, ts + "\n")
+    return [{"ts": ts, "recorded": not dry, "already": "", "dryRun": dry}]
+
+
+def main(argv: list) -> int:
+    ap = argparse.ArgumentParser(prog="decide-answer", description="터미널에서 받은 결정 답을 결정 기록에 남김(재알림에서 빠짐).",
+                                 epilog='예: decide-answer D-GEN1PLAN "승인" --pick 1')
+    ap.add_argument("did", nargs="?", help="결정 번호(D-…). --ts 를 쓰면 생략")
+    ap.add_argument("text", nargs="?", help="사용자 답 원문 그대로")
+    ap.add_argument("--ts", help="결정 번호 없는 옛 카드의 메시지 ts(숫자.숫자)")
+    ap.add_argument("--pick", type=int, help="고른 선택지 번호(카드의 번호)")
+    ap.add_argument("--dry-run", action="store_true", help="쓰지 않고 할 일만 출력")
+    ap.add_argument("--json", action="store_true", help="결과를 JSON 한 줄로")
+    a = ap.parse_args(argv)
+    if a.ts and a.text is None:  # --ts 를 쓰면 위치 인자는 원문 하나뿐
+        a.did, a.text = None, a.did
+    text = (a.text or "").strip()
+    if not text:
+        fail(EXIT_USAGE, '답 원문이 비었음. 조치: decide-answer <결정 번호> "<사용자 원문>"')
+    store = answer_store.AnswerStore()
+    if a.ts:
+        if a.did or a.pick is not None or not TS_RE.fullmatch(a.ts):
+            fail(EXIT_USAGE, "--ts 는 숫자.숫자(예 1794968665.024229)이고 결정 번호·--pick 과 함께 쓰지 않음")
+        rows = by_ts(store, a.ts, text, a.dry_run)
+    else:
+        if not a.did or not DID_RE.fullmatch(a.did):
+            fail(EXIT_USAGE, f"결정 번호 형식 오류: {a.did} — D-영문·숫자(예 D-GEN1PLAN)")
+        rows = by_did(store, a.did, a.pick, text, a.dry_run)
+    if a.json:
+        print(json.dumps({"decision": a.did or "", "cards": rows}, ensure_ascii=False))
+    else:
+        for r in rows:
+            state = "미리 보기(쓰지 않음)" if r.get("dryRun") else "기록함" if r["recorded"] else f"이미 답함({r['already']})"
+            print(f"{a.did or '옛 카드'} {r['ts']}: {state}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

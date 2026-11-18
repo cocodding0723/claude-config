@@ -21,6 +21,7 @@ LRM_PY_DIR="$(cd "$(dirname "$0")" && pwd)" "$PY" -I - "$DIR" "$@" <<'PY'
 import json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 sys.path.insert(0, os.environ["LRM_PY_DIR"])  # -I 는 같은 폴더를 import 경로에 넣지 않음
 import tls_ctx
+import answer_store
 SSL_CTX = tls_ctx.ssl_context()
 H = sys.argv[1]
 DRY = "--dry-run" in sys.argv[2:]
@@ -37,6 +38,8 @@ HIST = os.path.join(H, "slack-pending-history.jsonl")
 # 번호 카드(slack_notify.sh --options) 답 표시. 형식은 slack_poll.sh 와 같음. 표시만 하고 결정을 확정·실행하지 않음(메인이 원문으로 확인)
 DECISION_ID_RE = re.compile(r"D-[0-9A-Za-z]{1,16}", re.ASCII)
 ANSWER_ACTIONS = ("pick", "approve", "hold")
+TOLD_MAX = 60  # 고쳐 쓴 글에 보이는 답 내용 길이
+SAID_NOTE = " — 글 답 도착, 담당 확인 중"  # 선택 표기 없는 글 답이 온 카드. 닫지 않고 표시만
 
 class Fail(Exception):
     pass
@@ -139,6 +142,17 @@ def main():
              and isinstance(s.get("decision_id"), str) and DECISION_ID_RE.fullmatch(s["decision_id"])}
     done = {t for t in reacted if t not in cards} | {t for t, st in cards.items() if st and st[0] == "closed"}
     done |= set(open(done_file).read().split()) if os.path.exists(done_file) else set()
+    # 버튼·터미널 답은 답 기록 모듈이 판정(확인 목록·옆 패널과 같은 한 곳). 여기서 따로 세면 Slack 밖에서 답한 결정이 계속 대기로 남음
+    known, proof = set(done), {}  # proof: 카드 ts → 판정 근거 줄(고쳐 쓸 때 답 내용을 보여 줌)
+    for s in sent:
+        if s.get("ts") and isinstance(s.get("decision_id"), str):
+            by, rec = answer_store.AnswerStore.judge(inbox, known, s["decision_id"], s["ts"])
+            if by:
+                done.add(s["ts"])
+                proof[s["ts"]] = rec
+    # 글로 쓴 답(선택 표기 아님)은 결정을 닫지 않음: "잠깐만" 같은 글에 닫히면 그 뒤 버튼이 거절됨. 목록에 남기되 글이 왔다고 표시하고, 담당이 읽고 decide-answer 로 닫음
+    said = {d.get("parent_ts") for d in inbox if d.get("type") == "thread_reply" and d.get("kind") == "decide"
+            and d.get("action") == "free" and not answer_store.is_question(d.get("text"))}
     # 번호 카드 기록이면 번호가 손상됐어도 목록에는 남김(번호 없이 제목만 표시)
     decisions = [s for s in sent if s.get("ts") and not s.get("thread_ts")
                  and ("결정" in s.get("title", "") or s["ts"] in cards or (s.get("form_kind") == "decide" and "options" in s))]
@@ -164,8 +178,15 @@ def main():
     for s in todo:
         r = reacted.get(s["ts"], {})
         st = cards.get(s["ts"])
-        action = st[1] if st else r.get("action", "완료")
-        text = f"✅ {s['title']} — {action}" if st else f"✅ {s['title']} — 답: {action}"
+        rec = proof.get(s["ts"]) or {}
+        told = str(rec.get("option_text") or rec.get("text") or "")[:TOLD_MAX]  # 버튼·터미널로 답한 내용
+        if st and st[0] == "closed":
+            action, text = st[1], f"✅ {s['title']} — {st[1]}"
+        elif told:  # 보류 뒤 버튼·터미널로 닫힌 카드도 여기(상태 문구 '보류' 대신 실제 답)
+            action, text = told, f"✅ {s['title']} — 답: {told}"
+        else:
+            action = st[1] if st else r.get("action", "완료")
+            text = f"✅ {s['title']} — {action}" if st else f"✅ {s['title']} — 답: {action}"
         if DRY:
             print(f"수정 예정: {s['ts']} → {text}")
             continue
@@ -196,7 +217,7 @@ def main():
         row = f"• <{link}|{s['title']}>"
         if card:
             st = cards[s["ts"]]
-            row += f" · {s.get('decision_id')}" + (f" — {st[1]}" if st else "")
+            row += f" · {s.get('decision_id')}" + (f" — {st[1]}" if st else SAID_NOTE if s["ts"] in said else "")
         rows.append((s["title"], row))
     channel = waiting[0]["channel"] if waiting else None
 

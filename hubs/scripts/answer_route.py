@@ -37,13 +37,11 @@ def said_text(did: str, extra: dict, label: str) -> str:
     return f"결정 {did} = " + (f"선택 {pick}({name})" if isinstance(pick, int) else name) + " (버튼)"
 
 
-# 직접 입력이 질문인지 판정하는 규칙(한 곳). 끝이 물음표, 또는 끝말이 아래 어미. 끝의 공백·마침표·느낌표·물결은 무시
-QUESTION_RE = re.compile(r"[?？]\s*$|(?:뭐야|뭔데|어떻게|왜|인가|나요|까)[\s.!~]*$")
+QUESTION_RE = answer_store.QUESTION_RE  # 질문 판정 규칙은 답 기록 모듈 한 곳(대기 목록·패널과 같은 판정)
 QUESTION_NOTE = "질문(직접 입력, 답 아님·카드 버튼은 열려 있음)"
 
 
-def is_question(text: str) -> bool:
-    return bool(QUESTION_RE.search((text or "").strip()))
+is_question = answer_store.is_question
 
 
 def asked_text(did: str, text: str) -> str:
