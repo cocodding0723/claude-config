@@ -1,7 +1,8 @@
 #!/bin/bash
 # slack_pending.sh 케이스: 정상·원문 이력·수정 상한·수정 재시도·빈 목록·이력 실패 차단·전송 직후 이력 실패·429·시간 예산·중복 실행
 . "$(dirname "$0")/lib.sh"
-PEND="$SCRIPTS/slack_pending.sh"
+# 설치되는 스크립트(hubs/scripts)를 검사함. lib.sh 기본값($ROOT/lrm-hubs)은 11-06 이후 고치지 않은 옛 사본이라 지금 동작을 검사하지 못함
+PEND="${LRM_SCRIPT_DIR:-$ROOT/hubs/scripts}/slack_pending.sh"
 export LRM_RETRY_CAP=0
 NOW=$(date +%s)
 
