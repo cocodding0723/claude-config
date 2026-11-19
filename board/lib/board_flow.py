@@ -8,6 +8,9 @@ board-claim(집기)과 board-stage(단계 옮기기)가 같이 씀. 규칙을 �
 계획 승인 = 그 기능의 계획 승인 카드(결정 번호 plan_id(기능 카드 id), 1번 선택지가 '승인')에 사용자가 Slack·문서 사이트에서 1번이나 추천대로를 고른 것,
 또는 사용자가 그 기능 코디네이터 창에 '승인'·'스킵'으로 시작하는 글을 직접 친 것(세션 기록에서 읽음, board_said).
 터미널에서 남긴 답(decide-answer)은 세지 않음: 코디네이터가 스스로 승인할 수 있게 되기 때문.
+
+건너뛰기(11-19 사용자 결정: 준비만): 사용자가 급한 일에서 이해(1)·계획(2)을 건너뛰게 한 기능은 label skip:understand·skip:plan 을 가짐.
+skip:plan 이 있으면 계획 승인 없이 구현 카드를 집음(작은 일과 같은 길). 검증·검수·병합 승인은 건너뛰지 못함.
 """
 import hashlib
 import json
@@ -30,6 +33,15 @@ SENT_NAME, INBOX_NAME = "slack-sent.jsonl", "slack-inbox.jsonl"
 # 코디네이터 창에 직접 친 승인·건너뛰기: 글이 이 말로 시작할 때만("승인", "계획 승인한다", "스킵하고 진행", "승인 건너뛰고 진행").
 # "진행해"·"ㄱㄱ" 같은 말은 세지 않음: 다른 얘기 끝에 붙는 말이라 뜻하지 않은 승인이 됨
 TYPED_OK = re.compile(r"^\s*(?:계획\s*)?(?:승인|스킵|skip|건너뛰)", re.I)
+# 건너뛸 수 있는 준비 항목: 이름 → (사용자에게 보일 이름, 이 단계에 들어서면 이미 지난 항목)
+SKIP_HEAD = "skip:"
+SKIP_ITEMS = {"understand": ("이해", "design"), "plan": ("계획", "build")}
+SKIP_BUNDLES = {"급함": ("understand", "plan")}  # 묶음 이름 → 한 번에 거는 항목
+# 건너뛸 수 없는 것의 이름. '스킵 다른모델검수'를 계획 승인으로 읽지 않고 거절 안내를 하려고 둠
+SKIP_REFUSED = ("다른모델검수", "모델검수", "검수", "사용자검수", "내검수", "검증", "녹화", "캡처", "촬영", "컴파일", "시험", "병합", "병합승인")
+# 코디네이터 창에 친 건너뛰기 글. 글 전체가 이 꼴일 때만: "급함 아님"처럼 다른 말이 붙은 글을 건너뛰기로 읽지 않게
+URGENT_TEXT = re.compile(r"^\s*급함(?:으로)?(?:\s*(?:진행|가자|ㄱㄱ|해줘|처리))?[\s.!~]*$")
+SKIP_TEXT = re.compile(r"^\s*(?:스킵|skip|건너뛰기?)\s+(.+?)[\s.!~]*$", re.I)
 HUB_LINE = re.compile(r"^[ \t>*-]*기능 코디네이터 허브[ \t]*:[ \t]*(\S+)", re.M)  # feature_open.sh 가 기능 카드 설명에 적는 줄(feedback_route.HUB_LINE_RE 와 같은 꼴)
 
 
@@ -96,6 +108,71 @@ def stage_block(epic: dict, target: str, approved) -> str:
 
 def labels(card: "dict | None") -> list:
     return list((card or {}).get("labels") or [])
+
+
+def current(epic: "dict | None") -> "Stage | None":
+    """카드에 적힌 단계(없으면 None). 여러 개가 붙어 있으면 가장 뒤 단계"""
+    have = [s for s in STAGES if s.label in labels(epic)]
+    return have[-1] if have else None
+
+
+def skips(epic: "dict | None") -> tuple:
+    """이 기능에서 사용자가 건너뛰기로 한 항목들(SKIP_ITEMS 순서)"""
+    have = {x[len(SKIP_HEAD):] for x in labels(epic) if x.startswith(SKIP_HEAD)}
+    return tuple(k for k in SKIP_ITEMS if k in have)
+
+
+def skip_keys(words) -> tuple:
+    """항목 이름들(영문 이름·한글 이름·묶음 이름) → (항목들, 모르는 낱말들). 항목은 SKIP_ITEMS 순서, 겹치면 한 번"""
+    by_name = {v[0]: k for k, v in SKIP_ITEMS.items()}
+    got, unknown = set(), []
+    for w in words:
+        w = str(w).strip()
+        if w in SKIP_BUNDLES:
+            got.update(SKIP_BUNDLES[w])
+        elif w in SKIP_ITEMS:
+            got.add(w)
+        elif w in by_name:
+            got.add(by_name[w])
+        elif w:
+            unknown.append(w)
+    return tuple(k for k in SKIP_ITEMS if k in got), tuple(unknown)
+
+
+def typed_skips(text: str) -> tuple:
+    """코디네이터 창에 친 글이 건너뛰기면 그 항목들, 아니면 (). '급함'(묶음) 또는 '스킵 <항목…>' 꼴이고 항목 이름만 있을 때"""
+    if URGENT_TEXT.match(text or ""):
+        return SKIP_BUNDLES["급함"]
+    m = SKIP_TEXT.match(text or "")
+    if not m:
+        return ()
+    keys, unknown = skip_keys(re.split(r"[\s,·]+", m.group(1)))
+    return () if unknown else keys
+
+
+def skip_past(epic: "dict | None", item: str) -> bool:
+    """그 항목의 단계를 이미 지났는가(지난 항목은 건너뛰기를 걸거나 풀어도 달라질 것이 없음)"""
+    st = current(epic)
+    return st is not None and order(st) >= order(stage(SKIP_ITEMS[item][1]))
+
+
+def typed_plan_ok(text: str) -> bool:
+    """창에 친 글이 계획 승인인가. 항목을 붙인 건너뛰기('스킵 이해')는 그 항목만 건너뛰고 계획 승인으로 세지 않음"""
+    items = typed_skips(text)
+    if items:
+        return "plan" in items
+    return bool(TYPED_OK.match(text or "")) and not refused_skips(text)
+
+
+def refused_skips(text: str) -> tuple:
+    """'스킵 <낱말…>' 꼴 글에 든, 건너뛸 수 없는 것의 이름들. 그런 글은 계획 승인도 건너뛰기도 아님"""
+    m = SKIP_TEXT.match(text or "")
+    return tuple(w for w in re.split(r"[\s,·]+", m.group(1)) if w in SKIP_REFUSED) if m else ()
+
+
+def is_control(text: str) -> bool:
+    """승인·건너뛰기로 친 글인가(지시 장부에 지시로 적지 않는 글)"""
+    return bool(TYPED_OK.match(text or "") or typed_skips(text))
 
 
 def size_of(epic: "dict | None") -> str:
@@ -176,7 +253,7 @@ def typed_approval(hub_dir: str, did: str, epic: "dict | None", typed=board_said
         ans = last_answer(hub_dir, did, card)
         if ans is not None and isinstance(ans.get("received_at"), (int, float)):
             since = max(since, float(ans["received_at"]))
-    return any(TYPED_OK.match(text) for _, text in typed(ws, since))
+    return any(typed_plan_ok(text) for _, text in typed(ws, since))
 
 
 def approval(hub_dir: str, epic: "dict | None"):
@@ -202,11 +279,11 @@ def claim_block(card: dict, epic: "dict | None", approved) -> str:
     if not size:
         return (f"기능 {epic['id']} 의 크기를 정하지 않음(접수 단계) — 목표·확인 방법을 적고 "
                 f"bd label add {epic['id']} {SIZE_HEAD}{SMALL}|{NORMAL}|{LARGE} 중 하나를 붙인 뒤 다시 집음")
-    if size == SMALL:
+    if size == SMALL or "plan" in skips(epic):
         return ""
     did = plan_id(epic["id"])
     if approved(did):
         return ""
     return (f"기능 {epic['id']}({SIZES[size]}) 의 계획 승인이 없음 — 계획서를 작업 스레드에 결정 카드 {did} 로 올리고"
             f"(1번 선택지 '{APPROVE_WORD}') 사용자가 승인한 뒤 다시 집음. 사용자가 코디네이터 창에 '승인'이나 '스킵'이라고 직접 쳐도 됨. "
-            f"작은 일이면 {SIZE_HEAD}{SMALL} 로 바꿈")
+            f"작은 일이면 {SIZE_HEAD}{SMALL} 로 바꿈. 급한 일이면 사용자가 코디네이터 창에 '급함'이라고 치거나 /orca-feature skip 으로 준비를 건너뜀(board-skip)")

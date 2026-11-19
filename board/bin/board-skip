@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""건너뛰기 기록: 사용자가 급한 일에서 건너뛰게 한 준비 항목(이해·계획)을 기능 카드에 적고 보여 줌.
+집기·단계 도구(board-claim, board-stage)가 이 표시(label skip:<항목>)를 읽어 계획 승인 없이 구현으로 보냄(lib/board_flow.py).
+건너뛸 수 있는 것은 준비뿐(11-19 사용자 결정). 컴파일·시험, 다른 모델 검수, 캡처·녹화, 사용자 검수, 병합 승인은 그대로 거침."""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
+import board_flow as bf  # noqa: E402
+import board_said as said  # noqa: E402
+
+EPILOG = """\
+항목: 이해(understand) — 기획 대조표·지금 상태 도식·기준 캡처를 만들지 않음 · 계획(plan) — 계획서와 계획 승인 없이 구현으로 감 · 급함 — 둘 다
+건너뛰기는 사용자만 정함. 근거는 둘 중 하나:
+  --sync            사용자가 그 기능 코디네이터 창에 친 글('급함', '스킵 계획', '스킵 이해 계획')을 세션 기록에서 읽어 적음
+  --user-said 원문  다른 창에서 받은 사용자 명령(/orca-feature skip …)의 원문. 세션 기록과 대조하지 않으므로 사용자가 실제로 한 말만 넣음
+이미 지난 단계의 항목은 걸거나 풀어도 바꾸지 않고 알려 줌(이해는 설계부터, 계획은 구현부터 지난 것).
+종료 코드: 0 성공(조회 포함) · 2 사용법·카드 없음·기능 카드 아님·모르는 항목·건너뛸 수 없는 항목·근거 없음 · 4 환경(bd 실패)
+예:
+  board-skip lrm-94k                                    지금 건너뛴 것
+  board-skip lrm-94k coord-x --sync                     창에 친 건너뛰기 글을 적음
+  board-skip lrm-94k coord-x 급함 --user-said "/orca-feature skip mailbox 급함"
+  board-skip lrm-94k coord-x 계획 --undo                계획 건너뛰기 취소
+환경: BOARD_DIR(기본 ~/orca/board) · BOARD_CLAUDE_DIRS 세션 기록을 찾을 설정 폴더(쌍점 구분, 시험용)"""
+
+MARK = re.compile(r"\[skip:(\d+)\]")  # --sync 가 적은 글의 시각 표시. 같은 글을 두 번 적지 않게 함(취소한 뒤 다시 걸리지 않게)
+
+
+def die(msg, code):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def bd(*args, actor=None):
+    env = dict(os.environ, BD_ACTOR=actor) if actor else None
+    return subprocess.run(["bd", *args], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
+
+
+def must(r, what):
+    if r.returncode != 0:
+        die(f"실패: {what} {r.stderr.strip()[:200]}. 조치: 같은 명령을 다시 실행(이미 된 것은 건너뜀)", 4)
+
+
+def names(keys):
+    return ", ".join(bf.SKIP_ITEMS[k][0] for k in keys)
+
+
+def apply(epic, actor, keys, quote, mark=""):
+    """항목들을 건다. (새로 건 것, 이미 지난 것) — 이미 걸린 것은 조용히 넘어감"""
+    have = set(bf.skips(epic))
+    past = [k for k in keys if k not in have and bf.skip_past(epic, k)]
+    new = [k for k in keys if k not in have and k not in past]
+    for k in new:
+        must(bd("label", "add", epic["id"], bf.SKIP_HEAD + k, actor=actor), f"label {bf.SKIP_HEAD}{k}")
+    if new or mark:
+        what = f"건너뛰기: {names(new)}" if new else f"건너뛰기 글(바꾼 것 없음: {'이미 지남 ' + names(past) if past else '이미 걸림'})"
+        must(bd("comments", "add", epic["id"], f"{what} (사용자 원문: {quote}){mark}", actor=actor), "기록 코멘트")
+    return new, past
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="board-skip", description="사용자가 건너뛰게 한 준비 항목(이해·계획) 기록.",
+                                 epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("card", help="기능 카드(epic) id")
+    ap.add_argument("actor", nargs="?", help="작업자 이름(BD_ACTOR). 기록을 바꿀 때 필요")
+    ap.add_argument("items", nargs="*", help="항목: 이해 · 계획 · 급함(둘 다)")
+    ap.add_argument("--sync", action="store_true", help="코디네이터 창에 친 건너뛰기 글을 읽어 적음")
+    ap.add_argument("--user-said", default="", metavar="원문", help="항목을 직접 걸 때: 그렇게 하라고 한 사용자 원문")
+    ap.add_argument("--undo", action="store_true", help="적은 항목의 건너뛰기를 취소")
+    ap.add_argument("--json", action="store_true", help="결과를 JSON 한 줄로")
+    try:
+        a = ap.parse_args()
+    except SystemExit as e:
+        sys.exit(0 if e.code == 0 else 2)
+    board = os.environ.get("BOARD_DIR", os.path.expanduser("~/orca/board"))
+    if not os.path.isdir(board):
+        die(f"실패: 작업판 폴더 {board} 없음. 조치: BOARD_DIR=<경로> board-skip …", 4)
+    os.chdir(board)
+    r = bd("show", a.card, "--json")  # 없는 카드는 bd 가 실패로 답함 → 사용법 오류(2)로 안내
+    try:
+        shown = json.loads(r.stdout or "null")
+    except ValueError:
+        shown = None
+    epic = shown[0] if isinstance(shown, list) and shown else shown
+    if not epic:
+        die(f"거부: 카드 {a.card} 없음. 조치: bd list -t epic 으로 id 확인", 2)
+    if epic.get("issue_type") != "epic":
+        die(f"거부: {a.card} 는 기능 카드(epic)가 아님. 조치: 건너뛰기는 기능 카드에 적음 — 상위 카드 id 로 다시 실행", 2)
+
+    keys, unknown = bf.skip_keys(a.items)
+    refused = [w for w in unknown if w in bf.SKIP_REFUSED]
+    if refused:
+        die(f"거부: {', '.join(refused)} 은(는) 건너뛸 수 없음. 건너뛸 수 있는 것은 준비(이해·계획, 묶음 급함)뿐이고 "
+            f"검증·검수·병합 승인은 그대로 거침. 조치: board-skip {a.card} <이름> 급함 --user-said \"<원문>\"", 2)
+    if unknown:
+        die(f"거부: 모르는 항목 {', '.join(unknown)}. 조치: 이해 · 계획 · 급함 중에서 고름", 2)
+    changing = a.sync or a.undo or bool(keys)
+    if changing and not a.actor:
+        die("거부: 작업자 이름 필요. 조치: board-skip <기능 카드> <작업자> …", 2)
+    if a.undo and (a.sync or not keys):
+        die("거부: --undo 는 취소할 항목과 함께 씀. 조치: board-skip <기능 카드> <작업자> 계획 --undo", 2)
+    if keys and not a.undo and not a.sync and not a.user_said.strip():
+        die("거부: 건너뛰기는 사용자만 정함 — 근거가 필요. 조치: 사용자가 코디네이터 창에 '급함'이라고 쳤으면 --sync, "
+            "다른 창에서 명령했으면 --user-said \"<사용자 원문>\"", 2)
+
+    out = {"card": epic["id"], "added": [], "removed": [], "past": [], "refused": []}
+    if a.undo:
+        have = set(bf.skips(epic))
+        out["past"] = [k for k in keys if k in have and bf.skip_past(epic, k)]
+        out["removed"] = [k for k in keys if k in have and k not in out["past"]]
+        for k in out["removed"]:
+            must(bd("label", "remove", epic["id"], bf.SKIP_HEAD + k, actor=a.actor), f"label {bf.SKIP_HEAD}{k} 제거")
+        if out["removed"]:
+            must(bd("comments", "add", epic["id"], f"건너뛰기 취소: {names(out['removed'])}", actor=a.actor), "기록 코멘트")
+    elif a.sync:
+        ws = bf.coordinator_ws(epic)
+        if not ws:
+            die(f"거부: {a.card} 설명에 '기능 코디네이터 허브: <경로>' 줄이 없어 세션 기록을 찾을 수 없음. 조치: feature_open.sh 로 연 기능 카드인지 확인", 2)
+        r = bd("comments", a.card, "--json")
+        must(r, "코멘트 조회")
+        seen = {int(n) for c in json.loads(r.stdout or "[]") for n in MARK.findall(str(c.get("text") or ""))}
+        for at, text in said.typed(ws, said.stamp(epic.get("created_at"))):
+            if int(at) in seen:
+                continue
+            out["refused"] += [w for w in bf.refused_skips(text) if w not in out["refused"]]
+            items = bf.typed_skips(text)
+            if not items:
+                continue
+            new, past = apply(epic, a.actor, items, text, f" [skip:{int(at)}]")
+            out["added"] += new
+            out["past"] += [k for k in past if k not in out["past"]]
+            epic = dict(epic, labels=bf.labels(epic) + [bf.SKIP_HEAD + k for k in new])
+    elif keys:
+        out["added"], out["past"] = apply(epic, a.actor, keys, a.user_said.strip())
+
+    if changing:
+        epic = (json.loads(bd("show", a.card, "--json").stdout or "[null]") or [epic])[0] or epic
+    out["skips"] = list(bf.skips(epic))
+    if a.json:
+        print(json.dumps(out, ensure_ascii=False))
+        return
+    print(f"건너뛰기: {names(out['skips']) or '없음'}")
+    if out["added"]:
+        print(f"새로 건 것: {names(out['added'])} — 이해는 문서를 만들지 않고, 계획은 계획서·계획 승인 없이 구현으로 감")
+    if out["removed"]:
+        print(f"취소한 것: {names(out['removed'])}")
+    if out["past"]:
+        print(f"이미 지난 단계라 바꾸지 않은 것: {names(out['past'])}")
+    if out["refused"]:
+        print(f"건너뛸 수 없는 것을 건너뛰라는 글이 있음: {', '.join(out['refused'])} — 사용자에게 '준비(이해·계획)만 건너뛸 수 있다'고 알림")
+
+
+if __name__ == "__main__":
+    main()
