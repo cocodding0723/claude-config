@@ -133,6 +133,7 @@ bd show "$e" --json | grep -q '"stage:review"' && ok "닫힌 epic 은 사용자 
 expect "--user-ok 원문 없으면 2" 2 "$BIN" --epic "$e" lead --user-ok ""
 expect "--user-ok 로 검수 대기 해제" 0 "$BIN" --epic "$e" lead --user-ok "좋아 반영해"
 bd show "$e" --json | grep -q '"stage:review"' && ko "검수 대기 해제" || ok "검수 대기 label 떼짐"
+bd show "$e" --json | grep -q '"stage:ship"' && ok "검수 통과 뒤에는 반영 단계 label" || ko "반영 단계 label"
 
 # epic 게이트: 직접 닫은 하위 카드·board-merge 기록 없는 병합 거부
 ME=$(git -C "$GR" rev-parse w)
@@ -186,13 +187,23 @@ rm -f "$BOARD_DIR/repos.json"
 "$BIN" "$gc" w1 --dry-run >"$SB/out" 2>&1; grep -q '게이트 컴파일 설정 없음' "$SB/out" && ok "컴파일 설정 없으면 경고" || ko "컴파일 설정 없음 경고"
 ls "$BOARD_DIR"/.evidence/"$gc"-compile-*.log >/dev/null 2>&1 && ok "게이트 컴파일 로그를 작업판에 남김" || ko "게이트 컴파일 로그"
 
-# epic 닫히면 기능 코디네이터 정리 실행
+# 기능 코디네이터는 검수와 반영이 끝날 때까지 남음: 닫힘 → 검수 통과(--user-ok) → 반영 끝(--shipped) 순서의 마지막에만 정리 실행
 printf '#!/bin/bash\necho "$@" > "%s/fc.args"\n' "$SB" > "$SB/fc.sh"
 fe=$(bd create "기능 묶음" -t epic --labels "feature:demo,$BL" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
 sleep 1; printf 'png' > "$SB/ev/s2.png"; printf 'mp4' > "$SB/ev/r2.mp4"; cp "$SB/ev/rv.json" "$SB/ev/rv2.json"; ev "$fe" "$SB/ev/s2.png"; ev "$fe" "$SB/ev/r2.mp4"; ev "$fe" "review=$SB/ev/rv2.json"
 expect "feature: epic 닫힘" 0 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epic "$fe" lead
+sleep 1.5
+[ ! -e "$SB/fc.args" ] && ok "epic 이 닫혀도 코디네이터 정리는 아직 실행하지 않음(검수 답을 받을 세션 유지)" || ko "검수 전 정리 실행됨" "$(cat "$SB/fc.args" 2>/dev/null)"
+expect "--shipped 는 검수 통과 전에는 거부(4)" 4 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epic "$fe" lead --shipped "PR #9 병합"
+expect "feature: 검수 통과 기록" 0 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epic "$fe" lead --user-ok "통과"
+sleep 1.5
+[ ! -e "$SB/fc.args" ] && ok "검수 통과만으로는 정리하지 않음(PR·병합이 남음)" || ko "검수 통과에 정리 실행됨" "$(cat "$SB/fc.args" 2>/dev/null)"
+expect "--shipped 근거 없으면 2" 2 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epic "$fe" lead --shipped ""
+expect "feature: 반영 끝 기록" 0 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epic "$fe" lead --shipped "PR #9 병합(abc1234)"
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$SB/fc.args" ] && break; sleep 0.3; done
-[ "$(cat "$SB/fc.args" 2>/dev/null)" = "--slug demo --yes" ] && ok "epic 닫힘 뒤 feature_close --slug --yes 실행" || ko "feature_close 연결" "$(cat "$SB/fc.args" 2>/dev/null)"
+[ "$(cat "$SB/fc.args" 2>/dev/null)" = "--slug demo --yes" ] && ok "반영이 끝나면 feature_close --slug --yes 실행" || ko "feature_close 연결" "$(cat "$SB/fc.args" 2>/dev/null)"
+bd show "$fe" --json | grep -q '"stage:ship"' && ko "반영 단계 label 남음" || ok "반영이 끝나면 단계 label 을 뗌"
+bd comments "$fe" --json | grep -q 'shipped: PR #9 병합(abc1234)' && ok "반영 근거가 코멘트로 남음" || ko "반영 근거 코멘트"
 
 # board-run --card: 성공·커밋된 트리면 증거 커밋을 metadata 에 남기고 heartbeat 갱신. 실패·미커밋은 증거 안 남김. 시험 종료 코드는 그대로
 bm=$(new_card "beat 연결"); claim "$bm" wb
