@@ -31,7 +31,7 @@ TAG = "remind"
 LIST_MAX = 8                 # 칸마다 보여 줄 줄 수. 넘으면 '그 밖에 N건'
 STALL_HOURS = 24.0
 NOTIFY_TIMEOUT_S = 60
-REVIEW_LABEL = "stage:review"
+REVIEW_LABEL, SHIP_LABEL = "stage:review", "stage:ship"
 FEATURE_HEAD, STAGE_HEAD = "feature:", "stage:"
 TITLE_TAG = re.compile(r"^\s*(?:\[[^\]]*\]\s*)+")        # 제목 머리의 [LRM-684]·[개인] 같은 표시
 TICKET = re.compile(r"\b[A-Z]{2,}-\d+\b")                # 본문에 티켓 번호를 넣지 않음(양식 A 규칙 5)
@@ -79,11 +79,12 @@ def reviews(cards: list) -> list:
 
 
 def features(cards: list, flow=None) -> list:
-    """열린 기능(기능 label 이 있는 기능 카드)의 단계와 하위 카드 진행. 하위 카드는 id 가 '<기능 id>.' 로 시작하는 카드"""
+    """남은 기능(기능 label 이 있는 기능 카드)의 단계와 하위 카드 진행. 하위 카드는 id 가 '<기능 id>.' 로 시작하는 카드.
+    검수를 통과하고 반영 중인 기능은 카드가 닫혀 있어도 남은 일(PR·병합)"""
     out = []
     for e in cards:
         labels = e.get("labels") or []
-        if e.get("issue_type") != "epic" or e.get("status") == "closed" or not any(x.startswith(FEATURE_HEAD) for x in labels):
+        if e.get("issue_type") != "epic" or not any(x.startswith(FEATURE_HEAD) for x in labels) or (e.get("status") == "closed" and SHIP_LABEL not in labels):
             continue
         kids = [c for c in cards if str(c.get("id") or "").startswith(e["id"] + ".")]
         key = next((x[len(STAGE_HEAD):] for x in labels if x.startswith(STAGE_HEAD)), "")

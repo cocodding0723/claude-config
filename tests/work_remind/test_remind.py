@@ -64,6 +64,11 @@ class BoardTest(unittest.TestCase):
         self.assertEqual([(f["name"], f["stage"], f["done"], f["total"]) for f in got],
                          [("텐션업 불꽃 상승 연출", "3 구현", 1, 3)])
 
+    def test_feature_being_shipped_is_still_listed_after_its_card_closed(self):
+        """검수를 통과해 반영 중인 기능은 카드가 닫혀 있어도 남은 일(PR·병합)"""
+        self.cards.append(card("t-e5", "closed", labels=["feature:ship", "stage:ship"], title="[LRM-700] 반영 중인 기능", kind="epic"))
+        self.assertIn(("반영 중인 기능", "6 반영"), [(f["name"], f["stage"]) for f in wr.features(self.cards, wr.flow_lib())])
+
     def test_feature_without_feature_label_is_not_listed_as_feature(self):
         self.assertNotIn("버그 팀 11-17~", [f["name"] for f in wr.features(self.cards)])
 

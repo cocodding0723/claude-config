@@ -140,6 +140,14 @@ def is_feature(card):
     return card.get("issue_type") == "epic" and bool(slug_of(card))
 
 
+LIVE_STAGES = ("stage:review", "stage:ship")  # 완료 검사가 기능 카드를 닫은 뒤에도 코디네이터가 남는 단계(검수 대기·반영 중, board-done 이 붙이고 뗌)
+
+
+def feature_alive(card):
+    """답을 받을 코디네이터가 있는 기능인가: 열려 있거나, 닫혔어도 검수·반영 단계 표시가 있음"""
+    return bool(card) and (card.get("status") != "closed" or any(x in (card.get("labels") or []) for x in LIVE_STAGES))
+
+
 def is_open(card):
     """끝나지 않은 카드: 닫히지 않았고 반납 표시(END)도 없음"""
     return card.get("status") != "closed" and END not in (card.get("labels") or [])
@@ -285,12 +293,12 @@ def place(rec, hits, text, dry_run, head="", note=""):
                 return to_ws(c, rec, text, dry_run, head, note)
             # 끝난 작업 공간 카드: 답은 그 기능 코디네이터가 받음. 기능도 끝났으면 확인 카드
             up = card_row(c["parent"]) if c.get("parent") else None
-            if up and up.get("status") != "closed" and is_feature(up):
+            if up and feature_alive(up) and is_feature(up):
                 return to_feature(up, rec, text, dry_run, note=f", 끝난 작업 공간 카드 {c['id']} 스레드" + note, head=head)
             return to_triage(rec, hits, "끝난 작업 공간 카드(기능도 끝남)" + note, text, dry_run)
-        if is_feature(c) and c.get("status") != "closed":
+        if is_feature(c) and feature_alive(c):
             return to_feature(c, rec, text, dry_run, note=note, head=head)
-    opened = [e for e in hits if e.get("status") != "closed"]
+    opened = [e for e in hits if feature_alive(e)]
     if len(hits) > 1:
         why = "epic 여럿" if all(e.get("issue_type") == "epic" for e in hits) else "카드 여럿"
     elif not opened:
@@ -312,12 +320,12 @@ def coordinator_ws(epic):
 
 
 def feature_session(hub):
-    """기능 코디네이터 허브 이름(feat-<slug>) → [열린 기능 카드 id, 코디네이터 작업 공간 경로]. 못 찾으면 ['', ''].
+    """기능 코디네이터 허브 이름(feat-<slug>) → [살아 있는 기능 카드 id(열림 또는 검수·반영 단계), 코디네이터 작업 공간 경로]. 못 찾으면 ['', ''].
     작업 공간 경로는 기능 카드 설명의 '기능 코디네이터 허브:' 줄. 없으면 ''(상자·코멘트는 남기고 입력창 알림만 생략)"""
     if not str(hub or "").startswith(BOX_HEAD):
         return ["", ""]
-    rows = [r for r in cards.bd_json("list", "-t", "epic", "-l", f"feature:{hub[len(BOX_HEAD):]}", "--limit", "0") or []
-            if isinstance(r, dict) and r.get("status") != "closed"]
+    rows = [r for r in cards.bd_json("list", "-t", "epic", "-l", f"feature:{hub[len(BOX_HEAD):]}", "--all", "--limit", "0") or []
+            if isinstance(r, dict) and feature_alive(r)]
     if not rows:
         return ["", ""]
     row = card_row(rows[0]["id"]) or rows[0]
