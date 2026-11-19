@@ -182,7 +182,9 @@ def to_feature(epic, rec, text, dry_run, note="", head=""):
     if not dry_run:  # 상자 먼저: 중복 판정이 있어 재시도해도 줄이 겹치지 않고, 코멘트는 상자가 된 뒤에 한 번만
         main_inbox.append("feedback", head + text, SOURCE, ref=f"{epic['id']} slack:{rec.get('ts')}", box=box)
         cards.bd("comments", "add", epic["id"], f"Slack 피드백(원문{note}): {text}")
-    return {"ts": str(rec.get("ts")), "parent_ts": str(rec.get("parent_ts") or ""), "to": "feature", "epic": epic["id"], "box": box}
+    got = {"ts": str(rec.get("ts")), "parent_ts": str(rec.get("parent_ts") or ""), "to": "feature", "epic": epic["id"], "box": box}
+    ws = coordinator_ws(epic)
+    return dict(got, wake_ws=ws) if ws else got  # 쉬는 코디네이터는 상자를 스스로 읽지 않으므로 창에 한 줄 알림. 폴더를 모르면 기록만
 
 
 def to_triage(rec, hits, why, text, dry_run):
@@ -271,7 +273,7 @@ def route_card_reply(rec, dry_run):
         return None
     kind = DECIDE_ASK if answer_store.is_question(rec.get("text")) else DECIDE_ANSWER
     got = to_feature(epic, rec, body(rec), dry_run, note=DECIDE_NOTE[kind].format(did=did), head=DECIDE_HEAD.format(did=did, kind=kind))
-    return dict(got, decision_id=did, wake_ws=ws)  # wake_ws: 결정에 달린 글은 사용자가 답을 기다리므로 코디네이터 창에 바로 알림
+    return dict(got, decision_id=did)
 
 
 def place(rec, hits, text, dry_run, head="", note=""):
@@ -303,6 +305,12 @@ def place(rec, hits, text, dry_run, head="", note=""):
 HUB_LINE_RE = re.compile(r"^[ \t>*-]*기능 코디네이터 허브[ \t]*:[ \t]*(\S+)", re.M)  # feature_open.sh 가 기능 카드 설명에 적는 줄
 
 
+def coordinator_ws(epic):
+    """기능 카드 설명의 '기능 코디네이터 허브:' 줄에 적힌 코디네이터 작업 공간 경로. 없으면 ''"""
+    m = HUB_LINE_RE.search(str((epic or {}).get("description") or ""))
+    return m.group(1) if m else ""
+
+
 def feature_session(hub):
     """기능 코디네이터 허브 이름(feat-<slug>) → [열린 기능 카드 id, 코디네이터 작업 공간 경로]. 못 찾으면 ['', ''].
     작업 공간 경로는 기능 카드 설명의 '기능 코디네이터 허브:' 줄. 없으면 ''(상자·코멘트는 남기고 입력창 알림만 생략)"""
@@ -313,8 +321,7 @@ def feature_session(hub):
     if not rows:
         return ["", ""]
     row = card_row(rows[0]["id"]) or rows[0]
-    m = HUB_LINE_RE.search(str(row.get("description") or ""))
-    return [row["id"], m.group(1) if m else ""]
+    return [row["id"], coordinator_ws(row)]
 
 
 def card_decision(rec):
