@@ -37,6 +37,9 @@ elif a[:2] == ["label", "add"]:
 elif a[:1] == ["update"] and a[2:4] == ["--status", "open"]:
     cards[a[1]]["status"] = "open"
     save()
+elif a[:1] == ["update"] and a[2:3] == ["--assignee"]:
+    cards[a[1]]["assignee"] = a[3]
+    save()
 else:
     print(f"가짜 bd: 모르는 명령 {a}", file=sys.stderr)
     sys.exit(2)
