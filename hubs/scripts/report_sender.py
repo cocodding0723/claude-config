@@ -739,6 +739,17 @@ def feature_thread(conf: Conf, rep: dict) -> "tuple[str, str]":
     return "", ""
 
 
+def in_thread(rep: dict, topic: dict) -> bool:
+    """보고 본문을 주제 스레드 안에 올리는가(False 면 맨 위 글). 판정 경우는 tests/report_sender/test_feature_route.py 의 표.
+    같이 쓰는 스레드(shared)의 결정은 기능 코디네이터 것만 안에 올림: 그 스레드의 글 답은 기능 코디네이터가 받으므로,
+    다른 허브의 결정을 넣으면 글 답이 엉뚱한 세션으로 감"""
+    if rep["kind"] != "decide":
+        return True
+    if not topic.get("ts"):
+        return False
+    return not topic.get("shared") or str(rep.get("hub") or "").startswith(FEATURE_HUB)
+
+
 def open_topic(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
     """주제 스레드 시작 메시지를 올리고 상태에 저장. 카드 주제면 카드에 스레드를 붙임.
     작업 공간 카드가 기능당 스레드 상한(ws_thread_max)에 걸리면 자기 스레드를 열지 않고 부모 기능 epic 의 스레드를 같이 씀(스레드는 첫 보고 때만 열리므로 이 결정도 한 번만)"""
@@ -803,15 +814,15 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
         rs["sent"] = int(time.time())
         save_state(conf.state, st)
         return {"topic_ts": rep["thread"], "body_ts": rs["body_ts"], "line_ts": "", "pinned": True}
-    threaded = not decide or bool(rep.get("card"))  # 카드를 준 결정은 그 작업 스레드 안에. 카드 없는 결정은 맨 위 글
+    # 카드를 준 결정은 그 작업 스레드 안에. 기능 코디네이터의 결정은 카드 지정이 없어도 기능 스레드 안에(승인과 작업 이력을 한 스레드로). 그 밖의 결정은 맨 위 글
+    threaded = not decide or bool(rep.get("card")) or bool(feature_thread(conf, rep)[1])
     if threaded and key not in st["topics"]:
         open_topic(conf, rep, st, deadline)
     elif threaded:
         refresh_parent(conf, rep, st, deadline)
     topic = st["topics"].get(key, {})
     shared = bool(topic.get("shared"))
-    # 상한 밖 카드가 같이 쓰는 기능 스레드에는 결정 카드를 올리지 않음: 그 스레드의 글 답이 어느 작업 공간 것인지 가릴 수 없어 기능 코디네이터로 감
-    threaded = threaded and not (decide and shared)
+    threaded = threaded and in_thread(rep, topic)
     if "body_ts" not in rs:
         warn_unattached(conf, rep)
         if decide:
