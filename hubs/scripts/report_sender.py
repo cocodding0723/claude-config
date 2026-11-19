@@ -723,11 +723,34 @@ def parent_of(card: str) -> str:
     return (row or {}).get("parent") or ""
 
 
+FEATURE_HUB = "feat-"  # feature_open.sh 가 만드는 기능 코디네이터 허브 이름 머리
+
+
+def feature_thread(conf: Conf, rep: dict) -> "tuple[str, str]":
+    """기능 코디네이터 허브의 보고가 모일 기능 epic 과 그 스레드 ts. 기능 허브가 아니거나 스레드가 아직 없으면 ("", "")"""
+    hub = rep.get("hub") or ""
+    if not hub.startswith(FEATURE_HUB):
+        return "", ""
+    rows = bd_json(conf, "list", "-t", "epic", "-l", f"feature:{hub[len(FEATURE_HUB):]}", "--all", "--limit", "0") or []
+    for row in rows:
+        ts = next((lb.split(":", 1)[1] for lb in row.get("labels") or [] if lb.startswith("slack-thread:")), "")
+        if ts:
+            return row.get("id") or "", ts
+    return "", ""
+
+
 def open_topic(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
     """주제 스레드 시작 메시지를 올리고 상태에 저장. 카드 주제면 카드에 스레드를 붙임.
     작업 공간 카드가 기능당 스레드 상한(ws_thread_max)에 걸리면 자기 스레드를 열지 않고 부모 기능 epic 의 스레드를 같이 씀(스레드는 첫 보고 때만 열리므로 이 결정도 한 번만)"""
     key = topic_key(rep)
     card = rep.get("card")
+    # 기능 허브 보고는 카드·티켓·허브 주제를 새로 열지 않고 기능 스레드 하나로 모음(11-19 스레드 흩어짐 지적)
+    epic, ts = feature_thread(conf, rep)
+    if ts and key != f"card:{epic}":
+        st["topics"][key] = {"ts": ts, "channel": st["topics"].get(f"card:{epic}", {}).get("channel", ""), "shared": epic}
+        save_state(conf.state, st)
+        log(conf, f"기능 허브 {rep['hub']} 보고 {key} 는 기능 스레드({epic})로")
+        return
     if card and rep.get("ws"):
         parent = parent_of(card)
         if parent and open_ws_threads(parent) >= conf.ws_thread_max:
