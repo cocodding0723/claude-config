@@ -111,11 +111,45 @@ def bullet(line: str) -> str:
 REF_PREFIX = "참고:"  # 양식 A: 티켓·커밋 번호·파일명은 맨 아래 '참고:' 줄. 머리표를 붙이면 검사기가 참고 줄로 못 알아봄
 
 
+_KEEP_RE = re.compile(r"`[^`\n]*`|https?://\S+")  # 코드·URL 안의 번호는 양식 검사도 보지 않으므로 그대로 둠
+
+
+def move_refs(lines) -> "tuple[list, list]":
+    """본문 줄의 티켓·커밋 번호를 빼서 (정리된 줄, 뺀 번호) 로 돌려줌. 양식 검사가 본문 번호를 거부해 보고가 영구 중단되던 것을 막음"""
+    found, out = [], []
+
+    def strip(seg: str) -> str:
+        for rx in (board_cards.TICKET_RX, board_cards.HEX_RX):
+            found.extend(m.group(0) for m in rx.finditer(seg))
+            seg = rx.sub("", seg)
+        return seg
+
+    for ln in lines:
+        if ln.lstrip().startswith(REF_PREFIX):
+            out.append(ln)
+            continue
+        parts, last = [], 0
+        for m in _KEEP_RE.finditer(ln):
+            parts += [strip(ln[last:m.start()]), m.group(0)]
+            last = m.end()
+        new = "".join(parts + [strip(ln[last:])])
+        if new != ln:
+            new = re.sub(r"\(\s*[,·]?\s*\)|\[\s*\]", "", new)
+            new = re.sub(r"[ \t]{2,}", " ", new).strip(" ,·:")
+        if new.strip():
+            out.append(new)
+    return out, list(dict.fromkeys(found))
+
+
 def bullet_items(lines) -> list:
-    """항목 줄은 '- ' 머리표, '참고:' 줄은 머리표 없이 맨 아래에 빈 줄 하나 뒤로 모음. 답 줄(👉)·표·인용은 그대로 둠"""
+    """항목 줄은 '- ' 머리표, '참고:' 줄은 머리표 없이 맨 아래에 빈 줄 하나 뒤로 모음. 답 줄(👉)·표·인용은 그대로 둠.
+    본문의 티켓·커밋 번호는 참고 줄로 옮김"""
+    lines, moved = move_refs(lines)
     keep = ("👉", ":point_right:", "|", ">", ":one:", ":two:", ":three:", ":four:", "1\ufe0f\u20e3", "2\ufe0f\u20e3", "3\ufe0f\u20e3", "4\ufe0f\u20e3")  # 선택지 줄은 알림 스크립트가 경고하도록 그대로
     items = [ln if ln.lstrip().startswith(keep) else bullet(ln) for ln in lines if not ln.lstrip().startswith(REF_PREFIX)]
-    refs = [ln.strip() for ln in lines if ln.lstrip().startswith(REF_PREFIX)]
+    # 참고 줄은 하나로 합침. 양식 검사는 마지막 참고 줄부터만 참고로 보므로 둘로 나뉘면 앞 줄 번호가 본문으로 걸림
+    refs = [ln.strip()[len(REF_PREFIX):].strip() for ln in lines if ln.lstrip().startswith(REF_PREFIX)] + moved
+    refs = [f"{REF_PREFIX} {' · '.join(dict.fromkeys(r for r in refs if r))}"] if any(refs) else []
     return items + (([""] if items else []) + refs)
 
 
@@ -124,6 +158,8 @@ def bullet_body(text: str) -> str:
     lines = [ln for ln in text.splitlines() if ln.strip()]
     if not lines:
         return text
+    head, moved = move_refs(lines[:1])
+    lines = (head or [lines[0]]) + lines[1:] + ([f"{REF_PREFIX} {' · '.join(moved)}"] if moved else [])
     rest = bullet_items(lines[1:])
     return "\n".join([lines[0]] + ([""] + rest if rest else []))
 
