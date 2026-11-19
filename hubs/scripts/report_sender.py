@@ -745,7 +745,7 @@ def in_thread(rep: dict, topic: dict) -> bool:
     다른 허브나 작업 공간 세션(하위 카드 + ws)의 결정을 넣으면 글 답이 올린 세션이 아닌 곳으로 감"""
     if rep["kind"] != "decide":
         return True
-    if not topic.get("ts"):
+    if not topic.get("ts") or rep.get("top"):  # top: 사용자가 새 메시지로 올리라고 한 결정
         return False
     if not topic.get("shared"):
         return True
@@ -818,6 +818,8 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
         return {"topic_ts": rep["thread"], "body_ts": rs["body_ts"], "line_ts": "", "pinned": True}
     # 카드를 준 결정은 그 작업 스레드 안에. 기능 코디네이터의 결정은 카드 지정이 없어도 기능 스레드 안에(승인과 작업 이력을 한 스레드로). 그 밖의 결정은 맨 위 글
     threaded = not decide or bool(rep.get("card")) or bool(feature_thread(conf, rep)[1])
+    if decide and rep.get("top"):
+        threaded = False  # 사용자가 새 메시지로 올리라고 한 결정: 스레드를 열지도 찾지도 않음
     if threaded and key not in st["topics"]:
         open_topic(conf, rep, st, deadline)
     elif threaded:

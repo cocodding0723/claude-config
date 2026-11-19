@@ -45,7 +45,7 @@ chk "feature_open 재실행: 같은 내용을 다시 예약(중복은 hub_report
 # 브랜치 이름은 게임 저장소 규칙(CLAUDE.md): 스프린트 안에서 끝나면 sprint-YYYYMMDD/타입-티켓-작업명, 여러 스프린트에 걸치는 모듈만 feature/<이름>
 : > "$CALLS"; LRM_SPRINT_DATE=20261125 bash "$SCR/feature_open.sh" --ticket LRM-701 --name "우편함" --base dev --slug mail >/dev/null 2>&1
 chk "스프린트가 바뀐 뒤 다시 실행해도 처음 만든 브랜치를 그대로 씀" 'grep -q "통합 브랜치 sprint-20261118/feat-LRM-701-mail)" "$CALLS"' "$(cat "$CALLS")"
-chk "새 기능 카드에 새 흐름 표시(flow:v1)·첫 단계(접수)·브랜치가 적힘" '(cd "$BOARD" && bd show "$EPIC" --json | jq -e "(if type==\"array\" then .[0] else . end).labels | (index(\"flow:v1\") != null) and (index(\"stage:intake\") != null) and (index(\"branch:sprint-20261118/feat-LRM-701-mail\") != null)") >/dev/null'
+chk "새 기능 카드에 새 흐름 표시(flow:v1)·첫 단계(접수)·브랜치가 적힘" '(cd "$BOARD" && bd show "$EPIC" --json | jq -e "(if type==\"array\" then .[0] else . end).labels | (index(\"flow:v1\") != null) and (index(\"said:v1\") != null) and (index(\"stage:intake\") != null) and (index(\"branch:sprint-20261118/feat-LRM-701-mail\") != null)") >/dev/null'
 bjson() { bash "$SCR/feature_open.sh" "$@" --base dev --dry-run --json 2>"$SB/err" | jq -r .branch; }
 chk "버그 작업은 타입 fix" '[ "$(bjson --ticket LRM-711 --name 버그 --slug gauge-overflow --type fix)" = "sprint-20261118/fix-LRM-711-gauge-overflow" ]'
 chk "여러 스프린트에 걸치는 모듈(--long)은 feature/<이름>" '[ "$(bjson --ticket LRM-712 --name 현지화 --slug localization --long)" = "feature/localization" ]'

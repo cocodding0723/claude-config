@@ -115,7 +115,7 @@ if [ -z "$EPIC" ]; then
   EPIC_STATE=new
   if [ "$DRY" = 1 ]; then EPIC="(생성 예정)"
   else
-    EPIC=$(cd "$CFG_BOARD" && bd create "[$TICKET] $NAME" -t epic -l "$LABEL,flow:v1,stage:intake,branch:$BRANCH,repo:$CFG_REPO,base:$BASE_REF" --external-ref "jira-$TICKET" \
+    EPIC=$(cd "$CFG_BOARD" && bd create "[$TICKET] $NAME" -t epic -l "$LABEL,flow:v1,said:v1,stage:intake,branch:$BRANCH,repo:$CFG_REPO,base:$BASE_REF" --external-ref "jira-$TICKET" \
       -d "$(printf -- '- 목표: %s\n- 확인 방법: %s\n- 범위 밖: %s\n- 기능 코디네이터 허브: %s\n- 통합 브랜치: %s' "$(oneline "$GOAL")" "$(oneline "$VERIFY")" "$(oneline "$OUT_OF")" "$HUB" "$BRANCH")" --json | jq -r '.id // empty') || true
     [ -n "$EPIC" ] || die "epic 생성 실패 — cd $CFG_BOARD && bd create ... 를 직접 실행해 오류 확인" 1
   fi

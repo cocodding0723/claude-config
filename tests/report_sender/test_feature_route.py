@@ -66,6 +66,7 @@ class DecideThreadTest(unittest.TestCase):
          {"kind": "decide", "hub": "feat-x", "card": "t-e.1", "ws": "/w/1"}, {"ts": "1.1", "shared": "t-e"}, False),
         ("기능 허브가 아닌 곳이 같이 쓰는 스레드의 결정은 맨 위 글", {"kind": "decide", "hub": "ui-hub", "card": "t-e.9"}, {"ts": "1.1", "shared": "t-e"}, False),
         ("스레드가 아직 없으면 맨 위 글", {"kind": "decide", "hub": "feat-x"}, {}, False),
+        ("사용자가 새 메시지로 올리라고 한 결정(--top)은 맨 위 글", {"kind": "decide", "hub": "feat-x", "card": "t-e", "top": True}, {"ts": "1.1"}, False),
     ]
 
     def test_cases(self):
@@ -93,6 +94,18 @@ class DecideThreadTest(unittest.TestCase):
         args = self.deliver(self.decide(), EPIC_ROWS)
         self.assertEqual(args[args.index("--thread") + 1], EPIC_TS)
         self.assertIn("--broadcast", args)
+
+    def test_top_flag_posts_the_decision_as_a_new_message(self):
+        """스레드 안 카드는 눈에 안 띌 수 있음(11-19 "slack에 안 옴" → "새 메시지로 다시 올려"). 카드 지정은 남겨 답이 그 세션으로 가게 함"""
+        args = self.deliver(self.decide(top=True, card="lrm-1yd", ws="/w/coord"), EPIC_ROWS)
+        self.assertNotIn("--thread", args)
+
+    def test_top_flag_is_accepted_only_for_decisions(self):
+        rep = hub_report.make_report("feat-x", "없음", "decide", "계획 승인: x\n배경: 계획서를 올리고 사용자 승인을 기다리는 중\n용어: 없음", [], options="1=승인 => 구현 시작,2=수정 요청 => 계획을 고침",
+                                     recommend="1", decision_id="D-PLANX", no_doc=True, top=True)
+        self.assertIs(rep["top"], True)
+        with self.assertRaises(hub_report.ReportError):
+            hub_report.make_report("feat-x", "없음", "info", "진행 보고", [], top=True)
 
     def test_coordinator_decision_stays_top_level_until_the_feature_thread_exists(self):
         args = self.deliver(self.decide(), [{"id": "lrm-1yd", "labels": ["feature:lrm-677"]}])

@@ -309,7 +309,7 @@ def line_gaps_split(text: str, kind: str) -> tuple:
 
 
 def make_report(hub, task, kind, text, files, options=None, recommend=None, decision_id=None, reversible=None,
-                thread=None, no_doc=False, card=None, ws=None, broadcast=False) -> dict:
+                thread=None, no_doc=False, card=None, ws=None, broadcast=False, top=False) -> dict:
     """입력 검증 → 보고 dict(id·at 제외). 잘못되면 ReportError.
     비밀 검사는 모든 입력 필드(hub·task·kind 포함)에 가장 먼저 함. 형식 오류 메시지가 입력을 되비추기 전에 걸러야 비밀이 출력·로그로 새지 않음"""
     if has_secret(*[str(v) for v in (hub, task, kind, text, options, recommend, decision_id, reversible, thread, card, ws, *(files or [])) if v]):
@@ -378,6 +378,10 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
         rep["ws"] = ws
     if broadcast:
         rep["broadcast"] = True
+    if top:
+        if kind != "decide" or thread:
+            raise ReportError("--top 은 결정 카드(--kind decide)만, --thread 없이 — 결정 카드를 스레드 밖 새 메시지로 올리는 옵션")
+        rep["top"] = True
     return rep
 
 
@@ -412,6 +416,8 @@ def valid_record(d) -> bool:
     if d.get("card") is not None and not (isinstance(d["card"], str) and CARD_RE.match(d["card"]) and not d.get("thread")):
         return False
     if d.get("broadcast") is not None and d["broadcast"] is not True:
+        return False
+    if d.get("top") is not None and not (d["top"] is True and d["kind"] == "decide"):
         return False
     if d.get("ws") is not None and not (isinstance(d["ws"], str) and d["ws"].startswith("/") and d.get("card")):
         return False
@@ -565,6 +571,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--thread", "--reply-to", dest="thread", help="봇 DM 안의 기존 Slack 스레드 ts(숫자.숫자)에 답글로 올림(채널 지정 불가). info·done·warn 만. 하달문 '답할 곳: thread <ts>' 의 ts 를 씀. 진행 스레드 한 줄은 생략")
     a.add_argument("--card", help="작업판 카드 id. 그 카드의 Slack 스레드 답글로 올라감(스레드는 카드의 첫 보고 때만 열림). decide 도 그 스레드 안에 올라감. --thread 와 함께 쓰지 않음")
     a.add_argument("--broadcast", action="store_true", help=f"스레드 답글을 DM 목록에도 보이게 함. 사용자가 봐야 하는 진행 보고(확인·검수 요청)에 사용. {'·'.join(BROADCAST_KINDS)} 는 주지 않아도 보임")
+    a.add_argument("--top", action="store_true", help="(decide 전용) 결정 카드를 스레드 안이 아니라 새 메시지로 올림. 사용자가 '새 메시지로 올려'라고 했을 때만. --card·--ws 는 그대로 줘서 답이 이 세션으로 오게 함")
     a.add_argument("--ws", help="(--card 와 함께) 담당 작업 공간 절대 경로. 카드 스레드 답을 그 작업 공간 세션에 전달하는 근거")
     a.add_argument("--no-doc", action="store_true", help="(decide) 근거 문서 없는 결정임을 명시. decide 는 --file 없이는 이게 있어야 기록됨")
     a.add_argument("--now", action="store_true", help="기록 직후 전송기를 1회 실행. 다른 전송기가 돌고 있으면 다음 폴러 회차가 올림")
@@ -590,7 +597,7 @@ def main(argv=None) -> int:
     try:
         if args.cmd == "add":
             rep = make_report(args.hub, args.task, args.kind, args.text, args.files,
-                              args.options, args.recommend, args.decision_id, args.reversible, args.thread, args.no_doc, args.card, os.path.expanduser(args.ws) if args.ws else None, args.broadcast)
+                              args.options, args.recommend, args.decision_id, args.reversible, args.thread, args.no_doc, args.card, os.path.expanduser(args.ws) if args.ws else None, args.broadcast, args.top)
             rep["files"] = [resolve_file(f) for f in rep["files"]]
             for f in rep["files"]:
                 if why := file_problem(f):

@@ -114,7 +114,7 @@ def main():
                 f"bd update {a.card} -d … 로 채운 뒤 다시 집음(양식 board/templates/card-task.md)", 2)
         epic = feature_epic(card)
         hub =os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
-        why = bf.claim_block(card, epic, lambda did: bf.plan_approved(hub, did))
+        why = bf.claim_block(card, epic, bf.approval(hub, epic))
         if why:
             die(f"거부: {why}", 15)
         repo = os.path.expanduser(a.repo or bs.label(card, "repo"))
