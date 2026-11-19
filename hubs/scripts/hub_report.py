@@ -314,8 +314,8 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
     비밀 검사는 모든 입력 필드(hub·task·kind 포함)에 가장 먼저 함. 형식 오류 메시지가 입력을 되비추기 전에 걸러야 비밀이 출력·로그로 새지 않음"""
     if has_secret(*[str(v) for v in (hub, task, kind, text, options, recommend, decision_id, reversible, thread, card, ws, *(files or [])) if v]):
         raise ReportError("비밀 값(토큰·키·비밀번호)으로 보이는 내용 포함 — 기록 안 함. 값을 빼고 다시 기록")
-    if not hub_status.SLUG_RE.match(hub or "") or len(hub) > 48:
-        raise ReportError(f"--hub '{hub}' 형식 오류 — 소문자·숫자·하이픈 48자 이내(예: ui-layer)")
+    if not hub_status.SLUG_RE.match(hub or ""):
+        raise ReportError(f"--hub '{hub}' 형식 오류 — 소문자·숫자·하이픈(예: ui-layer)")
     if task != NO_TASK and not TASK_RE.match(task or ""):
         raise ReportError(f"--task '{task}' 형식 오류 — 작업 번호(예: C0012) 또는 '{NO_TASK}'")
     if kind not in KINDS:
