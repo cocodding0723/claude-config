@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.lrm.workremind</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__HOME__/.config/lrm-hubs/work_remind.sh</string>
+  </array>
+  <!-- 30분 주기. 보내는 조건은 work_remind.py 머리말, 실행 기록은 아래 로그 -->
+  <key>StartInterval</key><integer>1800</integer>
+  <key>RunAtLoad</key><false/>
+  <!-- 셸 진입점이 쓸 python3: install.sh 가 3.10 이상으로 검증한 경로(lib/py.sh 가 읽음) -->
+  <key>EnvironmentVariables</key>
+  <dict><key>LRM_PYTHON3</key><string>__PYTHON3__</string></dict>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>__HOME__/.config/lrm-hubs/work-remind.launchd.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.config/lrm-hubs/work-remind.launchd.log</string>
+</dict>
+</plist>
