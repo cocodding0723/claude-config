@@ -47,6 +47,10 @@ CFG_PLACE_LOCK_WAIT=900                                  # 같은 곳을 다른 
 # PR 닫힘 즉시 정리: 브랜치 PR 이 전부 병합·닫힘이고 HEAD 가 그 PR 마지막 커밋 안이면 활동 일수를 기다리지 않고 미커밋까지 보관 뒤 삭제
 CFG_PR_DONE_GRACE_MIN="${WS_GC_PR_DONE_GRACE_MIN:-10}"   # 마지막 활동 후 이 분은 기다림(막 띄운 워커의 빈 공간·병합 직후 정리 중인 곳 보호)
 CFG_PR_DONE_MAX_MB="${WS_GC_PR_DONE_MAX_MB:-2048}"        # 보관할 미커밋이 이보다 크면 건너뜀(archive_big). 디스크 보호
+CFG_MERGED_LIVE="${WS_GC_MERGED_LIVE:-1}"                 # 1: PR 이 전부 병합된 곳은 창이 붙어 있어도 정리(창을 닫고 지움). 0: 창이 붙은 곳은 항상 건너뜀
+CFG_MERGED_LIVE_IDLE_MIN="${WS_GC_MERGED_LIVE_IDLE_MIN:-30}"  # 창이 붙은 곳은 마지막 활동 후 이 분이 지나야 대상(쓰고 있는 창 보호)
+CFG_MARK_MIN="${WS_GC_MARK_MIN:-25}"                       # 수거 방식: 표시한 뒤 이 분이 지난 회차에 치움(주기 30분이면 한 회차 뒤)
+CFG_MARKS="${WS_GC_MARKS:-$CFG_ARCHIVE/ws_gc.marks}"       # 표시 기록(경로<TAB>표시 시각). 표시 뒤 활동이 생기면 지움
 # ───────────────────────────────────────────────────────────────────────────────────────────
 
 usage() {
@@ -72,6 +76,9 @@ PR 닫힘 즉시 정리(위 2·3 대신): 로컬 브랜치가 남고, 그 브랜
   <archive>/<폴더>-<YYYYMMDD-HHMM>/ 에 tracked.patch(git diff HEAD, 스테이징 포함)·staged.patch·status.txt·meta.txt·list.txt,
   files/ 아래 미추적·캐시 아닌 gitignore 파일(경로 유지). 파일 수·바이트·내용 대조가 맞아야 지우고(--force), 보관 뒤 바뀌면 안 지움.
   서브모듈 안 변경·Unity 가 연 곳(Temp/UnityLockfile)·WS_GC_PR_DONE_MAX_MB(기본 2048) 초과는 건너뜀. 브랜치는 유지
+병합된 PR 에 창이 붙은 곳(수거 방식): 일하는 워커 없이 창만 붙어 있고, PR 이 전부 MERGED 이고, 마지막 활동이 WS_GC_MERGED_LIVE_IDLE_MIN(기본 30)분 넘게 전이면
+  이번 회차에 표시만 하고(SKIP live_marked), 표시한 지 WS_GC_MARK_MIN(기본 25)분이 지난 회차에 창을 닫은 뒤(orca terminal close) 위 PR 닫힘 정리와 같이 보관·삭제.
+  표시 뒤 활동이 생기면 표시를 지움. 창 닫기가 실패하면 지우지 않음(term_close_fail). WS_GC_MERGED_LIVE=0 이면 창이 붙은 곳은 항상 건너뜀
 절차(--apply): 허용 목록 결과물(미추적·gitignore)을 <archive>/<저장소>/<폴더>/ 로 복제 → byte 단위 대조(불일치·복사 실패면 삭제 안 함)
   → orca worktree rm(브랜치는 지우지 않음) → 허브 색인 한 줄(~/.config/lrm-hubs/hub-inbox/<허브 slug>.tsv: 시각·작업 공간·보관 경로·파일 수)
   → 쉬고 있는 워커 기록 worker-release.
@@ -118,7 +125,7 @@ while [ $# -gt 0 ]; do
     --parent) [ $# -ge 2 ] || die "--parent 값 필요 — 허브 폴더 절대 경로"; PARENT="$2"; shift 2 ;;
     --assume-idle) [ $# -ge 2 ] || die "--assume-idle 값 필요 — 워커 dispatch id"; ASSUME_IDLE="$2"; shift 2 ;;
     --root) [ $# -ge 2 ] || die "--root 값 필요 — 폴더 경로"; CFG_ROOT="$2"; shift 2 ;;
-    --archive-dir) [ $# -ge 2 ] || die "--archive-dir 값 필요 — 폴더 경로"; CFG_ARCHIVE="$2"; CFG_LOG="${WS_GC_LOG:-$2/ws_gc.log}"; shift 2 ;;
+    --archive-dir) [ $# -ge 2 ] || die "--archive-dir 값 필요 — 폴더 경로"; CFG_ARCHIVE="$2"; CFG_LOG="${WS_GC_LOG:-$2/ws_gc.log}"; CFG_MARKS="${WS_GC_MARKS:-$2/ws_gc.marks}"; shift 2 ;;
     --log) [ $# -ge 2 ] || die "--log 값 필요 — 파일 경로"; CFG_LOG="$2"; shift 2 ;;
     --no-slack) SLACK=0; shift ;;
     --quiet) QUIET=1; shift ;;
@@ -179,6 +186,8 @@ done
 echo "$TL" | jq -r '.result.terminals[] | select(.connected == true and (.orphaned != true)) | [.handle, .worktreePath] | @tsv' > "$TMP/terms.tsv"
 # 살아 있는 곳 = 연결된 터미널이 붙은 곳 + 쉬는 중(reclaimable)이 아닌 워커가 붙은 곳. 쉬는 워커의 터미널은 제외(정리 뒤 worker-release)
 awk -F'\t' -v AS="$ASSUME_IDLE" 'FILENAME == ARGV[1] { if ($2 == "reclaimable" || (AS != "" && $1 == AS)) idle[$3] = 1; else if ($2 != "released") print $4; next } !($1 in idle) { print $2 }' "$TMP/workers.tsv" "$TMP/terms.tsv" | sort -u > "$TMP/live"
+# 일하는 워커가 붙은 곳(창만 붙은 곳과 구분). 창만 붙은 곳은 PR 이 전부 병합이면 정리 대상이 될 수 있음
+awk -F'\t' -v AS="$ASSUME_IDLE" '!($2 == "reclaimable" || (AS != "" && $1 == AS)) && $2 != "released" { print $4 }' "$TMP/workers.tsv" | sort -u > "$TMP/live_workers"
 
 echo "$WL" | jq -r --arg root "$CFG_ROOT/" '
   [.result.worktrees[].id] as $ids
@@ -399,15 +408,41 @@ evaluate_pr_done() {
 }
 protected_branch() { local b="$1" x; for x in $CFG_PROTECTED_BRANCHES; do [ "$b" = "$x" ] && return 0; done; case "$b" in release/*) return 0 ;; esac; return 1; }
 
+# 수거 표시: 경로<TAB>표시 시각. 시험 모드(dry-run)는 표시를 쓰지도 지우지도 않음
+mark_at() { [ -f "$CFG_MARKS" ] && awk -F'\t' -v p="$1" '$1 == p { print $2; exit }' "$CFG_MARKS"; }
+mark_set() { [ "$APPLY" = 1 ] || return 0; mkdir -p "$(dirname "$CFG_MARKS")"; printf '%s\t%s\n' "$1" "$NOW" >> "$CFG_MARKS"; }
+mark_clear() {
+  [ "$APPLY" = 1 ] && [ -f "$CFG_MARKS" ] && grep -Fq -- "$1"$'\t' "$CFG_MARKS" || return 0
+  awk -F'\t' -v p="$1" '$1 != p' "$CFG_MARKS" > "$TMP/marks.new" && cat "$TMP/marks.new" > "$CFG_MARKS"
+}
+# 창이 붙은 곳의 수거 판정(sweep_ready 경로 유휴분). PR 이 전부 병합이고 한동안 활동이 없으면 이번 회차에 표시만 하고, 표시한 지 CFG_MARK_MIN 분이 지난 회차에 치움.
+# 표시와 치우기 사이에 사용자가 창을 다시 쓰면(유휴 조건이 깨짐) 표시를 지움. 0 치워도 됨(CLOSE_TERMS=1) · 1 건너뜀(REASON·DETAIL)
+sweep_ready() {
+  local p="$1" idle="$2" at waited
+  if ! echo "$prs" | jq -e 'all(.[]; .state == "MERGED")' >/dev/null 2>&1 || [ "$idle" -lt "$CFG_MERGED_LIVE_IDLE_MIN" ]; then mark_clear "$p"; REASON=live; return 1; fi
+  at=$(mark_at "$p")
+  if [ -z "$at" ]; then
+    mark_set "$p"; REASON=live_marked; DETAIL="PR $PR_LABEL 병합·${idle}분 활동 없음 → 표시함, 다음 회차에 창을 닫고 정리"; return 1
+  fi
+  waited=$(( (NOW - at) / 60 ))
+  if [ "$waited" -lt "$CFG_MARK_MIN" ]; then REASON=live_marked; DETAIL="표시 후 ${waited}분(${CFG_MARK_MIN}분 뒤 정리)"; return 1; fi
+  CLOSE_TERMS=1; return 0
+}
+
 # evaluate 경로 최근활동ms 살아있는하위수 → 0 후보, 1 건너뜀(REASON·DETAIL)
 evaluate() {
   local p="$1" last_ms="$2" kids="$3" br last_c last age prs keep_br
-  REASON="" DETAIL="" PR_LABEL="" UNMERGED_KEPT=0 keep_br=0 PR_DONE=0 PRS_OK=0 prs=""
+  REASON="" DETAIL="" PR_LABEL="" UNMERGED_KEPT=0 keep_br=0 PR_DONE=0 PRS_OK=0 prs="" LIVE_TERM=0 CLOSE_TERMS=0
   case "$(basename "$p")" in "$CFG_HUB_PREFIX"*) REASON=hub; return 1 ;; esac
   [ -e "$p/.git" ] || { REASON=missing; return 1; }
   case "$PWD/" in "$p"/*) REASON=current; return 1 ;; esac
   [ "$kids" -gt 0 ] && { REASON=children; DETAIL="하위 $kids"; return 1; }
-  grep -Fxq -- "$p" "$TMP/live" && { REASON=live; return 1; }
+  if grep -Fxq -- "$p" "$TMP/live"; then
+    # 창만 붙은 곳(일하는 워커 없음)은 아래에서 PR 이 전부 병합인지 더 봄. 그 밖은 사용 중
+    if [ "$CFG_MERGED_LIVE" = 1 ] && ! grep -Fxq -- "$p" "$TMP/live_workers"; then LIVE_TERM=1; else mark_clear "$p"; REASON=live; return 1; fi
+  else
+    mark_clear "$p"  # 창이 없어진 곳의 옛 표시
+  fi
   br=$(git -C "$p" symbolic-ref -q --short HEAD 2>/dev/null) || br=""
   protected_branch "$br" && { REASON=protected; DETAIL="$br"; return 1; }
   last_c=$(git -C "$p" log -1 --format=%ct 2>/dev/null || echo 0)
@@ -418,8 +453,12 @@ evaluate() {
   # PR 이 병합·닫힌 곳은 활동 일수·미커밋을 기다리지 않음(보관 뒤 삭제). 조회 실패·PR 없음·PR 뒤 새 커밋이면 아래 기존 규칙
   if [ "$keep_br" = 1 ] && pr_lookup "$p" "$br"; then
     PRS_OK=1
-    if pr_done_check "$p" && [ $(( (NOW - last) / 60 )) -ge "$CFG_PR_DONE_GRACE_MIN" ]; then PR_DONE=1; evaluate_pr_done "$p" "$br"; return $?; fi
+    if pr_done_check "$p" && [ $(( (NOW - last) / 60 )) -ge "$CFG_PR_DONE_GRACE_MIN" ]; then
+      if [ "$LIVE_TERM" = 1 ]; then sweep_ready "$p" $(( (NOW - last) / 60 )) || return 1; fi
+      PR_DONE=1; evaluate_pr_done "$p" "$br"; return $?
+    fi
   fi
+  if [ "$LIVE_TERM" = 1 ]; then mark_clear "$p"; REASON=live; return 1; fi  # 창이 붙은 곳은 위 병합 경로로만 정리
   if [ "$age" -lt "$DAYS" ]; then
     if [ "$keep_br" = 0 ] || [ $(( (NOW - last) / 60 )) -lt "$CFG_FRESH_GRACE_MIN" ]; then REASON=idle; DETAIL="${age}일 전 활동"; return 1; fi
   fi
@@ -668,6 +707,15 @@ process_pr_done() {
     item candidate pr_done "$DETAIL"
     return 0
   fi
+  if [ "$CLOSE_TERMS" = 1 ]; then
+    # 창을 먼저 닫음: 열려 있으면 보관 뒤에 파일이 바뀔 수 있고 orca 가 삭제를 거부함
+    if orca terminal close --worktree "path:$p" --all --json >/dev/null 2>&1; then
+      log "TERM_CLOSE $name — PR 병합·표시 뒤 한 회차 지남, 붙어 있던 창을 닫음"
+    else
+      echo term_close_fail >> "$TMP/skips"; N_FAIL=$((N_FAIL + 1)); log "SKIP term_close_fail $name — 창 닫기 실패, 삭제 안 함(orca terminal close 확인)"
+      echo "$name" >> "$TMP/failed.txt"; item failed term_close_fail "창 닫기 실패"; return 0
+    fi
+  fi
   dest=$(pr_done_dest "$p")
   if ! archive_all "$p" "$dest"; then
     echo archive_fail >> "$TMP/skips"; N_FAIL=$((N_FAIL + 1)); log "SKIP archive_fail $name — PR 닫힘 보관·대조 실패, 삭제 안 함(보관본 $dest 확인)"
@@ -679,6 +727,7 @@ process_pr_done() {
     item deleted pr_done "$DETAIL 보관=$dest"
     inbox_add "$parent" "$name" "$dest" "${ARCHIVE_STATS% *}"
     release_workers "$p"
+    mark_clear "$p"
   else
     echo rm_fail >> "$TMP/skips"; N_FAIL=$((N_FAIL + 1)); log "SKIP rm_fail $name — PR 닫힘 정리 중 삭제 거부·보관 뒤 변경, 보관본은 남음($dest)"
     echo "$name" >> "$TMP/failed.txt"; item failed rm_fail "PR 닫힘 정리 중 삭제 거부"
@@ -703,7 +752,7 @@ label() { case "$1" in
   hub) echo 허브 ;; current) echo 현재작업 ;; children) echo 하위있음 ;; live) echo 터미널·워커 ;; idle) echo 최근활동 ;; dirty) echo 미커밋 ;;
   pr_open) echo PR열림 ;; unmerged) echo 미병합 ;; gh_fail) echo PR조회실패 ;; protected) echo 보호브랜치 ;; submodule) echo 서브모듈 ;;
   not_orca) echo 미등록 ;; missing) echo 폴더없음 ;; archive_fail) echo 보관실패 ;; lock_busy) echo 잠금대기 ;; rm_fail) echo 삭제실패 ;;
-  archive_big) echo 보관과대 ;; unity_open) echo Unity열림 ;; *) echo "$1" ;; esac; }
+  archive_big) echo 보관과대 ;; unity_open) echo Unity열림 ;; live_marked) echo 정리예정 ;; term_close_fail) echo 창닫기실패 ;; *) echo "$1" ;; esac; }
 SKIP_TXT=$(sort "$TMP/skips" | uniq -c | while read -r n r; do printf '%s %s·' "$(label "$r")" "$n"; done | sed 's/·$//')
 N_SKIP=$(wc -l < "$TMP/skips" | tr -d ' ')
 N_KEEP_CODE=$(wc -l < "$TMP/keepcode.jsonl" | tr -d ' ')

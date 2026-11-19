@@ -26,11 +26,12 @@ reset() {  # reset <카드 JSON 배열> [PR 표 JSON] [로컬 덮어쓰기 표 �
   printf 'log_path\t%s\nlock_path\t%s\n%s' "$SB/sweep.log" "$SB/sweep.lock" "${3:-}" > "$LRM_BOARD_SWEEP_LOCAL"
   : > "$FAKE_BD_LOG"; : > "$FAKE_GH_LOG"; : > "$SB/sweep.log"
 }
-card() {  # card <id> <status> <labels 쉼표> <created> [title] [description] [assignee] [comment_count]
+card() {  # card <id> <status> <labels 쉼표> <created> [title] [description] [assignee] [comment_count] [issue_type]
   python3 -c 'import json,sys; a=sys.argv[1:]; print(json.dumps({"id":a[0],"status":a[1],"labels":[l for l in a[2].split(",") if l],
-    "created_at":a[3],"updated_at":a[3],"title":a[4] or a[0],"description":a[5],"assignee":a[6],"comment_count":int(a[7] or 0)}, ensure_ascii=False))' \
-    "$1" "$2" "$3" "$4" "${5:-}" "${6:-}" "${7:-}" "${8:-0}"
+    "created_at":a[3],"updated_at":a[3],"title":a[4] or a[0],"description":a[5],"assignee":a[6],"comment_count":int(a[7] or 0),"issue_type":a[8]}, ensure_ascii=False))' \
+    "$1" "$2" "$3" "$4" "${5:-}" "${6:-}" "${7:-}" "${8:-0}" "${9:-task}"
 }
+assignee_of() { python3 -c 'import json,sys; print({c["id"]:c.get("assignee","") for c in json.load(open(sys.argv[1]))["cards"]}[sys.argv[2]])' "$FAKE_BD_STATE" "$1"; }
 status_of() { python3 -c 'import json,sys; print({c["id"]:c["status"] for c in json.load(open(sys.argv[1]))["cards"]}[sys.argv[2]])' "$FAKE_BD_STATE" "$1"; }
 labels_of() { python3 -c 'import json,sys; print(",".join({c["id"]:c["labels"] for c in json.load(open(sys.argv[1]))["cards"]}[sys.argv[2]]))' "$FAKE_BD_STATE" "$1"; }
 sweep() { bash "$ENTRY" "$@" >"$SB/out" 2>&1; echo $? > "$SB/rc"; }
@@ -134,6 +135,39 @@ check "orphan: 최근 댓글이 있으면 둠" '[ "$(status_of o2)" = in_progres
 check "orphan: 담당이 있으면 둠" '[ "$(status_of o3)" = in_progress ]'
 check "orphan: 최근 갱신이면 둠" '[ "$(status_of o4)" = in_progress ]'
 check "protect_ids 접두 일치·skip 라벨 카드는 제외" '[ "$(status_of lrm-run.1)" = in_progress ] && [ "$(status_of o6)" = in_progress ]'
+
+# ── ws_gone: 작업 공간이 사라진 카드 빼기 ──
+WSR="$SB/workspaces"; mkdir -p "$WSR/game/alive"
+WSCFG="$(printf 'ws_root\t%s\n' "$WSR")"
+MERGED_PR='[{"number":901,"state":"MERGED"}]'
+ws_cards() {
+  reset "[$(card w1 in_progress "kind:task,ws:$WSR/game/gone1,branch:fix/a" $OLD '' '' worker-a),
+$(card w2 in_progress "kind:task,ws:$WSR/game/gone2,branch:fix/b" $OLD '' '' worker-b),
+$(card w3 in_progress "kind:task,ws:$WSR/game/alive,branch:fix/a" $OLD '' '' worker-c),
+$(card w4 open "kind:task,repo:$WSR/game/gone4,branch:fix/b" $OLD),
+$(card w5 in_progress "kind:task,repo:$SB/elsewhere/gone5" $OLD '' '' worker-e),
+$(card w6 in_progress "kind:task,ws:$WSR/game/gone6" $OLD '' '' worker-f 0 epic),
+$(card w7 in_progress "kind:task,ws:$WSR/game/gone7" 2026-11-17T02:50:00Z '' '' worker-g),
+$(card w8 open "kind:task,ws:$WSR/game/gone8,branch:fix/a" $OLD)]" \
+    "{\"head:fix/a\":$MERGED_PR,\"head:fix/b\":[{\"number\":902,\"state\":\"OPEN\"}]}" "$WSCFG"
+}
+ws_cards; sweep
+check "ws_gone: 작업 공간이 없고 PR 이 병합된 카드는 닫음" '[ "$(status_of w1)" = closed ] && grep -q "\"comment\", \"w1\", \"정리(자동): 작업 공간 gone1 없음·PR #901 병합" "$FAKE_BD_LOG"' "$(cat "$SB/sweep.log")"
+check "ws_gone: 병합 전이면 진행 중에서 내려놓고 담당을 비움" '[ "$(status_of w2)" = open ] && [ -z "$(assignee_of w2)" ] && grep -q "\"comment\", \"w2\", \"정리(자동): 작업 공간 gone2 없음" "$FAKE_BD_LOG"' "$(cat "$SB/sweep.log")"
+check "ws_gone: 작업 공간이 살아 있으면 둠" '[ "$(status_of w3)" = in_progress ] && [ "$(assignee_of w3)" = worker-c ]'
+check "ws_gone: 병합 전인 할 일 카드는 그대로 둠(댓글도 없음)" '[ "$(status_of w4)" = open ] && ! grep -q "\"comment\", \"w4\"" "$FAKE_BD_LOG"'
+check "ws_gone: 작업 공간 폴더 밖 경로는 보지 않음" '[ "$(status_of w5)" = in_progress ]'
+check "ws_gone: 기능 카드(epic)는 건드리지 않음" '[ "$(status_of w6)" = in_progress ]'
+check "ws_gone: 방금 활동한 카드는 한 회차 기다림(막 만든 작업 공간 보호)" '[ "$(status_of w7)" = in_progress ]'
+check "ws_gone: 할 일 카드도 PR 이 병합됐으면 닫음" '[ "$(status_of w8)" = closed ]'
+ws_cards; FAKE_BD_BLOCK=w1 sweep
+check "ws_gone: 닫기가 막히면 닫기 후보 라벨을 붙이고 진행 중에서는 내려놓음" '[ "$(status_of w1)" = open ] && [[ "$(labels_of w1)" == *sweep:close-candidate* ]] && [ -z "$(assignee_of w1)" ]' "$(cat "$SB/sweep.log")"
+ws_cards; FAKE_GH_FAIL=fix/a sweep
+check "ws_gone: PR 조회가 실패하면 닫지 않고 내려놓기만" '[ "$(status_of w1)" = open ] && [ "$(status_of w8)" = open ]' "$(cat "$SB/sweep.log")"
+ws_cards; printf 'log_path\t%s\nlock_path\t%s\nws_root\t%s\n' "$SB/sweep.log" "$SB/sweep.lock" "$SB/no-such-root" > "$LRM_BOARD_SWEEP_LOCAL"; sweep
+check "ws_gone: 작업 공간 폴더 자체가 없으면(디스크 미연결) 아무 카드도 건드리지 않음" '[ "$(status_of w1)" = in_progress ] && [ "$(status_of w2)" = in_progress ] && grep -q "root-missing" "$SB/sweep.log"' "$(cat "$SB/sweep.log")"
+ws_cards; cp "$FAKE_BD_STATE" "$SB/before.json"; sweep --dry-run
+check "ws_gone dry-run: 상태를 바꾸지 않고 바뀔 동작만 기록" 'cmp -s "$FAKE_BD_STATE" "$SB/before.json" && [ "$(grep -cE "	dry	ws_gone	w[128]	" "$SB/sweep.log")" = 3 ]' "$(cat "$SB/sweep.log")"
 
 # ── 닫기 막힘 ──
 reset "[$(card g1 open kind:decision,pr:101 $OLD)]" "{\"101\":$MERGED_LATE}"

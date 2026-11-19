@@ -11,6 +11,9 @@
   stale      만든 지 stale_hours 넘은 결정 카드에 라벨 stale 추가(닫지 않음)
   duplicate  같은 제목의 열린 카드가 여럿이면 가장 새 것만 두고 나머지에 댓글 + 닫기 후보 라벨
   orphan     담당(assignee) 없는 진행 중 카드가 orphan_hours 넘게 갱신·댓글이 없으면 open 으로 되돌리고 댓글
+  ws_gone    작업 공간 라벨(ws:·repo:<경로>)이 가리키는 폴더가 사라진 작업 카드: 브랜치(라벨 branch:)의 PR 이 전부 병합이면 닫고,
+             아니면 진행 중에서 내려놓음(open + 담당 비움). 기능 카드(epic)·작업 공간 폴더(ws_root) 밖 경로·ws_gone_hours 안에 활동한 카드는 둠.
+             작업 공간 폴더 자체가 없으면(디스크 미연결) 아무것도 하지 않음
 닫기가 bd 훅·게이트로 막히면 우회(--force)하지 않고 닫기 후보 라벨만 붙임.
 규칙 하나가 실패해도 다른 규칙은 계속함. gh 호출은 실행당 gh_calls_max 까지(넘으면 남은 PR 은 다음 회차).
 동작마다 sweep.log 에 한 줄(시각·모드·규칙·카드·동작·근거, 탭 구분), 회차 끝에 요약 한 줄. --dry-run 은 쓰기 없이 같은 줄을 mode=dry 로 남김.
@@ -34,6 +37,7 @@ DONE_STATES = ("MERGED", "CLOSED")
 REQUIRED = ("rules", "kinds", "kind_prefix", "pr_repo", "pr_label_prefix", "pr_sources", "pr_min_digits",
             "gh_calls_max", "gh_timeout_sec", "expires_label_prefix", "stale_kinds", "stale_hours", "stale_label",
             "dup_kinds", "slack_kinds", "slack_id_pattern", "slack_label_prefix", "slack_body_line", "candidate_label", "orphan_hours", "skip_label", "protect_ids", "bd_timeout_sec",
+            "ws_root", "ws_label_prefix", "branch_label_prefix", "ws_gone_hours",
             "log_path", "lock_path")
 
 EPILOG = """예:
@@ -82,7 +86,7 @@ def load_config():
     for k in ("pr_min_digits", "gh_calls_max", "gh_timeout_sec", "bd_timeout_sec"):
         if not cfg[k].isdigit():
             raise ConfigError(f"규칙 표 {k} 가 정수가 아님: '{cfg[k]}'")
-    for k in ("stale_hours", "orphan_hours"):
+    for k in ("stale_hours", "orphan_hours", "ws_gone_hours"):
         try:
             float(cfg[k])
         except ValueError:
@@ -419,7 +423,73 @@ class Sweeper:
                 self.count("error")
                 self.log("orphan", card["id"], "reopen-failed", err.strip()[:160])
 
-    RULES = {"pr_done": rule_pr_done, "slack_answered": rule_slack_answered, "expired": rule_expired, "stale": rule_stale,
+    def branch_prs(self, branch):
+        """브랜치를 head 로 가진 PR 의 [(번호, 상태)] | None(상한 도달·조회 실패). 실행 안에서는 같은 브랜치를 다시 묻지 않음"""
+        key = "head:" + branch
+        if key in self.pr_cache:
+            return self.pr_cache[key]
+        if self.gh_calls >= int(self.cfg["gh_calls_max"]):
+            return None  # 다음 회차에 다시 봄. 닫지 않을 뿐 내려놓기는 그대로 함
+        self.gh_calls += 1
+        rc, out, err = self.run([self.gh_bin, "pr", "list", "--repo", self.cfg["pr_repo"], "--head", branch, "--state", "all",
+                                 "--json", "number,state"], int(self.cfg["gh_timeout_sec"]))
+        result = None
+        if rc == 0:
+            try:
+                result = [(int(d["number"]), d.get("state")) for d in json.loads(out or "[]")]
+            except (json.JSONDecodeError, AttributeError, KeyError, TypeError, ValueError):
+                result = None
+        if result is None:
+            self.count("error")
+            self.log("ws_gone", branch, "gh-error", (err or out).strip().replace("\n", " ")[:160] or f"종료 {rc}")
+        self.pr_cache[key] = result
+        return result
+
+    def put_down(self, rule, card, reason):
+        """진행 중 카드를 할 일로 내려놓고 담당을 비움. 작업 공간이 없어 이어서 할 세션이 없는 카드가 진행 중 목록에 남지 않게 함"""
+        cid = card["id"]
+        rc, _, err = self.bd_write("update", cid, "--status", "open")
+        if rc != 0:
+            self.count("error")
+            self.log(rule, cid, "reopen-failed", err.strip()[:160])
+            return
+        self.bd_write("update", cid, "--assignee", "")
+        self.comment(cid, f"정리(자동): {reason}")
+        self.handled.add(cid)
+        self.count("reopen")
+        self.log(rule, cid, "reopen", reason)
+
+    def rule_ws_gone(self, cards):
+        root = os.path.normpath(os.path.expanduser(self.cfg["ws_root"]))
+        if not os.path.isdir(root):
+            self.log("ws_gone", "-", "root-missing", f"작업 공간 폴더 {root} 없음 — 이번 회차는 건너뜀")
+            return
+        prefixes, bp = as_list(self.cfg["ws_label_prefix"]), self.cfg["branch_label_prefix"]
+        grace = dt.timedelta(hours=float(self.cfg["ws_gone_hours"]))
+        for card in cards:
+            if card["id"] in self.handled or card.get("issue_type") == "epic":
+                continue
+            labels = card.get("labels") or []
+            paths = [os.path.normpath(os.path.expanduser(lab[len(p):])) for lab in labels for p in prefixes if lab.startswith(p)]
+            paths = [p for p in paths if p.startswith(root + os.sep)]
+            if not paths or any(os.path.exists(p) for p in paths):
+                continue
+            last = self.last_activity(card)
+            if last is None or self.now - last <= grace:
+                continue
+            name = os.path.basename(paths[0])
+            working = card.get("status") == "in_progress"
+            branch = next((lab[len(bp):] for lab in labels if lab.startswith(bp) and lab[len(bp):]), "")
+            prs = self.branch_prs(branch) if branch else []
+            if prs and all(state == "MERGED" for _, state in prs):
+                self.close("ws_gone", card, f"작업 공간 {name} 없음·PR {', '.join(f'#{n}' for n, _ in prs)} 병합")
+                if working and card["id"] not in self.handled and not self.dry:
+                    # 닫기가 게이트에 막힘: 닫기 후보 라벨은 close 가 붙였고, 진행 중 목록에서는 뺌
+                    self.put_down("ws_gone", card, f"작업 공간 {name} 없음(닫기는 게이트에 막혀 닫기 후보로 둠)")
+            elif working:
+                self.put_down("ws_gone", card, f"작업 공간 {name} 없음 → 할 일로 내려놓음(이어서 하려면 다시 집음)")
+
+    RULES = {"ws_gone": rule_ws_gone, "pr_done": rule_pr_done, "slack_answered": rule_slack_answered, "expired": rule_expired, "stale": rule_stale,
              "duplicate": rule_duplicate, "orphan": rule_orphan}
 
     def sweep(self):

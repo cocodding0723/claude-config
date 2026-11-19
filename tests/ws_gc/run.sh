@@ -566,6 +566,49 @@ gc --only pd_ --apply --json --no-slack 2>/dev/null
 chk "[PD] 요약: PR 닫힘 즉시 정리 개수" 'has "END .*PR 닫힘 즉시 정리"'
 chk "[PD] 보존 대상은 끝까지 그대로" '[ -e "$W/pd_open" ] && [ -e "$W/pd_newc" ] && [ -e "$W/pd_fresh" ] && [ -e "$W/pd_live" ] && [ -e "$W/pd_nopr" ] && [ -e "$W/pd_sub" ] && [ -e "$W/dev_pd" ]'
 
+# ---- 11. 병합된 PR 에 창이 붙은 곳(11-19): 이번 회차에 표시하고 다음 회차에 창을 닫고 정리(수거 방식) ----
+regen_live() {
+  regen
+  jq -R -s '{ok:true,result:{terminals:(split("\n")|map(select(length>0)|split("\t")|{handle:.[0],worktreePath:.[1],connected:true,orphaned:false}))}}' "$FAKE/terminals.tsv" > "$FAKE/terminals.json"
+  jq -R -s '{ok:true,result:{workers:(split("\n")|map(select(length>0)|split("\t")|{dispatchId:.[0],terminalState:.[1],agentTerminalHandle:.[2],resource:{worktreeId:("repo::"+.[3])}})),page:{hasMore:false}}}' "$FAKE/workers.tsv" > "$FAKE/workers.json"
+}
+term() { printf 'term_%s\t%s\n' "$1" "$W/$1" >> "$FAKE/terminals.tsv"; }
+active_min() { perl -pi -e 's#^(\Q'"$W/$1"'\E\t[^\t]*\t)\d+#${1}'"$((NOW_MS - $2 * 60000))"'#' "$SB/reg.tsv"; }
+MARKS="$ARC/ws_gc.marks"
+mark_old() { printf '%s\t%s\n' "$W/$1" "$(( $(date +%s) - 1800 ))" >> "$MARKS"; }
+mkpd ml_idle feat/ml_idle 40;     prh feat/ml_idle 110 MERGED ml_idle; dirty_all ml_idle; term ml_idle
+mkpd ml_busy feat/ml_busy 20;     prh feat/ml_busy 111 MERGED ml_busy; term ml_busy
+mkpd ml_closed feat/ml_closed 40; prh feat/ml_closed 112 CLOSED ml_closed; term ml_closed
+mkpd ml_worker feat/ml_worker 40; prh feat/ml_worker 113 MERGED ml_worker; term ml_worker
+  printf 'd_ml\tactive\tterm_ml_worker\t%s\n' "$W/ml_worker" >> "$FAKE/workers.tsv"
+mkpd ml_back feat/ml_back 40;     prh feat/ml_back 114 MERGED ml_back; term ml_back
+mkpd ml_fail feat/ml_fail 40;     prh feat/ml_fail 115 MERGED ml_fail; term ml_fail
+mkpd ml_dry feat/ml_dry 40;       prh feat/ml_dry 116 MERGED ml_dry; term ml_dry
+regen_live
+gc --only ml_dry
+chk "[ML] dry-run: 표시 예정만 기록하고 표시 파일은 쓰지 않음" 'has "SKIP live_marked repoA/ml_dry" && [ ! -s "$MARKS" ]' "$(pdlog ml_dry)"
+gc --only ml_ --apply
+chk "[ML] 첫 회차: 표시만 하고 지우지 않음(창도 그대로)" '[ -e "$W/ml_idle" ] && has "SKIP live_marked repoA/ml_idle — PR #110 MERGED" && grep -q "^$W/ml_idle	" "$MARKS" && ! grep -q "^terminal close" "$FAKE/orca.calls"' "$(pdlog ml_idle)"
+chk "[ML] 30분 안에 활동한 곳은 표시하지 않음(사용 중)" 'has "SKIP live repoA/ml_busy" && ! grep -q "ml_busy" "$MARKS"' "$(pdlog ml_busy)"
+chk "[ML] 병합이 아니라 닫히기만 한 PR 은 창이 있으면 보존" 'has "SKIP live repoA/ml_closed" && ! grep -q "ml_closed" "$MARKS"' "$(pdlog ml_closed)"
+chk "[ML] 일하는 워커가 붙은 곳은 보존" 'has "SKIP live repoA/ml_worker" && ! grep -q "ml_worker" "$MARKS"' "$(pdlog ml_worker)"
+gc --only ml_idle --apply
+chk "[ML] 표시한 직후 회차에는 아직 지우지 않음" '[ -e "$W/ml_idle" ] && has "SKIP live_marked repoA/ml_idle — 표시 후 0분" && [ "$(grep -c "ml_idle" "$MARKS")" = 1 ]' "$(pdlog ml_idle)"
+perl -pi -e 's#^(\Q'"$W/ml_idle"'\E\t)\d+#${1}'"$(( $(date +%s) - 1800 ))"'#' "$MARKS"
+FAKE_RM_CHECK_DIRTY=1 gc --only ml_idle --apply
+D=$(ls -d "$ARC"/ml_idle-* 2>/dev/null | head -1)
+chk "[ML] 다음 회차: 창을 닫고 미커밋을 보관한 뒤 삭제" '[ ! -e "$W/ml_idle" ] && grep -q "^terminal close --worktree path:$W/ml_idle --all --json" "$FAKE/orca.calls" && has "DELETE repoA/ml_idle pr_done" && [ -f "$D/files/src/Foo.cs" ]' "$(pdlog ml_idle)"
+chk "[ML] 창 닫기가 삭제보다 먼저" '[ "$(grep -n "^terminal close" "$FAKE/orca.calls" | head -1 | cut -d: -f1)" -lt "$(grep -n "^worktree rm" "$FAKE/orca.calls" | head -1 | cut -d: -f1)" ]'
+chk "[ML] 치운 곳의 표시는 지움, 다른 곳의 표시는 그대로" '! grep -q "ml_idle" "$MARKS" && grep -q "ml_back" "$MARKS"'
+active_min ml_back 5; regen_live
+gc --only ml_back --apply
+chk "[ML] 표시 뒤에 활동이 생기면 표시를 풀고 보존" '[ -e "$W/ml_back" ] && has "SKIP live repoA/ml_back" && ! grep -q "ml_back" "$MARKS"' "$(pdlog ml_back)"
+perl -pi -e 's#^(\Q'"$W/ml_fail"'\E\t)\d+#${1}'"$(( $(date +%s) - 1800 ))"'#' "$MARKS"
+FAKE_TERM_CLOSE_FAIL=1 gc --only ml_fail --apply
+chk "[ML] 창 닫기가 실패하면 지우지 않음(term_close_fail)" '[ -e "$W/ml_fail" ] && has "SKIP term_close_fail repoA/ml_fail" && [ "$(rm_calls)" = 0 ]' "$(pdlog ml_fail)"
+WS_GC_MERGED_LIVE=0 gc --only ml_fail --apply
+chk "[ML] 끄면(WS_GC_MERGED_LIVE=0) 창이 붙은 곳은 예전처럼 보존" '[ -e "$W/ml_fail" ] && has "SKIP live repoA/ml_fail" && ! grep -q "^terminal close" "$FAKE/orca.calls"' "$(pdlog ml_fail)"
+
 bash "$HERE/adopt.sh" || FAIL=$((FAIL + 1))
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]

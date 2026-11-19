@@ -1,6 +1,6 @@
 # 작업판 주기 정리기(hubs/scripts/board_sweep.py) 규칙 표. 형식: 키<TAB>값<TAB>설명. 코드에 숫자·라벨 이름을 두지 않고 여기서만 바꿈
 # 목록 값은 쉼표 구분. 규칙을 끄려면 rules 에서 이름을 뺌
-rules	pr_done,slack_answered,expired,stale,duplicate,orphan	실행할 규칙(순서대로). pr_done=PR 끝난 카드 닫기, slack_answered=Slack 버튼으로 답한 결정 닫기,expired=만료 라벨 닫기, stale=오래된 결정 라벨, duplicate=같은 제목 닫기 후보, orphan=담당 없는 진행 중 되돌리기
+rules	pr_done,slack_answered,expired,stale,duplicate,ws_gone,orphan	실행할 규칙(순서대로). pr_done=PR 끝난 카드 닫기, slack_answered=Slack 버튼으로 답한 결정 닫기,expired=만료 라벨 닫기, stale=오래된 결정 라벨, duplicate=같은 제목 닫기 후보, ws_gone=작업 공간이 사라진 카드 빼기, orphan=담당 없는 진행 중 되돌리기
 kinds	decision,user-todo,approval	pr_done·expired 대상 kind:<값>. approval 은 11-17 폐지된 옛 종류(남은 카드 정리용)
 kind_prefix	kind:	종류 라벨 접두
 pr_repo	Basakansoft/LoveRevolutionMaker	PR 번호를 조회할 저장소
@@ -20,6 +20,10 @@ stale_label	stale	오래됨 라벨(패널이 '오래됨' 표시에 씀)
 dup_kinds	decision,user-todo,approval,task	같은 제목 검사 대상 종류
 candidate_label	sweep:close-candidate	닫기 후보 라벨: 같은 제목 중 오래된 쪽, 닫기가 훅·게이트로 막힌 카드. 붙은 카드는 닫기 규칙이 다시 건드리지 않음
 orphan_hours	2	진행 중 카드가 이 시간 넘게 활동(갱신·댓글)이 없으면 되돌림
+ws_root	~/orca/workspaces	ws_gone 이 보는 작업 공간 폴더. 이 아래 경로만 검사하고, 이 폴더가 없으면 규칙 전체를 건너뜀
+ws_label_prefix	ws:,repo:	카드를 작업 공간에 묶는 라벨 접두(쉼표 구분)
+branch_label_prefix	branch:	카드의 작업 브랜치 라벨 접두. 이 브랜치의 PR 이 전부 병합이면 닫음
+ws_gone_hours	0.5	이 시간 안에 활동(갱신·댓글)한 카드는 ws_gone 에서 제외(막 만든 작업 공간 보호)
 skip_label	sweep:skip	이 라벨이 있는 카드는 모든 규칙에서 제외
 protect_ids		모든 규칙에서 제외할 카드 id(쉼표, 끝 * 는 접두 일치). 지금 돌고 있는 작업을 임시로 지킬 때
 bd_timeout_sec	30	bd 호출 1회 제한 시간(초)
