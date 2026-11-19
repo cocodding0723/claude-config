@@ -8,6 +8,7 @@
   - 이미 답한 결정은 preview·commit 모두 '이미 Slack/문서 사이트에서 답함' 으로 거부. 감시기 카드(card-actions 등록)는 Slack 에서만 답함.
 감사 로그: <작업 폴더>/docsite-audit.jsonl 한 줄 = commit 시도 1건 {at, source, did, pick, result}. 토큰·문구·본문은 남기지 않음.
 """
+from __future__ import annotations
 import json
 import os
 import re

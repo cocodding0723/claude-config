@@ -6,6 +6,7 @@
   max_age_hours<TAB>시간                   이 시간이 넘은 결정은 재알림에서 뺌
   exclude_pattern<TAB>결정 번호 정규식<TAB>설명   번호 전체가 맞는 카드는 자동 알림. 머리말만 보면 사람 결정(D-STORE…)까지 빠지므로 전체 일치로 봄
 """
+from __future__ import annotations
 import os
 import re
 import sys

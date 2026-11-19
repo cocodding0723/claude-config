@@ -8,6 +8,7 @@
 답 상태는 panel_collect.card_state 규칙(slack-inbox.jsonl 의 반응)을 그대로 씀. 이름이 안 맞는 문서는 결정 없음.
 파일 파싱 결과는 (mtime, size) 키로 캐시(doc-index-cache.json)해 다음 회차에 바뀐 파일만 다시 읽음.
 """
+from __future__ import annotations
 import glob
 import hashlib
 import importlib.util

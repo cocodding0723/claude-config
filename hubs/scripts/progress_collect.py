@@ -11,6 +11,7 @@ PR(gh)은 PR_INTERVAL_S 초에 한 번만 조회하고 그 사이는 직전 값�
       LRM_ORCA orca 명령(없으면 PATH → 알려진 설치 위치) · LRM_PROGRESS_PR_INTERVAL PR 조회 간격 초(기본 300) · LRM_PROGRESS_PR_BUDGET PR 조회 전체 시간 상한 초(기본 30)
 종료 코드: 0 성공(원료 일부 실패 포함), 2 설정·입력 오류
 """
+from __future__ import annotations
 import sys
 
 if sys.version_info < (3, 10):  # 하위 모듈이 3.10 문법(X | None)을 씀. launchd 가 시스템 python(3.9)을 잡으면 TypeError 로 조용히 실패하므로 원인·조치를 냄

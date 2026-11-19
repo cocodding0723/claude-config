@@ -8,6 +8,7 @@
 소유권 불명·사용자 인수·유지 표식 창은 '사람 확인' 으로 목록에만 올리고, 중복 코디네이터도 목록·로그에만 올림(전송·닫기 없음).
 조회 실패·조회 불완전(쪽 상한에 닿고 nextCursor 남음)·판정 불가는 이번 회차 무동작. 감지·화면 판정은 stall_watch·panel_collect 를 import 해 재사용함.
 """
+from __future__ import annotations
 import sys
 
 if sys.version_info < (3, 10):  # card_actions.py 가 3.10 문법(float | None)을 씀. launchd 가 시스템 python(3.9)을 잡으면 TypeError 대신 안내

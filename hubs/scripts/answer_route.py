@@ -11,6 +11,7 @@
 전달이 끝나면 결과를 answer_store 의 전달 기록(answer-delivery.jsonl)에 남김.
 결정→허브: hub-reports.jsonl(허브 보고 outbox)의 decision_id·hub 가 우선, 없으면 보낸 카드 기록의 tag (todo_facts.decision_hubs 규칙).
 """
+from __future__ import annotations
 import json
 import os
 import re

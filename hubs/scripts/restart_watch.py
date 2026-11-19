@@ -5,6 +5,7 @@
 같은 재시작은 키(runtimeId:pid:시작 시각)로 한 번만 카드를 보냄. 카드 전송이 실패하면 저장값을 바꾸지 않아 다음 주기에 다시 시도함.
 상태 파일: $LRM_HUB_DIR/restart-watch.json. 호출은 slack_socket.py 의 감시 루프가 주기적으로 함(새 launchd 없음).
 """
+from __future__ import annotations
 import argparse
 import hashlib
 import json

@@ -20,6 +20,7 @@
       BOARD_SWEEP_NOW 현재 시각 ISO(시험용)
 종료 코드: 0 정상(일부 규칙 실패 포함) · 2 인자·규칙 표 오류 · 3 bd 목록 조회 실패 · 4 다른 실행이 잠금 보유(건너뜀)
 """
+from __future__ import annotations
 import argparse
 import datetime as dt
 import fcntl

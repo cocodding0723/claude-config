@@ -8,6 +8,7 @@
 중복 방지: 같은 dispatch 는 DEDUPE_H 시간 안에 다시 알리지 않음(stall-watch.json). 첫 실행은 이미 멈춰 있던 옛 워커를 기준선으로만 기록(카드 없음).
 호출은 slack_socket.py 의 감시 루프가 주기적으로 함.
 """
+from __future__ import annotations
 import argparse
 import hashlib
 import json

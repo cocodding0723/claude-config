@@ -16,6 +16,7 @@ REFRESH 주기마다 계획 재연결(반쯤 죽은 연결 방지). ALIVE 주기
       LRM_SOCKET_WATCH_S 감시기(재시작 감지 등) 실행 주기(120, 0 이면 끔)
 종료 코드: 2 설정 오류(토큰 없음)·첫 연결 실패, 3 재연결 연속 실패(launchd 가 재시작). 0 은 없음 — 신호(SIGTERM)로만 끝남
 """
+from __future__ import annotations
 import json
 import os
 import re

@@ -5,6 +5,7 @@
 panel-auto.json 을 원자 교체로 씀. 진행 스냅샷(progress.json, progress_collect.py)도 같은 회차에 갱신함(진행 칸 원료). 작업판(bd)이 결정·할 일·승인·헤드라인의 정본(11-16, 손 칸 panel.json 폐지).
 화면(preview)·메시지 본문·토큰은 파일·로그에 남기지 않음. slack-bot.env·main.env 는 읽지 않음(Slack API 호출 없음).
 """
+from __future__ import annotations
 import sys
 
 if sys.version_info < (3, 10):  # 하위 모듈이 3.10 문법(X | None)을 씀. launchd 가 시스템 python(3.9)을 잡으면 TypeError 로 조용히 실패하므로 원인·조치를 냄

@@ -4,6 +4,7 @@
 파일: $LRM_HUB_DIR(기본 ~/.config/lrm-hubs)/card-actions.json  {결정번호: {kind, args, createdAt}}
 규칙: 선택지 1번이 '실행', 그 밖의 답(보류·직접 입력)은 동작 없이 항목만 지움. 항목은 꺼낼 때 지워 같은 카드를 두 번 눌러도 한 번만 실행함.
 """
+from __future__ import annotations
 import argparse
 import contextlib
 import fcntl

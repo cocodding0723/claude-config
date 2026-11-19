@@ -10,6 +10,7 @@
 사라진 항목을 기억하는 명부(confirm-seen.json)가 있어야 병합된 PR·끝난 허브 항목을 '함' 으로 보여 줌. 근거 없이 사라진 결정·PR 은 목록에서 뺌.
 기록 파일은 모두 flock 아래 쓰고 명부는 임시 파일 → rename 으로 교체. 환경: LRM_HUB_DIR 작업 폴더
 """
+from __future__ import annotations
 import json
 import os
 import re

@@ -25,6 +25,7 @@ HTML 은 html_pdf.sh 로 PDF(Slack 에서 바로 열림), html_preview.sh 로 39
       LRM_LEDGER 장부(주제 제목용) · LRM_LEDGER_STATE ledger_sync 상태(진행 스레드 부모 ts) · LRM_REPORT_SENT 전송 기록(채널 조회) · LRM_REPORT_BUDGET_S 회차 시간 예산
 종료 코드: 0 성공(처리할 것 없음·busy 포함), 1 일부 전송 실패(재시도 대상), 2 설정·입력 오류·상태 파일 손상(전송 중단, 복구 안내 출력)
 """
+from __future__ import annotations
 import argparse
 import contextlib
 import fcntl

@@ -9,6 +9,7 @@
   시간 초과로 도착 여부 불명인 전달·이미 성공한 전달은 다시 보내지 않음.
 감사 로그: docsite-audit.jsonl 에 {at, source, kind: confirm, key, result} 한 줄. 본문·토큰은 남기지 않음.
 """
+from __future__ import annotations
 import json
 import os
 import sys

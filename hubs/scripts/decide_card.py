@@ -5,6 +5,7 @@
 선택 항목: 본문 '이유:' 줄 = 추천 이유. 카드에서는 추천 줄 뒤에 붙음.
 카드 렌더 순서: 제목 → 배경 → 선택지(각 결과) → 추천(+이유) → 용어 → 답 줄.
 """
+from __future__ import annotations
 import json
 import os
 import re

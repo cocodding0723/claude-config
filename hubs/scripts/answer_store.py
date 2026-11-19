@@ -12,6 +12,7 @@
   answer-delivery.jsonl  한 줄: {decision_id, parent_ts, state: pending|hub|main|proxy|unknown|lost|action, ok, at, retry}
 환경: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs)
 """
+from __future__ import annotations
 import json
 import os
 import re

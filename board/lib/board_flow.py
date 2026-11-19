@@ -8,6 +8,7 @@ board-claim(집기)과 board-stage(단계 옮기기)가 같이 씀. 규칙을 �
 계획 승인 = 그 기능의 계획 승인 카드(결정 번호 plan_id(기능 카드 id), 1번 선택지가 '승인')에 사용자가 Slack·문서 사이트에서 1번이나 추천대로를 고른 것.
 터미널에서 남긴 답(decide-answer)은 세지 않음: 코디네이터가 스스로 승인할 수 있게 되기 때문.
 """
+from __future__ import annotations
 import hashlib
 import json
 import os
