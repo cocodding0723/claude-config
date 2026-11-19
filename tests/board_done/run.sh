@@ -229,4 +229,34 @@ expect "--help 는 0" 0 "$BIN" --help
 expect "없는 카드는 4" 4 "$BIN" nope-1 w1
 expect "작업판 폴더 없음은 3" 3 env BOARD_DIR="$SB/none" "$BIN" x w1
 
+# 화면에 보이는 변화가 없는 기능은 캡처·녹화 생략(--no-capture). 화면 파일이 바뀌었으면 거부하고 바로 찍게 함
+gitc() { git -C "$GR" -c user.name=t -c user.email=t@t "$@"; }
+gitc checkout -q -b logic main; echo 'class A {}' > "$GR/A.cs"; gitc add -A; gitc commit -q -m logic; HEAD_L=$(git -C "$GR" rev-parse HEAD)
+gitc checkout -q -b vis main; mkdir -p "$GR/Assets"; echo p > "$GR/Assets/a.prefab"; gitc add -A; gitc commit -q -m vis; HEAD_V=$(git -C "$GR" rev-parse HEAD); gitc checkout -q main
+epic_of() { bd create "$1" -t epic --labels "$2" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'; }
+nc=$(epic_of "화면 변화 없음" "branch:logic,repo:$GR,base:main"); nv=$(epic_of "화면 변화 있음" "branch:vis,repo:$GR,base:main"); nb=$(epic_of "기준 모름" "branch:logic,repo:$GR")
+sleep 1; for n in 5 6 7; do cp "$SB/ev/rv.json" "$SB/ev/rv$n.json"; done
+bd comments add "$nc" "evidence:review=$SB/ev/rv5.json commit=$HEAD_L" >/dev/null; bd comments add "$nv" "evidence:review=$SB/ev/rv6.json commit=$HEAD_V" >/dev/null; bd comments add "$nb" "evidence:review=$SB/ev/rv7.json commit=$HEAD_L" >/dev/null
+expect "캡처 증거가 없으면 그냥은 거부(6)" 6 "$BIN" --epic "$nc" lead --dry-run
+expect "--no-capture 이유 없으면 2" 2 "$BIN" --epic "$nc" lead --no-capture "" --dry-run
+expect "화면 파일이 안 바뀐 기능은 --no-capture 로 통과" 0 "$BIN" --epic "$nc" lead --no-capture "계산식만 바뀜" --dry-run
+expect "화면 파일이 바뀐 기능은 --no-capture 거부(7)" 7 "$BIN" --epic "$nv" lead --no-capture "간단함" --dry-run
+grep -q 'a.prefab' "$SB/out" && grep -q '묻지 않고 바로' "$SB/out" && ok "거부 안내가 바뀐 화면 파일과 '묻지 않고 바로 찍기'를 알려 줌" || ko "캡처 안내" "$(cat "$SB/out")"
+expect "기준 브랜치를 모르면 --no-capture 거부(6)" 6 "$BIN" --epic "$nb" lead --no-capture "계산식만 바뀜" --dry-run
+expect "--no-capture 로 닫으면 통과" 0 env BOARD_FEATURE_CLOSE=off "$BIN" --epic "$nc" lead --no-capture "계산식만 바뀜"
+bd comments "$nc" --json | grep -q 'no-capture: 계산식만 바뀜' && ok "캡처 생략 이유가 카드에 남음" || ko "캡처 생략 이유"
+
+# 지시 장부: 사용자가 코디네이터 창에 직접 친 지시의 처리가 다 적혀야 기능을 닫음(label said:v1 인 기능만)
+SAID="$HERE/../../board/bin/board-said"; SDIR="$SB/claude/projects/-w-coord-feat-s-hub"; mkdir -p "$SDIR"
+sd=$(bd create "지시 장부" -t epic --labels "branch:logic,repo:$GR,base:main,said:v1" -d $'- 목표: x\n- 기능 코디네이터 허브: /w/coord-feat-s-hub' --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+sleep 1; cp "$SB/ev/rv.json" "$SB/ev/rv8.json"; bd comments add "$sd" "evidence:review=$SB/ev/rv8.json commit=$HEAD_L" >/dev/null
+expect "직접 친 지시가 없으면 통과" 0 env BOARD_CLAUDE_DIRS="$SB/claude" "$BIN" --epic "$sd" lead --no-capture "계산식만" --dry-run
+python3 -c 'import json,datetime,time,sys; open(sys.argv[1],"w").write(json.dumps({"type":"user","timestamp":datetime.datetime.fromtimestamp(time.time()+5,datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),"message":{"role":"user","content":"높이 조금만 더 낮추자"}},ensure_ascii=False)+"\n")' "$SDIR/s.jsonl"
+expect "장부에 없는 지시가 있으면 거부(6)" 6 env BOARD_CLAUDE_DIRS="$SB/claude" "$BIN" --epic "$sd" lead --no-capture "계산식만" --dry-run
+grep -q 'board-said' "$SB/out" && ok "거부 안내가 지시 장부 명령을 알려 줌" || ko "장부 안내" "$(cat "$SB/out")"
+BOARD_CLAUDE_DIRS="$SB/claude" "$SAID" "$sd" lead --sync >/dev/null 2>&1
+expect "장부에 적었어도 처리가 없으면 거부(6)" 6 env BOARD_CLAUDE_DIRS="$SB/claude" "$BIN" --epic "$sd" lead --no-capture "계산식만" --dry-run
+BOARD_CLAUDE_DIRS="$SB/claude" "$SAID" "$sd" lead --mark 1 반영 "카드 x.5" >/dev/null 2>&1
+expect "지시마다 처리가 적히면 통과" 0 env BOARD_CLAUDE_DIRS="$SB/claude" "$BIN" --epic "$sd" lead --no-capture "계산식만" --dry-run
+
 echo "통과 $PASS, 실패 $FAIL"; [ "$FAIL" = 0 ]
