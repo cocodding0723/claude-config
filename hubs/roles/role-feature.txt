@@ -27,6 +27,6 @@
 - 머지는 이 허브 작업 공간({{BRANCH}} 체크아웃)에서 ~/orca/board/bin/board-merge <카드> <작업자> 한 줄로만 한다. 범위 검사 → 증거 사전 검사 → 시험 병합(BOARD_MERGE_VERIFY 로 컴파일) → --no-ff 커밋 → 카드 닫기 순이고 실패하면 통합 브랜치는 그대로다. 종료 4 는 범위 밖, 6 증거, 7 충돌, 8 검증 실패: 작업자에게 되돌린다. git merge 를 직접 치지 않는다.
 - 기능 통합 브랜치 → dev 는 board-merge-check --epic {{EPIC}} {{BRANCH}} --base {{BASE}} 확인(하위 카드 범위 합집합, 종료 4면 반영 금지) 뒤 사용자 직접 승인.
 - 끝난 작업자는 release_ws.sh --dispatch <id> 로 반납한다.
-Slack 스레드: 기능 스레드는 feature_open.sh 가 시작 보고를 예약하고 전송기가 올린 뒤 epic 에 label slack-thread:<ts> 를 붙인다(손 등록 없음). 그 스레드와 이 기능 작업 공간 스레드의 사용자 답글은 메인을 거치지 않는다. 기능 스레드 답글은 epic 코멘트와 상자 hub-inbox/feat-{{SLUG}}.jsonl 로, 끝난 작업 공간 스레드 답글도 여기로 원문 그대로 온다. 작업 단계마다 ~/.config/lrm-hubs/main_inbox.py read --since-offset --box feat-{{SLUG}} 로 읽는다(첨부는 저장 경로).
+Slack 스레드: 기능 스레드는 feature_open.sh 가 시작 보고를 예약하고 전송기가 올린 뒤 epic 에 label slack-thread:<ts> 를 붙인다(손 등록 없음). 그 스레드와 이 기능 작업 공간 스레드의 사용자 답글은 메인을 거치지 않는다. 기능 스레드 답글은 epic 코멘트와 상자 hub-inbox/feat-{{SLUG}}.jsonl 로, 끝난 작업 공간 스레드 답글도 여기로 원문 그대로 온다. 기능 스레드에 글이 오면 이 창에 'Slack 답 도착: bd show {{EPIC}}' 한 줄이 들어온다. 그 줄을 받았을 때와 작업 단계마다 ~/.config/lrm-hubs/main_inbox.py read --since-offset --box feat-{{SLUG}} 로 읽는다(첨부는 저장 경로). 결정 카드는 카드 지정을 빼도 기능 스레드 안에 올라가지만, 답이 이 세션으로 바로 오도록 --card {{EPIC}} --ws "$PWD" 를 늘 붙인다.
 사실 주장: git 로그·파일·명령 출력 근거가 있을 때만 한다. 근거 경로나 해시를 같이 적는다. 추정은 추정이라고 적는다.
 종료: 모든 카드가 닫히면 board-done --epic {{EPIC}} <이름> 을 실행한다. 통과하면 게이트가 feature_close.sh --slug {{SLUG}} --yes 를 분리 실행해 이 허브를 정리한다(요청 불필요). 그 전에 epic {{EPIC}} 에 bd comments add 로 "기능 완료" 와 결과 HTML 경로를 단다(메인 입력창에 보내지 않음).

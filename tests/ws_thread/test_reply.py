@@ -185,6 +185,27 @@ class FeatureSessionTest(ReplyBase):
             sent = f.read()
         self.assertIn(self.fe, sent)
 
+    def test_reply_in_the_feature_thread_wakes_the_coordinator(self):
+        """기능 스레드에 쓴 글도 코디네이터 창에 알림: 쉬는 코디네이터는 상자를 스스로 읽지 않아 글이 묻힘"""
+        self.label(self.fe, "slack-thread:1794383200.000700")
+        self.wake_on()
+        self.set_terminals([{"handle": TERM, "worktreePath": self.hubws, "agentIdentity": "claude", "writable": True, "connected": True, "orphaned": False}])
+        self.reply("1794383291.000011", "1794383200.000700", "여기 색을 더 진하게")
+        out = self.route()
+        self.assertEqual((out["routed"][0]["to"], out["routed"][0]["epic"]), ("feature", self.fe))
+        self.assertEqual([w["wake"] for w in out["wake"]], ["sent"])
+        self.assertIn(self.fe, self.sends()[-1][1])
+
+    def test_feature_thread_reply_without_a_known_coordinator_workspace_is_still_recorded(self):
+        """기능 카드 설명에 코디네이터 폴더 줄이 없는 옛 기능: 알림만 생략하고 카드·상자 기록은 그대로"""
+        self.wake_on()
+        self.reply("1794383291.000012", EPIC_TS, "옛 기능 스레드 글")
+        out = self.route()
+        self.assertEqual((out["routed"][0]["to"], out["routed"][0]["epic"]), ("feature", self.epic))
+        self.assertEqual(out.get("wake"), None)
+        self.assertEqual(self.sends(), [])
+        self.assertEqual(self.box("feat-x")[-1]["text"], "옛 기능 스레드 글")
+
     def test_plain_reply_under_such_a_card_is_marked_as_answer(self):
         self.reply("1794383291.000002", "1794383290.000100", "슬라이더가 다 이동하면 캐릭터를 끄고 싶다")
         self.route()
