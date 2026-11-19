@@ -124,7 +124,7 @@ else
 fi
 
 # 허브·워커는 기억 플러그인 끔(메모리 절약, 11-05). 메인 체크아웃만 켬
-# 워커 deny 규칙. 토큰 파일 Read 는 모든 저장소 공통. Slack 스크립트·토큰 파일 Bash 차단은 게임 저장소만(claude-config 워커는 slack_notify.sh 로 보고함, 11-13 D-CFGAPPLY)
+# 워커 deny 규칙. 채팅 토큰 파일 Read 는 모든 저장소 공통. 채팅 알림 스크립트·토큰 파일 Bash 차단은 게임 저장소만(claude-config 워커는 slack_notify.sh 로 보고함, 11-13 D-CFGAPPLY)
 CFG_CONFIG_REPO="${LRM_CONFIG_REPO_NAME:-claude-config}"
 DENY_BASH=1; [ "$(basename "$REPO")" = "$CFG_CONFIG_REPO" ] && DENY_BASH=0
 mkdir -p "$P/.claude" && python3 -c 'import json,os,sys
@@ -132,6 +132,9 @@ f, home, deny_bash = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 d = json.load(open(f)) if os.path.exists(f) else {}
 d.setdefault("enabledPlugins", {})["openviking-memory@openviking"] = False
 dn = d.setdefault("permissions", {}).setdefault("deny", [])
-rules = ["Read(/%s/.config/lrm-hubs/slack-bot.env)" % home] + (["Bash(*slack-bot.env*)", "Bash(*slack_notify.sh*)"] if deny_bash else [])
+tokens = ["slack-bot.env", "discord-bot.env"]  # 채팅 봇 토큰 파일(Slack·Discord)
+rules = ["Read(/%s/.config/lrm-hubs/%s)" % (home, t) for t in tokens]
+if deny_bash:
+    rules += ["Bash(*%s*)" % t for t in tokens] + ["Bash(*slack_notify.sh*)", "Bash(*discord_notify.py*)"]
 dn.extend(r for r in rules if r not in dn)
 json.dump(d, open(f, "w"), indent=2)' "$P/.claude/settings.local.json" "$HOME" "$DENY_BASH"
