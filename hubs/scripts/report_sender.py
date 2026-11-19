@@ -742,12 +742,14 @@ def feature_thread(conf: Conf, rep: dict) -> "tuple[str, str]":
 def in_thread(rep: dict, topic: dict) -> bool:
     """보고 본문을 주제 스레드 안에 올리는가(False 면 맨 위 글). 판정 경우는 tests/report_sender/test_feature_route.py 의 표.
     같이 쓰는 스레드(shared)의 결정은 기능 코디네이터 것만 안에 올림: 그 스레드의 글 답은 기능 코디네이터가 받으므로,
-    다른 허브의 결정을 넣으면 글 답이 엉뚱한 세션으로 감"""
+    다른 허브나 작업 공간 세션(하위 카드 + ws)의 결정을 넣으면 글 답이 올린 세션이 아닌 곳으로 감"""
     if rep["kind"] != "decide":
         return True
     if not topic.get("ts"):
         return False
-    return not topic.get("shared") or str(rep.get("hub") or "").startswith(FEATURE_HUB)
+    if not topic.get("shared"):
+        return True
+    return str(rep.get("hub") or "").startswith(FEATURE_HUB) and not (rep.get("card") and rep.get("ws"))
 
 
 def open_topic(conf: Conf, rep: dict, st: dict, deadline: float) -> None:

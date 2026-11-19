@@ -62,6 +62,8 @@ class DecideThreadTest(unittest.TestCase):
         ("카드를 준 결정은 그 카드 스레드 안", {"kind": "decide", "hub": "ci-hub", "card": "t-1"}, {"ts": "1.1"}, True),
         ("기능 코디네이터의 결정은 기능 스레드 안", {"kind": "decide", "hub": "feat-x"}, {"ts": "1.1", "shared": "t-e"}, True),
         ("기능 코디네이터가 하위 카드로 올린 결정도 기능 스레드 안", {"kind": "decide", "hub": "feat-x", "card": "t-e.1"}, {"ts": "1.1", "shared": "t-e"}, True),
+        ("작업 공간 세션이 올린 결정은 맨 위 글(글 답이 그 세션이 아니라 코디네이터로 가므로)",
+         {"kind": "decide", "hub": "feat-x", "card": "t-e.1", "ws": "/w/1"}, {"ts": "1.1", "shared": "t-e"}, False),
         ("기능 허브가 아닌 곳이 같이 쓰는 스레드의 결정은 맨 위 글", {"kind": "decide", "hub": "ui-hub", "card": "t-e.9"}, {"ts": "1.1", "shared": "t-e"}, False),
         ("스레드가 아직 없으면 맨 위 글", {"kind": "decide", "hub": "feat-x"}, {}, False),
     ]
