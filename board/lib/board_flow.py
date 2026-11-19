@@ -5,7 +5,8 @@ board-claim(집기)과 board-stage(단계 옮기기)가 같이 씀. 규칙을 �
 크기: 작음은 설계를 건너뛰고(0 → 3) 보통·큼은 계획 승인 뒤에만 구현 카드를 집음.
 적용 대상: 기능 카드(epic)에 label flow:v1 이 있는 기능만. 옛 방식으로 떠 있는 기능은 막지 않음.
 
-계획 승인 = 그 기능의 계획 승인 카드(결정 번호 plan_id(기능 카드 id), 1번 선택지가 '승인')에 사용자가 Slack·문서 사이트에서 1번이나 추천대로를 고른 것.
+계획 승인 = 그 기능의 계획 승인 카드(결정 번호 plan_id(기능 카드 id), 1번 선택지가 '승인')에 사용자가 Slack·문서 사이트에서 1번이나 추천대로를 고른 것,
+또는 사용자가 그 기능 코디네이터 창에 '승인'·'스킵'으로 시작하는 글을 직접 친 것(세션 기록에서 읽음, board_said).
 터미널에서 남긴 답(decide-answer)은 세지 않음: 코디네이터가 스스로 승인할 수 있게 되기 때문.
 """
 import hashlib
@@ -13,6 +14,8 @@ import json
 import os
 import re
 from dataclasses import dataclass
+
+import board_said
 
 FLOW_LABEL = "flow:v1"
 SIZE_HEAD = "size:"
@@ -24,6 +27,10 @@ APPROVE_WORD = "승인"            # 계획 승인 카드의 1번 선택지는 �
 USER_SOURCES = ("slack", "docsite")  # 사용자가 직접 누른 답만. 터미널 기록은 코디네이터가 쓸 수 있음
 POLLED_TYPES = ("reaction", "thread_reply")  # 폴러가 Slack 에서 읽어 온 사용자 반응·카드 스레드 글(출처 칸 없이 기록됨)
 SENT_NAME, INBOX_NAME = "slack-sent.jsonl", "slack-inbox.jsonl"
+# 코디네이터 창에 직접 친 승인·건너뛰기: 글이 이 말로 시작할 때만("승인", "계획 승인한다", "스킵하고 진행", "승인 건너뛰고 진행").
+# "진행해"·"ㄱㄱ" 같은 말은 세지 않음: 다른 얘기 끝에 붙는 말이라 뜻하지 않은 승인이 됨
+TYPED_OK = re.compile(r"^\s*(?:계획\s*)?(?:승인|스킵|skip|건너뛰)", re.I)
+HUB_LINE = re.compile(r"^[ \t>*-]*기능 코디네이터 허브[ \t]*:[ \t]*(\S+)", re.M)  # feature_open.sh 가 기능 카드 설명에 적는 줄(feedback_route.HUB_LINE_RE 와 같은 꼴)
 
 
 @dataclass(frozen=True)
@@ -127,15 +134,54 @@ def plan_approved(hub_dir: str, did: str) -> bool:
     """계획 승인 카드에 사용자가 승인으로 답했는가. 기록을 못 읽으면 승인 아님.
     답은 가장 최근에 올린 카드(메시지)에 달린 것만 봄: 계획을 고쳐 같은 번호로 다시 올리면 옛 카드의 승인은 새 계획의 승인이 아님.
     그 카드의 답이 여럿이면 가장 최근 것이 기준(승인 뒤 수정 요청으로 바꾸면 승인이 풀림)"""
-    card = next((s for s in reversed(read_jsonl(os.path.join(hub_dir, SENT_NAME)))
-                 if s.get("decision_id") == did and s.get("form_kind") == "decide" and isinstance(s.get("options"), dict)), None)
+    card = last_card(hub_dir, did)
     if card is None or not card.get("ts") or not str(card["options"].get("1", "")).strip().startswith(APPROVE_WORD):
         return False
-    last = next((r for r in reversed(read_jsonl(os.path.join(hub_dir, INBOX_NAME)))
-                 if r.get("decision_id") == did and r.get("parent_ts") == card["ts"] and by_user(r)
-                 and r.get("action") in ("pick", "approve", "custom", "hold")), None)
+    last = last_answer(hub_dir, did, card)
     # 추천대로(approve)도 pick 에 추천 번호가 들어 있음. 1번(승인)일 때만 승인
     return last is not None and last["action"] in ("pick", "approve") and last.get("pick") == 1
+
+
+def last_card(hub_dir: str, did: str) -> "dict | None":
+    """그 결정 번호로 가장 최근에 올린 결정 카드 기록"""
+    return next((s for s in reversed(read_jsonl(os.path.join(hub_dir, SENT_NAME)))
+                 if s.get("decision_id") == did and s.get("form_kind") == "decide" and isinstance(s.get("options"), dict)), None)
+
+
+def last_answer(hub_dir: str, did: str, card: dict) -> "dict | None":
+    """그 카드에 사용자가 낸 가장 최근 답"""
+    return next((r for r in reversed(read_jsonl(os.path.join(hub_dir, INBOX_NAME)))
+                 if r.get("decision_id") == did and r.get("parent_ts") == card.get("ts") and by_user(r)
+                 and r.get("action") in ("pick", "approve", "custom", "hold")), None)
+
+
+def coordinator_ws(epic: "dict | None") -> str:
+    """기능 카드 설명에 적힌 코디네이터 작업 공간 경로. 없으면 ''"""
+    m = HUB_LINE.search(str((epic or {}).get("description") or ""))
+    return m.group(1) if m else ""
+
+
+def typed_approval(hub_dir: str, did: str, epic: "dict | None", typed=board_said.typed) -> bool:
+    """사용자가 그 기능 코디네이터 창에 승인·건너뛰기를 직접 쳤는가(11-19: Slack 버튼을 기다리지 않고 진행하는 길).
+    가장 최근 계획 카드를 올린 뒤에 친 글만 봄(카드를 다시 올리면 그 전 승인은 새 계획의 승인이 아님). 카드가 없으면 기능을 연 뒤의 글.
+    그 카드에 Slack 으로 수정 요청을 했으면 그 뒤에 친 글만 봄(나중 답이 기준)"""
+    ws = coordinator_ws(epic)
+    if not ws:
+        return False
+    card = last_card(hub_dir, did)
+    since = board_said.stamp((epic or {}).get("created_at"))
+    if card is not None:
+        if isinstance(card.get("at"), (int, float)) and not isinstance(card.get("at"), bool):
+            since = max(since, float(card["at"]))
+        ans = last_answer(hub_dir, did, card)
+        if ans is not None and isinstance(ans.get("received_at"), (int, float)):
+            since = max(since, float(ans["received_at"]))
+    return any(TYPED_OK.match(text) for _, text in typed(ws, since))
+
+
+def approval(hub_dir: str, epic: "dict | None"):
+    """계획 승인 조회 함수(결정 번호 -> bool): Slack·문서 사이트 답, 또는 코디네이터 창에 직접 친 승인·건너뛰기"""
+    return lambda did: plan_approved(hub_dir, did) or typed_approval(hub_dir, did, epic)
 
 
 def by_user(rec: dict) -> bool:
@@ -162,4 +208,5 @@ def claim_block(card: dict, epic: "dict | None", approved) -> str:
     if approved(did):
         return ""
     return (f"기능 {epic['id']}({SIZES[size]}) 의 계획 승인이 없음 — 계획서를 작업 스레드에 결정 카드 {did} 로 올리고"
-            f"(1번 선택지 '{APPROVE_WORD}') 사용자가 승인한 뒤 다시 집음. 작은 일이면 {SIZE_HEAD}{SMALL} 로 바꿈")
+            f"(1번 선택지 '{APPROVE_WORD}') 사용자가 승인한 뒤 다시 집음. 사용자가 코디네이터 창에 '승인'이나 '스킵'이라고 직접 쳐도 됨. "
+            f"작은 일이면 {SIZE_HEAD}{SMALL} 로 바꿈")

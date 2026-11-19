@@ -50,5 +50,17 @@ expect "없는 카드는 2" 2 "$BIN" "no-such-card" build co
 T=$(bd create "하위 작업" --parent "$S" --json | jq -r .id)
 expect "기능 카드가 아니면 2" 2 "$BIN" "$T" build co
 
+# 사용자가 코디네이터 창에 직접 친 승인·건너뛰기: Slack 버튼 없이도 구현으로 넘어감(글 판정 경우는 tests/board_flow/test_said.py)
+export BOARD_CLAUDE_DIRS="$SB/claude"; TDIR="$SB/claude/projects/-w-coord-feat-typed-hub"; mkdir -p "$TDIR"
+typed() { python3 -c 'import json,sys,datetime,time; print(json.dumps({"type":"user","timestamp":datetime.datetime.fromtimestamp(time.time()+float(sys.argv[1]),datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),"message":{"role":"user","content":sys.argv[2]}},ensure_ascii=False))' "$1" "$2" >> "$TDIR/s.jsonl"; }
+Y=$(bd create "[LRM-3] 창에서 승인" -t epic --labels "feature:typed,flow:v1" -d $'- 목표: 창에서 승인한다\n- 확인 방법: 단계가 구현으로 넘어간다\n- 기능 코디네이터 허브: /w/coord-feat-typed-hub' --json | jq -r .id)
+expect "창 승인: 설계까지는 그냥 감" 0 "$BIN" "$Y" design co --size normal
+typed 5 "작업 빠르게 진행 ㄱㄱ"
+expect "'진행 ㄱㄱ'만으로는 구현으로 못 넘어감(15)" 15 "$BIN" "$Y" build co
+grep -q "스킵" "$SB/out" && ok "거부 안내가 창에서 승인·스킵하는 길을 알려 줌" || ko "창 승인 안내" "$(cat "$SB/out")"
+typed 10 "스킵하고 진행"
+expect "사용자가 창에 '스킵하고 진행'이라고 치면 구현으로" 0 "$BIN" "$Y" build co
+unset BOARD_CLAUDE_DIRS
+
 printf '통과 %d · 실패 %d\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

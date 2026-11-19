@@ -81,7 +81,7 @@ def main():
     if epic.get("issue_type") != "epic":
         die(f"거부: {a.card} 는 기능 카드(epic)가 아님. 조치: 단계는 기능 카드에 적음 — 상위 카드 id 로 다시 실행", 2)
     did = bf.plan_id(epic["id"])
-    approved = lambda d: bf.plan_approved(hub, d)  # noqa: E731
+    approved = bf.approval(hub, epic)
 
     if a.stage is None:
         st, size = current(epic), bf.size_of(epic)
