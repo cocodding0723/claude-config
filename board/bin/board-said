@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""지시 장부: 사용자가 기능 코디네이터 창에 직접 친 글을 기능 카드에 번호와 함께 적고, 글마다 어떻게 처리했는지 적음.
+원문은 세션 기록에서 읽으므로(lib/board_said.py) 코디네이터가 옮겨 적다가 빠뜨리거나 고쳐 쓰지 못함.
+완료 검사(board-done --epic)가 --check 와 같은 판정으로, 처리 안 적힌 지시가 남은 기능을 막음."""
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib"))
+import board_flow as bf  # noqa: E402
+import board_said as said  # noqa: E402
+
+EPILOG = """\
+처리 종류: 반영(근거: 카드·커밋) · 미반영(이유) · 답함(질문에 답함) · 되물음(사용자에게 다시 물음, 답이 올 때까지 미처리로 셈) · 해당없음(지시가 아닌 글)
+승인·건너뛰기로 친 글('승인', '스킵' 으로 시작)은 지시로 적지 않음(계획 승인 판정이 따로 읽음).
+종료 코드: 0 성공(--check: 전부 처리됨) · 2 사용법·카드 없음·기능 카드 아님·코디네이터 폴더 줄 없음 · 4 환경(bd 실패) · 6 처리 안 된 지시 있음(--check)
+예:
+  board-said lrm-94k                                  지시 목록과 처리 상태
+  board-said lrm-94k coord-x --sync                   새로 친 글을 장부에 적음
+  board-said lrm-94k coord-x --mark 3,4 반영 "카드 lrm-94k.4, 커밋 ecad6f2"
+  board-said lrm-94k --check                          처리 안 된 지시가 있으면 종료 6
+환경: BOARD_DIR(기본 ~/orca/board) · BOARD_CLAUDE_DIRS 세션 기록을 찾을 설정 폴더(쌍점 구분, 시험용)"""
+
+
+def die(msg, code):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def bd(*args, actor=None):
+    env = dict(os.environ, BD_ACTOR=actor) if actor else None
+    return subprocess.run(["bd", *args], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
+
+
+def bd_json(*args):
+    r = bd(*args, "--json")
+    if r.returncode != 0:
+        die(f"실패: bd {' '.join(args)}: {r.stderr.strip()[:200]}. 조치: BOARD_DIR·bd 설치 확인", 4)
+    try:
+        return json.loads(r.stdout or "null")
+    except ValueError:
+        die(f"실패: bd {' '.join(args)} 출력이 JSON 아님. 조치: bd 버전 확인", 4)
+
+
+def state(epic):
+    """(장부, 세션 기록에는 있는데 장부에 없는 글들, 세션 기록을 찾았는가)"""
+    ws = bf.coordinator_ws(epic)
+    comments = [str(c.get("text") or "") for c in bd_json("comments", epic["id"]) or []]
+    book = said.ledger(comments)
+    rows = said.typed(ws, said.stamp(epic.get("created_at"))) if ws else []
+    return book, said.unrecorded(rows, book, skip=bf.TYPED_OK.match), bool(ws and said.transcripts(ws))
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="board-said", description="사용자가 코디네이터 창에 직접 친 지시의 장부.",
+                                 epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("card", help="기능 카드(epic) id")
+    ap.add_argument("actor", nargs="?", help="작업자 이름(BD_ACTOR). --sync·--mark 에 필요")
+    ap.add_argument("--sync", action="store_true", help="새로 친 글을 장부에 적음")
+    ap.add_argument("--mark", nargs=3, metavar=("번호", "처리", "근거"), help="지시 처리를 적음. 번호는 쉼표로 여럿")
+    ap.add_argument("--check", action="store_true", help="처리 안 된 지시·장부에 없는 글이 있으면 종료 6")
+    ap.add_argument("--json", action="store_true", help="결과를 JSON 한 줄로")
+    try:
+        a = ap.parse_args()
+    except SystemExit as e:
+        sys.exit(0 if e.code == 0 else 2)
+    board = os.environ.get("BOARD_DIR", os.path.expanduser("~/orca/board"))
+    if not os.path.isdir(board):
+        die(f"실패: 작업판 폴더 {board} 없음. 조치: BOARD_DIR=<경로> board-said …", 4)
+    os.chdir(board)
+    r = bd("show", a.card, "--json")  # 없는 카드는 bd 가 실패로 답함 → 사용법 오류(2)로 안내
+    try:
+        shown = json.loads(r.stdout or "null")
+    except ValueError:
+        shown = None
+    epic = shown[0] if isinstance(shown, list) and shown else shown
+    if not epic:
+        die(f"거부: 카드 {a.card} 없음. 조치: bd list -t epic 으로 id 확인", 2)
+    if epic.get("issue_type") != "epic":
+        die(f"거부: {a.card} 는 기능 카드(epic)가 아님. 조치: 지시 장부는 기능 카드에 적음 — 상위 카드 id 로 다시 실행", 2)
+    if (a.sync or a.mark) and not a.actor:
+        die("거부: 작업자 이름 필요. 조치: board-said <기능 카드> <작업자> --sync", 2)
+    if a.sync and not bf.coordinator_ws(epic):
+        die(f"거부: {a.card} 설명에 '기능 코디네이터 허브: <경로>' 줄이 없어 세션 기록을 찾을 수 없음. 조치: feature_open.sh 로 연 기능 카드인지 확인", 2)
+
+    book, fresh, found = state(epic)
+    if a.sync:
+        n = max(book, default=0)
+        for at, text in fresh:
+            n += 1
+            r = bd("comments", "add", epic["id"], said.said_line(n, at, text), actor=a.actor)
+            if r.returncode != 0:
+                die(f"실패: 지시 #{n} 기록 {r.stderr.strip()[:200]}. 조치: 같은 명령을 다시 실행(이미 적힌 글은 건너뜀)", 4)
+        book, fresh, found = state(epic)
+    if a.mark:
+        nums, how, why = a.mark
+        try:
+            numbers = [int(x.lstrip("#")) for x in nums.split(",") if x.strip()]
+        except ValueError:
+            die(f"거부: 번호 '{nums}' 를 읽을 수 없음. 조치: --mark 3,4 반영 \"근거\"", 2)
+        if how not in said.STATES or not why.strip() or not numbers:
+            die(f"거부: 처리는 {'|'.join(said.STATES)} 중 하나, 근거는 비울 수 없음. 조치: --mark 3 반영 \"카드 lrm-x.4\"", 2)
+        missing = [n for n in numbers if n not in book]
+        if missing:
+            die(f"거부: 장부에 없는 지시 번호 {', '.join(f'#{n}' for n in missing)}. 조치: board-said {a.card} <이름> --sync 뒤 목록 확인", 2)
+        r = bd("comments", "add", epic["id"], said.done_line(numbers, how, why.strip()), actor=a.actor)
+        if r.returncode != 0:
+            die(f"실패: 처리 기록 {r.stderr.strip()[:200]}", 4)
+        book, fresh, found = state(epic)
+
+    open_n = said.unsettled(book)
+    out = {"card": epic["id"], "found": found, "count": len(book), "unrecorded": len(fresh), "unsettled": open_n,
+           "rows": [{"n": n, **book[n]} for n in sorted(book)]}
+    if a.json:
+        print(json.dumps(out, ensure_ascii=False))
+    else:
+        if not found:
+            print("세션 기록을 찾지 못함 — 장부에 적힌 것만 보여 줌", file=sys.stderr)
+        for n in sorted(book):
+            v = book[n]
+            print(f"#{n} [{v['state'] or '미처리'}] {v['text'][:120]}" + (f"  ← {v['why'][:80]}" if v["why"] else ""))
+        if fresh:
+            print(f"장부에 아직 없는 글 {len(fresh)}건 — board-said {epic['id']} <이름> --sync")
+        if not book and not fresh:
+            print("직접 친 지시 없음")
+    if a.check and (fresh or open_n):
+        die(f"미처리: 장부에 없는 글 {len(fresh)}건, 처리 안 적힌 지시 {', '.join(f'#{n}' for n in open_n) or '없음'}. "
+            f"조치: board-said {epic['id']} <이름> --sync 뒤 지시마다 --mark <번호> 반영|미반영|답함|해당없음 \"<근거>\"", 6)
+
+
+if __name__ == "__main__":
+    main()

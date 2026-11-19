@@ -256,4 +256,6 @@ board/bin/board-beat	orca/board/bin/board-beat	link
 board/bin/board-stage	orca/board/bin/board-stage	link
 board/lib/board_beat.py	orca/board/lib/board_beat.py	link
 board/lib/board_flow.py	orca/board/lib/board_flow.py	link
+board/lib/board_said.py	orca/board/lib/board_said.py	link
+board/bin/board-said	orca/board/bin/board-said	link
 board/lib/board_evidence.py	orca/board/lib/board_evidence.py	link
