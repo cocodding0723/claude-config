@@ -50,7 +50,7 @@ usage() {
                   세 칸은 새 기능 카드를 만들 때만 적음. 안 주면 빈 칸으로 남고 코디네이터가 채워야 접수 단계를 떠날 수 있음(board-stage)
   --dry-run       아무것도 만들지 않고 할 일만 출력
   --json          결과를 JSON 한 줄로 출력
-환경: REPO(게임 저장소, 기본 ~/orca/LoveRevolutionMaker), WS_ROOT(기본 ~/orca/workspaces/<REPO 폴더 이름>), LRM_BOARD(작업판 폴더), LRM_CREATE_HUB, LRM_FEATURE_ROLE, LRM_ROLES_DIR, LRM_SPRINT_DATE(스프린트 시작일), LRM_SPRINT_FILE(스프린트 시작일 설정 파일, 기본 ~/.config/lrm-hubs/sprint-start)
+환경: REPO(게임 저장소. Jira 티켓은 기본 ~/orca/LoveRevolutionMaker, GitHub 이슈는 필수), WS_ROOT(기본 ~/orca/workspaces/<REPO 폴더 이름>), LRM_BOARD(작업판 폴더), LRM_CREATE_HUB, LRM_FEATURE_ROLE, LRM_ROLES_DIR, LRM_SPRINT_DATE(스프린트 시작일), LRM_SPRINT_FILE(스프린트 시작일 설정 파일, 기본 ~/.config/lrm-hubs/sprint-start)
 종료 코드: 0 성공, 1 단계 실패, 2 인자 오류, 3 환경 오류(bd·orca·jq·git 없음, 기준 브랜치 없음), 5 사용자 검수 대기 상한(REVIEW_WIP_MAX, 기본 3)
 예:
   feature_open.sh --ticket LRM-612 --name "우편함" --base dev --dry-run
@@ -81,6 +81,8 @@ GH_NUM=""
 if [[ "$TICKET" =~ ^[A-Z][A-Z0-9]{1,9}-[0-9]+$ ]]; then TRACKER=jira
 elif [[ "$TICKET" =~ ^(([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+))?#([0-9]+)$ ]]; then
   TRACKER=github GH_NUM="${BASH_REMATCH[3]}" GH_GIVEN="${BASH_REMATCH[2]}"
+  # 기본 저장소(게임 저장소 하나)는 Jira 티켓용. GitHub 이슈는 저장소가 여럿이라 추측하면 엉뚱한 저장소에 브랜치가 생김
+  [ -n "${REPO:-}" ] || die "GitHub 이슈는 REPO 가 필요 — REPO=<작업 저장소 경로> feature_open.sh … 로 다시 실행" 2
   GH_REPO=$(git -C "$CFG_REPO" remote get-url origin 2>/dev/null | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##; s#/$##') || GH_REPO=""
   [ -n "$GH_REPO" ] || die "GitHub 이슈인데 $CFG_REPO 의 origin 이 GitHub 이 아님 — REPO 로 게임 저장소를 지정" 3
   if [ -n "$GH_GIVEN" ] && [ "$(echo "$GH_GIVEN" | tr 'A-Z' 'a-z')" != "$(echo "$GH_REPO" | tr 'A-Z' 'a-z')" ]; then

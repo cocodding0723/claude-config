@@ -4,14 +4,19 @@
 # 종료 코드: 0 생성(부모 연결 확인됨), 1 부모 허브 연결 실패(폴더는 남음, stderr 에 수동 명령), 2 인자 오류, 3 같은 이름 폴더가 이미 있음(덮어쓰지 않음), 4 정리 뒤에도 하위 작업 공간이 상한 이상이라 생성 거부(폴더 안 만듦)
 # 허브는 출력(경로·JSON)을 그대로 쓴다. 'LRM-507-*' 같은 폴더를 추측해 고르면 다른 허브의 작업 공간을 고를 수 있음.
 set -euo pipefail
-REPO="${REPO:-$HOME/orca/LoveRevolutionMaker}"
-WS_ROOT="${WS_ROOT:-$HOME/orca/workspaces/LoveRevolutionMaker}"
 HUB="" NAME="" PATHS="" BRANCH="" FULL=0 BASE="origin/dev" JSON=0 CARD=""
 while [ $# -gt 0 ]; do case "$1" in
   --hub) HUB="$2"; shift 2;; --name) NAME="$2"; shift 2;; --paths) PATHS="$2"; shift 2;;
   --branch) BRANCH="$2"; shift 2;; --card) CARD="$2"; shift 2;; --base) BASE="$2"; shift 2;; --full) FULL=1; shift;; --json) JSON=1; shift;;
   *) echo "알 수 없는 인자: $1" >&2; exit 2;; esac; done
 : "${HUB:?--hub 필요}" "${NAME:?--name 필요}"
+# 저장소·작업 공간 묶음은 허브 작업 공간에서 추론(REPO·WS_ROOT 가 있으면 그 값). 기본 저장소로 떨어지면 다른 게임 저장소에 브랜치가 생김
+if [ -z "${REPO:-}" ]; then
+  common=$(git -C "$HUB" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || common=""
+  [ -n "$common" ] || { echo "허브 $HUB 에서 git 저장소를 못 찾음 — --hub 에 허브 작업 공간 경로를 넘기거나 REPO=<게임 저장소> 지정" >&2; exit 2; }
+  REPO=$(dirname "$common")
+fi
+WS_ROOT="${WS_ROOT:-$(dirname "$HUB")}"
 # 허브당 하위 작업 공간 상한(설정은 이 블록 한 곳). 넘으면 그 허브 하위만 ws_gc 로 1회 정리하고, 그래도 넘으면 기록 뒤 생성 거부(종료 4). 하위 수 조회 실패(빈 값)는 판정 불가라 경고만 하고 생성 계속 — Orca 일시 오류로 작업이 멈추는 것을 피함
 CFG_HUB_MAX="${LRM_HUB_MAX_CHILDREN:-10}"
 CFG_WS_GC="${LRM_WS_GC:-$HOME/.config/lrm-hubs/ws_gc.sh}"
@@ -77,7 +82,7 @@ P="$WS_ROOT/$DIR_NAME"
 if [ -e "$P" ] || [ -n "$(orca worktree list --limit 1000 --json 2>/dev/null | jq -r --arg p "$P" '.result.worktrees[]? | select(.path == $p) | .path' 2>/dev/null || true)" ]; then
   echo "이미 있는 작업 공간: $P — 덮어쓰지 않음. 다른 --name·--branch 를 쓰거나 기존 작업 공간을 재사용할 것" >&2; exit 3
 fi
-git -C "$REPO" fetch -q origin 2>/dev/null || git -C "$REPO" -c credential.helper= -c credential.helper="!gh auth git-credential" fetch -q https://github.com/Basakansoft/LoveRevolutionMaker.git "+refs/heads/*:refs/remotes/origin/*" || echo "⚠️ fetch 실패 — 로컬 origin/* 기준으로 계속" >&2
+git -C "$REPO" fetch -q origin 2>/dev/null || git -C "$REPO" -c credential.helper= -c credential.helper="!gh auth git-credential" fetch -q "$(git -C "$REPO" remote get-url origin 2>/dev/null | sed -E 's#^git@github\.com:#https://github.com/#')" "+refs/heads/*:refs/remotes/origin/*" || echo "⚠️ fetch 실패 — 로컬 origin/* 기준으로 계속" >&2
 if [ -n "$BRANCH" ]; then ARGS=(-b "$BRANCH"); else ARGS=(--detach); fi
 if [ "$FULL" = 1 ]; then
   git -C "$REPO" worktree add -q "${ARGS[@]}" "$P" "$BASE"

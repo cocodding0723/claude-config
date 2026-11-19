@@ -53,6 +53,8 @@ chk "작업명을 안 주면 티켓 번호까지만 쓰고 경고" '[ "$(bjson -
 bash "$SCR/feature_open.sh" --ticket LRM-714 --name x --base dev --slug y --type hotfix --dry-run >/dev/null 2>"$SB/err"; RC=$?
 chk "모르는 타입은 종료 2" '[ "$RC" = 2 ] && grep -q "feat|fix" "$SB/err"' "rc=$RC $(cat "$SB/err")"
 # 스프린트 폴더의 날짜는 스프린트 시작일(사용자 11-18). 오늘 날짜가 아니므로 계산하지 않고 정해 둔 값을 읽음: --sprint > LRM_SPRINT_DATE > 설정 파일
+env -u REPO bash "$SCR/feature_open.sh" --ticket '#5' --name x --base dev --slug x --type feat --dry-run >/dev/null 2>"$SB/err"; RC=$?
+chk "feature_open: GitHub 이슈인데 REPO 없음 → 종료 2, 기본 저장소로 떨어지지 않음" '[ "$RC" = 2 ] && grep -q "REPO 가 필요" "$SB/err"' "rc=$RC $(cat "$SB/err")"
 nosprint() { env -u LRM_SPRINT_DATE LRM_SPRINT_FILE="$SB/sprint-start" bash "$SCR/feature_open.sh" "$@" --base dev --dry-run --json 2>"$SB/err"; }
 rm -f "$SB/sprint-start"; nosprint --ticket LRM-715 --name x --slug nodate >/dev/null; RC=$?
 chk "스프린트 시작일을 모르면 만들지 않고 멈춤(오늘 날짜로 지어내지 않음)" '[ "$RC" = 2 ] && grep -q "스프린트 시작일" "$SB/err" && ! grep -q "$(date +%Y%m%d)" "$SB/err"' "rc=$RC $(cat "$SB/err")"

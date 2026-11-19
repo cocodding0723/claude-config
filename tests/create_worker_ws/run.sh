@@ -187,5 +187,20 @@ chk "--card 없음: 보고 예약 안 함(기존 동작)" '[ "$RC" = 0 ] && [ ! 
 setlist 1; rm -f "$F"/show.n; : > "$F/report.calls"; FAKE_REPORT_FAIL=1 runx --name "[C3] 예약 실패" --card t-abc
 chk "--card 예약 실패: 경고만 하고 생성·종료 0 유지" '[ "$RC" = 0 ] && [ -d "$WSR/C3-예약-실패" ] && grep -q "Slack 스레드 시작 예약 실패" "$SB/err"' "rc=$RC $(cat "$SB/err")"
 
+# ---- REPO·WS_ROOT 미지정: 허브 작업 공간에서 저장소·묶음 폴더 추론, 못 찾으면 종료 2 ----
+WS2="$SB/ws2"; mkdir -p "$WS2"; git -C "$SB/repo" worktree add -q --detach "$WS2/coord-r-hub" origin/dev
+cat > "$F/list2.json" <<EOJ
+{"ok":true,"result":{"worktrees":[{"id":"r::hub2","path":"$WS2/coord-r-hub","childWorktreeIds":[]}]}}
+EOJ
+cp "$F/list.json" "$F/list.bak"; cp "$F/list2.json" "$F/list.json"; rm -f "$F"/show.n
+env LRM_WS_REG_WAIT=3 LRM_WS_REG_INTERVAL=0.1 PATH="$BIN:$PATH" FAKE_DIR="$F" LRM_WS_GC="$BIN/ws_gc.sh" LRM_HUB_REPORT="$BIN/hub_report.py" \
+  bash "$CW" --hub "$WS2/coord-r-hub" --name infer1 --branch feat/infer1 --paths README.md > "$SB/out" 2>"$SB/err"; RC=$?
+chk "REPO 없음: 허브의 저장소에 브랜치, 허브 옆 폴더에 작업 공간" '[ -d "$WS2/feat-infer1" ] && git -C "$SB/repo" show-ref -q --verify refs/heads/feat/infer1' "rc=$RC $(cat "$SB/err")"
+mkdir -p "$SB/plain-hub"
+env PATH="$BIN:$PATH" FAKE_DIR="$F" LRM_WS_GC="$BIN/ws_gc.sh" LRM_HUB_REPORT="$BIN/hub_report.py" \
+  bash "$CW" --hub "$SB/plain-hub" --name infer2 --paths README.md > "$SB/out" 2>"$SB/err"; RC=$?
+chk "REPO 없음·허브가 git 아님: 종료 2, 원인·조치 출력, 폴더 안 만듦" '[ "$RC" = 2 ] && grep -q "REPO=" "$SB/err" && [ ! -e "$SB/infer2" ]' "rc=$RC $(cat "$SB/err")"
+cp "$F/list.bak" "$F/list.json"
+
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
