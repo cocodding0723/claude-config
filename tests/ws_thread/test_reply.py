@@ -206,6 +206,21 @@ class FeatureSessionTest(ReplyBase):
         self.assertEqual(self.sends(), [])
         self.assertEqual(self.box("feat-x")[-1]["text"], "옛 기능 스레드 글")
 
+    def test_feature_waiting_for_review_still_receives_answers(self):
+        """완료 검사가 기능 카드를 닫아도 검수·반영 단계 표시가 있으면 코디네이터가 살아 있음: 검수 답과 스레드 글이 메인 확인 카드로 떨어지지 않게 함"""
+        self.label(self.fe, "slack-thread:1794383200.000800")
+        self.bd("close", self.fe, "--reason", "board-done: test")
+        self.assertEqual(self.session("feat-z"), ["", ""], "단계 표시 없이 닫힌 기능은 끝난 것")
+        for stage in ("stage:review", "stage:ship"):
+            with self.subTest(stage):
+                self.label(self.fe, stage)
+                self.assertEqual(self.session("feat-z"), [self.fe, self.hubws])
+                ts = f"1794383291.0000{31 if stage.endswith('review') else 32}"
+                self.reply(ts, "1794383200.000800", "버튼 색만 고쳐 줘")
+                got = self.route()["routed"][0]
+                self.assertEqual((got["to"], got["epic"]), ("feature", self.fe))
+                self.bd("label", "remove", self.fe, stage)
+
     def test_plain_reply_under_such_a_card_is_marked_as_answer(self):
         self.reply("1794383291.000002", "1794383290.000100", "슬라이더가 다 이동하면 캐릭터를 끄고 싶다")
         self.route()
