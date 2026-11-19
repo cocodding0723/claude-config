@@ -188,5 +188,116 @@ class RunTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.state))
 
 
+SLACK_PASS = "Slack 결정 답: 사용자 원문: 결정 D-LRM687REVIEW = 선택 1(통과(지금 소리 유지)) (버튼) (출처: Slack)"
+
+
+class PassedTest(unittest.TestCase):
+    """기능 카드에 검수 통과가 이미 적혀 있는가. 경우를 더할 때는 CASES 에 한 줄"""
+    CASES = [
+        ("통과 기록(user-ok)이 있으면 통과", [(NOW, "user-ok: 통과, PR 올려")], NOW - HOUR, True),
+        ("코디네이터가 꺼져 기록은 없어도 Slack 통과 답 코멘트가 있으면 통과", [(NOW, SLACK_PASS)], NOW - HOUR, True),
+        ("고칠 점 답은 통과가 아님", [(NOW, "Slack 결정 답: 사용자 원문: 결정 D-X = 선택 2(고칠 점 있음) (버튼) (출처: Slack)")], NOW - HOUR, False),
+        ("카드가 닫히기 전의 통과 답은 다른 결정의 답", [(NOW - 2 * HOUR, SLACK_PASS)], NOW - HOUR, False),
+        ("통과라는 말이 든 보고 글은 통과 답이 아님", [(NOW, "기능 완료. 검수 통과 대기")], NOW - HOUR, False),
+        ("코멘트가 없으면 통과 아님", [], NOW - HOUR, False),
+    ]
+
+    def test_cases(self):
+        for name, comments, since, want in self.CASES:
+            with self.subTest(name):
+                self.assertEqual(wr.passed(comments, since), want)
+
+
+class PrSummaryTest(unittest.TestCase):
+    CASES = [
+        ("열린 PR 이 하나라도 있으면 열림", [(923, "OPEN"), (901, "MERGED")], ("open", "PR #923 열림")),
+        ("열린 것 없이 병합된 것이 있으면 병합됨", [(1005, "MERGED"), (1002, "MERGED")], ("merged", "PR #1002·#1005 병합됨")),
+        ("병합 없이 닫힌 것뿐이면 닫힘", [(966, "CLOSED")], ("closed", "PR #966 병합 없이 닫힘")),
+        ("PR 이 없으면 표시 없음", [], ("none", "")),
+        ("조회를 못 했으면 모름(표시 없음)", None, ("unknown", "")),
+    ]
+
+    def test_cases(self):
+        for name, prs, want in self.CASES:
+            with self.subTest(name):
+                got = wr.pr_summary(prs)
+                self.assertEqual((got["state"], got["note"]), want)
+
+
+class RealityTest(unittest.TestCase):
+    """작업판 표시와 실제가 어긋날 때(11-19: 병합된 기능이 진행 중으로, 통과 답을 낸 기능이 검수 대기로 뜸)"""
+
+    def setUp(self):
+        self.review = dict(card("t-r1", "closed", labels=["feature:sfx", "stage:review"], title="[LRM-687] VS 증감 효과음", kind="epic"),
+                           closed_at="2026-11-19T02:28:56Z")
+        self.open = card("t-o1", "open", labels=["feature:lines", "stage:build"], title="[LRM-689] 승부·찬스 대사", kind="epic")
+
+    def test_review_the_user_already_passed_is_not_my_turn(self):
+        got = wr.reviews([self.review], comments_of=lambda c: [(wr.stamp("2026-11-19T02:37:00Z"), SLACK_PASS)], prs_of=lambda c: [])
+        self.assertEqual([(r["name"], r["passed"], r["done"]) for r in got], [("VS 증감 효과음", True, True)])
+
+    def test_review_without_a_pass_stays_my_turn_with_its_pr_state(self):
+        got = wr.reviews([self.review], comments_of=lambda c: [], prs_of=lambda c: [(923, "OPEN")])
+        self.assertEqual([(r["done"], r["pr"]["note"]) for r in got], [(False, "PR #923 열림")])
+
+    def test_feature_whose_pr_merged_is_marked_merged(self):
+        got = wr.features([self.open], wr.flow_lib(), prs_of=lambda c: [(1002, "MERGED"), (1005, "MERGED")])
+        self.assertEqual([(f["name"], f["merged"]) for f in got], [("승부·찬스 대사", True)])
+
+    def test_message_moves_them_out_of_my_turn_and_out_of_in_progress(self):
+        revs = wr.reviews([self.review], comments_of=lambda c: [(wr.stamp("2026-11-19T02:37:00Z"), SLACK_PASS)], prs_of=lambda c: [])
+        feats = wr.features([self.open], wr.flow_lib(), prs_of=lambda c: [(1002, "MERGED")])
+        lines = wr.build(NOW, decisions=[], reviews=revs, features=feats, stalled=[]).splitlines()
+        self.assertEqual(lines[0], "📋 남은 작업 11:00 — 내 차례 없음")
+        self.assertNotIn("🙋 내 차례", lines)
+        self.assertNotIn("🔄 진행 중", lines)
+        self.assertIn("🧹 정리만 남음", lines)
+        self.assertIn("- VS 증감 효과음: 통과 답을 이미 냄", lines)
+        self.assertIn("- 승부·찬스 대사: 3 구현, 카드 0/0 — PR #1002 병합됨", lines)
+
+    def test_message_with_pr_notes_passes_the_slack_format_check(self):
+        revs = wr.reviews([self.review], comments_of=lambda c: [], prs_of=lambda c: [(923, "OPEN")])
+        feats = wr.features([self.open], wr.flow_lib(), prs_of=lambda c: [(1002, "MERGED"), (1005, "MERGED")])
+        text = wr.build(NOW, decisions=[], reviews=revs, features=feats, stalled=[])
+        self.assertEqual([g for g in board_cards.text_gaps(text, skip_first=True) if g[2] == "reject"], [])
+        self.assertNotRegex(text, r"LRM-\d+")
+
+
+class PrReaderTest(unittest.TestCase):
+    """기능의 PR 찾기: 제목의 티켓 번호 먼저, 없으면 기능 브랜치. gh 는 가짜"""
+
+    def reader(self, answers):
+        self.calls = []
+
+        def run(cmd, **kw):
+            self.calls.append(cmd)
+            key = "search" if "--search" in cmd else "head"
+            out = answers.get(key)
+            return type("P", (), {"returncode": 0 if out is not None else 1, "stdout": json.dumps(out or []), "stderr": ""})()
+        return wr.pr_reader("gh", run=run)
+
+    def epic(self):
+        return card("t-p1", "open", labels=["feature:x", "repo:" + tempfile.gettempdir(), "branch:feature/lrm-63"], title="[LRM-63] 우편함", kind="epic")
+
+    def test_ticket_in_title_wins_and_other_tickets_are_dropped(self):
+        read = self.reader({"search": [{"number": 7, "state": "MERGED", "title": "[LRM-63] feat: 우편함"},
+                                       {"number": 8, "state": "OPEN", "title": "[LRM-637] feat: 다른 일"}]})
+        self.assertEqual(read(self.epic()), [(7, "MERGED")])
+        self.assertEqual(len(self.calls), 1)
+
+    def test_falls_back_to_the_feature_branch_when_no_title_matches(self):
+        read = self.reader({"search": [], "head": [{"number": 9, "state": "OPEN", "title": "feat: 제목에 번호 없음"}]})
+        self.assertEqual(read(self.epic()), [(9, "OPEN")])
+
+    def test_failed_lookup_is_unknown_not_empty(self):
+        self.assertIsNone(self.reader({})(self.epic()))
+
+    def test_switched_off_or_unknown_repo_asks_nothing(self):
+        self.assertIsNone(wr.pr_reader("off")(self.epic()))
+        no_repo = card("t-p2", "open", labels=["feature:x"], title="[LRM-63] 우편함", kind="epic")
+        self.assertIsNone(self.reader({"search": []})(no_repo))
+        self.assertEqual(self.calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()
