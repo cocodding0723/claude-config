@@ -164,8 +164,10 @@ expect "반납된 작업 공간 카드도 epic 저장소로 검사" 0 "$BIN" "$g
 g=$(new_card "커밋"); claim "$g" w1
 good_compile "$SB/ev/g.log"; good_xml "$SB/ev/g.xml"
 bd comments add "$g" "evidence:compile=$SB/ev/g.log" >/dev/null; ev "$g" "editmode=$SB/ev/g.xml"
-expect "commit= 없는 증거 거부" 6 "$BIN" "$g" w1
+expect "commit= 없는 board-run 로그는 로그에 적힌 커밋으로 통과" 0 "$BIN" "$g" w1 --dry-run
 git -C "$GR" -c user.name=t -c user.email=t@t commit -q --allow-empty -m next; git -C "$GR" branch -f w HEAD
+expect "commit= 이 없어도 브랜치가 앞으로 가면 로그의 이전 커밋으로 거부" 6 "$BIN" "$g" w1
+grep -q '낡은 증거' "$SB/out" && ok "거부 사유는 낡은 증거(형식 아님)" || ko "거부 사유" "$(head -c 300 "$SB/out")"
 ev "$g" "compile=$SB/ev/g.log"
 expect "브랜치가 앞으로 가면 이전 커밋 증거 거부" 6 "$BIN" "$g" w1
 git -C "$GR" branch -f w "$HEAD_W"
@@ -206,8 +208,11 @@ TW="$(cd "$SB" && pwd -P)/coord-feat-typed-hub"; TP="$SB/cfg/projects/$(printf '
 typed_line() { python3 -c 'import json,sys,datetime;print(json.dumps({"type":"user","timestamp":datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),"message":{"role":"user","content":sys.argv[1]}},ensure_ascii=False))' "$1" >> "$TP/s.jsonl"; }
 te=$(bd create "창 통과 기능" -t epic --labels "$BL" -d "- 기능 코디네이터 허브: $TW" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
 typed_line "통과"   # 완료 검사 전에 친 글은 세지 않음
-sleep 1; printf 'png' > "$SB/ev/s3.png"; printf 'mp4' > "$SB/ev/r3.mp4"; cp "$SB/ev/rv.json" "$SB/ev/rv3.json"; ev "$te" "$SB/ev/s3.png"; ev "$te" "$SB/ev/r3.mp4"; ev "$te" "review=$SB/ev/rv3.json"
-expect "typed: epic 닫힘" 0 env BOARD_CLAUDE_DIRS="$SB/cfg" "$BIN" --epic "$te" lead
+sleep 1; printf 'png' > "$SB/ev/s3.png"; printf 'mp4' > "$SB/ev/r3.mp4"; cp "$SB/ev/rv.json" "$SB/ev/rv3.json"; printf 'png' > "$SB/ev/old.png"; touch -t 202001010000 "$SB/ev/old.png"
+bd comments add "$te" "evidence:$SB/ev/old.png" >/dev/null; bd comments add "$te" "evidence:$SB/ev/r3.mp4" >/dev/null; bd comments add "$te" "evidence:review=$SB/ev/rv3.json" >/dev/null
+expect "commit= 없는 촬영 파일이 브랜치 끝 커밋보다 오래되면 거부" 6 env BOARD_CLAUDE_DIRS="$SB/cfg" "$BIN" --epic "$te" lead --dry-run
+bd comments add "$te" "evidence:$SB/ev/s3.png" >/dev/null
+expect "typed: epic 닫힘(commit= 없는 촬영·녹화·판정 증거)" 0 env BOARD_CLAUDE_DIRS="$SB/cfg" "$BIN" --epic "$te" lead
 grep -q -- '--user-ok-typed' "$SB/out" && ok "typed: 닫을 때 창 입력으로 통과하는 법을 알려 줌" || ko "typed: 안내 줄 없음" "$(cat "$SB/out")"
 expect "typed: 완료 검사 뒤에 친 통과가 없으면 4" 4 env BOARD_CLAUDE_DIRS="$SB/cfg" "$BIN" --epic "$te" lead --user-ok-typed
 expect "typed: --user-ok 와 같이 쓰면 2" 2 env BOARD_CLAUDE_DIRS="$SB/cfg" "$BIN" --epic "$te" lead --user-ok-typed --user-ok "통과"
