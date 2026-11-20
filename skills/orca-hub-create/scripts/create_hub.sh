@@ -5,6 +5,8 @@ REPO="${REPO:-$HOME/orca/LoveRevolutionMaker}"
 WS_ROOT="${WS_ROOT:-$HOME/orca/workspaces/LoveRevolutionMaker}"
 SLUG="" NAME="" PATHS="/docs/ /.claude/ /CLAUDE.md /AGENTS.md" ROLE_FILE="" RESUME="" MODEL="claude-opus-5-5" FORCE=0
 BASE="origin/dev" BRANCH="" DRY=0
+# 코디네이터 자동 압축 기준(토큰). 호출마다 지난 대화를 다시 읽는 비용을 줄이려 기본 20만. 0·off 면 설정에 넣지 않음. claude 최소값 100000
+AUTOCOMPACT="${LRM_HUB_AUTOCOMPACT:-200000}"
 while [ $# -gt 0 ]; do case "$1" in
   --slug) SLUG="$2"; shift 2;; --name) NAME="$2"; shift 2;; --paths) PATHS="$2"; shift 2;;
   --role-file) ROLE_FILE="$2"; shift 2;; --resume) RESUME="$2"; shift 2;; --model) MODEL="$2"; shift 2;; --force) FORCE=1; shift;;
@@ -15,6 +17,8 @@ while [ $# -gt 0 ]; do case "$1" in
 # 작업 공간을 만들기 전에 확인함(만든 뒤 실패하면 반쯤 만들어진 허브가 남음). 종료 3 은 feature_open.sh 가 '이미 실행 중'으로 읽으므로 4
 COMMON_FILE="${COMMON_FILE:-}"
 [ -z "$COMMON_FILE" ] || [ -f "$COMMON_FILE" ] || { echo "COMMON_FILE 로 지정한 공통 규칙 파일 없음: $COMMON_FILE" >&2; exit 4; }   # 오타면 다른 규칙으로 기동하지 않고 멈춤
+case "$AUTOCOMPACT" in 0|off) AUTOCOMPACT=0;; *[!0-9]*|"") AUTOCOMPACT=bad;; *) [ "$AUTOCOMPACT" -ge 100000 ] || AUTOCOMPACT=bad;; esac
+[ "$AUTOCOMPACT" != bad ] || { echo "LRM_HUB_AUTOCOMPACT 는 100000 이상 정수 또는 off: $LRM_HUB_AUTOCOMPACT" >&2; exit 2; }
 [ -n "${PATHS// /}" ] || { echo "--paths 가 비어 있음 — 받을 경로를 하나 이상 지정" >&2; exit 2; }
 for c in "$COMMON_FILE" "$(dirname "$0")/../references/common-rules.txt" "$HOME/.claude/skills/orca-hub-create/references/common-rules.txt"; do
   if [ -n "$c" ] && [ -f "$c" ]; then COMMON_FILE="$c"; break; fi
@@ -52,8 +56,8 @@ ${COMMON}
 ${RESUME:+이어받기: Orca 재시작 등으로 이전 세션이 끝났다. 먼저 다음을 읽고 이어서 진행: ${RESUME}
 인계를 다 읽으면 사용자에게 묻거나 계획만 말하고 멈추지 말고, 인계의 '다음 할 일'부터 바로 진행한다. 승인이 필요한 일만 결정 카드로 묻는다.
 }$(cat "$ROLE_FILE")"
-# 허브·워커는 기억 플러그인 끔(메모리 절약, 11-05). 메인 체크아웃만 켬
-mkdir -p "$HUB/.claude" && python3 -c "import json,os,sys;f=sys.argv[1];d=json.load(open(f)) if os.path.exists(f) else {};d.setdefault(\"enabledPlugins\",{})[\"openviking-memory@openviking\"]=False;dn=d.setdefault(\"permissions\",{}).setdefault(\"deny\",[]);[dn.append(r) for r in [\"Read(/$HOME/.config/lrm-hubs/slack-bot.env)\",\"Bash(*slack-bot.env*)\",\"Bash(*slack_notify.sh*)\"] if r not in dn];json.dump(d,open(f,\"w\"),indent=2)" "$HUB/.claude/settings.local.json"
+# 허브·워커는 기억 플러그인 끔(메모리 절약, 11-05). 메인 체크아웃만 켬. 자동 압축 기준은 허브만(메인·워커 제외)
+mkdir -p "$HUB/.claude" && python3 -c "import json,os,sys;f=sys.argv[1];d=json.load(open(f)) if os.path.exists(f) else {};a=int(sys.argv[2]);d.pop(\"autoCompactWindow\",None) if a==0 else d.__setitem__(\"autoCompactWindow\",a);d.setdefault(\"enabledPlugins\",{})[\"openviking-memory@openviking\"]=False;dn=d.setdefault(\"permissions\",{}).setdefault(\"deny\",[]);[dn.append(r) for r in [\"Read(/$HOME/.config/lrm-hubs/slack-bot.env)\",\"Bash(*slack-bot.env*)\",\"Bash(*slack_notify.sh*)\"] if r not in dn];json.dump(d,open(f,\"w\"),indent=2)" "$HUB/.claude/settings.local.json" "$AUTOCOMPACT"
 H=$(orca agent launch --agent claude --worktree "path:$HUB" --model "$MODEL" --effort high \
   --surface terminal --prompt "$PROMPT" --json | jq -r 'first(.. | objects | .handle? // empty | select(startswith("term_")))')
 : "${H:?agent launch 결과에서 터미널 handle 을 찾지 못함}"
