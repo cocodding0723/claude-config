@@ -3,6 +3,8 @@
 . "$(dirname "$(perl -MCwd=realpath -e 'print realpath shift' "${BASH_SOURCE[0]}")")/lib/common.sh"
 hook_input; cwd=$(hj '.cwd'); src=$(hj '.source')
 prune_state
+# 압축 직후 코디네이터 허브: 카드 상태 재주입(아래 stale 보고와 한 번에 내보냄)
+restore=""; [ "$src" = compact ] && restore=$("$HOOKS_DIR/lib/compact_restore.sh" "$cwd" 2>/dev/null)
 top=$(repo_top "$cwd") || exit 0
 git -C "$top" worktree prune 2>/dev/null
 
@@ -36,7 +38,9 @@ if [ "$src" != compact ] && [ -n "$(gh_slug "$top")" ]; then
   fi
 fi
 
-[ -n "$report" ] || exit 0
-msg="stale worktree 발견 (총 $total개 중):$report
+[ -n "$report" ] || [ -n "$restore" ] || exit 0
+msg=""; [ -n "$report" ] && msg="stale worktree 발견 (총 $total개 중):$report
 정리하려면 /worktree-gc"
-jq -cn --arg m "$msg" '{systemMessage:$m, hookSpecificOutput:{hookEventName:"SessionStart", additionalContext:$m}}'
+ctx="$msg"; [ -n "$restore" ] && ctx="${ctx:+$ctx
+}$restore"
+jq -cn --arg m "$msg" --arg c "$ctx" '{hookSpecificOutput:{hookEventName:"SessionStart", additionalContext:$c}} + (if $m != "" then {systemMessage:$m} else {} end)'
