@@ -101,7 +101,8 @@
     ]
   },
   "env": {
-    "LRM_FORMAT": "strict"
+    "LRM_FORMAT": "strict",
+    "OPENVIKING_RECALL_COMPRESS": "off"
   },
   "model": "opus",
   "hooks": {
