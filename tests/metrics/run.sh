@@ -32,6 +32,14 @@ grep -q "^Unity 자리 요청 1" "$R" && grep -q "^자리 명령 1 중앙(초) 1
 grep -q "^메인 접점 1일 · 사용자→메인 메시지 일평균 2.0 · 자동 압축 일평균 1.0" "$R" && ok "메인 접점: 사람 입력만(허브 붙여넣기·시스템 주입·같은 uuid 제외), 압축 수" || ko "메인 접점" "$(grep '메인 접점' "$R")"
 grep -q "^재작업률 " "$R" && grep -q "^검수 대기 " "$R" && ok "결과 지표 단계가 같은 보고서에 붙음" || ko "outcome 단계" "$(tail -5 "$R")"
 
+# 토큰: 같은 message.id 3줄은 한 번, 기간 밖 응답은 0, 입력·출력·캐시 읽기·캐시 쓰기 분리
+HT="$P/-x-orca-workspaces-LoveRevolutionMaker-coord-tok-hub"; mkdir -p "$HT"
+au() { printf '{"type":"assistant","timestamp":"%s","message":{"id":"%s","usage":{"input_tokens":%s,"output_tokens":%s,"cache_read_input_tokens":%s,"cache_creation_input_tokens":%s},"content":[{"type":"text","text":"x"}]}}\n' "$@"; }
+{ au 2026-11-10T04:00:00 msg_a 1000000 2000000 3000000 4000000; au 2026-11-10T04:00:01 msg_a 1000000 2000000 3000000 4000000; au 2026-11-10T04:00:02 msg_a 1000000 2000000 3000000 4000000
+  au 2026-10-01T04:00:00 msg_old 9000000 9000000 9000000 9000000; } > "$HT/t.jsonl"
+HOME="$SB/home" bash "$M" --since 2026-11-10 --until 2026-11-10 --out "$SB/tok" >/dev/null 2>&1
+grep -q "^tok-hub 1 [0-9]* [0-9]* 1.0 2.0 3.0 4.0$" "$SB/tok/report.txt" && ok "토큰: 같은 message.id 한 번·기간 밖 0·네 항목 분리" || ko "토큰" "$(grep -A5 '허브 세션' "$SB/tok/report.txt")"
+
 # 결과 지표: 임시 작업판·작업 장부·되돌림 커밋. 작업판 시각은 지금이라 오늘 날짜 기간으로 따로 돌림
 O="$HERE/../../tools/metrics/outcome.py"
 TODAY=$(TZ=Asia/Seoul date +%Y-%m-%d)

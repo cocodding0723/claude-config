@@ -57,17 +57,19 @@ for h, v in hr.items():
 for d in sorted(day):
     print(d, "동시 워커 최고", day[d][0], "워커-시간", round(day[d][1], 1))
 
-H = C.defaultdict(lambda: [0, 0, 0.0, 0])
+TOK_KEYS = ("in", "out", "cache_read", "cache_write")
+H = C.defaultdict(lambda: [0, 0, 0.0, dict.fromkeys(TOK_KEYS, 0)])
 for x in S:
     if x.get("c") == "hub" and "act" in x:
         k = re.sub(r".*coord-", "", x["dir"])
         H[k][0] += 1
         H[k][1] += x["act"]
         H[k][2] += x["span"]
-        H[k][3] += x["tok"]
-print("허브 세션 활동분 생존분 토큰(M)")
+        for t in TOK_KEYS:
+            H[k][3][t] += x["tok"].get(t, 0)
+print("허브 세션 활동분 생존분 토큰(M): 입력 출력 캐시읽기 캐시쓰기")
 for k, v in sorted(H.items(), key=lambda z: -z[1][2]):
-    print(k, v[0], v[1], round(v[2]), round(v[3] / 1e6, 1))
+    print(k, v[0], v[1], round(v[2]), *(round(v[3][t] / 1e6, 1) for t in TOK_KEYS))
 W = [x for x in S if x.get("c") == "worker" and "act" in x]
 print("워커", len(W), "5분 이하", sum(1 for x in W if x["act"] <= 5))
 with open(a.path("sess2.json"), "w") as fh:
