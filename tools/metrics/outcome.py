@@ -1,5 +1,5 @@
-"""5단계: 결과 지표 — 지시→완료 시간·기능당 사용자 접점·재작업률·검수 대기 수·메인 접점 → outcome.json
-투입량(1~4단계)과 달리 사용자가 받은 결과를 잼. 리드타임은 재작업률과 같이 봄(한쪽만 좋아지면 개선 아님). 표본 10 미만은 판단 보류.
+"""5단계: 결과 지표 — 카드 수명·기능당 사용자 접점·재작업률·검수 대기 수·메인 접점 → outcome.json
+투입량(1~4단계)과 달리 사용자가 받은 결과를 잼. 카드 수명은 카드 생성→닫힘이라 사용자 지시부터의 시간이 아님(카드는 일을 시작할 때 만들어지는 경우가 많음). 재작업률과 같이 봄(한쪽만 좋아지면 개선 아님). 표본 10 미만은 판단 보류.
 자료: 작업판(bd list·bd history), 작업 장부 tasks.jsonl, 허브 보고 hub-reports.jsonl, 답 전달 answer-delivery.jsonl, git log, 메인 세션 기록.
 환경: METRICS_BOARD_DIR(기본 ~/orca/board) · METRICS_BD(bd) · LRM_HUB_DIR(기본 ~/.config/lrm-hubs) ·
       METRICS_REPOS(':' 구분, 기본 ~/orca/LoveRevolutionMaker:~/orca/claude-config) · METRICS_HISTORY_MAX(다시 연 카드 조회 상한 200)"""
@@ -16,6 +16,7 @@ import time
 from common import KST, args, claude_base, kst
 
 MIN_SAMPLE = 10
+QUICK_CLOSE_H = 0.25  # 15분 안에 닫힌 카드: 일을 시작하며 만든 카드 비중을 가늠
 HUMAN_KINDS = ("kind:decision", "kind:user-todo", "kind:approval")
 APPROVAL_LABEL = "gate:approval"
 ANSWER_REASON = "답:"  # board-answer 가 닫을 때 쓰는 사유 머리
@@ -120,7 +121,7 @@ def feature_of(r, by_id):
 
 def board_part(b, lo, hi, hist_max):
     in_win = lambda t: t is not None and lo <= t < hi
-    lead, done, touch, redo_ids = [], 0, C.Counter(), []
+    life, run, done, touch, redo_ids = [], [], 0, C.Counter(), []
     capped = False
     budget = hist_max
     for r in b.rows:
@@ -130,7 +131,10 @@ def board_part(b, lo, hi, hist_max):
                 done += 1
                 start = utc_epoch(r.get("created_at"))
                 if start is not None:
-                    lead.append((closed_at - start) / 3600)
+                    life.append((closed_at - start) / 3600)
+                began = utc_epoch(r.get("started_at"))
+                if began is not None:
+                    run.append((closed_at - began) / 3600)
             if in_win(utc_epoch(r.get("updated_at"))):
                 if budget <= 0:
                     capped = True
@@ -151,7 +155,9 @@ def board_part(b, lo, hi, hist_max):
     review = [r["id"] for r in b.rows if r.get("issue_type") == "epic" and r.get("status") != "closed"
               and kids.get(r["id"]) and all(k.get("status") == "closed" for k in kids[r["id"]])]
     gate = [r["id"] for r in b.rows if r.get("status") != "closed" and APPROVAL_LABEL in labels(r)]
-    return {"lead": spread(lead), "done": done, "touch": dict(touch), "reopened": redo_ids, "historyCapped": capped,
+    life_s = spread(life)
+    life_s["within15m"] = sum(1 for h in life if h <= QUICK_CLOSE_H)
+    return {"life": life_s, "run": spread(run), "done": done, "touch": dict(touch), "reopened": redo_ids, "historyCapped": capped,
             "review": review, "approvalWait": gate}
 
 
@@ -267,9 +273,13 @@ def report(o):
     out = []
     if o.get("boardErr"):
         out.append(f"작업판 읽기 실패: {o['boardErr']} (작업판 값은 0 으로 둠)")
-    for name, d in (("작업판 카드", bd["lead"]), ("작업 장부(옛)", lg["lead"])):
-        body = f"n={d['n']}" + (f" 중앙 {d['median_h']}시간 p90 {d['p90_h']}시간" if d["n"] else "")
-        out.append(f"지시→완료 {name} {body}{verdict(d['n'])}")
+    def body(d):
+        return f"n={d['n']}" + (f" 중앙 {d['median_h']}시간 p90 {d['p90_h']}시간" if d["n"] else "")
+
+    life = bd["life"]
+    out.append(f"카드 수명(카드 생성→닫힘, 사용자 지시부터가 아님) {body(life)} · 15분 안에 닫힌 카드 {life['within15m']}/{life['n']}{verdict(life['n'])}")
+    out.append(f"시작→닫힘(started_at 있는 카드) {body(bd['run'])}{verdict(bd['run']['n'])}")
+    out.append(f"접수→완료 작업 장부(옛, received_at→done_at) {body(lg['lead'])}{verdict(lg['lead']['n'])}")
     ft = bd["touch"]
     out.append(f"기능당 사용자 접점 기능 {len(ft)} 합 {sum(ft.values())}" + (f" 기능당 {round(sum(ft.values()) / len(ft), 1)}" if ft else "") + verdict(len(ft)))
     out += [f"  {k} {v}" for k, v in sorted(ft.items(), key=lambda z: -z[1])[:10]]

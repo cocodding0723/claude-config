@@ -56,7 +56,7 @@ BD="$SB/board"; mkdir -p "$BD"
 b() { (cd "$BD" && bd "$@"); }
 idof() { python3 -c 'import json,sys;d=json.load(sys.stdin);d=d[0] if isinstance(d,list) else d;print(d["id"])'; }
 EP=$(b create "우편함" -t epic -l feature:mail --json | idof)
-for n in 1 2; do K=$(b create "작업 $n" --parent "$EP" --json | idof); b close "$K" --reason "커밋 abc$n" >/dev/null; done
+for n in 1 2; do K=$(b create "작업 $n" --parent "$EP" --json | idof); [ "$n" = 1 ] && b update "$K" --status in_progress >/dev/null 2>&1; b close "$K" --reason "커밋 abc$n" >/dev/null; done
 RE=$(b create "다시 연 일" --json | idof); b close "$RE" --reason x >/dev/null; b reopen "$RE" >/dev/null 2>&1
 DC=$(b create "색 정할까?" --parent "$EP" -l kind:decision --json | idof); b close "$DC" --reason "답: 파랑" >/dev/null
 b create "PR 게시" -l kind:decision,gate:approval --json >/dev/null
@@ -68,10 +68,13 @@ RP="$SB/repo"; git init -q "$RP"; git -C "$RP" -c user.email=t@t -c user.name=t 
 git -C "$RP" -c user.email=t@t -c user.name=t commit -q --allow-empty -m 'Revert "feat: 무엇"' >/dev/null 2>&1
 git -C "$RP" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "docs: 되돌리기 명령 정리" >/dev/null 2>&1
 OUT=$(HOME="$SB/home" METRICS_BOARD_DIR="$BD" LRM_HUB_DIR="$HD" METRICS_REPOS="$RP" python3 "$O" --since "$TODAY" --until "$TODAY" --work "$SB/o2" 2>&1); rc=$?
-J="$SB/o2/outcome.json"
+J="$SB/o2/outcome.json"; OUT_LIFE="$OUT"
 [ "$rc" = 0 ] && [ -f "$J" ] && ok "outcome.py 단독 실행·outcome.json" || ko "outcome 실행" "rc=$rc $OUT"
-[ "$(jq '.board.lead.n' "$J")/$(jq '.board.done' "$J")" = "2/2" ] && ok "지시→완료: 닫힌 작업 카드만(epic·결정 카드 제외)" || ko "작업판 리드타임" "$(jq -c .board.lead "$J") done=$(jq .board.done "$J")"
-[ "$(jq '.ledger.lead.median_h == 2' "$J")" = true ] && ok "지시→완료: 작업 장부 received_at→done_at 2시간" || ko "장부 리드타임" "$(jq -c .ledger "$J")"
+[ "$(jq '.board.life.n' "$J")/$(jq '.board.done' "$J")" = "2/2" ] && ok "카드 수명: 닫힌 작업 카드만(epic·결정 카드 제외)" || ko "카드 수명" "$(jq -c .board.life "$J") done=$(jq .board.done "$J")"
+[ "$(jq '.board.life.within15m' "$J")" = 2 ] && grep -q "^카드 수명.*15분 안에 닫힌 카드 2/2" <<<"$OUT_LIFE" && ok "카드 수명: 15분 안에 닫힌 카드 수가 보고서에 나옴" || ko "15분 안" "$(jq -c .board.life "$J") $OUT_LIFE"
+[ "$(jq '.board.run.n' "$J")" = 1 ] && [ "$(jq '.board.run.median_h < 0.25' "$J")" = true ] && ok "시작→닫힘: started_at 있는 카드만 중앙값" || ko "시작→닫힘" "$(jq -c .board.run "$J")"
+grep -q "지시→완료" <<<"$OUT_LIFE" && ko "보고서에 '지시→완료' 가 남음" "$OUT_LIFE" || ok "보고서에 '지시→완료' 없음"
+[ "$(jq '.ledger.lead.median_h == 2' "$J")" = true ] && ok "접수→완료: 작업 장부 received_at→done_at 2시간" || ko "장부 리드타임" "$(jq -c .ledger "$J")"
 [ "$(jq -r '.board.touch["feature:mail"]' "$J")" = 2 ] && ok "기능당 사용자 접점: 기능 epic 의 결정 1 + 답 1" || ko "기능 접점" "$(jq -c .board.touch "$J")"
 [ "$(jq -r '.ledger.touch.ui' "$J")" = 2 ] && ok "옛 허브 접점: 결정 요청 1 + 전달된 답 1" || ko "허브 접점" "$(jq -c .ledger.touch "$J")"
 [ "$(jq -c '[.rework.reverts,.rework.reopened,.rework.redo,.rework.done]' "$J")" = "[1,1,1,3]" ] && ok "재작업률: 되돌림 커밋 1(문서 '되돌리기' 제외)·다시 연 카드 1·재지시 1 / 완료 3(작업판 2 + 장부 1)" || ko "재작업률" "$(jq -c .rework "$J")"
