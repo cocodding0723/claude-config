@@ -344,6 +344,34 @@ def check_form(msg, kind, guided):
             out.append((tag, code, board_cards.gap_message(hit, msg)))
     return out
 
+def move_ref_text(msg):
+    """본문의 티켓·커밋 번호를 쉬운 말로 바꾸고 맨 아래 '참고:' 줄로 이동. (새 글, 옮긴 번호 목록).
+    치환·참고 줄 조립은 board_slack.move_refs 한 곳. 이미 '참고:' 줄이 있으면 새 줄 없이 그 줄 끝에 합침"""
+    import board_slack
+    scan = scrub(msg)
+    pos = ref_start(scan)
+    head, tail = (msg, "") if pos is None else (msg[:pos], msg[pos:])
+    # move_refs 는 줄 단위라 여러 줄 코드 블록을 못 알아봄 → 블록을 한 줄 표식으로 가렸다 되돌림
+    fences = []
+    def mask(m):
+        fences.append(m.group(0))
+        return "\x01%d\x01" % (len(fences) - 1)
+    lines = RX["fence"].sub(mask, head.rstrip("\n")).split("\n")
+    moved = board_slack.move_refs(lines)
+    if len(moved) == len(lines):
+        return msg, []
+    body, ref_line = moved[:-1], moved[-1]
+    body = [re.sub("\x01(\\d+)\x01", lambda m: fences[int(m.group(1))], ln) for ln in body]
+    labeled = ref_line[len(board_slack.REF_HEAD):].strip().split(board_slack.REF_SEP)
+    items = [x.split(" = ")[-1] for x in labeled]
+    if not tail:
+        return "\n".join(body) + "\n\n" + ref_line, items
+    fresh = [lab for lab, raw in zip(labeled, items) if raw not in tail]  # 참고 줄에 이미 있는 번호는 다시 안 적음
+    first, nl, rest = tail.partition("\n")
+    if fresh:
+        first = first.rstrip() + ("" if first.rstrip().endswith(":") else " ·") + " " + board_slack.REF_SEP.join(fresh)
+    return "\n".join(body) + head[len(head.rstrip("\n")):] + first + nl + rest, items
+
 def attach_guide(msg, guide):
     scan = scrub(msg)
     pos = ref_start(scan)
@@ -510,6 +538,11 @@ data = sys.stdin.buffer.read().decode("utf-8", "replace")
 if sys.argv[1] == "dup":
     if recent_dup(sys.argv[2], sys.argv[3]):
         sys.stderr.buffer.write(("경고: --decision-id %s 로 최근 %d일 안에 보낸 카드가 있음(전송함) — 메인 전달문 '결정 %s = …' 이 어느 카드의 답인지 구분되지 않으니 번호를 새로 정하세요\n" % (sys.argv[3], DUP_DAYS, sys.argv[3])).encode("utf-8"))
+elif sys.argv[1] == "refs":
+    out, items = move_ref_text(data)
+    if items:
+        sys.stderr.buffer.write(("참고 줄로 옮김: %s\n" % ", ".join(items)).encode("utf-8"))
+    sys.stdout.buffer.write(out.encode("utf-8"))
 elif sys.argv[1] == "check":
     for lvl, code, text in check_form(data, sys.argv[2], sys.argv[3] == "1"):
         sys.stdout.buffer.write(("%s\t%s\t%s\n" % (lvl, code, text)).encode("utf-8"))
@@ -575,6 +608,8 @@ if [ -n "$KIND" ] && [ "$NOCHECK" = 0 ]; then
   case "$MODE" in warn|strict|off) ;; *) die "LRM_FORMAT 값 오류: $MODE — warn|strict|off 중 하나로 지정" ;; esac
   if [ "$MODE" != off ]; then
     FORM_N=0 HARD_N=0 FORM_CODES="" FORM_OUT="" HARD_TXT=""
+    # 본문 번호는 거부하지 않고 '참고:' 줄로 옮긴 글을 검사·전송. 실패하면 원문 그대로 검사(번호 위반은 기존대로 보고)
+    if MOVED="$(printf '%s' "$MSG" | "$PY" -c "$FORM_PY" refs)"; then MSG="$MOVED"; else echo "참고 줄 이동 실패 — 원문 그대로 검사" >&2; fi
     if ! FORM_OUT="$(check_form "$MSG" "$KIND" "$GUIDED")"; then
       # decide 는 다중 결정 검사를 건너뛰면 안 되므로 warn 이어도 미전송. 다른 kind 는 warn 에서 검사 없이 전송
       if [ "$MODE" = strict ] || [ "$KIND" = decide ]; then
