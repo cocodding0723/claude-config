@@ -92,6 +92,7 @@ hubs/scripts/decide-answer	.config/lrm-hubs/decide-answer	link
 hubs/scripts/test-box	.config/lrm-hubs/test-box	link
 hubs/scripts/test-box.sb	.config/lrm-hubs/test-box.sb	link
 hubs/scripts/answer_route.py	.config/lrm-hubs/answer_route.py	link
+hubs/scripts/ask_open.py	.config/lrm-hubs/ask_open.py	link
 hubs/scripts/restart_watch.py	.config/lrm-hubs/restart_watch.py	link
 hubs/docs/restart-watch.md	.config/lrm-hubs/docs/restart-watch.md	link
 hubs/scripts/stall_watch.py	.config/lrm-hubs/stall_watch.py	link

@@ -11,6 +11,7 @@ outbox: 한 줄 = 보고 1건(JSON). 쓰기는 flock 아래 추가 전용이라 
 카드 주제(--card): 작업판 카드 하나 = Slack 스레드 하나. 같은 카드의 보고는 그 카드 스레드의 답글로 감(전송기가 첫 보고 때 스레드를 열고 카드에 label slack-thread:<ts> 를 붙임).
 결정 카드(decide)도 --card 를 주면 그 스레드 안에 올라감.
 알림: 스레드 답글은 팔로우해야 알림이 옴. BROADCAST_KINDS 의 보고와 --broadcast 를 준 보고는 DM 목록에도 보임. 진행 보고(info)는 스레드에만.
+스레드 답글 본문은 전송기가 사용자를 불러(--mention) 어느 스레드에 달렸는지 보이게 함.
 작업 공간 카드는 --ws 로 담당 작업 공간 경로를 같이 남김(스레드 답을 그 세션에 전달하는 근거). 봇 토큰은 이 CLI 도 작업자도 보지 않음.
 환경: LRM_HUB_DIR 작업 폴더(기본 ~/.config/lrm-hubs) · LRM_REPORT_OUTBOX outbox 경로(기본 <작업 폴더>/hub-reports.jsonl) · LRM_REPORT_FILES 첨부 복사 폴더(기본 <outbox 폴더>/outbox-files)
 종료 코드: 0 기록(중복 무시 포함), 1 파일 읽기·쓰기 실패, 2 인자·입력 오류(비밀 값 포함)

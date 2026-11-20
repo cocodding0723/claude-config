@@ -51,11 +51,42 @@ class ThreadTest(unittest.TestCase):
         call, = self.calls()  # 주제 시작·진행 줄 없이 1건
         self.assertEqual(call[call.index("--thread") + 1], THREAD)
         self.assertEqual(call[call.index("--kind") + 1], "warn")
+        self.assertIn("--mention", call, "사용자를 불러야 어느 스레드에 달렸는지 보임")
         self.assertIn("CI 실패 원인", call[-1])
         self.assertNotIn(PARENT, " ".join(call))
         self.assertIn("진행 줄 없음(스레드 지정)", r.stdout)
         with open(self.p("state.json")) as f:
             self.assertEqual(json.load(f)["topics"], {})
+
+    def test_reply_in_a_thread_with_an_open_question_gets_the_button_line_once(self):
+        import ask_open
+        ask_open.note(self.dir.name, THREAD, "D-0001", "1730790001.000001")
+        ask_open.note(self.dir.name, "1730790009.000009", "D-0002", "1730790009.000009")  # 다른 스레드의 질문
+        self.assertEqual(self.add("--thread", THREAD, kind="info", text="원인은 캐시").returncode, 0)
+        self.assertEqual(self.cli("--once", script="report_sender.py").returncode, 0)
+        self.assertEqual(self.add("--thread", THREAD, kind="info", text="추가 설명").returncode, 0)
+        self.assertEqual(self.cli("--once", script="report_sender.py").returncode, 0)
+        first, second = [c[-1] for c in self.calls()]
+        self.assertIn("- 답을 확인했으면 결정 D-0001 카드 버튼으로 골라 주세요", first.splitlines())
+        self.assertNotIn("D-0002", first)
+        self.assertNotIn("버튼으로", second, "안내는 질문당 한 번")
+        self.assertEqual(hub_report.line_gaps_split("원인은 캐시\n" + ask_open.REMIND.format(did="D-0001"), "info")[0], "", "안내 줄이 양식 검사에 걸리지 않음")
+
+    def test_question_on_an_already_answered_card_adds_no_button_line(self):
+        import ask_open
+        ask_open.note(self.dir.name, THREAD, "D-0001", "1730790001.000001")
+        with open(self.p("slack-inbox.jsonl"), "w", encoding="utf-8") as f:  # 버튼으로 이미 고른 카드
+            f.write(json.dumps({"ts": "1730790002.000001", "parent_ts": "1730790001.000001", "type": "button", "decision_id": "D-0001",
+                                "kind": "decide", "action": "pick", "pick": 1, "source": "slack"}) + "\n")
+        self.assertEqual(self.add("--thread", THREAD, kind="info", text="원인은 캐시").returncode, 0)
+        self.assertEqual(self.cli("--once", script="report_sender.py").returncode, 0)
+        self.assertNotIn("버튼으로", self.calls()[0][-1])
+
+    def test_old_question_is_not_reminded(self):
+        import ask_open
+        ask_open.note(self.dir.name, THREAD, "D-0001", "1730790001.000001", now=1000)
+        self.assertEqual(ask_open.waiting(self.dir.name, THREAD, now=1000 + ask_open.TTL_S + 1), [])
+        self.assertEqual(ask_open.waiting(self.dir.name, THREAD, now=1000 + 60), ["D-0001"])
 
     def test_info_reply_to_goes_to_given_thread(self):
         """Slack 에서 온 질문의 답: --reply-to 로 info 를 그 스레드에 답글(채널 새 글·진행 줄 없음)"""

@@ -18,6 +18,8 @@ usage() {
   --thread     해당 ts 메시지의 스레드 답글로 게시
   --broadcast  (--thread 전용) 스레드 답글을 DM 목록에도 보이게 함(reply_broadcast). 스레드 답글은 팔로우해야 알림이 오므로,
                사용자가 봐야 하는 글(결정 카드·확인 요청·완료 보고)에만 사용. 진행 보고에는 쓰지 않음
+  --mention    (--thread 전용) 답글 알림 글 앞에 사용자를 부름(<@사용자>). 불린 스레드는 Slack 이 팔로우로 잡아 '스레드'·'내 활동'에 새 글이 뜸.
+               부르지 않은 답글은 어느 스레드에 달렸는지 사용자가 알 수 없음(11-20). 보고 본문 답글에 쓰고 진행 줄·첨부에는 쓰지 않음
   --update     해당 ts 메시지(이 봇이 보낸 최상위 글)의 본문을 새 본문으로 고쳐 씀(chat.update). 새 글을 만들지 않고 sent 기록도 남기지 않음.
                --thread·파일·--options·--to-user 와 함께 못 씀. 출력 'ok <ts>'. 같은 본문으로 다시 불러도 결과가 같음
   --kind       decide|todo|done|progress|warn|doc. 첫 줄에 종류 이모지가 없으면 붙이고 양식 A 를 검사.
@@ -66,7 +68,7 @@ usage() {
 EOF
 }
 die() { echo "$1" >&2; exit 2; }
-CARD="" CARD_SET=0 BROADCAST=0
+CARD="" CARD_SET=0 BROADCAST=0 MENTION=0
 ATTACHED=() LINK_TO="" QUOTE="" NO_DOC=0 TO_USER=""
 FROM="" SUBJECT="" STATE="" DEDUP_RID=""
 TAG="" TITLE="" THREAD="" UPDATE="" KIND="" NOCHECK=0 ALIVE=0CHOICES="" CHOICES_SET=0 EMOJISET=custom
@@ -80,6 +82,7 @@ while [ $# -gt 0 ]; do
     --title) TITLE="${2:?--title 값 필요}"; shift 2 ;;
     --thread) THREAD="${2:?--thread 값 필요}"; shift 2 ;;
     --broadcast) BROADCAST=1; shift ;;
+    --mention) MENTION=1; shift ;;
     --kind) [ $# -ge 2 ] || die "--kind 값 필요 — decide|todo|done|progress|warn|doc 중 하나"; KIND="$2"; shift 2 ;;
     --choices) [ $# -ge 2 ] || die "--choices 값 필요 — 2~4 사이 숫자"; CHOICES="$2" CHOICES_SET=1; shift 2 ;;
     --emoji-set) [ $# -ge 2 ] || die "--emoji-set 값 필요 — custom|std 중 하나"; EMOJISET="$2"; shift 2 ;;
@@ -137,6 +140,7 @@ if [ "$TID_SET" = 1 ] && [ "$KIND" != todo ]; then die "--todo-id 는 --kind tod
 if [ -n "$THREAD" ] && [ "$TID_SET" = 1 ]; then die "--thread 는 --todo-id 카드와 함께 쓸 수 없음 — 스레드 답글의 반응은 수집되지 않으므로 --thread 를 빼고 보내세요"; fi
 if [ "$BROADCAST" = 1 ] && { [ -z "$THREAD" ] || [ -n "$UPDATE" ]; }; then die "--broadcast 는 --thread 와 함께 새 답글을 보낼 때만 사용 — --thread <스레드 ts> 를 함께 지정"; fi
 [ "$BROADCAST" = 1 ] && export LRM_BROADCAST=1
+if [ "$MENTION" = 1 ] && { [ -z "$THREAD" ] || [ -n "$UPDATE" ]; }; then die "--mention 은 --thread 와 함께 새 답글을 보낼 때만 사용 — --thread <스레드 ts> 를 함께 지정"; fi
 # 결정은 근거 문서 첨부가 계약(hub_report.py 와 같음). 문서 없는 결정만 --no-doc 로 명시
 if [ "$NO_DOC" = 1 ] && [ "$KIND" != decide ]; then die "--no-doc 는 --kind decide 와만 사용 — --kind decide 를 함께 지정"; fi
 if [ "$KIND" = decide ] && [ "$NO_DOC" = 0 ] && [ $# -lt 2 ] && [ ${#ATTACHED[@]} -eq 0 ]; then
@@ -406,7 +410,7 @@ def buttons(spec):
                 "text": {"type": "plain_text", "text": "직접 입력", "emoji": True}})
     return {"type": "actions", "block_id": "lrm_decide:%s" % did, "elements": els}
 
-def build_payload(msg, kind, channel, thread, card="", unfurl="", broadcast=""):
+def build_payload(msg, kind, channel, thread, card="", unfurl="", broadcast="", mention=""):
     """chat.postMessage 본문 JSON. kind 가 색 표에 있으면 attachment 색 띠에 본문을 담고, 알림 미리보기용 text 에는 제목만 둠.
     번호 카드(card 에 options)면 색 띠 안을 section + 버튼 블록으로 바꿈. 이모지 답 줄은 버튼이 안 될 때를 위해 남김"""
     body = {"channel": channel, "text": msg}
@@ -426,6 +430,8 @@ def build_payload(msg, kind, channel, thread, card="", unfurl="", broadcast=""):
         body["thread_ts"] = thread
         if broadcast == "1":  # 스레드 답글은 팔로우해야 알림이 옴. DM 목록에도 보이게
             body["reply_broadcast"] = True
+        if mention:  # 색 띠 안에서 부르면 알림이 안 가므로 알림 글(text)에 둠
+            body["text"] = "<@%s> %s" % (mention, body["text"])
     return json.dumps(body)
 
 def given(arg):
@@ -547,7 +553,7 @@ elif sys.argv[1] == "check":
     for lvl, code, text in check_form(data, sys.argv[2], sys.argv[3] == "1"):
         sys.stdout.buffer.write(("%s\t%s\t%s\n" % (lvl, code, text)).encode("utf-8"))
 elif sys.argv[1] == "payload":
-    sys.stdout.buffer.write(build_payload(data, *sys.argv[2:8]).encode("utf-8"))
+    sys.stdout.buffer.write(build_payload(data, *sys.argv[2:9]).encode("utf-8"))
 elif sys.argv[1] in ("opts", "card"):
     try:
         if sys.argv[1] == "opts":
@@ -769,7 +775,8 @@ print("ok file_id=" + rec["file_id"] if kind=="file" else "ok " + rec["ts"])
 
 # 텍스트 게시. 번호 카드면 색 띠 안에 버튼 블록이 들어감
 post_text() {
-  PAYLOAD="$(printf '%s' "$MSG" | "$PY" -c "$FORM_PY" payload "$KIND" "$CH" "$THREAD" "$CARD_JSON" "$UNFURL" "$BROADCAST")" \
+  local who=""; [ "$MENTION" = 0 ] || who="$SLACK_USER_ID"
+  PAYLOAD="$(printf '%s' "$MSG" | "$PY" -c "$FORM_PY" payload "$KIND" "$CH" "$THREAD" "$CARD_JSON" "$UNFURL" "$BROADCAST" "$who")" \
     || die "페이로드 생성 실패(전송 안 함) — python3 동작 확인 뒤 다시 보내세요"
   curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H 'Content-Type: application/json' \
     -d "$PAYLOAD" $API/chat.postMessage | record text

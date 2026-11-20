@@ -565,6 +565,12 @@ run_n --kind decide --no-doc --recommend 1 --decision-id D-0553 --options "$OK3"
   && ok "H --broadcast: 스레드 답글이 DM 목록에도 보임(reply_broadcast), 기록에 broadcast" || ko "H broadcast" "rc=$RC $(cat "$SB/err") / $(cat "$LOG/post.json")"
 run_n --kind done --thread "$TH" --broadcast $'끝남\n\n• 무엇: 반영'
 [ "$RC" = 0 ] && [ "$(payload '.reply_broadcast')" = true ] && ok "H --broadcast 는 일반 스레드 답글에도 적용" || ko "H broadcast 일반" "rc=$RC $(cat "$SB/err")"
+run_n --kind progress --thread "$TH" --mention $'진행\n\n• 무엇: 반영'
+[ "$RC" = 0 ] && payload '.text' | grep -q '^<@Uuser1> .*진행$' && ! payload '.attachments[0].text' | grep -q '<@' \
+  && ok "H --mention: 알림 글 앞에 사용자를 부름(색 띠 본문은 그대로)" || ko "H mention" "rc=$RC $(cat "$SB/err") / $(cat "$LOG/post.json")"
+run_n --kind progress --thread "$TH" $'진행\n\n• 무엇: 반영'
+! payload '.text' | grep -q '<@' && ok "H --mention 없으면 부르지 않음" || ko "H mention 기본" "$(payload '.text')"
+rej "--mention 인데 --thread 없음" '^--mention 은 --thread 와 함께' -- --kind progress --mention $'진행\n\n• 무엇: x'
 rej "--broadcast 인데 --thread 없음" '^--broadcast 는 --thread 와 함께' -- --kind progress --broadcast $'진행\n\n• 무엇: x'
 rej "--broadcast + --update" '^--broadcast 는 --thread 와 함께' -- --kind progress --broadcast --update 1700000000.000900 "x"
 rej "--todo-id + --thread" '^--thread 는 --todo-id 카드와 함께 쓸 수 없음' -- --kind todo --todo-id T-0300 --thread 1730000000.000001 "할 일"

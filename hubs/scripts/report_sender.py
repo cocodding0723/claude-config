@@ -40,6 +40,7 @@ import time
 from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import ask_open  # noqa: E402
 import board_cards  # noqa: E402
 import hub_report  # noqa: E402
 import hub_status  # noqa: E402
@@ -492,15 +493,39 @@ def refresh_parent(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
     log(conf, f"부모 고쳐 씀 {key} {topic['ts']} {stamp}")
 
 
-def body_text(rep: dict, shared: bool = False) -> str:
-    """shared: 기능 스레드를 같이 쓰는 작업 공간 카드의 보고. 어느 카드 글인지 머리에 카드 id 를 붙임"""
+def ask_waiting(conf: Conf, thread: str) -> list:
+    """이 스레드에 답글을 기다리는 직접 입력 질문의 결정 번호. 조회가 실패하면 빈 목록 — 안내 줄만 빠지고 보고 전송은 그대로"""
+    try:
+        import answer_store  # 함수 안 import: 터미널 전송 모듈까지 딸려 와 질문이 있는 스레드에서만 읽음
+        store = answer_store.AnswerStore(HUB_DIR)
+        return ask_open.waiting(HUB_DIR, thread, lambda did, card: bool(store.first_answer(did, card)))
+    except Exception as err:  # noqa: BLE001
+        log(conf, f"질문 대기 기록 조회 실패({type(err).__name__}) — 버튼 안내 줄 생략")
+        return []
+
+
+def body_text(rep: dict, shared: bool = False, asks: tuple = ()) -> str:
+    """shared: 기능 스레드를 같이 쓰는 작업 공간 카드의 보고. 어느 카드 글인지 머리에 카드 id 를 붙임.
+    asks: 이 글이 답이 되는 직접 입력 질문의 결정 번호. 번호마다 버튼 안내 항목을 덧붙임(결정 카드 본문에는 안 붙임)"""
     label = hub_report.KINDS[rep["kind"]][1]
     lines = [ln for ln in rep["text"].splitlines() if ln.strip()]
+    if rep["kind"] != "decide":
+        lines += [ask_open.REMIND.format(did=d) for d in asks]
     if rep["kind"] == "decide":  # 첫 줄이 제목, 나머지가 배경. 선택지·답 줄은 slack_notify.sh 가 붙임
         out = hub_report.bullet_body("\n".join(lines)).splitlines()
     else:
         out = [f"{label} · {rep['hub']}" + (f" · {rep['card']}" if shared and rep.get("card") else ""), ""] + hub_report.bullet_items(lines)
     return "\n".join(out)
+
+
+def close_asks(conf: Conf, thread: str, asks: list) -> None:
+    """안내를 붙인 질문을 닫음. 전송이 끝난 뒤에만 부름 — 전송 실패로 다시 보낼 때 안내가 빠지지 않게"""
+    if not asks:
+        return
+    try:
+        ask_open.close(HUB_DIR, thread, asks)
+    except OSError as err:
+        log(conf, f"질문 대기 기록 닫기 실패({type(err).__name__}) — 다음 답글에 버튼 안내가 한 번 더 붙음")
 
 
 def progress_line(rep: dict) -> str:
@@ -520,6 +545,11 @@ def attached_args(rep: dict) -> list:
 def broadcast_args(rep: dict) -> list:
     """스레드 답글을 DM 목록에도 보이게 할 보고인가. 규칙은 hub_report.BROADCAST_KINDS 한 곳, 그 밖은 보고가 직접 요청(--broadcast)한 것만"""
     return ["--broadcast"] if rep.get("broadcast") or rep["kind"] in hub_report.BROADCAST_KINDS else []
+
+
+def thread_args(ts: str) -> list:
+    """보고 본문을 스레드 답글로 올릴 때의 인자. 사용자를 불러야 그 스레드가 사용자의 '스레드' 목록에 뜸(11-20 "어디 스레드인지 체크가 안 된다")"""
+    return ["--thread", ts, "--mention"]
 
 
 def decide_args(rep: dict) -> list:
@@ -809,8 +839,10 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
             _, _, kind = hub_report.KINDS[rep["kind"]]
             warn_unattached(conf, rep)
             pinned = ["--broadcast"] if rep.get("broadcast") else []  # 지정 스레드는 질문에 답하는 자리라 요청한 것만
-            rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind, "--thread", rep["thread"]] + pinned + attached_args(rep) + [body_text(rep)], deadline)
+            asks = ask_waiting(conf, rep["thread"])
+            rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind] + thread_args(rep["thread"]) + pinned + attached_args(rep) + [body_text(rep, asks=asks)], deadline)
             save_state(conf.state, st)
+            close_asks(conf, rep["thread"], asks)
         send_files(conf, rep, rs, st, rep["thread"], deadline)
         rs["line_ts"] = ""
         rs["sent"] = int(time.time())
@@ -830,11 +862,13 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
     if "body_ts" not in rs:
         warn_unattached(conf, rep)
         if decide:
-            where = ["--thread", topic["ts"]] + broadcast_args(rep) if threaded else []
+            where = thread_args(topic["ts"]) + broadcast_args(rep) if threaded else []
             rs["body_ts"] = run_notify(conf, decide_args(rep) + where + attached_args(rep) + [body_text(rep)], deadline)
         else:
             _, _, kind = hub_report.KINDS[rep["kind"]]
-            rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind, "--thread", topic["ts"]] + broadcast_args(rep) + attached_args(rep) + [body_text(rep, shared)], deadline)
+            asks = ask_waiting(conf, topic["ts"])  # 카드 스레드(--card)로 답해도 같은 안내
+            rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind] + thread_args(topic["ts"]) + broadcast_args(rep) + attached_args(rep) + [body_text(rep, shared, asks)], deadline)
+            close_asks(conf, topic["ts"], asks)
         save_state(conf.state, st)
     send_files(conf, rep, rs, st, topic["ts"] if threaded else rs["body_ts"], deadline)
     if "line_ts" not in rs:
