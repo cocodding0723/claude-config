@@ -922,5 +922,34 @@ mexp "허용 파일 만료 시 Edit 거부" Edit "$GR/a.cs" deny
 rm -f "$MALLOW"
 mexp "허용 파일 없으면 허용 파일 Write 거부" Write "$MALLOW" deny
 
+# ---- session-start: 압축 직후 코디네이터 허브 카드 상태 재주입 (가짜 bd·board 도구) ----
+CB="$SB/cbin"; mkdir -p "$CB" "$SB/cboard" "$SB/cws/coord-feat-x-hub" "$SB/cws/coord-other-hub"
+cat > "$CB/bd" <<'F'
+#!/bin/bash
+[ -n "$FAKE_BD_FAIL" ] && exit 1
+[ -n "$FAKE_BD_SLOW" ] && sleep 5
+echo '[{"id":"lrm-fake1"}]'
+F
+printf '#!/bin/bash\necho "단계: 3 구현"; echo "크기: 보통"; echo "계획 승인: 됨"\n' > "$CB/board-stage"
+printf '#!/bin/bash\n[ -n "$FAKE_SAID" ] && { echo "미처리: 장부에 없는 글 0건, 처리 안 적힌 지시 #2, #3. 조치: x" >&2; exit 6; }\necho 직접 친 지시 없음\n' > "$CB/board-said"
+chmod +x "$CB"/*
+for d in "$SB/cws/coord-feat-x-hub" "$SB/cws/coord-other-hub"; do git init -q -b main "$d"; git -C "$d" commit -q --allow-empty -m init; done
+ss() { # <source> <cwd> [환경...]
+  local src=$1 cwd=$2; shift 2
+  printf '%s' "$(jq -cn --arg s "$src" --arg d "$cwd" '{source:$s,cwd:$d}')" | env "$@" HOME="$SB/home" CLAUDE_HOOKS_STATE="$SB/cstate" PATH="$CB:$PATH" BOARD_BIN="$CB" BOARD_DIR="$SB/cboard" bash "$H/session-start.sh" 2>/dev/null | jq -r '.hookSpecificOutput.additionalContext // empty'
+}
+out=$(ss compact "$SB/cws/coord-feat-x-hub" X=1)
+echo "$out" | grep -q 'lrm-fake1' && echo "$out" | grep -q '단계: 3 구현' && [ "$(echo "$out" | wc -l)" -le 20 ] && ok "compact+기능 허브: 카드 id·단계, 20줄 이내" || ko "기능 허브 재주입" "$out"
+echo "$out" | grep -q '처리 안 된 지시: 없음' && ok "지시 없음 표시" || ko "지시 없음" "$out"
+out=$(ss compact "$SB/cws/coord-feat-x-hub" FAKE_SAID=1)
+echo "$out" | grep -q '#2, #3' && ok "처리 안 된 지시 번호 표시" || ko "미처리 지시" "$out"
+out=$(ss compact "$SB/cws/coord-feat-x-hub" FAKE_BD_FAIL=1); n=$(echo "$out" | grep -c .)
+[ "$n" -le 2 ] && echo "$out" | grep -q '조회 실패' && ok "작업판 조회 실패: 안내만, 종료 0" || ko "조회 실패" "$out"
+t0=$(date +%s); out=$(ss compact "$SB/cws/coord-feat-x-hub" FAKE_BD_SLOW=1); t1=$(date +%s)
+[ $((t1 - t0)) -le 8 ] && echo "$out" | grep -q '조회 실패' && ok "2초 넘게 걸리면 중단" || ko "느린 조회" "$((t1 - t0))초 $out"
+out=$(ss compact "$SB/cws/coord-other-hub" X=1)
+echo "$out" | grep -q 'coord-other-hub' && ! echo "$out" | grep -q 'lrm-fake1' && ok "그 밖의 허브: 이름과 재독 안내만" || ko "일반 허브" "$out"
+[ -z "$(ss startup "$SB/cws/coord-feat-x-hub" X=1)" ] && [ -z "$(ss compact "$R" X=1)" ] && ok "compact 아니거나 허브 아니면 출력 없음" || ko "비대상" "출력이 있음"
+
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
