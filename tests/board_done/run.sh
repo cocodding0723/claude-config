@@ -283,4 +283,32 @@ expect "장부에 적었어도 처리가 없으면 거부(6)" 6 env BOARD_CLAUDE
 BOARD_CLAUDE_DIRS="$SB/claude" "$SAID" "$sd" lead --mark 1 반영 "카드 x.5" >/dev/null 2>&1
 expect "지시마다 처리가 적히면 통과" 0 env BOARD_CLAUDE_DIRS="$SB/claude" "$BIN" --epic "$sd" lead --no-capture "계산식만" --dry-run
 
+# 잡파일만 다른 tree: 편집기가 만든 .slnx·evidence/ 폴더는 커밋에 없는 새 파일이어도 같은 내용으로 봄. 코드 파일이 섞이면 거부
+G2="$SB/repo2"; git init -q -b main "$G2" && printf 'a\n' > "$G2/Code.cs" && printf 's\n' > "$G2/Settings.asset" \
+  && git -C "$G2" add -A && git -C "$G2" -c user.name=t -c user.email=t@t commit -q -m init && git -C "$G2" branch n && git -C "$G2" checkout -q n
+tcard() { bd create "$1" --labels "kind:tool,branch:n,repo:$G2" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'; }
+n1=$(tcard "잡파일"); claim "$n1" wn
+mkdir -p "$G2/evidence/c1" && printf 'png' > "$G2/evidence/c1/shot.png" && printf 'x' > "$G2/ws.slnx"
+(cd "$G2" && "$RUN" test --out "$SB/ev/n1.log" --card "$n1" --actor wn -- true >/dev/null 2>&1)
+[ -n "$(meta_of "$n1" evidence_test)" ] && ok "board-run: 잡파일(.slnx·evidence/)만 있으면 커밋된 내용으로 보고 증거를 카드에 남김" || ko "잡파일인데 증거 안 남김" "$(head -1 "$SB/ev/n1.log")"
+expect "잡파일만 다른 증거는 통과" 0 "$BIN" "$n1" wn --dry-run
+n2=$(tcard "코드 섞임"); claim "$n2" wn
+printf 'b\n' > "$G2/New.cs"
+(cd "$G2" && "$RUN" test --out "$SB/ev/n2.log" -- true >/dev/null 2>&1); rm -f "$G2/New.cs"
+bd comments add "$n2" "evidence:test=$SB/ev/n2.log" >/dev/null
+expect "커밋 안 된 코드 파일이 섞인 증거는 거부" 7 "$BIN" "$n2" wn --dry-run
+grep -q '달라진 파일: New.cs' "$SB/out" && ok "거부 안내에 달라진 파일 이름" || ko "달라진 파일 안내 없음" "$(head -c 300 "$SB/out")"
+n3=$(tcard "추적 파일 수정"); claim "$n3" wn
+printf 'changed-by-tool\n' > "$G2/Settings.asset"
+(cd "$G2" && "$RUN" test --out "$SB/ev/n3.log" -- true >/dev/null 2>&1); git -C "$G2" checkout -q -- Settings.asset
+bd comments add "$n3" "evidence:test=$SB/ev/n3.log" >/dev/null
+expect "추적 파일 수정은 기본으로는 거부" 7 "$BIN" "$n3" wn --dry-run
+printf '{"%s": {"evidence_ignore": ["Settings.asset"]}}' "$G2" > "$BOARD_DIR/repos.json"
+expect "저장소 설정(evidence_ignore)에 있는 파일의 수정은 통과" 0 "$BIN" "$n3" wn --dry-run
+printf 'c\n' > "$G2/Code.cs"
+(cd "$G2" && "$RUN" test --out "$SB/ev/n4.log" -- true >/dev/null 2>&1); git -C "$G2" checkout -q -- Code.cs
+bd comments add "$n3" "evidence:test=$SB/ev/n4.log" >/dev/null
+expect "설정에 없는 코드 수정은 여전히 거부" 7 "$BIN" "$n3" wn --dry-run
+rm -f "$BOARD_DIR/repos.json"
+
 echo "통과 $PASS, 실패 $FAIL"; [ "$FAIL" = 0 ]

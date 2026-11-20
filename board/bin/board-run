@@ -69,7 +69,12 @@ fi
 echo "# exit $RC" >> "$OUT"
 echo "evidence:$KIND=$OUT commit=$HEAD"
 COMMITTED=1
-[ "$TREE" = "$(git rev-parse -q --verify 'HEAD^{tree}' 2>/dev/null)" ] || { COMMITTED=0; echo "참고: 커밋 안 된 변경 포함. 이 내용 그대로 커밋하면 commit= 을 새 커밋 해시로 바꿔 달 것" >&2; }
+HEADTREE=$(git rev-parse -q --verify 'HEAD^{tree}' 2>/dev/null)
+# 잡파일(편집기가 만든 .slnx, evidence/ 폴더, 저장소 설정의 evidence_ignore)만 다르면 커밋된 내용으로 봄(판정은 board_tree 한 곳)
+TREE_PY="$(cd "$(dirname "$(perl -MCwd=realpath -e 'print realpath shift' "${BASH_SOURCE[0]}")")" && pwd -P)/../lib/board_tree.py"
+if [ "$TREE" != "$HEADTREE" ] && ! { [ -n "$HEADTREE" ] && python3 "$TREE_PY" same "$TOP" "$HEADTREE" "$TREE" >/dev/null 2>&1; }; then
+  COMMITTED=0; echo "참고: 커밋 안 된 변경 포함. 이 내용 그대로 커밋하면 commit= 을 새 커밋 해시로 바꿔 달 것" >&2
+fi
 if [ -n "$CARD" ]; then
   [ -n "$ACTOR" ] || echo "경고: --card 에는 --actor 도 필요함. heartbeat 생략" >&2
   if [ -n "$ACTOR" ]; then
