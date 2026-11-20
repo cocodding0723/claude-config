@@ -200,6 +200,21 @@ sleep 1.5
 [ ! -e "$SB/fc.args" ] && ok "검수 통과만으로는 정리하지 않음(PR·병합이 남음)" || ko "검수 통과에 정리 실행됨" "$(cat "$SB/fc.args" 2>/dev/null)"
 expect "--shipped 근거 없으면 2" 2 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epic "$fe" lead --shipped ""
 expect "feature: 반영 끝 기록" 0 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epic "$fe" lead --shipped "PR #9 병합(abc1234)"
+
+# 창에 친 검수 통과(--user-ok-typed): 완료 검사 뒤 코디네이터 창에 친 '통과'를 세션 기록에서 읽어 기록. Slack 카드 답을 기다리지 않음
+TW="$(cd "$SB" && pwd -P)/coord-feat-typed-hub"; TP="$SB/cfg/projects/$(printf '%s' "$TW" | sed 's/[^A-Za-z0-9]/-/g')"; mkdir -p "$TP"
+typed_line() { python3 -c 'import json,sys,datetime;print(json.dumps({"type":"user","timestamp":datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),"message":{"role":"user","content":sys.argv[1]}},ensure_ascii=False))' "$1" >> "$TP/s.jsonl"; }
+te=$(bd create "창 통과 기능" -t epic --labels "$BL" -d "- 기능 코디네이터 허브: $TW" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+typed_line "통과"   # 완료 검사 전에 친 글은 세지 않음
+sleep 1; printf 'png' > "$SB/ev/s3.png"; printf 'mp4' > "$SB/ev/r3.mp4"; cp "$SB/ev/rv.json" "$SB/ev/rv3.json"; ev "$te" "$SB/ev/s3.png"; ev "$te" "$SB/ev/r3.mp4"; ev "$te" "review=$SB/ev/rv3.json"
+expect "typed: epic 닫힘" 0 env BOARD_CLAUDE_DIRS="$SB/cfg" "$BIN" --epic "$te" lead
+grep -q -- '--user-ok-typed' "$SB/out" && ok "typed: 닫을 때 창 입력으로 통과하는 법을 알려 줌" || ko "typed: 안내 줄 없음" "$(cat "$SB/out")"
+expect "typed: 완료 검사 뒤에 친 통과가 없으면 4" 4 env BOARD_CLAUDE_DIRS="$SB/cfg" "$BIN" --epic "$te" lead --user-ok-typed
+expect "typed: --user-ok 와 같이 쓰면 2" 2 env BOARD_CLAUDE_DIRS="$SB/cfg" "$BIN" --epic "$te" lead --user-ok-typed --user-ok "통과"
+sleep 1; typed_line "토스트는 나오나?"; typed_line "통과 ㄱㄱ"
+expect "typed: 창에 친 통과로 검수 통과 기록" 0 env BOARD_CLAUDE_DIRS="$SB/cfg" "$BIN" --epic "$te" lead --user-ok-typed
+bd show "$te" --json | grep -q '"stage:ship"' && ok "typed: 반영 단계 label" || ko "typed: 반영 단계 label 없음"
+bd comments "$te" 2>/dev/null | grep -q 'user-ok: (창에 친 글) 통과 ㄱㄱ' && ok "typed: 사용자 원문을 카드에 남김" || ko "typed: 원문 코멘트 없음" "$(bd comments "$te" 2>&1 | tail -3)"
 for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$SB/fc.args" ] && break; sleep 0.3; done
 [ "$(cat "$SB/fc.args" 2>/dev/null)" = "--slug demo --yes" ] && ok "반영이 끝나면 feature_close --slug --yes 실행" || ko "feature_close 연결" "$(cat "$SB/fc.args" 2>/dev/null)"
 bd show "$fe" --json | grep -q '"stage:ship"' && ko "반영 단계 label 남음" || ok "반영이 끝나면 단계 label 을 뗌"

@@ -82,6 +82,13 @@ class TypedApprovalTest(unittest.TestCase):
         ("'승인 건너뛰고 진행해'도 승인", [(10, "승인 건너뛰고 진행해")], True),
         ("'계획 승인한다'도 승인", [(10, "계획 승인한다")], True),
         ("영문 skip 도 승인", [(10, "Skip")], True),
+        ("'전부 추천'도 승인(11-20 실제 입력)", [(10, "전부 추천")], True),
+        ("맞장구 뒤의 '추천대로'도 승인", [(10, "ㅇㅇ 추천대로 가자")], True),
+        ("'승인 ㄱㄱ 빠르게 PR 올리고 병합하자'도 승인", [(10, "승인 ㄱㄱ 빠르게 PR 올리고 병합하자")], True),
+        ("부정이 붙은 승인은 승인이 아님", [(10, "승인 안 함"), (20, "승인 보류"), (30, "승인 못 해 이건")], False),
+        ("묻는 글은 승인이 아님", [(10, "승인?"), (20, "승인하면 바로 시작함?")], False),
+        ("'승인 전에 …'는 승인이 아님", [(10, "승인 전에 하나만 고치자")], False),
+        ("첫 문장이 승인이면 뒤 문장의 부정은 보지 않음", [(10, "승인. 녹화는 하지 마")], True),
         ("'진행해'·'ㄱㄱ'만으로는 승인이 아님(다른 얘기 끝에 붙는 말)", [(10, "작업 빠르게 진행 ㄱㄱ"), (20, "진행해")], False),
         ("글 중간의 승인은 세지 않음", [(10, "이거 승인 전에 하나만 고치자")], False),
         ("계획 카드를 올리기 전에 친 승인은 그 카드의 승인이 아님", [(-10, "승인")], False),
@@ -135,6 +142,42 @@ class TypedApprovalTest(unittest.TestCase):
     def test_approval_lookup_accepts_either_way(self):
         self.post()
         self.assertFalse(bf.approval(self.hub, self.epic)(self.DID))
+
+
+class TypedReviewTest(TypedTest):
+    """코디네이터 창에 직접 친 검수 통과. 완료 검사가 기능 카드를 닫은 뒤(closed_at)에 친 글만 셈"""
+
+    def review(self, rows):
+        self.write(*[user(text, T0 + sec) for sec, text in rows])
+        epic = {"id": "t-e", "created_at": iso(T0 - 500), "closed_at": iso(T0), "description": f"- 기능 코디네이터 허브: {WS}"}
+        return bf.typed_review(epic, typed=lambda ws, since: said.typed(ws, since, dirs=[self.dir]))
+
+    def test_table(self):
+        cases = [
+            ("'통과'", [(10, "통과")], "통과"),
+            ("'통과, PR 올려'(11-19 실제 입력)", [(10, "통과, PR 올려")], "통과, PR 올려"),
+            ("'통과 ㄱㄱ'", [(10, "통과 ㄱㄱ")], "통과 ㄱㄱ"),
+            ("'검수 통과'·맞장구", [(10, "ㅇㅇ 검수 통과")], "ㅇㅇ 검수 통과"),
+            ("여럿이면 가장 최근 것", [(10, "통과"), (20, "토스트는?"), (30, "통과 ㄱㄱ")], "통과 ㄱㄱ"),
+            ("완료 검사 전에 친 통과는 세지 않음", [(-10, "통과")], ""),
+            ("묻는 글·부정은 통과가 아님", [(10, "통과?"), (20, "통과 못 시킴"), (30, "통과는 보류")], ""),
+            ("글 중간의 통과는 세지 않음", [(10, "이거 컴파일은 통과함?")], ""),
+            ("'진행해'만으로는 통과가 아님", [(10, "진행해")], ""),
+        ]
+        for name, rows, want in cases:
+            with self.subTest(name):
+                self.setUp()
+                self.assertEqual(self.review(rows), want)
+
+    def test_needs_the_coordinator_workspace_and_a_closed_card(self):
+        self.write(user("통과", T0 + 10))
+        typed = lambda ws, since: said.typed(ws, since, dirs=[self.dir])
+        self.assertEqual(bf.typed_review({"id": "t-e", "closed_at": iso(T0), "description": "- 목표: x"}, typed=typed), "", "코디네이터 작업 공간을 모름")
+        self.assertEqual(bf.typed_review({"id": "t-e", "description": f"- 기능 코디네이터 허브: {WS}"}, typed=typed), "", "아직 닫히지 않은 기능")
+
+    def test_typed_pass_is_not_logged_as_an_instruction(self):
+        self.assertTrue(bf.is_control("통과"))
+        self.assertFalse(bf.is_control("통과 못 시킴. 버튼 위치 고쳐"), "고칠 점이 붙은 글은 지시로 남김")
 
 
 if __name__ == "__main__":
