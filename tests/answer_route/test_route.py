@@ -178,6 +178,12 @@ class UnitRoute(Base):
         self.assertEqual(self.hub_calls, [("alpha", "사용자 원문: 결정 D-0001 질문(직접 입력, 답 아님·카드 버튼은 열려 있음): 왜 필요한가요? (출처: Slack)")])
         self.assertEqual(self.store.deliveries("D-0001", "1.1"), [])
 
+    def test_asked_text_names_the_thread_to_reply_in(self):
+        line = self.route_mod.asked_text("D-0001", "왜 필요한가요?", "1730790000.123456")
+        self.assertTrue(line.startswith("결정 D-0001 질문(직접 입력, 답 아님·카드 버튼은 열려 있음): 왜 필요한가요? (답할 곳: Slack thread 1730790000.123456"), line)
+        self.assertIn("--reply-to 1730790000.123456", line)
+        self.assertNotIn("답할 곳", self.route_mod.asked_text("D-0001", "왜 필요한가요?"), "스레드를 모르면 붙이지 않음")
+
     def test_mapped_hub_gets_original_text_with_source_and_main_gets_reference(self):
         self.map_decision()
         out = self.router("sent").route("D-0001", "1.1", "docsite", BODY)

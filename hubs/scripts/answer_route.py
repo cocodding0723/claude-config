@@ -47,9 +47,14 @@ QUESTION_NOTE = "질문(직접 입력, 답 아님·카드 버튼은 열려 있�
 is_question = answer_store.is_question
 
 
-def asked_text(did: str, text: str) -> str:
-    """질문 한 문장. said_text 와 달리 '답' 이 아니라 '질문' 머리를 써서 받는 쪽이 결정으로 처리하지 않게 함"""
-    return f"결정 {did} {QUESTION_NOTE}: {text}"
+# 답할 곳이 없으면 받은 세션이 답글 대신 카드를 다시 올리거나 답 없이 넘어감(11-20 두 건). 버튼 안내 줄은 전송기가 붙임(ask_open)
+QUESTION_REPLY = " (답할 곳: Slack thread {ts} — 카드를 다시 올리지 말고 hub_report.py add --kind info --reply-to {ts} --text '답' 으로 답함. 버튼 안내 줄은 자동으로 붙음)"
+
+
+def asked_text(did: str, text: str, thread: str = "") -> str:
+    """질문 한 문장. said_text 와 달리 '답' 이 아니라 '질문' 머리를 써서 받는 쪽이 결정으로 처리하지 않게 함.
+    thread 는 답글을 올릴 Slack 스레드 ts. 있으면 끝에 답할 곳과 명령을 붙임"""
+    return f"결정 {did} {QUESTION_NOTE}: {text}" + (QUESTION_REPLY.format(ts=thread) if thread else "")
 
 
 @dataclass(frozen=True)

@@ -37,6 +37,7 @@ import answer_route  # noqa: E402
 import main_inbox  # noqa: E402
 import answer_store  # noqa: E402
 import board_slack  # noqa: E402
+import ask_open  # noqa: E402
 import card_actions as actions  # noqa: E402
 import ledger  # noqa: E402
 import ledger_sync  # noqa: E402
@@ -166,7 +167,8 @@ class Decide:
             return
         msg = self.card_message(meta["channel"], meta["ts"], meta.get("thread_ts") or "")
         if answer_route.is_question(text) and not STORE.first_answer(meta["did"], meta["ts"]):
-            self.ask(meta["did"], meta["channel"], meta["ts"], msg, text)  # 질문은 답이 아님: 기록(claim)·카드 닫기 없이 버튼 유지
+            # 질문은 답이 아님: 기록(claim)·카드 닫기 없이 버튼 유지. 답글 자리는 카드가 든 스레드, 맨 위 카드면 카드 자신
+            self.ask(meta["did"], meta["channel"], meta["ts"], msg, text, meta.get("thread_ts") or meta["ts"])
             return
         self.finish(meta["did"], meta["channel"], meta["ts"], msg, "직접 입력: " + text, {"action": "custom", "text": text})
 
@@ -188,18 +190,23 @@ class Decide:
         except Exception as err:
             log(f"카드 갱신 실패 {type(err).__name__} — {on_fail}")
 
-    def ask(self, did: str, ch: str, ts: str, msg: dict, text: str) -> None:
-        """질문: 카드에 안내 한 줄만 달고 원문을 허브·메인에 전달(답 경로와 같은 라우터, kind=question)"""
+    def ask(self, did: str, ch: str, ts: str, msg: dict, text: str, thread: str) -> None:
+        """질문: 카드에 안내 한 줄만 달고 원문을 허브·메인에 전달(답 경로와 같은 라우터, kind=question). thread 는 답글이 올라갈 스레드 ts"""
         title = card_title(msg)
         self.update_card(ch, ts, msg, did, noted(msg, ASK_LINE.format(at=time.strftime("%m-%d %H:%M"))), "질문은 전달함")
-        self.start(self.send_ask, did, ts, title, text)
+        try:
+            ask_open.note(DIR, thread, did, ts)
+        except OSError as err:  # 기록이 없으면 답글에 버튼 안내 줄만 빠짐. 질문 전달은 계속
+            log(f"결정 {did} 질문 기록 실패 {type(err).__name__} — 답글에 버튼 안내가 안 붙음")
+        self.start(self.send_ask, did, ts, title, text, thread)
 
-    def send_ask(self, did: str, ts: str, title: str, text: str) -> None:
+    def send_ask(self, did: str, ts: str, title: str, text: str, thread: str) -> None:
+        asked = answer_route.asked_text(did, text, thread)
         if board_slack.card_for(did):  # 작업판 결정 카드: 질문은 카드 코멘트로만(카드는 열어 둠), 허브·메인 전달 없음
-            self.to_board(did, ts, title, answer_route.asked_text(did, text), keep_open=True)
+            self.to_board(did, ts, title, asked, keep_open=True)
             return
         try:
-            out = self.asker.ask(did, ts, answer_store.SLACK, answer_route.asked_text(did, text))
+            out = self.asker.ask(did, ts, answer_store.SLACK, asked)
         except Exception as err:
             log(f"결정 {did} 질문 전달 예외 {type(err).__name__}")
             warn_slack(ts, f"질문 전달 예외: {title or did}\n\n• 무엇: 질문을 허브·메인에 못 보냄({type(err).__name__})\n• 결과: 메인에 직접 알려 주세요")
