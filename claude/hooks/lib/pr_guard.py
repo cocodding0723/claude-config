@@ -1,6 +1,6 @@
 """gh 명령 해석 + PR 규칙 판정(pr-draft-guard.sh 가 부름). 인자: 시작 cwd. stdin: 원본 명령.
 규칙: 새 PR 은 draft 로만(11-13 D-PRDRAFT) + 생성 자체도 사용자 승인 뒤에만(11-16). 승인 = Orca 하위 작업 공간의 자기 브랜치(11-17, workspace_pr)
-·D-PR<해시> 카드·계획 기록·터미널 승인·메인 대화의 사용자 직접 지시(11-17, 인자 2·3 = 훅 입력 transcript_path·session_id) /
+·D-PR<해시> 카드·계획 기록·계획 승인된 기능의 통합 브랜치(11-20, feature_plan)·터미널 승인·메인 대화의 사용자 직접 지시(11-17, 인자 2·3 = 훅 입력 transcript_path·session_id) /
 draft 해제(ready)는 그 PR 에 대한 사용자 승인 기록이 있을 때만.
 출력: 판정 있으면 hook JSON 한 줄(deny|ask), 통과면 빈 출력. 따옴표 안·heredoc 본문의 글자는 명령이 아니라 무시하되
 bash -c·eval 문자열은 다시 해석함. 판정 불가(PR 번호·저장소 해석 실패, 기록 읽기 실패)는 deny 가 아니라 ask."""
@@ -18,6 +18,7 @@ import push_targets as pt  # noqa: E402  따옴표·heredoc·cd 해석 재사용
 import plan_approval as pa  # noqa: E402
 import prompt_approval as ua  # noqa: E402  메인 대화의 사용자 직접 지시
 import workspace_pr as ws  # noqa: E402  Orca 하위 작업 공간 상시 허용
+import feature_plan as fp  # noqa: E402  기능의 계획 승인(작업판)
 
 HOME = os.path.expanduser("~")
 EV = {}  # 훅 입력의 세션 정보(transcript_path·session_id). main() 이 채움
@@ -216,6 +217,8 @@ def check_create(toks, flags, repo, here):
     if not REPO_RE.fullmatch(repo or "") or not head:
         raise Unknown("새 PR 의 저장소·브랜치를 알 수 없음(-R·--head 로 지정)")
     if ws.allowed(here, repo, head, origin_repo) or plan_ok(pa.find_pr, repo, head, base) or prompt_ok("pr"):
+        return None
+    if fp.find_pr(hub_dir(), repo, head, origin_repo):  # 계획 승인된 기능의 통합 브랜치(11-20). 작업판 조회는 위 길이 다 아닐 때만
         return None
     did = pr_create_id(repo, head)
     if not decided(did, repo):

@@ -19,7 +19,7 @@ CFG_HUB_REPORT="${LRM_HUB_REPORT:-$HERE/hub_report.py}"   # 기능 Slack 스레�
 usage() {
   cat <<'USAGE'
 사용: feature_open.sh --ticket LRM-n --name "<기능 한글>" --base <브랜치> [--slug <영문 작업명>] [--type <타입>] [--long]
-                       [--goal "<목표 한 문장>" --verify "<확인 방법 한 문장>" [--out "<범위 밖>"]] [--dry-run] [--json]
+                       [--goal "<목표 한 문장>" --verify "<확인 방법 한 문장>" [--out "<범위 밖>"]] [--skip 급함] [--dry-run] [--json]
 기능 하나를 맡을 코디네이터를 만든다. 다시 실행해도 있는 것은 재사용하고 빠진 것만 만든다.
   1 기능 통합 브랜치(없으면 --base 에서 생성). 이름은 게임 저장소 규칙(CLAUDE.md Branch Convention)을 따름:
       스프린트 안에서 끝나는 작업  sprint-<스프린트 시작일 YYYYMMDD>/<타입>-<티켓>-<작업명>   예 sprint-20261107/feat-LRM-612-mailbox
@@ -45,6 +45,9 @@ usage() {
   --verify 문장   접수: 끝났는지 확인할 방법 한 문장. "- 확인 방법:" 칸에 적음
   --out 문장      접수: 이번에 하지 않는 것. "- 범위 밖:" 칸에 적음
                   세 칸은 새 기능 카드를 만들 때만 적음. 안 주면 빈 칸으로 남고 코디네이터가 채워야 접수 단계를 떠날 수 있음(board-stage)
+  --skip 항목     급한 일: 준비를 건너뜀. 급함(이해·계획 둘 다) | 이해 | 계획, 쉼표로 여럿. 사용자가 그렇게 하라고 했을 때만 줌
+                  기능 카드에 label skip:understand·skip:plan 이 붙어 계획 승인 없이 구현으로 감. 검증·검수·병합 승인은 그대로 거침
+                  새 기능 카드를 만들 때만 적음. 이미 연 기능은 board-skip 으로 걸거나 품
   --dry-run       아무것도 만들지 않고 할 일만 출력
   --json          결과를 JSON 한 줄로 출력
 환경: REPO, WS_ROOT, LRM_BOARD(작업판 폴더), LRM_CREATE_HUB, LRM_FEATURE_ROLE, LRM_ROLES_DIR, LRM_SPRINT_DATE(스프린트 시작일), LRM_SPRINT_FILE(스프린트 시작일 설정 파일, 기본 ~/.config/lrm-hubs/sprint-start)
@@ -57,14 +60,14 @@ USAGE
 die() { echo "$1" >&2; exit "${2:-2}"; }
 oneline() { printf '%s' "$1" | tr '\n' ' '; }  # 접수 칸은 한 줄(줄이 갈리면 칸 이름 줄에서 떨어짐)
 
-TICKET="" NAME="" BASE="" SLUG="" TYPE="feat" LONG=0 DRY=0 JSON=0 GOAL="" VERIFY="" OUT_OF="" SPRINT_ARG=""
+TICKET="" NAME="" BASE="" SLUG="" TYPE="feat" LONG=0 DRY=0 JSON=0 GOAL="" VERIFY="" OUT_OF="" SPRINT_ARG="" SKIP_ARG=""
 BRANCH_TYPES="feat|fix|chore|refactor|docs|design"  # 게임 저장소 CLAUDE.md 의 타입 접두
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --ticket|--name|--base|--slug|--type|--goal|--verify|--out|--sprint) [ $# -ge 2 ] || die "$1 값 필요 — --help 참고"
+    --ticket|--name|--base|--slug|--type|--goal|--verify|--out|--sprint|--skip) [ $# -ge 2 ] || die "$1 값 필요 — --help 참고"
       case "$1" in --ticket) TICKET="$2";; --name) NAME="$2";; --base) BASE="$2";; --slug) SLUG="$2";; --type) TYPE="$2";;
-        --goal) GOAL="$2";; --verify) VERIFY="$2";; --out) OUT_OF="$2";; --sprint) SPRINT_ARG="$2";; esac; shift 2 ;;
+        --goal) GOAL="$2";; --verify) VERIFY="$2";; --out) OUT_OF="$2";; --sprint) SPRINT_ARG="$2";; --skip) SKIP_ARG="$2";; esac; shift 2 ;;
     --long) LONG=1; shift ;;
     --dry-run) DRY=1; shift ;;
     --json) JSON=1; shift ;;
@@ -74,6 +77,20 @@ done
 [ -n "$TICKET" ] && [ -n "$NAME" ] && [ -n "$BASE" ] || die "--ticket·--name·--base 필요 — 예 feature_open.sh --ticket LRM-612 --name \"우편함\" --base dev"
 [[ "$TICKET" =~ ^LRM-[0-9]+$ ]] || die "티켓 형식 오류: $TICKET — LRM-숫자 로 지정"
 [[ "$TYPE" =~ ^($BRANCH_TYPES)$ ]] || die "타입 오류: $TYPE — $BRANCH_TYPES 중 하나"
+# 건너뛰기 항목 → label. 이름은 board/lib/board_flow.py 의 SKIP_ITEMS·SKIP_BUNDLES 와 같아야 함
+SKIP_LABELS="" SKIP_NAMES=""
+if [ -n "$SKIP_ARG" ]; then
+  IFS=',' read -r -a SKIP_WORDS <<< "$SKIP_ARG"
+  WANT_U=0 WANT_P=0
+  for w in "${SKIP_WORDS[@]}"; do
+    case "$(printf '%s' "$w" | tr -d '[:space:]')" in
+      급함) WANT_U=1; WANT_P=1 ;; 이해|understand) WANT_U=1 ;; 계획|plan) WANT_P=1 ;;
+      *) die "--skip 값 오류: $w — 급함 | 이해 | 계획 중에서(쉼표로 여럿). 검증·검수·병합 승인은 건너뛸 수 없음" ;;
+    esac
+  done
+  [ "$WANT_U" = 1 ] && { SKIP_LABELS=",skip:understand"; SKIP_NAMES="이해"; }
+  [ "$WANT_P" = 1 ] && { SKIP_LABELS="$SKIP_LABELS,skip:plan"; SKIP_NAMES="${SKIP_NAMES:+$SKIP_NAMES, }계획"; }
+fi
 NAMED=1; [ -n "$SLUG" ] || NAMED=0
 SLUG="${SLUG:-$(echo "$TICKET" | tr 'A-Z' 'a-z')}"
 [[ "$SLUG" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "slug 형식 오류: $SLUG — 영문 소문자·숫자·- 만"
@@ -115,12 +132,13 @@ if [ -z "$EPIC" ]; then
   EPIC_STATE=new
   if [ "$DRY" = 1 ]; then EPIC="(생성 예정)"
   else
-    EPIC=$(cd "$CFG_BOARD" && bd create "[$TICKET] $NAME" -t epic -l "$LABEL,flow:v1,said:v1,stage:intake,branch:$BRANCH,repo:$CFG_REPO,base:$BASE_REF" --external-ref "jira-$TICKET" \
-      -d "$(printf -- '- 목표: %s\n- 확인 방법: %s\n- 범위 밖: %s\n- 기능 코디네이터 허브: %s\n- 통합 브랜치: %s' "$(oneline "$GOAL")" "$(oneline "$VERIFY")" "$(oneline "$OUT_OF")" "$HUB" "$BRANCH")" --json | jq -r '.id // empty') || true
+    EPIC=$(cd "$CFG_BOARD" && bd create "[$TICKET] $NAME" -t epic -l "$LABEL,flow:v1,said:v1,stage:intake,branch:$BRANCH,repo:$CFG_REPO,base:$BASE_REF$SKIP_LABELS" --external-ref "jira-$TICKET" \
+      -d "$(printf -- '- 목표: %s\n- 확인 방법: %s\n- 범위 밖: %s\n- 기능 코디네이터 허브: %s\n- 통합 브랜치: %s%s' "$(oneline "$GOAL")" "$(oneline "$VERIFY")" "$(oneline "$OUT_OF")" "$HUB" "$BRANCH" "${SKIP_NAMES:+$(printf '\n- 건너뛰기: %s (열 때 사용자 지정)' "$SKIP_NAMES")}")" --json | jq -r '.id // empty') || true
     [ -n "$EPIC" ] || die "epic 생성 실패 — cd $CFG_BOARD && bd create ... 를 직접 실행해 오류 확인" 1
   fi
 fi
 
+SKIP_APPLIED=""; [ "$EPIC_STATE" = new ] && SKIP_APPLIED="$SKIP_NAMES"  # 건너뛰기는 새 기능 카드를 만들 때만 적음
 render_role() { # 템플릿 → 역할 파일
   sed -e "s|{{NAME}}|$NAME|g" -e "s|{{TICKET}}|$TICKET|g" -e "s|{{BRANCH}}|$BRANCH|g" -e "s|{{BASE}}|$BASE_REF|g" \
       -e "s|{{EPIC}}|$EPIC|g" -e "s|{{SLUG}}|$SLUG|g" "$CFG_ROLE_TMPL"
@@ -149,13 +167,14 @@ fi
 
 if [ "$JSON" = 1 ]; then
   jq -nc --arg s "$STATUS" --arg slug "$SLUG" --arg t "$TICKET" --arg b "$BRANCH" --arg bs "$BRANCH_STATE" --arg base "$BASE_REF" \
-    --arg hub "$HUB" --arg e "$EPIC" --arg es "$EPIC_STATE" --arg role "$ROLE_OUT" --arg out "$HUB_OUT" \
-    '{status:$s, slug:$slug, ticket:$t, branch:$b, branch_state:$bs, base:$base, hub:$hub, epic:$e, epic_state:$es, role_file:$role, hub_output:$out}'
+    --arg hub "$HUB" --arg e "$EPIC" --arg es "$EPIC_STATE" --arg role "$ROLE_OUT" --arg out "$HUB_OUT" --arg skip "$SKIP_APPLIED" \
+    '{status:$s, slug:$slug, ticket:$t, branch:$b, branch_state:$bs, base:$base, hub:$hub, epic:$e, epic_state:$es, role_file:$role, skips:$skip, hub_output:$out}'
 else
   echo "상태: $STATUS"
   echo "브랜치: $BRANCH ($BRANCH_STATE, 기준 $BASE_REF)"
   echo "허브: $HUB"
   echo "epic: $EPIC ($EPIC_STATE, label $LABEL)"
+  [ -z "$SKIP_NAMES" ] || echo "건너뛰기: ${SKIP_APPLIED:-적용 안 함(이미 연 기능 — board-skip $EPIC <이름> 급함 --user-said \"<원문>\" 으로 검)}"
   echo "역할 파일: $ROLE_OUT"
   printf '%s\n' "$HUB_OUT"
 fi

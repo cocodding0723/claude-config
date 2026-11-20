@@ -46,6 +46,14 @@ chk "feature_open 재실행: 같은 내용을 다시 예약(중복은 hub_report
 : > "$CALLS"; LRM_SPRINT_DATE=20261125 bash "$SCR/feature_open.sh" --ticket LRM-701 --name "우편함" --base dev --slug mail >/dev/null 2>&1
 chk "스프린트가 바뀐 뒤 다시 실행해도 처음 만든 브랜치를 그대로 씀" 'grep -q "통합 브랜치 sprint-20261118/feat-LRM-701-mail)" "$CALLS"' "$(cat "$CALLS")"
 chk "새 기능 카드에 새 흐름 표시(flow:v1)·첫 단계(접수)·브랜치가 적힘" '(cd "$BOARD" && bd show "$EPIC" --json | jq -e "(if type==\"array\" then .[0] else . end).labels | (index(\"flow:v1\") != null) and (index(\"said:v1\") != null) and (index(\"stage:intake\") != null) and (index(\"branch:sprint-20261118/feat-LRM-701-mail\") != null)") >/dev/null'
+# 급한 일(11-19): 사용자가 열 때 준비를 건너뛰게 하면 기능 카드에 건너뛰기 표시가 붙음. 이미 연 기능에는 적지 않음
+bash "$SCR/feature_open.sh" --ticket LRM-702 --name "급한 일" --base dev --slug rush --skip 급함 > "$SB/out" 2>"$SB/err"; RC=$?
+RUSH=$(epic_of rush)
+chk "--skip 급함: 새 기능 카드에 이해·계획 건너뛰기 표시와 설명 줄" '[ "$RC" = 0 ] && (cd "$BOARD" && bd show "$RUSH" --json | jq -e "(if type==\"array\" then .[0] else . end) | ((.labels | index(\"skip:understand\")) != null) and ((.labels | index(\"skip:plan\")) != null) and (.description | test(\"건너뛰기: 이해, 계획\"))" >/dev/null) && grep -q "건너뛰기: 이해, 계획" "$SB/out"' "rc=$RC $(cat "$SB/out" "$SB/err" | tail -3)"
+bash "$SCR/feature_open.sh" --ticket LRM-701 --name "우편함" --base dev --slug mail --skip 계획 > "$SB/out" 2>&1
+chk "--skip 은 이미 연 기능의 카드를 바꾸지 않고 거는 법을 알려 줌" '(cd "$BOARD" && bd show "$EPIC" --json | jq -e "(if type==\"array\" then .[0] else . end).labels | index(\"skip:plan\") == null" >/dev/null) && grep -q "board-skip" "$SB/out"' "$(tail -3 "$SB/out")"
+bash "$SCR/feature_open.sh" --ticket LRM-703 --name x --base dev --slug z --skip 검수 --dry-run >/dev/null 2>"$SB/err"; RC=$?
+chk "--skip 에 건너뛸 수 없는 것을 주면 종료 2" '[ "$RC" = 2 ] && grep -q "급함 | 이해 | 계획" "$SB/err"' "rc=$RC $(cat "$SB/err")"
 bjson() { bash "$SCR/feature_open.sh" "$@" --base dev --dry-run --json 2>"$SB/err" | jq -r .branch; }
 chk "버그 작업은 타입 fix" '[ "$(bjson --ticket LRM-711 --name 버그 --slug gauge-overflow --type fix)" = "sprint-20261118/fix-LRM-711-gauge-overflow" ]'
 chk "여러 스프린트에 걸치는 모듈(--long)은 feature/<이름>" '[ "$(bjson --ticket LRM-712 --name 현지화 --slug localization --long)" = "feature/localization" ]'

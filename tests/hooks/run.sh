@@ -267,6 +267,35 @@ exp "pr-create: 다른 브랜치(--head)는 거부" $PD 'gh pr create --draft --
 exp "pr-create: -R·--head 지정이면 cd 변수 뒤도 판정(통과)" $PD 'cd "$W" && gh pr create --draft -R Org/RepoA --head feat/x -t t' "$PR"
 exp "pr-create: 다른 저장소는 거부" $PD 'gh pr create --draft -R Org/RepoB -t t' "$PR" deny
 
+# ---- 기능의 계획 승인이 PR·Jira 훅 승인으로 이어짐(11-20, feature_plan). 작은 크기·계획 건너뛰기는 계획 승인이 필요 없는 기능 ----
+FDESC=$'- 목표: 시험\n- 확인 방법: 시험'
+FB_OLD="${BOARD_DIR:-}"; export BOARD_DIR="$SB/fplan-board"; mkdir -p "$BOARD_DIR"; (cd "$BOARD_DIR" && git init -q && bd init --quiet >/dev/null 2>&1)
+fepic() { (cd "$BOARD_DIR" && bd create "$1" -t epic -d "$FDESC" --labels "$2" --external-ref "$3" --json 2>/dev/null | jq -r .id); }
+FE1=$(fepic 준비됨 "flow:v1,size:small,branch:feat/fplan,repo:$PR" jira-LRM-500)
+FE2=$(fepic 승인전 "flow:v1,size:normal,branch:feat/fwait,repo:$PR" jira-LRM-501)
+FE3=$(fepic 옛방식 "size:small,branch:feat/fold,repo:$PR" jira-LRM-502)
+FE4=$(fepic 다른저장소 "flow:v1,size:small,branch:feat/frepo,repo:$R" jira-LRM-503)
+exp "feature-plan: 구현 가능한 기능의 통합 브랜치는 draft PR 생성 통과" $PD 'gh pr create --draft -R Org/RepoA --head feat/fplan -t t' "$PR"
+exp "feature-plan: 그래도 --draft 없으면 거부" $PD 'gh pr create -R Org/RepoA --head feat/fplan -t t' "$PR" deny
+exp "feature-plan: 계획 승인 전 기능의 브랜치는 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/fwait -t t' "$PR" deny
+exp "feature-plan: 새 흐름 표시 없는 기능은 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/fold -t t' "$PR" deny
+exp "feature-plan: 기능 카드의 저장소가 다르면 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/frepo -t t' "$PR" deny
+(cd "$BOARD_DIR" && bd update "$FE2" --add-label skip:plan >/dev/null 2>&1)
+exp "feature-plan: 사용자가 계획을 건너뛰게 한 기능은 통과" $PD 'gh pr create --draft -R Org/RepoA --head feat/fwait -t t' "$PR"
+(cd "$BOARD_DIR" && bd update "$FE2" --remove-label skip:plan >/dev/null 2>&1)
+JT='{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"cloudId":"c","issueIdOrKey":"%s","transitionId":"%s"}}'
+jrun0() { local out; out=$(printf '%s' "$1" | HOME="$SB/home" bash "$H/jira-approval-guard.sh" 2>/dev/null); [ -z "$out" ] && { echo pass; return; }; printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision'; }
+fj() { local got; got=$(jrun0 "$(printf "$JT" "$2" "$3")"); [ "$got" = "${4:-pass}" ] && ok "$1" || ko "$1" "기대 ${4:-pass}, 실제 $got"; }
+fj "feature-plan: 구현 가능한 기능의 티켓은 확인 대기 전환 통과" LRM-500 31
+fj "feature-plan: 그 티켓도 완료 전환은 거부" LRM-500 41 deny
+fj "feature-plan: 계획 승인 전 기능의 티켓은 확인 대기 거부" LRM-501 31 deny
+fj "feature-plan: 기능 카드가 없는 티켓은 확인 대기 거부" LRM-999 31 deny
+(cd "$BOARD_DIR" && bd close "$FE1" --force >/dev/null 2>&1)
+exp "feature-plan: 닫힌 기능의 브랜치는 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/fplan -t t' "$PR" deny
+r=$(printf '%s' "$(jq -cn --arg c 'gh pr create --draft -R Org/RepoA --head feat/fwait -t t' --arg d "$PR" '{tool_input:{command:$c},cwd:$d}')" | HOME="$SB/home" BOARD_DIR="$SB/없는폴더" bash "$H/$PD" | jq -r '.hookSpecificOutput.permissionDecision')
+[ "$r" = deny ] && ok "feature-plan: 작업판을 못 읽으면 승인으로 치지 않음" || ko "feature-plan: 작업판 조회 실패" "$r"
+if [ -n "$FB_OLD" ]; then export BOARD_DIR="$FB_OLD"; else unset BOARD_DIR; fi
+
 # ---- jira-approval-guard: 이슈 생성·상태 변경은 승인 기록 뒤에만(사용자 11-16) ----
 jrun() { local out; out=$(printf '%s' "$1" | HOME="$SB/home" bash "$H/jira-approval-guard.sh" 2>/dev/null); [ -z "$out" ] && { echo pass; return; }; printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision'; }
 jexp() { local got; got=$(jrun "$2"); [ "$got" = "${3:-pass}" ] && ok "$1" || ko "$1" "기대 ${3:-pass}, 실제 ${got:-빈 출력}"; }
@@ -314,10 +343,10 @@ jq -e '.permissions.deny | index("Bash(gh pr merge:*)")' "$HERE/../../claude/set
   && ! grep -q 'merge' "$H/lib/plan_approval.py" && ok "plan: gh pr merge 는 권한 deny 고정·계획 승인 모듈이 병합을 다루지 않음" || ko "plan: 병합 고정" "settings deny 또는 plan_approval.py 확인"
 jexp "plan: 계획에 적힌 요약은 Jira 발급 통과(공백 정리)" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":" 계획  티켓 하나"}}'
 jexp "plan: 계획에 없는 요약도 Jira 발급 통과(11-17)" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 밖 티켓"}}'
-jexp "plan: 계획에 적힌 이슈 상태 전환 통과" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-77","transition":{"id":"21"}}}'
+jexp "plan: 계획에 적힌 이슈 상태 전환 통과" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-77","transition":{"id":"41"}}}'
 jexp "plan: 대상 상태가 다르면 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-77","transition":{"id":"31","name":"완료"}}}' deny
-jexp "plan: 계획에 없는 이슈 전환은 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-78","transition":{"id":"21"}}}' deny
-jmsg=$(printf '%s' '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-78","transition":{"id":"21"}}}' | HOME="$SB/home" bash "$H/jira-approval-guard.sh" | jq -r '.hookSpecificOutput.permissionDecisionReason')
+jexp "plan: 계획에 없는 이슈 전환은 거부" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-78","transition":{"id":"41"}}}' deny
+jmsg=$(printf '%s' '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-78","transition":{"id":"41"}}}' | HOME="$SB/home" bash "$H/jira-approval-guard.sh" | jq -r '.hookSpecificOutput.permissionDecisionReason')
 case "$jmsg" in *"계획서에 추가한 뒤 컨펌"*"D-JSTLRM78"*) ok "plan: Jira 상태 변경 거부 메시지에 계획서 추가 조치·D-JST 번호";; *) ko "plan: Jira 거부 메시지" "$jmsg";; esac
 plan P2 '{"plan_id":"P2","approved_at":"@NOW@","approver_quote":"  ","tickets":[{"summary":"인용 없는 티켓"}],"prs":[{"repo":"Org/RepoA","branch":"feat/noquote"}]}'
 plan P3 '{"plan_id":"다른이름","approved_at":"x","approver_quote":"좋아","prs":[{"repo":"Org/RepoA","branch":"feat/badid"}]}'
@@ -330,7 +359,7 @@ plan PS4 '{"plan_id":"PS4","approved_at":"@NOW@","approver_quote":"전부 추천
 plan P6 "{\"plan_id\":\"P6\",\"approved_at\":\"$OLD\",\"approver_quote\":\"전부 추천대로\",\"source\":{\"slack_ts\":\"900.1\"},\"prs\":[{\"repo\":\"Org/RepoA\",\"branch\":\"feat/old\"}]}"
 plan P7 '{"plan_id":"P7","approved_at":"2026-11-16T10:00:00","approver_quote":"전부 추천대로","source":{"slack_ts":"900.1"},"prs":[{"repo":"Org/RepoA","branch":"feat/notz"}]}'
 plan P8 '{"plan_id":"P8","approved_at":"2999-01-01T00:00:00+00:00","approver_quote":"전부 추천대로","source":{"slack_ts":"900.1"},"prs":[{"repo":"Org/RepoA","branch":"feat/future"}]}'
-jexp "plan: 사용자 원문 인용 없는 기록은 무효(상태 전환)" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-79","transition":{"id":"21"}}}' deny
+jexp "plan: 사용자 원문 인용 없는 기록은 무효(상태 전환)" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-79","transition":{"id":"41"}}}' deny
 exp "plan: 인용 없는 기록의 PR 은 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/noquote -t t' "$PR" deny
 exp "plan: plan_id 가 파일 이름과 다르면 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/badid -t t' "$PR" deny
 exp "plan: approved_at 없으면 무효" $PD 'gh pr create --draft -R Org/RepoA --head feat/notime -t t' "$PR" deny
@@ -450,7 +479,7 @@ uexp "said: '티켓 발급하지 마' 여도 발급 훅은 막지 않음(11-17)"
 uexp "said: 사용자 지시로 Jira 상태 변경은 허용 안 함" "$(uline '티켓 만들어')" deny '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-90","transition":{"id":"31"}}}' main jira
 chmod 000 "$PA/P1.json"
 exp "plan: 계획 기록을 못 읽으면 ask" $PD 'gh pr create --draft -R Org/RepoA --head feat/plan -t t' "$PR" ask
-jexp "plan: Jira 상태 전환도 계획 기록을 못 읽으면 ask" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-77","transition":{"id":"21"}}}' ask
+jexp "plan: Jira 상태 전환도 계획 기록을 못 읽으면 ask" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"issueIdOrKey":"LRM-77","transition":{"id":"41"}}}' ask
 jexp "plan: 계획 기록을 못 읽어도 Jira 발급은 통과(11-17)" '{"tool_name":"mcp__atlassian__createJiraIssue","tool_input":{"summary":"계획 티켓 하나"}}'
 chmod 600 "$PA/P1.json"
 
@@ -507,6 +536,28 @@ wexp "plan-write: 다른 환경 변수 대입은 통과" "$(bx "LRM_SCRIPT_DIR=$
 wreason() { printf '%s' "$1" | HOME="$SB/home" bash "$H/plan-approval-write-guard.sh" 2>/dev/null | jq -r '.hookSpecificOutput.permissionDecisionReason // ""'; }
 case "$(wreason "$(bx "bash $SB/write_it.sh")")" in *"test-box <"*) ok "plan-write: 스크립트 거부 안내에 격리 시험 실행기(test-box) 길을 알려 줌" ;; *) ko "plan-write: 거부 안내에 test-box" "안내 없음" ;; esac
 case "$(wreason "$(bx 'D=~/.config/lrm-hubs/plan-approvals; echo {} > $D/p.json')")" in *"test-box <"*) ko "plan-write: 스크립트가 아닌 거부에는 test-box 안내 없음" "안내가 붙음" ;; *) ok "plan-write: 스크립트가 아닌 거부에는 test-box 안내 없음" ;; esac
+# 시험 스크립트 실행은 거부 대신 격리 실행기로 바꿔 통과(운영체제가 상자 밖 쓰기를 막음)
+wcmd() { printf '%s' "$1" | HOME="$SB/home" bash "$H/plan-approval-write-guard.sh" 2>/dev/null | jq -r '.hookSpecificOutput.updatedInput.command // ""'; }
+mkdir -p "$SB/tests/t" "$SB/home/.config/lrm-hubs"; cp "$SB/write_it.sh" "$SB/tests/t/run.sh"; cp "$SB/write_it.sh" "$SB/tests/t/test_x.py"
+BOXP="$SB/home/.config/lrm-hubs/test-box"
+wexp "plan-write: test-box 가 없으면 시험 스크립트도 거부" "$(bx 'bash tests/t/run.sh')" deny
+printf '#!/bin/bash\n' > "$BOXP"; chmod +x "$BOXP"
+wexp "plan-write: 시험 스크립트 실행은 상자로 바꿔 통과" "$(bx 'bash tests/t/run.sh 2>&1 | tail -5')" allow
+got=$(wcmd "$(bx 'bash tests/t/run.sh 2>&1 | tail -5')")
+[ "$got" = "$BOXP tests/t/run.sh 2>&1 | tail -5" ] && ok "plan-write: 바꾼 명령은 실행기만 test-box 로" || ko "plan-write: 바꾼 명령" "$got"
+got=$(wcmd "$(bx "cd $SB && python3 tests/t/test_x.py -v; bash $SB/tests/t/run.sh")")
+[ "$got" = "cd $SB && $BOXP tests/t/test_x.py -v; $BOXP $SB/tests/t/run.sh" ] && ok "plan-write: 여러 시험·절대 경로·파이썬도 바꿈" || ko "plan-write: 여러 시험 바꿈" "$got"
+got=$(jq -cn --arg d "$SB" '{tool_name:"Bash",tool_input:{command:"bash tests/t/run.sh",timeout:9000,description:"d"},cwd:$d}' | HOME="$SB/home" bash "$H/plan-approval-write-guard.sh" | jq -c '.hookSpecificOutput.updatedInput | [.timeout,.description]')
+[ "$got" = '[9000,"d"]' ] && ok "plan-write: 바꿀 때 입력의 다른 칸 유지" || ko "plan-write: 다른 칸 유지" "$got"
+wexp "plan-write: tests/ 밖 스크립트는 상자가 있어도 거부" "$(bx "bash $SB/write_it.sh")" deny
+wexp "plan-write: 시험과 tests/ 밖 스크립트가 섞이면 거부" "$(bx "bash tests/t/run.sh; bash $SB/write_it.sh")" deny
+wexp "plan-write: 시험과 직접 쓰기가 섞이면 거부" "$(bx 'bash tests/t/run.sh; echo {} > ~/.config/lrm-hubs/plan-approvals/p.json')" deny
+wexp "plan-write: 시험을 BASH_ENV 로 넘기면 거부" "$(bx 'BASH_ENV=tests/t/run.sh bash tests/t/run.sh')" deny
+wexp "plan-write: 실행기 옵션이 끼면 바꾸지 않고 거부" "$(bx 'bash -x tests/t/run.sh')" deny
+wexp "plan-write: 따옴표 속 같은 글자가 있으면 바꾸지 않고 거부" "$(bx 'echo "bash tests/t/run.sh 시작"; bash tests/t/run.sh')" deny
+wexp "plan-write: 변수 경로 시험은 거부" "$(bx 'T=tests/t; bash $T/run.sh')" deny
+case "$(wreason "$(bx $'python3 - <<EOF\nopen("plan-approvals/p.json","w")\nEOF')")" in *"Edit 도구"*) ok "plan-write: 인라인 코드 거부 안내에 Edit 도구" ;; *) ko "plan-write: 인라인 코드 안내" "안내 없음" ;; esac
+rm -f "$BOXP"
 wexp "plan-write: rsync 쓰기 거부" "$(bx 'rsync a.json ~/.config/lrm-hubs/plan-approvals/')" deny
 wexp "plan-write: curl -o 쓰기 거부" "$(bx 'curl -s -o ~/.config/lrm-hubs/plan-approvals/p.json https://example.invalid')" deny
 wexp "plan-write: sponge 쓰기 거부" "$(bx 'echo {} | sponge ~/.config/lrm-hubs/plan-approvals/p.json')" deny

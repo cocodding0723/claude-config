@@ -361,7 +361,7 @@ def said_gaps(card):
     ws = bf.coordinator_ws(card)
     book = said.ledger([str(c.get("text") or "") for c in bd_json("comments", card["id"]) or []])
     rows = said.typed(ws, said.stamp(card.get("created_at"))) if ws else []
-    return len(said.unrecorded(rows, book, skip=bf.TYPED_OK.match)), said.unsettled(book)
+    return len(said.unrecorded(rows, book, skip=bf.is_control)), said.unsettled(book)
 
 
 def gate(card, actor, epic, warnings, no_capture=None):

@@ -50,7 +50,7 @@ def state(epic):
     comments = [str(c.get("text") or "") for c in bd_json("comments", epic["id"]) or []]
     book = said.ledger(comments)
     rows = said.typed(ws, said.stamp(epic.get("created_at"))) if ws else []
-    return book, said.unrecorded(rows, book, skip=bf.TYPED_OK.match), bool(ws and said.transcripts(ws))
+    return book, said.unrecorded(rows, book, skip=bf.is_control), bool(ws and said.transcripts(ws))
 
 
 def main():
