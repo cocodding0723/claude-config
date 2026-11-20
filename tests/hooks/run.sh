@@ -507,6 +507,28 @@ wexp "plan-write: 다른 환경 변수 대입은 통과" "$(bx "LRM_SCRIPT_DIR=$
 wreason() { printf '%s' "$1" | HOME="$SB/home" bash "$H/plan-approval-write-guard.sh" 2>/dev/null | jq -r '.hookSpecificOutput.permissionDecisionReason // ""'; }
 case "$(wreason "$(bx "bash $SB/write_it.sh")")" in *"test-box <"*) ok "plan-write: 스크립트 거부 안내에 격리 시험 실행기(test-box) 길을 알려 줌" ;; *) ko "plan-write: 거부 안내에 test-box" "안내 없음" ;; esac
 case "$(wreason "$(bx 'D=~/.config/lrm-hubs/plan-approvals; echo {} > $D/p.json')")" in *"test-box <"*) ko "plan-write: 스크립트가 아닌 거부에는 test-box 안내 없음" "안내가 붙음" ;; *) ok "plan-write: 스크립트가 아닌 거부에는 test-box 안내 없음" ;; esac
+# 시험 스크립트 실행은 거부 대신 격리 실행기로 바꿔 통과(운영체제가 상자 밖 쓰기를 막음)
+wcmd() { printf '%s' "$1" | HOME="$SB/home" bash "$H/plan-approval-write-guard.sh" 2>/dev/null | jq -r '.hookSpecificOutput.updatedInput.command // ""'; }
+mkdir -p "$SB/tests/t" "$SB/home/.config/lrm-hubs"; cp "$SB/write_it.sh" "$SB/tests/t/run.sh"; cp "$SB/write_it.sh" "$SB/tests/t/test_x.py"
+BOXP="$SB/home/.config/lrm-hubs/test-box"
+wexp "plan-write: test-box 가 없으면 시험 스크립트도 거부" "$(bx 'bash tests/t/run.sh')" deny
+printf '#!/bin/bash\n' > "$BOXP"; chmod +x "$BOXP"
+wexp "plan-write: 시험 스크립트 실행은 상자로 바꿔 통과" "$(bx 'bash tests/t/run.sh 2>&1 | tail -5')" allow
+got=$(wcmd "$(bx 'bash tests/t/run.sh 2>&1 | tail -5')")
+[ "$got" = "$BOXP tests/t/run.sh 2>&1 | tail -5" ] && ok "plan-write: 바꾼 명령은 실행기만 test-box 로" || ko "plan-write: 바꾼 명령" "$got"
+got=$(wcmd "$(bx "cd $SB && python3 tests/t/test_x.py -v; bash $SB/tests/t/run.sh")")
+[ "$got" = "cd $SB && $BOXP tests/t/test_x.py -v; $BOXP $SB/tests/t/run.sh" ] && ok "plan-write: 여러 시험·절대 경로·파이썬도 바꿈" || ko "plan-write: 여러 시험 바꿈" "$got"
+got=$(jq -cn --arg d "$SB" '{tool_name:"Bash",tool_input:{command:"bash tests/t/run.sh",timeout:9000,description:"d"},cwd:$d}' | HOME="$SB/home" bash "$H/plan-approval-write-guard.sh" | jq -c '.hookSpecificOutput.updatedInput | [.timeout,.description]')
+[ "$got" = '[9000,"d"]' ] && ok "plan-write: 바꿀 때 입력의 다른 칸 유지" || ko "plan-write: 다른 칸 유지" "$got"
+wexp "plan-write: tests/ 밖 스크립트는 상자가 있어도 거부" "$(bx "bash $SB/write_it.sh")" deny
+wexp "plan-write: 시험과 tests/ 밖 스크립트가 섞이면 거부" "$(bx "bash tests/t/run.sh; bash $SB/write_it.sh")" deny
+wexp "plan-write: 시험과 직접 쓰기가 섞이면 거부" "$(bx 'bash tests/t/run.sh; echo {} > ~/.config/lrm-hubs/plan-approvals/p.json')" deny
+wexp "plan-write: 시험을 BASH_ENV 로 넘기면 거부" "$(bx 'BASH_ENV=tests/t/run.sh bash tests/t/run.sh')" deny
+wexp "plan-write: 실행기 옵션이 끼면 바꾸지 않고 거부" "$(bx 'bash -x tests/t/run.sh')" deny
+wexp "plan-write: 따옴표 속 같은 글자가 있으면 바꾸지 않고 거부" "$(bx 'echo "bash tests/t/run.sh 시작"; bash tests/t/run.sh')" deny
+wexp "plan-write: 변수 경로 시험은 거부" "$(bx 'T=tests/t; bash $T/run.sh')" deny
+case "$(wreason "$(bx $'python3 - <<EOF\nopen("plan-approvals/p.json","w")\nEOF')")" in *"Edit 도구"*) ok "plan-write: 인라인 코드 거부 안내에 Edit 도구" ;; *) ko "plan-write: 인라인 코드 안내" "안내 없음" ;; esac
+rm -f "$BOXP"
 wexp "plan-write: rsync 쓰기 거부" "$(bx 'rsync a.json ~/.config/lrm-hubs/plan-approvals/')" deny
 wexp "plan-write: curl -o 쓰기 거부" "$(bx 'curl -s -o ~/.config/lrm-hubs/plan-approvals/p.json https://example.invalid')" deny
 wexp "plan-write: sponge 쓰기 거부" "$(bx 'echo {} | sponge ~/.config/lrm-hubs/plan-approvals/p.json')" deny

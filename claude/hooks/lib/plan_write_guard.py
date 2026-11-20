@@ -6,7 +6,9 @@
 Bash 는 낱말 대신 쓰기 대상을 해석함: 리다이렉트·cp/mv/rsync/tee/sed -i/dd of=/curl -o 등의 대상, cd·변수 대입·~·glob 을 풀어
 실제 경로로 비교. 읽기(cat·grep·tail … | python3 -m json.tool, 다른 곳으로 리다이렉트)는 통과.
 대상을 못 푸는 경우($( )·모르는 변수)와 설치 밖 스크립트·인라인 코드는 보호 이름 조각이 보이면 거부(보수적).
-stdin: hook JSON. 출력: 거부면 hook JSON 한 줄, 통과면 빈 출력."""
+단, 걸린 것이 tests/ 아래 시험 스크립트 실행뿐이면 거부 대신 격리 실행기(test-box)로 바꿔 통과시킴(boxed). 운영체제가 상자 밖 쓰기를 막아
+거부와 같은 보호를 유지하면서 재시도 한 번을 없앰(11-20 집계: 이 훅 거부의 대부분이 시험 실행).
+stdin: hook JSON. 출력: 거부·바꿔 실행이면 hook JSON 한 줄, 통과면 빈 출력."""
 import fnmatch
 import glob
 import json
@@ -42,7 +44,12 @@ REASON_TRANSCRIPT = "세션 기록(projects/*/*.jsonl)은 사용자 '!' 승인 �
 REASON_APPROVE = ("board-approve 는 사용자가 프롬프트에서 직접 '! ~/orca/board/bin/board-approve <repo> <branch> \"<원문>\"' 로 실행함. "
                   "모델은 실행하지 않고 사용자에게 그 한 줄을 안내")
 HINT_TEST = " 시험 스크립트면 ~/.config/lrm-hubs/test-box <스크립트> 로 실행(임시 폴더 안에 묶여 돌아 기록을 못 고침)"
-REASON_OPAQUE = "쓰기 대상을 해석할 수 없음({why}) — 보호 기록({frag}) 쓰기일 수 있어 거부. 경로를 리터럴로 쓰거나 다른 방법으로"
+HINT_EDIT = " 파일을 고치는 중이면 Edit 도구로(대상 경로가 보여 판정 가능)"
+BOX_NAME = "test-box"
+BOX_SCRIPT_RE = re.compile(r"(^|/)tests/[^\s$`*?\[\]'\"\\]+$")  # 상자로 돌릴 수 있는 시험 스크립트 경로(리터럴만)
+BOX_RUNNERS = r"(?:bash|sh|zsh|python3?)"  # test-box 가 확장자로 고르는 실행기와 같은 범위
+BOX_NOTE = "시험 스크립트를 {box} 안에서 실행함(임시 폴더 격리: 상자 밖 쓰기·바깥 네트워크 막힘). 실패가 격리 때문인지 보려면 {box} --keep"
+REASON_OPAQUE ="쓰기 대상을 해석할 수 없음({why}) — 보호 기록({frag}) 쓰기일 수 있어 거부. 경로를 리터럴로 쓰거나 다른 방법으로"
 
 
 def hub_dir():
@@ -329,6 +336,30 @@ def script(path, ctx):
         ctx.hits.append(("code", f"스크립트 {path}"))
 
 
+def boxed(cmd, ctx, cwd):
+    """걸린 것이 tests/ 시험 스크립트 실행뿐이면 그 실행을 test-box 로 바꾼 명령, 아니면 None.
+    바꾼 명령을 다시 해석해 걸리는 것이 남으면(BASH_ENV 로 넘긴 경우 등) 바꾸지 않음"""
+    box = os.path.join(hub_dir(), BOX_NAME)
+    if ctx.opaque or not ctx.hits or not os.access(box, os.X_OK):
+        return None
+    head, paths = "스크립트 ", {}
+    for kind, name in ctx.hits:
+        if kind != "code" or not name.startswith(head):
+            return None
+        paths[name[len(head):]] = paths.get(name[len(head):], 0) + 1
+    out = cmd
+    for path, n in paths.items():
+        if not BOX_SCRIPT_RE.search(path):
+            return None
+        rx = re.compile(r"(?<![\w/.$-])" + BOX_RUNNERS + r"[ \t]+" + re.escape(path) + r"(?=$|[\s;|&)])")
+        if len(rx.findall(out)) != n:  # 따옴표 속 글자·다른 실행 경로가 섞이면 손대지 않음
+            return None
+        out = rx.sub(lambda m: shlex.quote(box) + " " + path, out)
+    again = Ctx(cwd)
+    analyze(out, again)
+    return None if again.hits or again.opaque else out
+
+
 REASON_DEV = ("계획 승인 직전 dev 기준 재확인 필요(lrm-1ce): 지금 {ref} = {sha}. 계획서의 파일·카드 범위를 이 기준과 다시 대조한 뒤 "
               "기록에 \"dev_checked\":{{\"ref\":\"{ref}\",\"sha\":\"{sha}\"}} 를 넣어 다시 씀(fetch: git -C {repo} fetch origin)")
 
@@ -383,8 +414,11 @@ def decide(ev):
     if ("plan" in kinds or "code" in kinds) and not main:
         if "plan" in kinds:
             return REASON_PLAN
+        new = boxed(cmd, ctx, ev.get("cwd") or "")
+        if new:
+            return {"command": new}
         why = next(n for k, n in ctx.hits if k == "code")
-        return REASON_OPAQUE.format(why=why, frag="이름 조각") + (HINT_TEST if why.startswith("스크립트") else "")
+        return REASON_OPAQUE.format(why=why, frag="이름 조각") + (HINT_TEST if why.startswith("스크립트") else HINT_EDIT)
     if "code" in kinds and main and re.search(r"slack[-_]?inbox|user[-_]?approv|board[-_]?approve", cmd, re.I):
         return REASON_LEDGER.format(name="원장")
     frag = FRAGMENTS.search(cmd)
@@ -403,7 +437,13 @@ def main():
     if not isinstance(ev, dict):
         return
     reason = decide(ev)
-    if reason:
+    if isinstance(reason, dict):  # 시험 실행을 상자로 바꿈. updatedInput 은 입력 전체를 갈아 끼우므로 나머지 칸을 함께 넘김
+        note = BOX_NOTE.format(box=os.path.join(hub_dir(), BOX_NAME))
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow",
+                                                 "permissionDecisionReason": "시험 스크립트를 test-box 로 바꿔 실행",
+                                                 "updatedInput": {**(ev.get("tool_input") or {}), **reason},
+                                                 "additionalContext": note}}, ensure_ascii=False))
+    elif reason:
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                                  "permissionDecisionReason": reason}}, ensure_ascii=False))
 
