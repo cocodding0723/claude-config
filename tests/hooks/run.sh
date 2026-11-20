@@ -267,6 +267,35 @@ exp "pr-create: 다른 브랜치(--head)는 거부" $PD 'gh pr create --draft --
 exp "pr-create: -R·--head 지정이면 cd 변수 뒤도 판정(통과)" $PD 'cd "$W" && gh pr create --draft -R Org/RepoA --head feat/x -t t' "$PR"
 exp "pr-create: 다른 저장소는 거부" $PD 'gh pr create --draft -R Org/RepoB -t t' "$PR" deny
 
+# ---- 기능의 계획 승인이 PR·Jira 훅 승인으로 이어짐(11-20, feature_plan). 작은 크기·계획 건너뛰기는 계획 승인이 필요 없는 기능 ----
+FDESC=$'- 목표: 시험\n- 확인 방법: 시험'
+FB_OLD="${BOARD_DIR:-}"; export BOARD_DIR="$SB/fplan-board"; mkdir -p "$BOARD_DIR"; (cd "$BOARD_DIR" && git init -q && bd init --quiet >/dev/null 2>&1)
+fepic() { (cd "$BOARD_DIR" && bd create "$1" -t epic -d "$FDESC" --labels "$2" --external-ref "$3" --json 2>/dev/null | jq -r .id); }
+FE1=$(fepic 준비됨 "flow:v1,size:small,branch:feat/fplan,repo:$PR" jira-LRM-500)
+FE2=$(fepic 승인전 "flow:v1,size:normal,branch:feat/fwait,repo:$PR" jira-LRM-501)
+FE3=$(fepic 옛방식 "size:small,branch:feat/fold,repo:$PR" jira-LRM-502)
+FE4=$(fepic 다른저장소 "flow:v1,size:small,branch:feat/frepo,repo:$R" jira-LRM-503)
+exp "feature-plan: 구현 가능한 기능의 통합 브랜치는 draft PR 생성 통과" $PD 'gh pr create --draft -R Org/RepoA --head feat/fplan -t t' "$PR"
+exp "feature-plan: 그래도 --draft 없으면 거부" $PD 'gh pr create -R Org/RepoA --head feat/fplan -t t' "$PR" deny
+exp "feature-plan: 계획 승인 전 기능의 브랜치는 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/fwait -t t' "$PR" deny
+exp "feature-plan: 새 흐름 표시 없는 기능은 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/fold -t t' "$PR" deny
+exp "feature-plan: 기능 카드의 저장소가 다르면 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/frepo -t t' "$PR" deny
+(cd "$BOARD_DIR" && bd update "$FE2" --add-label skip:plan >/dev/null 2>&1)
+exp "feature-plan: 사용자가 계획을 건너뛰게 한 기능은 통과" $PD 'gh pr create --draft -R Org/RepoA --head feat/fwait -t t' "$PR"
+(cd "$BOARD_DIR" && bd update "$FE2" --remove-label skip:plan >/dev/null 2>&1)
+JT='{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"cloudId":"c","issueIdOrKey":"%s","transitionId":"%s"}}'
+jrun0() { local out; out=$(printf '%s' "$1" | HOME="$SB/home" bash "$H/jira-approval-guard.sh" 2>/dev/null); [ -z "$out" ] && { echo pass; return; }; printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision'; }
+fj() { local got; got=$(jrun0 "$(printf "$JT" "$2" "$3")"); [ "$got" = "${4:-pass}" ] && ok "$1" || ko "$1" "기대 ${4:-pass}, 실제 $got"; }
+fj "feature-plan: 구현 가능한 기능의 티켓은 확인 대기 전환 통과" LRM-500 31
+fj "feature-plan: 그 티켓도 완료 전환은 거부" LRM-500 41 deny
+fj "feature-plan: 계획 승인 전 기능의 티켓은 확인 대기 거부" LRM-501 31 deny
+fj "feature-plan: 기능 카드가 없는 티켓은 확인 대기 거부" LRM-999 31 deny
+(cd "$BOARD_DIR" && bd close "$FE1" --force >/dev/null 2>&1)
+exp "feature-plan: 닫힌 기능의 브랜치는 거부" $PD 'gh pr create --draft -R Org/RepoA --head feat/fplan -t t' "$PR" deny
+r=$(printf '%s' "$(jq -cn --arg c 'gh pr create --draft -R Org/RepoA --head feat/fwait -t t' --arg d "$PR" '{tool_input:{command:$c},cwd:$d}')" | HOME="$SB/home" BOARD_DIR="$SB/없는폴더" bash "$H/$PD" | jq -r '.hookSpecificOutput.permissionDecision')
+[ "$r" = deny ] && ok "feature-plan: 작업판을 못 읽으면 승인으로 치지 않음" || ko "feature-plan: 작업판 조회 실패" "$r"
+if [ -n "$FB_OLD" ]; then export BOARD_DIR="$FB_OLD"; else unset BOARD_DIR; fi
+
 # ---- jira-approval-guard: 이슈 생성·상태 변경은 승인 기록 뒤에만(사용자 11-16) ----
 jrun() { local out; out=$(printf '%s' "$1" | HOME="$SB/home" bash "$H/jira-approval-guard.sh" 2>/dev/null); [ -z "$out" ] && { echo pass; return; }; printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision'; }
 jexp() { local got; got=$(jrun "$2"); [ "$got" = "${3:-pass}" ] && ok "$1" || ko "$1" "기대 ${3:-pass}, 실제 ${got:-빈 출력}"; }
