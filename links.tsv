@@ -233,6 +233,7 @@ board/bin/board-run	orca/board/bin/board-run	link
 board/bin/board-approve	orca/board/bin/board-approve	link
 board/bin/board-incident	orca/board/bin/board-incident	link
 board/lib/board_config.py	orca/board/lib/board_config.py	link
+board/lib/board_tree.py	orca/board/lib/board_tree.py	link
 board/lib/incident.py	orca/board/lib/incident.py	link
 board/templates/card-mockup.md	orca/board/templates/card-mockup.md	link
 board/templates/card-task.md	orca/board/templates/card-task.md	link

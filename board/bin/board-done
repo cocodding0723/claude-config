@@ -15,6 +15,7 @@ import board_flow as bf  # noqa: E402
 import board_said as said  # noqa: E402
 import board_scope as bs  # noqa: E402
 import board_config  # noqa: E402
+import board_tree  # noqa: E402
 
 USAGE_EPILOG = """\
 증거는 카드 notes 나 코멘트에 한 줄씩 단다. 로그는 board-run 으로 만든다(마지막 줄에 붙일 증거 줄을 출력함):
@@ -215,15 +216,21 @@ def runlog(path):
             "results": res, "text": text}
 
 
+GATE = {"repo": ""}  # 지금 검사 중인 카드의 저장소. tree 비교(board_tree)가 씀
+
+
 def check_run(path, kind, tree):
-    """board-run 로그가 그 종류·브랜치 끝 내용으로 끝까지 돌아 종료 0 이었는지"""
+    """board-run 로그가 그 종류·브랜치 끝 내용으로 끝까지 돌아 종료 0 이었는지. 잡파일만 다른 tree 는 같은 내용으로 봄"""
     rl = runlog(path)
     if not rl:
         return f"{path} 가 board-run 로그가 아님(손으로 쓴 로그 거부). board-run {kind} -- <명령> 으로 다시 만듦"
     if rl["kind"] != kind:
         return f"{path} 는 board-run {rl['kind']} 로그(필요: {kind})"
     if rl["tree"] != tree:
-        return f"{path} 는 다른 내용(tree {rl['tree'][:12]})에서 돌린 결과. 브랜치 끝 tree {tree[:12]} 에서 다시 실행"
+        rest = board_tree.real_changes(GATE["repo"], tree, rl["tree"]) if GATE["repo"] else None
+        if rest != []:
+            what = f" 달라진 파일: {', '.join(rest[:3])}{' 외' if rest and len(rest) > 3 else ''}." if rest else ""
+            return f"{path} 는 다른 내용(tree {rl['tree'][:12]})에서 돌린 결과.{what} 브랜치 끝 tree {tree[:12]} 에서 다시 실행"
     if rl["exit"] is None:
         return f"{path} 에 '# exit' 줄 없음(중간에 끊긴 실행)"
     if rl["exit"] != 0:
@@ -402,6 +409,7 @@ def gate(card, actor, epic, warnings, no_capture=None):
         kind = "mockup" if "kind:mockup" in labs else "tool" if "kind:tool" in labs else "task"
 
     repo, branch, head, head_time = branch_head(card)
+    GATE["repo"] = repo
     tree = git(repo, "rev-parse", head + "^{tree}")
     since = max(parse_time(card.get("started_at") or card["created_at"]), head_time)
     found = collect_evidence(card)
