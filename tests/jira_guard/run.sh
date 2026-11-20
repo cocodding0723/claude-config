@@ -41,7 +41,17 @@ jexp "무승인 전환: executeWrite 경유도 통과" '{"tool_name":"mcp__atlas
 jexp "무승인 전환: 완료(id 41)는 거부" "$(printf "$T" LRM-12 '"transitionId":"41"')" deny
 jexp "무승인 전환: 확인 대기(id 31)는 거부" "$(printf "$T" LRM-12 '"transitionId":"31"')" deny
 jexp "무승인 전환: 이름은 진행 중인데 id 가 완료면 거부" "$(printf "$T" LRM-12 '"transitionId":"41","transitionName":"진행 중"')" deny
-jexp "무승인 전환: 표에 없는 프로젝트는 거부" "$(printf "$T" ABC-3 '"transitionId":"21"')" deny
+jexp "다른 프로젝트: 전환 id 만 주면 거부(id 뜻이 프로젝트마다 다름)" "$(printf "$T" ABC-3 '"transitionId":"21"')" deny
+jexp "다른 프로젝트: 전환 이름만 주면 진행 중 통과" "$(printf "$T" ABC-3 '"transitionName":"진행 중"')"
+jexp "다른 프로젝트: 영문 이름·대소문자 달라도 통과" "$(printf "$T" SM2-7 '"transitionName":"in progress"')"
+jexp "다른 프로젝트: 이름과 id 를 같이 주면 거부(id 를 확인할 수 없음)" "$(printf "$T" ABC-3 '"transitionId":"31","transitionName":"진행 중"')" deny
+jexp "다른 프로젝트: 완료 이름은 거부" "$(printf "$T" ABC-3 '"transitionName":"완료"')" deny
+jexp "다른 프로젝트: 확인 대기는 공통 행에 없어 거부" "$(printf "$T" ABC-3 '"transitionName":"확인 대기"')" deny
+jexp "LRM 은 자기 행만 봄: 영문 이름은 거부" "$(printf "$T" LRM-12 '"transitionName":"In Progress"')" deny
+hint=$(printf '%s' "$(printf "$T" ABC-3 '"transitionId":"21"')" | HOME="$SB/home" bash "$H/jira-approval-guard.sh" | jq -r '.hookSpecificOutput.permissionDecisionReason')
+case "$hint" in *"transitionName 만"*) ok "다른 프로젝트: 거부 안내에 이름으로 부르는 길";; *) ko "다른 프로젝트 안내" "$hint";; esac
+hint=$(printf '%s' "$(printf "$T" LRM-12 '"transitionId":"41"')" | HOME="$SB/home" bash "$H/jira-approval-guard.sh" | jq -r '.hookSpecificOutput.permissionDecisionReason')
+case "$hint" in *"transitionName 만"*) ko "LRM 거부에는 이름 안내 없음" "$hint";; *) ok "LRM 거부에는 이름 안내 없음";; esac
 jexp "무승인 전환: 전환 없이 스프린트만 옮기면 기존대로 거부" "$(printf "$T" LRM-12 '"sprintId":5')" deny
 jexp "상태 변경: 이슈 키 없으면 ask" '{"tool_name":"mcp__atlassian__transitionJiraIssue","tool_input":{"transition":{"id":"31"}}}' ask
 
