@@ -165,6 +165,8 @@ g=$(new_card "커밋"); claim "$g" w1
 good_compile "$SB/ev/g.log"; good_xml "$SB/ev/g.xml"
 bd comments add "$g" "evidence:compile=$SB/ev/g.log" >/dev/null; ev "$g" "editmode=$SB/ev/g.xml"
 expect "commit= 없는 board-run 로그는 로그에 적힌 커밋으로 통과" 0 "$BIN" "$g" w1 --dry-run
+bd comments add "$g" "evidence:compile=$SB/ev/g.log commit=$HEAD_W (error CS 0건, 슬롯 조정 뒤 다시 돌림)" >/dev/null
+expect "증거 줄 끝의 괄호 메모는 경로로 읽지 않음" 0 "$BIN" "$g" w1 --dry-run
 git -C "$GR" -c user.name=t -c user.email=t@t commit -q --allow-empty -m next; git -C "$GR" branch -f w HEAD
 expect "commit= 이 없어도 브랜치가 앞으로 가면 로그의 이전 커밋으로 거부" 6 "$BIN" "$g" w1
 grep -q '낡은 증거' "$SB/out" && ok "거부 사유는 낡은 증거(형식 아님)" || ko "거부 사유" "$(head -c 300 "$SB/out")"
