@@ -260,3 +260,4 @@ board/lib/board_said.py	orca/board/lib/board_said.py	link
 board/bin/board-said	orca/board/bin/board-said	link
 board/bin/board-skip	orca/board/bin/board-skip	link
 board/lib/board_evidence.py	orca/board/lib/board_evidence.py	link
+hubs/jira_free_transitions.tsv	.config/lrm-hubs/jira_free_transitions.tsv	link
