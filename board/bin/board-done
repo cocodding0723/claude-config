@@ -27,12 +27,14 @@ board-run 로그는 머리줄 tree= 가 브랜치 끝 커밋의 tree 와 같아�
   evidence:screenshot=<png>  evidence:recording=<mp4>   --epic 만. 화면에 보이는 변화가 없는 기능은 --no-capture "<이유>" 로 생략
      (기준 브랜치 label base: 와 견줘 프리팹·씬·재질·셰이더·그림·애니메이션·데이터 에셋·UI 문서가 하나도 안 바뀌었을 때만 받아 줌. 바뀌었으면 묻지 않고 바로 찍음)
   evidence:review=<판정 json>          --epic 만. {"verdict":"pass","reviewer_model":..,"author_model":..} 두 모델이 달라야 함
-증거 줄 끝에 commit=<해시> 를 붙여 어느 커밋의 증거인지 묶는다. 카드 label branch:<브랜치>·repo:<저장소 경로> 가 필요하고,
-해시가 그 브랜치 끝과 같아야 하며 파일은 그 커밋 시각 이후에 만들어져야 함(낡은 증거·다른 커밋 증거 거부).
+증거는 브랜치 끝 커밋의 것이어야 한다. 카드 label branch:<브랜치>·repo:<저장소 경로> 가 필요하다.
+증거 줄 끝의 commit=<해시> 는 적으면 그 브랜치 끝과 같아야 하고, 안 적어도 된다: board-run 로그는 로그에 적힌 커밋으로,
+그 밖의 파일은 그 커밋 시각 이후에 만든 파일인지로 가린다(낡은 증거·다른 커밋 증거 거부).
 게이트 컴파일: <BOARD_DIR>/repos.json 의 그 저장소 "compile"(또는 BOARD_COMPILE_CMD)이 있으면 게이트가 repo 에서 직접 컴파일을 돌려
 compile 증거를 만든다(작업자 로그 대신 씀). 설정이 없으면 경고만 내고 작업자 로그를 검사함. 양식: board/repos.example.json
 epic 이 닫히면 label stage:review(사용자 검수 대기)를 붙임. 기능 코디네이터는 이때 정리하지 않음: 검수 답(통과·고칠 점)을 받을 세션이 있어야 함.
   검수 통과:  board-done --epic <id> <이름> --user-ok "<사용자 원문>"   → stage:review 를 떼고 stage:ship(반영 중)을 붙임
+              board-done --epic <id> <이름> --user-ok-typed            → 사용자가 코디네이터 창에 직접 친 '통과'를 세션 기록에서 읽어 같은 일을 함(Slack 카드 답을 기다리지 않음)
   반영 끝:    board-done --epic <id> <이름> --shipped "<PR 번호·병합 커밋>" → stage:ship 을 떼고, label feature:<slug> 가 있으면
               BOARD_FEATURE_CLOSE(기본 ~/.config/lrm-hubs/feature_close.sh) --slug <slug> --yes 를 분리 실행해 기능 코디네이터를 정리함(BOARD_FEATURE_CLOSE=off 로 끔)
 같은 종류가 여럿이면 마지막 줄(notes 다음 코멘트 순)만 봄. '<종류>=' 를 생략하면 파일 이름으로 추정함. 모든 파일은 존재·비어 있지 않음·카드 claim 이후 수정이어야 함.
@@ -155,9 +157,15 @@ def unrecorded_merges(epic, kids):
     return out
 
 
-def check_commit(sha, head, branch):
+def check_commit(sha, head, branch, path=""):
+    """증거가 브랜치 끝 커밋의 것인가. commit= 을 안 적었으면 board-run 로그에 적힌 커밋으로 대신함.
+    그 밖의 파일(촬영·녹화·판정)은 여기서 넘기고 check_file 이 브랜치 끝 커밋보다 나중에 만든 파일인지로 가림.
+    11-17~20 병합 거부 68번 가운데 사유를 읽을 수 있던 44건 중 38건이 commit= 누락이었고, 고쳐 다시 내는 데 중앙 3분이 들었음"""
     if not sha:
-        return "증거 줄에 commit=<해시> 없음"
+        rl = runlog(path) if path else None
+        if not rl:
+            return None
+        sha = rl["head"]
     if not head.startswith(sha):
         return f"증거 커밋 {sha[:12]} 가 {branch} 끝 {head[:12]} 와 다름(낡은 증거)"
     return None
@@ -424,7 +432,7 @@ def gate(card, actor, epic, warnings, no_capture=None):
             checks.append({"kind": need, "ok": False, "code": EXIT_MISSING, "cause": f"evidence:{need} 줄 없음", "fix": FIX[need]})
             continue
         for p, sha in paths:
-            err = check_commit(sha, head, branch)
+            err = check_commit(sha, head, branch, p)
             if err:
                 err = f"{need}: {err}"
             else:
@@ -464,6 +472,7 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="검사만 하고 닫지 않음")
     ap.add_argument("--no-capture", default=None, metavar="이유", help="--epic: 화면에 보이는 변화가 없어 캡처·녹화를 생략. 화면 파일이 바뀌었으면 거부")
     ap.add_argument("--user-ok", default=None, metavar="원문", help="--epic: 사용자 검수 통과 원문. stage:review 를 떼고 stage:ship 을 붙이며 원문을 남김")
+    ap.add_argument("--user-ok-typed", action="store_true", help="--epic: 사용자가 코디네이터 창에 직접 친 '통과'(완료 검사 뒤에 친 글)를 읽어 검수 통과로 기록. 그런 글이 없으면 종료 4")
     ap.add_argument("--shipped", default=None, metavar="근거", help="--epic: 반영이 끝난 근거(PR 번호·병합 커밋). stage:ship 을 떼고 기능 코디네이터를 정리함")
     ap.add_argument("--json", action="store_true", help="결과를 JSON 한 개로 stdout 에 출력")
     try:
@@ -480,6 +489,14 @@ def main():
             raise Fail(EXIT_ENV, f"작업판 폴더 {board} 없음", "BOARD_DIR=<작업판 경로> board-done <id> <작업자>")
         os.chdir(board)
         card = load_card(a.card_id)
+        if a.user_ok_typed:
+            if not a.epic or a.user_ok is not None:
+                raise Fail(EXIT_USAGE, "--user-ok-typed 는 --epic 과 함께, --user-ok 없이 씀", "board-done --epic <id> <이름> --user-ok-typed")
+            quote = bf.typed_review(card)
+            if not quote:
+                raise Fail(EXIT_STATE, f"{a.card_id} 완료 검사 뒤에 사용자가 이 기능 코디네이터 창에 친 '통과' 글이 없음",
+                           "사용자가 창에 '통과'라고 치거나 검수 카드에 답한 뒤 다시 실행. Slack 답은 --user-ok \"<원문>\"")
+            a.user_ok = "(창에 친 글) " + quote
         if a.user_ok is not None:
             if not a.epic or not a.user_ok.strip():
                 raise Fail(EXIT_USAGE, "--user-ok 는 --epic 과 사용자 원문이 필요", 'board-done --epic <id> <이름> --user-ok "<원문>"')
@@ -528,6 +545,7 @@ def main():
             # 사용자 최종 검수 대기로 표시. 코디네이터는 남겨 검수 답을 받게 함(11-19: 여기서 정리하면 통과·수정 답이 메인 확인 카드로 떨어짐)
             bd("label", "add", a.card_id, "stage:review", actor=a.actor)
             out["feature_close"] = "보류: 검수 통과(--user-ok)와 반영(--shipped) 뒤에 정리"
+            out["next"] = f"사용자 검수 대기. 사용자가 이 창에 '통과'라고 치면 board-done --epic {a.card_id} {a.actor} --user-ok-typed 로 바로 기록(카드 답을 기다리지 않음)"
     except Fail as f:
         out.update(ok=False, closed=False, exit=f.code, cause=f.cause, fix=f.fix)
 
@@ -535,6 +553,8 @@ def main():
         print(json.dumps(out, ensure_ascii=False))
     elif out["ok"]:
         print(f"{'검사 통과(닫지 않음)' if a.dry_run else '닫음'}: {a.card_id} ({out['kind']}) → {a.actor}")
+        if out.get("next"):
+            print(out["next"])
     else:
         for c in out.get("checks", []):
             print(f"  {'통과' if c['ok'] else '불합격'} {c['kind']} {c.get('path', '')}", file=sys.stderr)

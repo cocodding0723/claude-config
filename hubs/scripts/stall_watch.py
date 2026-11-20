@@ -6,6 +6,8 @@
       (c) 확인 창(승인·권한 질문)에서 approval_min 분 넘게 멈춘 워커. 카드에 화면 마지막 줄 요약(비밀 값 가림)을 싣고, 확인 창은 대신 누르지 않음(사용자만)
 침묵·시간 초과는 워커 사망의 증거가 아니므로 문구는 '응답 없음'. 워커를 멈추거나 재시작하지 않고, 🅰️ 선택 시 허브 코디네이터에 한 줄 알림만 보냄(card_actions.py).
 중복 방지: 같은 dispatch 는 DEDUPE_H 시간 안에 다시 알리지 않음(stall-watch.json). 첫 실행은 이미 멈춰 있던 옛 워커를 기준선으로만 기록(카드 없음).
+제외: 멈춘 워커의 작업을 다른 워커가 이어받아 돌고 있으면 대상 아님(11-13~20 알림 표본 14건 중 조치가 필요했던 것은 1~2건. 한도 소진으로 멈춘 워커를 코디네이터가 이미 교체한 경우가 많았음).
+조용한 시간: LRM_STALL_QUIET(기본 22-8, 로컬 시)에는 카드를 보내지 않고 본 것으로도 적지 않음. 아침 첫 점검이 그때도 멈춰 있는 것만 한 장으로 보냄(11-19~20 밤 카드는 답까지 4시간 넘게 걸렸고 무응답이 14장).
 호출은 slack_socket.py 의 감시 루프가 주기적으로 함.
 """
 import argparse
@@ -38,6 +40,7 @@ class Limits:
     dedupe_h: float  # 같은 dispatch 를 다시 알리지 않는 시간
     pages: int  # worker-list 쪽 수 상한(한 쪽 100건, 최신순)
     approval_min: float  # 확인 창(승인·권한 질문)에서 이 시간(분) 이상 멈추면 승인 대기
+    quiet: tuple = ()  # 카드를 보내지 않는 시간 (시작 시, 끝 시). 빈 값이면 늘 보냄
 
     @classmethod
     def from_env(cls) -> "Limits":
@@ -47,7 +50,28 @@ class Limits:
                 return v if v > 0 else default
             except ValueError:
                 return default
-        return cls(num("LRM_STALL_SILENCE_MIN", 30.0), num("LRM_STALL_DEDUPE_H", 6.0), int(num("LRM_STALL_PAGES", 5)), num("LRM_STALL_APPROVAL_MIN", 5.0))
+        return cls(num("LRM_STALL_SILENCE_MIN", 30.0), num("LRM_STALL_DEDUPE_H", 6.0), int(num("LRM_STALL_PAGES", 5)), num("LRM_STALL_APPROVAL_MIN", 5.0),
+                   quiet_hours(os.environ.get("LRM_STALL_QUIET", QUIET_DEFAULT)))
+
+
+QUIET_DEFAULT = "22-8"
+
+
+def quiet_hours(text: str) -> tuple:
+    """'22-8' → (22, 8). 'off'·빈 값·해석 못 하는 값은 ()(늘 보냄)"""
+    m = re.fullmatch(r"\s*(\d{1,2})\s*-\s*(\d{1,2})\s*", text or "")
+    if not m or not (0 <= int(m.group(1)) <= 24 and 0 <= int(m.group(2)) <= 24) or m.group(1) == m.group(2):
+        return ()
+    return int(m.group(1)), int(m.group(2))
+
+
+def is_quiet(quiet: tuple, now: float) -> bool:
+    """지금이 조용한 시간인가. 자정을 넘는 구간(22-8)도 받음"""
+    if not quiet:
+        return False
+    start, end = quiet
+    hour = time.localtime(now).tm_hour
+    return start <= hour < end if start < end else hour >= start or hour < end
 
 
 DIR = card_actions.DIR
@@ -75,7 +99,7 @@ PENDING_RE = re.compile(r"""(?i)[\w.-]*""" + KEY_WORDS + r"""[\w.-]*["']?\s*[:=]
 TOKEN_RE = re.compile(r"xox[abprs]-[\w-]+|xapp-[\w-]+|sk-[\w-]{16,}|gh[pousr]_\w{20,}|AKIA[0-9A-Z]{12,}")  # 알려진 토큰 형식은 접두부가 아니라 전체를 가림
 RULE_RE = re.compile(r"^[\s─━—\-=_│|]*$")  # 구분선·빈 줄
 
-EPILOG = """종료 코드: 0 정상(감지 없음·기준선 기록 포함), 1 카드 전송 실패·조회 실패, 2 인자 오류
+EPILOG = """종료 코드: 0 정상(감지 없음·기준선 기록·조용한 시간 보류 포함), 1 카드 전송 실패·조회 실패, 2 인자 오류
 환경: LRM_HUB_DIR, LRM_ORCA, LRM_NOTIFY, HUBS_TSV,
       LRM_STALL_SILENCE_MIN 응답 없음 기준(분, 기본 30), LRM_STALL_DEDUPE_H 재알림 간격(시간, 기본 6), LRM_STALL_PAGES 조회 쪽 수(기본 5)
 예:
@@ -196,8 +220,9 @@ def detect(limits: Limits, now: float):
     active = list_workers("active", limits.pages)
     if stopped is None or active is None:
         return [], "worker-list 조회 실패"
+    taken = {w.get("taskId") for w in active if w.get("taskId")}  # 다른 워커가 이어받아 돌고 있는 작업
     for w in stopped:
-        if w.get("workerState") == "stopped":
+        if w.get("workerState") == "stopped" and w.get("taskId") not in taken:
             cands.append((w, "stopped"))
     approval = approval_waiting(active, limits, now)
     cands += [(w, "approval") for w in approval]
@@ -307,6 +332,8 @@ def _check(limits: Limits, dry: bool, report_existing: bool, now: float | None =
              and not (st["seen"].get(i["dispatch"]) or {}).get("baseline")]
     if not fresh:
         return 0, {"status": "none"}
+    if is_quiet(limits.quiet, now) and not dry:  # 본 것으로 적지 않음: 아침에도 멈춰 있으면 그때 보냄
+        return 0, {"status": "quiet", "count": len(fresh)}
     for i in fresh:
         if i["kind"] == "approval":
             i["screen"] = screen_summary(i["dispatch"])

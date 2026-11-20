@@ -30,9 +30,16 @@ APPROVE_WORD = "승인"            # 계획 승인 카드의 1번 선택지는 �
 USER_SOURCES = ("slack", "docsite")  # 사용자가 직접 누른 답만. 터미널 기록은 코디네이터가 쓸 수 있음
 POLLED_TYPES = ("reaction", "thread_reply")  # 폴러가 Slack 에서 읽어 온 사용자 반응·카드 스레드 글(출처 칸 없이 기록됨)
 SENT_NAME, INBOX_NAME = "slack-sent.jsonl", "slack-inbox.jsonl"
-# 코디네이터 창에 직접 친 승인·건너뛰기: 글이 이 말로 시작할 때만("승인", "계획 승인한다", "스킵하고 진행", "승인 건너뛰고 진행").
+# 코디네이터 창에 직접 친 승인·건너뛰기: 글이 이 말로 시작할 때만("승인", "계획 승인한다", "스킵하고 진행", "전부 추천", "ㅇㅇ 추천대로 가자").
 # "진행해"·"ㄱㄱ" 같은 말은 세지 않음: 다른 얘기 끝에 붙는 말이라 뜻하지 않은 승인이 됨
-TYPED_OK = re.compile(r"^\s*(?:계획\s*)?(?:승인|스킵|skip|건너뛰)", re.I)
+# 앞의 맞장구("ㅇㅇ"·"네")는 허용. 11-19~20 실제 입력에서 "전부 추천"·"추천대로"가 승인으로 안 읽혀 Slack 카드를 다시 기다렸음
+YES_HEAD = r"(?:(?:ㅇㅇ|ㅇㅋ|응|네|넵|예|오케이|ok|okay)[\s,.!~]*)?"
+TYPED_OK = re.compile(r"^\s*" + YES_HEAD + r"(?:계획\s*)?(?:승인|스킵|skip|건너뛰|전부\s*추천|추천\s*대로)", re.I)
+# 검수 통과로 친 글: "통과", "검수 통과", "통과, PR 올려", "LGTM"
+REVIEW_OK = re.compile(r"^\s*" + YES_HEAD + r"(?:검수\s*)?(?:통과|lgtm)", re.I)
+# 첫 문장에 이 말이 있으면 승인·통과가 아님: "승인 전에 하나만", "통과 못 시킴", "승인?", "통과는 보류"
+TYPED_NO = re.compile(r"[?？]|말고|말아|마라|지\s*마|지\s*말|지\s*않|안\s*(?:함|해|할|돼|됨|된)|못\s*(?:함|해|하|시)|보류|취소|전에|아니|아님|불가|기다려|나중에")
+FIRST_SENTENCE = re.compile(r"^[^\n.!?？。]*[?？]?")
 # 건너뛸 수 있는 준비 항목: 이름 → (사용자에게 보일 이름, 이 단계에 들어서면 이미 지난 항목)
 SKIP_HEAD = "skip:"
 SKIP_ITEMS = {"understand": ("이해", "design"), "plan": ("계획", "build")}
@@ -156,12 +163,23 @@ def skip_past(epic: "dict | None", item: str) -> bool:
     return st is not None and order(st) >= order(stage(SKIP_ITEMS[item][1]))
 
 
+def says(pattern, text: str) -> bool:
+    """글이 그 말로 시작하고, 첫 문장에 부정·보류·질문이 없는가"""
+    text = text or ""
+    return bool(pattern.match(text)) and not TYPED_NO.search(FIRST_SENTENCE.match(text.strip()).group(0))
+
+
 def typed_plan_ok(text: str) -> bool:
     """창에 친 글이 계획 승인인가. 항목을 붙인 건너뛰기('스킵 이해')는 그 항목만 건너뛰고 계획 승인으로 세지 않음"""
     items = typed_skips(text)
     if items:
         return "plan" in items
-    return bool(TYPED_OK.match(text or "")) and not refused_skips(text)
+    return says(TYPED_OK, text) and not refused_skips(text)
+
+
+def typed_review_ok(text: str) -> bool:
+    """창에 친 글이 검수 통과인가"""
+    return says(REVIEW_OK, text)
 
 
 def refused_skips(text: str) -> tuple:
@@ -172,7 +190,7 @@ def refused_skips(text: str) -> tuple:
 
 def is_control(text: str) -> bool:
     """승인·건너뛰기로 친 글인가(지시 장부에 지시로 적지 않는 글)"""
-    return bool(TYPED_OK.match(text or "") or typed_skips(text))
+    return bool(says(TYPED_OK, text) or says(REVIEW_OK, text) or typed_skips(text))
 
 
 def size_of(epic: "dict | None") -> str:
@@ -254,6 +272,17 @@ def typed_approval(hub_dir: str, did: str, epic: "dict | None", typed=board_said
         if ans is not None and isinstance(ans.get("received_at"), (int, float)):
             since = max(since, float(ans["received_at"]))
     return any(typed_plan_ok(text) for _, text in typed(ws, since))
+
+
+def typed_review(epic: "dict | None", typed=board_said.typed) -> str:
+    """검수 대기 중인 기능의 코디네이터 창에 사용자가 직접 친 검수 통과 글(가장 최근 것). 없으면 ''.
+    완료 검사가 기능 카드를 닫은 뒤(closed_at)에 친 글만 봄: 그 전의 '통과'는 다른 것에 대한 말일 수 있음.
+    11-19: 한 코디네이터가 창의 '통과'를 두 번 거절하고 Slack 버튼을 기다렸음(터미널 답을 세지 않는 규칙을 넓게 읽음)"""
+    ws = coordinator_ws(epic)
+    since = board_said.stamp((epic or {}).get("closed_at"))
+    if not ws or not since:
+        return ""
+    return next((text for _, text in reversed(typed(ws, since)) if typed_review_ok(text)), "")
 
 
 def approval(hub_dir: str, epic: "dict | None"):
