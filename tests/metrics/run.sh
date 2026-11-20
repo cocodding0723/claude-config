@@ -82,6 +82,13 @@ grep -q "지시→완료" <<<"$OUT_LIFE" && ko "보고서에 '지시→완료' �
 EP2=$(b create "끝난 기능" -t epic --json | idof); K=$(b create "마지막" --parent "$EP2" --json | idof); b close "$K" --reason ok >/dev/null
 HOME="$SB/home" METRICS_BOARD_DIR="$BD" LRM_HUB_DIR="$HD" METRICS_REPOS="$RP" python3 "$O" --since "$TODAY" --until "$TODAY" --work "$SB/o3" >/dev/null 2>&1
 [ "$(jq -r '.board.review[0]' "$SB/o3/outcome.json")" = "$EP2" ] && ok "검수 대기: 하위 카드가 다 닫힌 열린 epic" || ko "epic 검수 대기" "$(jq -c .board.review "$SB/o3/outcome.json")"
+# 거부 수: incidents.jsonl 의 기간 안 merge_reject·report_stopped. 파일 없으면 "기록 없음"
+printf '%s\n' '{"at":"'"$TODAY"'T10:00:00+09:00","kind":"merge_reject"}' '{"at":"'"$TODAY"'T11:00:00","kind":"merge_reject"}' \
+  '{"at":"'"$TODAY"'T12:00:00+09:00","kind":"report_stopped"}' '{"at":"2026-10-01T10:00:00+09:00","kind":"merge_reject"}' '{"at":"'"$TODAY"'T12:00:00+09:00","kind":"other"}' > "$SB/inc.jsonl"
+OUT=$(HOME="$SB/home" METRICS_BOARD_DIR="$BD" LRM_HUB_DIR="$HD" METRICS_REPOS="$RP" METRICS_INCIDENTS="$SB/inc.jsonl" python3 "$O" --since "$TODAY" --until "$TODAY" --work "$SB/o5" 2>&1)
+echo "$OUT" | grep -q "^거부 기록(재작업률에 안 섞음) 병합 거부 2 · 보고 전송 거부 1$" && [ "$(jq -c '.rework.reverts' "$SB/o5/outcome.json")" = 1 ] && ok "거부 수: 기간 안 병합 거부 2·보고 전송 거부 1, 재작업률 식은 그대로" || ko "거부 수" "$OUT"
+[ "$(jq -c '[.rework.reverts,.rework.reopened,.rework.redo]' "$SB/o5/outcome.json")" = "[1,1,1]" ] && [ "$(jq -c .rework "$SB/o5/outcome.json")" = "$(jq -c .rework "$SB/o3/outcome.json")" ] && ok "재작업률 식에 거부 수 안 섞임" || ko "재작업률 식" "$OUT"
+echo "$(HOME="$SB/home" METRICS_BOARD_DIR="$BD" LRM_HUB_DIR="$HD" METRICS_REPOS="$RP" METRICS_INCIDENTS="$SB/nofile" python3 "$O" --since "$TODAY" --until "$TODAY" --work "$SB/o6" 2>&1)" | grep -q "^거부 기록 없음" && ok "사고 기록 파일 없음 → 0 이 아니라 '기록 없음'" || ko "기록 없음"
 OUT=$(HOME="$SB/home" METRICS_BOARD_DIR="$SB/none" LRM_HUB_DIR="$HD" METRICS_REPOS="$RP" python3 "$O" --since "$TODAY" --until "$TODAY" --work "$SB/o4" 2>&1); rc=$?
 [ "$rc" = 0 ] && echo "$OUT" | grep -q "작업판 읽기 실패: 작업판 폴더 없음" && ok "작업판 없음 → 실패 표시, 나머지 지표는 냄" || ko "작업판 없음" "rc=$rc $OUT"
 echo "$OUT" | grep -q "판단 보류(n<10)" && ok "표본 10 미만은 판단 보류" || ko "판단 보류" "$OUT"

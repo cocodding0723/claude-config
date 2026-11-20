@@ -2,7 +2,7 @@
 투입량(1~4단계)과 달리 사용자가 받은 결과를 잼. 카드 수명은 카드 생성→닫힘이라 사용자 지시부터의 시간이 아님(카드는 일을 시작할 때 만들어지는 경우가 많음). 재작업률과 같이 봄(한쪽만 좋아지면 개선 아님). 표본 10 미만은 판단 보류.
 자료: 작업판(bd list·bd history), 작업 장부 tasks.jsonl, 허브 보고 hub-reports.jsonl, 답 전달 answer-delivery.jsonl, git log, 메인 세션 기록.
 환경: METRICS_BOARD_DIR(기본 ~/orca/board) · METRICS_BD(bd) · LRM_HUB_DIR(기본 ~/.config/lrm-hubs) ·
-      METRICS_REPOS(':' 구분, 기본 ~/orca/LoveRevolutionMaker:~/orca/claude-config) · METRICS_HISTORY_MAX(다시 연 카드 조회 상한 200)"""
+      METRICS_REPOS(':' 구분, 기본 ~/orca/LoveRevolutionMaker:~/orca/claude-config) · METRICS_INCIDENTS(사고 기록, 기본 <작업판>/incidents.jsonl) · METRICS_HISTORY_MAX(다시 연 카드 조회 상한 200)"""
 import calendar
 import collections as C
 import datetime as D
@@ -20,6 +20,7 @@ QUICK_CLOSE_H = 0.25  # 15분 안에 닫힌 카드: 일을 시작하며 만든 �
 HUMAN_KINDS = ("kind:decision", "kind:user-todo", "kind:approval")
 APPROVAL_LABEL = "gate:approval"
 ANSWER_REASON = "답:"  # board-answer 가 닫을 때 쓰는 사유 머리
+REJECT_KINDS = ("merge_reject", "report_stopped")  # 병합 거부·보고 전송 거부. 재작업률 식에는 섞지 않음
 REVERT = re.compile(r"^(Revert\b|revert[:(\s])")
 REDO_FROM = "완료"  # 작업 장부: 완료 뒤 다른 상태로 돌아가면 재지시
 MAIN_HEAD = re.compile(r"^\s*(<|\[[^\]]*→메인\])")  # 슬래시 명령·허브 붙여넣기는 사용자 입력이 아님
@@ -202,6 +203,24 @@ def ledger_part(hub_dir, lo, hi):
     return {"lead": spread(lead), "done": done, "redo": redo, "touch": dict(touch)}
 
 
+def incidents_part(path, lo, hi):
+    """사고 기록 incidents.jsonl({"at": ISO, "kind": ...}) 의 기간 안 거부 수. 파일이 없으면 None(0 과 구분)"""
+    if not os.path.isfile(path):
+        return None
+    n = C.Counter()
+    with open(path, encoding="utf-8") as fh:
+        for x in fh:
+            try:
+                r = json.loads(x)
+                at = D.datetime.fromisoformat(r["at"])
+            except (ValueError, KeyError, TypeError):
+                continue
+            ep = at.timestamp() if at.tzinfo else (at - KST - D.datetime(1970, 1, 1)).total_seconds()  # 시간대 없으면 KST
+            if lo <= ep < hi and r.get("kind") in REJECT_KINDS:
+                n[r["kind"]] += 1
+    return {k: n[k] for k in REJECT_KINDS}
+
+
 def reverts(repos, a):
     n, seen = 0, set()
     since, until = f"{a.since} 00:00 +0900", (a.end).strftime("%Y-%m-%d 00:00 +0900")
@@ -291,6 +310,11 @@ def report(o):
     out.append(f"재작업률 {rate} = (되돌림 커밋 {r['reverts']} + 다시 연 카드 {r['reopened']} + 재지시 {r['redo']}) / 완료 {r['done']}"
                + (" · 다시 연 카드 조회 상한 도달" if bd["historyCapped"] else "") + verdict(r["done"]))
     out.append(f"검수 대기 {len(bd['review']) + len(bd['approvalWait'])} (지금 값: 하위 카드 다 닫힌 열린 epic {len(bd['review'])} · 승인 성격 결정 {len(bd['approvalWait'])})")
+    inc = o["incidents"]
+    if inc is None:
+        out.append("거부 기록 없음(사고 기록 파일 없음 · 재작업률에는 안 섞음)")
+    else:
+        out.append(f"거부 기록(재작업률에 안 섞음) 병합 거부 {inc['merge_reject']} · 보고 전송 거부 {inc['report_stopped']}")
     m = o["main"]
     if m.get("days"):
         out.append(f"메인 접점 {m['days']}일 · 사용자→메인 메시지 일평균 {m['userPerDay']} · 자동 압축 일평균 {m['compactPerDay']}")
@@ -309,9 +333,10 @@ def main():
     lg = ledger_part(env_path("LRM_HUB_DIR", "~/.config/lrm-hubs"), lo, hi)
     repos = [os.path.expanduser(p) for p in (os.environ.get("METRICS_REPOS") or "~/orca/LoveRevolutionMaker:~/orca/claude-config").split(":") if p]
     rv = reverts(repos, a)
+    inc_path = env_path("METRICS_INCIDENTS", os.path.join(b.path, "incidents.jsonl"))
     done = bd["done"] + lg["done"]
     redo_n = rv + len(bd["reopened"]) + lg["redo"]
-    o = {"board": bd, "boardErr": b.err, "ledger": lg, "main": main_part(a),
+    o = {"board": bd, "boardErr": b.err, "ledger": lg, "main": main_part(a), "incidents": incidents_part(inc_path, lo, hi),
          "rework": {"reverts": rv, "reopened": len(bd["reopened"]), "redo": lg["redo"], "done": done,
                     "rate": round(redo_n / done, 3) if done else None}}
     with open(a.path("outcome.json"), "w") as fh:
