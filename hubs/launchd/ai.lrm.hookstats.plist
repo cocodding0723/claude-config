@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.lrm.hookstats</string>
+  <!-- 매주 월요일 09:30 보호 훅 거부 집계 1건을 보고함(읽기 전용 집계, 전송은 report_sender). 기준·세는 법은 hook_stats.py 머리말 -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PYTHON3__</string>
+    <string>-I</string>
+    <string>__HOME__/.config/lrm-hubs/hook_stats.py</string>
+    <string>--days</string>
+    <string>7</string>
+    <string>--report</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>9</integer><key>Minute</key><integer>30</integer></dict>
+  <key>RunAtLoad</key><false/>
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+  <key>StandardOutPath</key><string>__HOME__/.config/lrm-hubs/hook-stats.launchd.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.config/lrm-hubs/hook-stats.launchd.log</string>
+</dict>
+</plist>
