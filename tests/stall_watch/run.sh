@@ -24,6 +24,7 @@ if [ -n "${FAKE_NOTIFY_GATE:-}" ]; then for _ in $(seq 200); do [ -e "$FAKE_NOTI
 SH
 chmod +x "$BIN/notify"
 export FAKE_DIR="$SB/fake" LRM_HUB_DIR="$SB/hub" LRM_ORCA="$BIN/orca" LRM_NOTIFY="$BIN/notify" HUBS_TSV="$SB/hubs.tsv" FAKE_NOTIFY_LOG="$SB/notify.log" LRM_MAIN_ENV="$SB/hub/main.env"
+export LRM_STALL_QUIET=off  # 조용한 시간은 12번에서만 켬(시험을 밤에 돌려도 같은 결과)
 export HUB_PROC_TABLE="$SB/no-proc-table"  # 없는 파일 = 프로세스 확인 불가 → Orca 플래그로 대체(실제 프로세스·소켓을 보지 않음)
 mkdir -p "$FAKE_DIR" "$LRM_HUB_DIR"; : > "$FAKE_NOTIFY_LOG"
 printf 'alpha\t알파 허브\t-\t-\t-\nbeta\t베타 허브\t-\t-\t-\n' > "$HUBS_TSV"
@@ -385,5 +386,37 @@ sw --json > "$SB/o"
 CARD=$(python3 -c "import sys;print([c for c in open(sys.argv[1],encoding='utf-8').read().split('---\n') if c.strip()][-1])" "$FAKE_NOTIFY_LOG")
 chk "생성 기록에 허브가 없어도 생성 터미널 폴더로 slug 보강('허브 미확인' 아님)" 'printf "%s" "$CARD" | grep -q "• 알파 허브 (alpha) · 워커 vfx-쉐이더 · 생성 기록 없는 작업" && ! printf "%s" "$CARD" | grep -q "허브 미확인"'
 chk "카드 데이터(JSON 요약)에 허브 slug 포함" 'grep -q "\"hubs\": *\[\"alpha\"\]" "$SB/o"'
+
+# ---- 12. 조용한 시간 보류·이어받은 작업 제외 ------------------------------------------------------------
+rm -f "$STATE"; : > "$FAKE_NOTIFY_LOG"
+mkfix 5 0; sw --json > /dev/null   # 기준선
+mkfix 45 1                         # ctx_3 무응답 + ctx_6 새로 멈춤
+LRM_STALL_QUIET=0-24 sw --json > "$SB/o"
+chk "조용한 시간: 카드를 보내지 않고 보류" '[ "$(cards)" = 0 ] && grep -q "\"status\": *\"quiet\"" "$SB/o"'
+chk "조용한 시간: 본 것으로 적지 않음(아침에 다시 판정)" '! grep -q ctx_6 "$STATE"'
+LRM_STALL_QUIET=0-24 sw --dry-run --json > "$SB/o"; chk "조용한 시간에도 건조 실행은 카드 문구를 보여 줌" 'grep -q would_card "$SB/o"'
+sw --json > "$SB/o"; chk "조용한 시간이 끝나면 그때도 멈춰 있는 것을 한 장으로" '[ "$(cards)" = 1 ] && grep -q carded "$SB/o" && grep -q ctx_6 "$STATE"'
+chk "조용한 시간 해석: 자정을 넘는 구간·끄기·틀린 값" 'python3 -I - "$SCRIPTS" <<PY
+import sys, time
+sys.path.insert(0, sys.argv[1])
+import stall_watch as s
+at = lambda h: time.mktime((2026, 11, 20, h, 30, 0, 0, 0, -1))
+assert s.quiet_hours("22-8") == (22, 8) and s.quiet_hours("off") == () and s.quiet_hours("") == () and s.quiet_hours("25-3") == () and s.quiet_hours("8-8") == ()
+assert [s.is_quiet((22, 8), at(h)) for h in (21, 22, 23, 0, 7, 8, 12)] == [False, True, True, True, True, False, False]
+assert [s.is_quiet((1, 5), at(h)) for h in (0, 1, 4, 5)] == [False, True, True, False] and not s.is_quiet((), at(3))
+PY'
+# 멈춘 워커 ctx_8 의 작업 T4 는 ctx_4 가 돌리는 중(교체됨) → 제외. ctx_9 의 작업 T9 는 아무도 안 돌림 → 대상
+python3 - <<'PY'
+import json, os
+d = os.environ["FAKE_DIR"]
+def w(disp, task):
+    return {"dispatchId": disp, "taskId": task, "runId": "run_1", "workerState": "stopped", "terminalState": "retained", "projection": {"evidence": {"lastObservedAt": None}, "workspace": {"id": "wid::/x/ws/ws-" + disp}}}
+p = os.path.join(d, "workers_retained.json"); rows = json.load(open(p)); rows += [w("ctx_8", "T4"), w("ctx_9", "T9")]; json.dump(rows, open(p, "w"))
+p = os.path.join(d, "tasks.json"); tasks = json.load(open(p))
+tasks["run_1"].append({"id": "T9", "status": "blocked", "title": "알파 넘겨받지 않은 작업", "created_by_process_incarnation": "wt::/x/coord-alpha-hub@@abc:def"})
+json.dump(tasks, open(p, "w"), ensure_ascii=False)
+PY
+sw --json > "$SB/o"
+chk "작업을 다른 워커가 이어받아 돌리면 멈춘 워커는 대상 아님" '! grep -q ctx_8 "$SB/o" && grep -q ctx_9 "$SB/o"'
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
