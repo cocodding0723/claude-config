@@ -1,8 +1,8 @@
-"""5단계: 결과 지표 — 지시→완료 시간·기능당 사용자 접점·재작업률·검수 대기 수·메인 접점 → outcome.json
-투입량(1~4단계)과 달리 사용자가 받은 결과를 잼. 리드타임은 재작업률과 같이 봄(한쪽만 좋아지면 개선 아님). 표본 10 미만은 판단 보류.
+"""5단계: 결과 지표 — 카드 수명·기능당 사용자 접점·재작업률·검수 대기 수·메인 접점 → outcome.json
+투입량(1~4단계)과 달리 사용자가 받은 결과를 잼. 카드 수명은 카드 생성→닫힘이라 사용자 지시부터의 시간이 아님(카드는 일을 시작할 때 만들어지는 경우가 많음). 재작업률과 같이 봄(한쪽만 좋아지면 개선 아님). 표본 10 미만은 판단 보류.
 자료: 작업판(bd list·bd history), 작업 장부 tasks.jsonl, 허브 보고 hub-reports.jsonl, 답 전달 answer-delivery.jsonl, git log, 메인 세션 기록.
 환경: METRICS_BOARD_DIR(기본 ~/orca/board) · METRICS_BD(bd) · LRM_HUB_DIR(기본 ~/.config/lrm-hubs) ·
-      METRICS_REPOS(':' 구분, 기본 ~/orca/LoveRevolutionMaker:~/orca/claude-config) · METRICS_HISTORY_MAX(다시 연 카드 조회 상한 200)"""
+      METRICS_REPOS(':' 구분, 기본 ~/orca/LoveRevolutionMaker:~/orca/claude-config) · METRICS_INCIDENTS(사고 기록, 기본 <작업판>/incidents.jsonl) · METRICS_HISTORY_MAX(다시 연 카드 조회 상한 200)"""
 import calendar
 import collections as C
 import datetime as D
@@ -16,9 +16,11 @@ import time
 from common import KST, args, claude_base, kst
 
 MIN_SAMPLE = 10
+QUICK_CLOSE_H = 0.25  # 15분 안에 닫힌 카드: 일을 시작하며 만든 카드 비중을 가늠
 HUMAN_KINDS = ("kind:decision", "kind:user-todo", "kind:approval")
 APPROVAL_LABEL = "gate:approval"
 ANSWER_REASON = "답:"  # board-answer 가 닫을 때 쓰는 사유 머리
+REJECT_KINDS = ("merge_reject", "report_stopped")  # 병합 거부·보고 전송 거부. 재작업률 식에는 섞지 않음
 REVERT = re.compile(r"^(Revert\b|revert[:(\s])")
 REDO_FROM = "완료"  # 작업 장부: 완료 뒤 다른 상태로 돌아가면 재지시
 MAIN_HEAD = re.compile(r"^\s*(<|\[[^\]]*→메인\])")  # 슬래시 명령·허브 붙여넣기는 사용자 입력이 아님
@@ -120,7 +122,7 @@ def feature_of(r, by_id):
 
 def board_part(b, lo, hi, hist_max):
     in_win = lambda t: t is not None and lo <= t < hi
-    lead, done, touch, redo_ids = [], 0, C.Counter(), []
+    life, run, done, touch, redo_ids = [], [], 0, C.Counter(), []
     capped = False
     budget = hist_max
     for r in b.rows:
@@ -130,7 +132,10 @@ def board_part(b, lo, hi, hist_max):
                 done += 1
                 start = utc_epoch(r.get("created_at"))
                 if start is not None:
-                    lead.append((closed_at - start) / 3600)
+                    life.append((closed_at - start) / 3600)
+                began = utc_epoch(r.get("started_at"))
+                if began is not None:
+                    run.append((closed_at - began) / 3600)
             if in_win(utc_epoch(r.get("updated_at"))):
                 if budget <= 0:
                     capped = True
@@ -151,7 +156,9 @@ def board_part(b, lo, hi, hist_max):
     review = [r["id"] for r in b.rows if r.get("issue_type") == "epic" and r.get("status") != "closed"
               and kids.get(r["id"]) and all(k.get("status") == "closed" for k in kids[r["id"]])]
     gate = [r["id"] for r in b.rows if r.get("status") != "closed" and APPROVAL_LABEL in labels(r)]
-    return {"lead": spread(lead), "done": done, "touch": dict(touch), "reopened": redo_ids, "historyCapped": capped,
+    life_s = spread(life)
+    life_s["within15m"] = sum(1 for h in life if h <= QUICK_CLOSE_H)
+    return {"life": life_s, "run": spread(run), "done": done, "touch": dict(touch), "reopened": redo_ids, "historyCapped": capped,
             "review": review, "approvalWait": gate}
 
 
@@ -194,6 +201,24 @@ def ledger_part(hub_dir, lo, hi):
         except OSError:
             continue
     return {"lead": spread(lead), "done": done, "redo": redo, "touch": dict(touch)}
+
+
+def incidents_part(path, lo, hi):
+    """사고 기록 incidents.jsonl({"at": ISO, "kind": ...}) 의 기간 안 거부 수. 파일이 없으면 None(0 과 구분)"""
+    if not os.path.isfile(path):
+        return None
+    n = C.Counter()
+    with open(path, encoding="utf-8") as fh:
+        for x in fh:
+            try:
+                r = json.loads(x)
+                at = D.datetime.fromisoformat(r["at"])
+            except (ValueError, KeyError, TypeError):
+                continue
+            ep = at.timestamp() if at.tzinfo else (at - KST - D.datetime(1970, 1, 1)).total_seconds()  # 시간대 없으면 KST
+            if lo <= ep < hi and r.get("kind") in REJECT_KINDS:
+                n[r["kind"]] += 1
+    return {k: n[k] for k in REJECT_KINDS}
 
 
 def reverts(repos, a):
@@ -267,9 +292,13 @@ def report(o):
     out = []
     if o.get("boardErr"):
         out.append(f"작업판 읽기 실패: {o['boardErr']} (작업판 값은 0 으로 둠)")
-    for name, d in (("작업판 카드", bd["lead"]), ("작업 장부(옛)", lg["lead"])):
-        body = f"n={d['n']}" + (f" 중앙 {d['median_h']}시간 p90 {d['p90_h']}시간" if d["n"] else "")
-        out.append(f"지시→완료 {name} {body}{verdict(d['n'])}")
+    def body(d):
+        return f"n={d['n']}" + (f" 중앙 {d['median_h']}시간 p90 {d['p90_h']}시간" if d["n"] else "")
+
+    life = bd["life"]
+    out.append(f"카드 수명(카드 생성→닫힘, 사용자 지시부터가 아님) {body(life)} · 15분 안에 닫힌 카드 {life['within15m']}/{life['n']}{verdict(life['n'])}")
+    out.append(f"시작→닫힘(started_at 있는 카드) {body(bd['run'])}{verdict(bd['run']['n'])}")
+    out.append(f"접수→완료 작업 장부(옛, received_at→done_at) {body(lg['lead'])}{verdict(lg['lead']['n'])}")
     ft = bd["touch"]
     out.append(f"기능당 사용자 접점 기능 {len(ft)} 합 {sum(ft.values())}" + (f" 기능당 {round(sum(ft.values()) / len(ft), 1)}" if ft else "") + verdict(len(ft)))
     out += [f"  {k} {v}" for k, v in sorted(ft.items(), key=lambda z: -z[1])[:10]]
@@ -281,6 +310,11 @@ def report(o):
     out.append(f"재작업률 {rate} = (되돌림 커밋 {r['reverts']} + 다시 연 카드 {r['reopened']} + 재지시 {r['redo']}) / 완료 {r['done']}"
                + (" · 다시 연 카드 조회 상한 도달" if bd["historyCapped"] else "") + verdict(r["done"]))
     out.append(f"검수 대기 {len(bd['review']) + len(bd['approvalWait'])} (지금 값: 하위 카드 다 닫힌 열린 epic {len(bd['review'])} · 승인 성격 결정 {len(bd['approvalWait'])})")
+    inc = o["incidents"]
+    if inc is None:
+        out.append("거부 기록 없음(사고 기록 파일 없음 · 재작업률에는 안 섞음)")
+    else:
+        out.append(f"거부 기록(재작업률에 안 섞음) 병합 거부 {inc['merge_reject']} · 보고 전송 거부 {inc['report_stopped']}")
     m = o["main"]
     if m.get("days"):
         out.append(f"메인 접점 {m['days']}일 · 사용자→메인 메시지 일평균 {m['userPerDay']} · 자동 압축 일평균 {m['compactPerDay']}")
@@ -299,9 +333,10 @@ def main():
     lg = ledger_part(env_path("LRM_HUB_DIR", "~/.config/lrm-hubs"), lo, hi)
     repos = [os.path.expanduser(p) for p in (os.environ.get("METRICS_REPOS") or "~/orca/LoveRevolutionMaker:~/orca/claude-config").split(":") if p]
     rv = reverts(repos, a)
+    inc_path = env_path("METRICS_INCIDENTS", os.path.join(b.path, "incidents.jsonl"))
     done = bd["done"] + lg["done"]
     redo_n = rv + len(bd["reopened"]) + lg["redo"]
-    o = {"board": bd, "boardErr": b.err, "ledger": lg, "main": main_part(a),
+    o = {"board": bd, "boardErr": b.err, "ledger": lg, "main": main_part(a), "incidents": incidents_part(inc_path, lo, hi),
          "rework": {"reverts": rv, "reopened": len(bd["reopened"]), "redo": lg["redo"], "done": done,
                     "rate": round(redo_n / done, 3) if done else None}}
     with open(a.path("outcome.json"), "w") as fh:
