@@ -928,7 +928,12 @@ cat > "$CB/bd" <<'F'
 #!/bin/bash
 [ -n "$FAKE_BD_FAIL" ] && exit 1
 [ -n "$FAKE_BD_SLOW" ] && sleep 5
-echo '[{"id":"lrm-fake1"}]'
+all=0; for a in "$@"; do [ "$a" = --all ] && all=1; done
+if [ -n "$FAKE_BD_CLOSED" ]; then   # 닫힌 카드만 있음: --all 이 있을 때만 보임
+  [ "$all" = 1 ] && echo '[{"id":"lrm-closed1","status":"closed","created_at":"2026-11-10T00:00:00Z"}]' || echo '[]'
+elif [ -n "$FAKE_BD_MULTI" ]; then  # 최신 닫힌 카드 + 오래된 열린 카드
+  [ "$all" = 1 ] && echo '[{"id":"lrm-new-closed","status":"closed","created_at":"2026-11-19T00:00:00Z"},{"id":"lrm-old-open","status":"open","created_at":"2026-11-01T00:00:00Z"}]' || echo '[{"id":"lrm-old-open","status":"open","created_at":"2026-11-01T00:00:00Z"}]'
+else echo '[{"id":"lrm-fake1","status":"open","created_at":"2026-11-15T00:00:00Z"}]'; fi
 F
 printf '#!/bin/bash\necho "단계: 3 구현"; echo "크기: 보통"; echo "계획 승인: 됨"\n' > "$CB/board-stage"
 printf '#!/bin/bash\n[ -n "$FAKE_SAID" ] && { echo "미처리: 장부에 없는 글 0건, 처리 안 적힌 지시 #2, #3. 조치: x" >&2; exit 6; }\necho 직접 친 지시 없음\n' > "$CB/board-said"
@@ -947,6 +952,10 @@ out=$(ss compact "$SB/cws/coord-feat-x-hub" FAKE_BD_FAIL=1); n=$(echo "$out" | g
 [ "$n" -le 2 ] && echo "$out" | grep -q '조회 실패' && ok "작업판 조회 실패: 안내만, 종료 0" || ko "조회 실패" "$out"
 t0=$(date +%s); out=$(ss compact "$SB/cws/coord-feat-x-hub" FAKE_BD_SLOW=1); t1=$(date +%s)
 [ $((t1 - t0)) -le 8 ] && echo "$out" | grep -q '조회 실패' && ok "2초 넘게 걸리면 중단" || ko "느린 조회" "$((t1 - t0))초 $out"
+out=$(ss compact "$SB/cws/coord-feat-x-hub" FAKE_BD_CLOSED=1)
+echo "$out" | grep -q 'lrm-closed1' && ok "닫힌 기능 카드도 찾음(--all)" || ko "닫힌 카드" "$out"
+out=$(ss compact "$SB/cws/coord-feat-x-hub" FAKE_BD_MULTI=1)
+echo "$out" | grep -q 'lrm-old-open' && ! echo "$out" | grep -q 'lrm-new-closed' && ok "같은 표시 여러 카드: 열린 것 먼저" || ko "열린 카드 우선" "$out"
 out=$(ss compact "$SB/cws/coord-other-hub" X=1)
 echo "$out" | grep -q 'coord-other-hub' && ! echo "$out" | grep -q 'lrm-fake1' && ok "그 밖의 허브: 이름과 재독 안내만" || ko "일반 허브" "$out"
 [ -z "$(ss startup "$SB/cws/coord-feat-x-hub" X=1)" ] && [ -z "$(ss compact "$R" X=1)" ] && ok "compact 아니거나 허브 아니면 출력 없음" || ko "비대상" "출력이 있음"

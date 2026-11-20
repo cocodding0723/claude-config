@@ -10,8 +10,9 @@ cap() { perl -e 'alarm 2; exec @ARGV' "$@" 2>&1; }   # 2초 넘으면 SIGALRM �
 echo "[압축 직후] 방금 대화가 요약됐다. 세부는 카드 코멘트(bd comments <카드>)와 작업 스레드가 정본이다."
 case "$hub" in
   coord-feat-*-hub)
+    # 닫힌 카드도 조회(--all): 완료 검사 뒤 검수·반영 중에도 코디네이터가 살아 있음. 같은 표시가 여럿이면 열린 것 먼저, 없으면 최신
     slug=${hub#coord-feat-}; slug=${slug%-hub}
-    card=$(cd "$BDIR" 2>/dev/null && cap bd list --type epic --label "feature:$slug" --json | jq -r '.[0].id // empty' 2>/dev/null)
+    card=$(cd "$BDIR" 2>/dev/null && cap bd list --all --type epic --label "feature:$slug" --json | jq -r 'sort_by(.created_at) | reverse | sort_by(.status=="closed") | .[0].id // empty' 2>/dev/null)
     if [ -z "$card" ]; then echo "기능 카드 조회 실패(feature:$slug). 카드 코멘트·역할 파일을 다시 읽을 것."; exit 0; fi
     echo "기능 카드: $card"
     st=$(BOARD_DIR="$BDIR" cap "$BIN/board-stage" "$card") && printf '%s\n' "$st" | head -6 || echo "단계 조회 실패. board-stage $card 로 확인할 것."
