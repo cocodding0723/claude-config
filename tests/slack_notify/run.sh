@@ -87,15 +87,15 @@ run_n --kind done "✅ $SPACED"
 run_n --kind done "🛠️ :비서-a: ${K40} :비서-b:"
 [ "$(errn)" = 0 ] && ok "B 이모지(유니코드·:이름:)는 길이에 안 셈" || ko "B 이모지 제외" "$(cat "$SB/err")"
 run_n --kind done $'✅ 완료\n\n• 무엇: LRM-542 수정'
-[ "$RC" = 0 ] && grep -q '경고: 본문에 티켓 번호 LRM-542 — 맨 아래' "$SB/err" && ok "B 본문의 LRM-n → 위반(원인+조치)" || ko "B LRM" "$(cat "$SB/err")"
+[ "$RC" = 0 ] && grep -q '^참고 줄로 옮김: LRM-542$' "$SB/err" && [ "$(text | tail -n 1)" = '참고: LRM-542' ] && ok "B 본문의 LRM-n → 참고 줄로 이동(안내 한 줄)" || ko "B LRM" "$(cat "$SB/err")"
 run_n --kind done $'✅ 완료\n\n• 무엇: 수정\n\n참고: LRM-542, abc1234'
 [ "$(errn)" = 0 ] && ok "B '참고:' 줄 이후의 티켓·커밋 번호는 허용" || ko "B 참고 허용" "$(cat "$SB/err")"
 run_n --kind done $'✅ 완료\n\n```\nLRM-1 abc1234def\n```\n• 무엇: `LRM-2 a1b2c3d4` 와 https://x.example/a1b2c3d4e/LRM-3 은 그대로'
 [ "$(errn)" = 0 ] && ok "B 코드 블록·인라인 코드·URL 안의 티켓·hex 는 허용" || ko "B 제외 구간" "$(cat "$SB/err")"
 run_n --kind done $'✅ 완료\n\n• 무엇: 커밋 abc1234 반영'
-grep -q '경고: 본문에 커밋 번호로 보이는 값 abc1234' "$SB/err" && ok "B 숫자·영문이 섞인 7자 hex → 위반" || ko "B hex" "$(cat "$SB/err")"
+grep -q '^참고 줄로 옮김: abc1234$' "$SB/err" && ok "B 숫자·영문이 섞인 7자 hex → 참고 줄로 이동" || ko "B hex" "$(cat "$SB/err")"
 run_n --kind done $'✅ 완료\n\n• 무엇: ABC1234 반영'
-grep -q 'ABC1234' "$SB/err" && ok "B 대문자 hex 도 위반" || ko "B 대문자 hex" "$(cat "$SB/err")"
+grep -q 'ABC1234' "$SB/err" && ok "B 대문자 hex 도 이동 대상" || ko "B 대문자 hex" "$(cat "$SB/err")"
 run_n --kind done $'✅ 완료\n\n• 무엇: deadbeef 와 1234567 과 abcdef 는 단어·숫자라 통과'
 [ "$(errn)" = 0 ] && ok "B 영단어형 hex(deadbeef)·순수 숫자 7자리·6자 hex 는 통과" || ko "B 영단어·숫자" "$(cat "$SB/err")"
 run_n --kind done $'✅ 완료\n\n• 무엇: 색 #F2994A80 과 세션 5660c10e-1211-4b22-b38a-affae9f647ad 는 커밋이 아님'
@@ -126,9 +126,9 @@ run_n --kind done $'완료\n\n• *a*b *c*'
 run_n --kind done $'완료\n\n*결정*이 *필요*함'
 grep -q '^경고: 굵게가 2곳' "$SB/err" && ok "B 굵게 뒤에 한글 조사가 붙어도 굵게로 셈" || ko "B 굵게 조사" "$(cat "$SB/err")"
 run_n --kind done $'완료\n\n참고: x\n\n• 무엇: LRM-1\n\n참고: y'
-grep -q '본문에 티켓 번호 LRM-1' "$SB/err" && ok "B '참고:' 가 둘이면 마지막 줄부터 제외(앞 참고 뒤 본문의 티켓은 검사)" || ko "B 참고 마지막 일치" "$(cat "$SB/err")"
+grep -q '^참고 줄로 옮김: LRM-1$' "$SB/err" && ok "B '참고:' 가 둘이면 마지막 줄부터 제외(앞 참고 뒤 본문의 티켓은 이동)" || ko "B 참고 마지막 일치" "$(cat "$SB/err")"
 run_n --kind done $'참고: ✅ 문서\n\n• 무엇: LRM-2'
-grep -q '본문에 티켓 번호 LRM-2' "$SB/err" && ok "B 첫 줄이 '참고:' 여도 제외 구간으로 안 봄(본문 티켓 검사)" || ko "B 첫 줄 참고" "$(cat "$SB/err")"
+grep -q '^참고 줄로 옮김: LRM-2$' "$SB/err" && ok "B 첫 줄이 '참고:' 여도 제외 구간으로 안 봄(본문 티켓 이동)" || ko "B 첫 줄 참고" "$(cat "$SB/err")"
 run_n --kind decide --no-doc $'주제\n\n👉 참고 링크'
 grep -q "👉 답:' 줄이 없음" "$SB/err" && ok "B '답:' 없는 👉 줄은 답 줄로 안 침" || ko "B 👉 엄격" "$(cat "$SB/err")"
 run_n --kind decide --no-doc $'주제\n\n  :point_right: 답: 확인'
@@ -177,7 +177,7 @@ FAKE_PY_FAIL=check LRM_FORMAT=strict run_n --kind done "깨끗"
 # ---- D. 집계 로그 ----------------------------------------------------------------------------
 newhome d
 run_n --kind decide --no-doc --tag ui-hub --title 비밀제목마커 $'✅ 비밀본문마커 LRM-9\n\n• 무엇: 비밀본문마커'
-RX="^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}${TABS}decide${TABS}ticket,no-answer${TABS}warn${TABS}ui-hub\$"
+RX="^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}${TABS}decide${TABS}no-answer${TABS}warn${TABS}ui-hub\$"
 [ "$(logn)" = 1 ] && printf '%s\n' "$(lastlog)" | grep -Eq "$RX" && ok "D 로그 한 줄: 시각 TAB 종류 TAB 위반 코드 TAB 모드 TAB 태그" || ko "D 로그 형식" "$(lastlog)"
 [ "$(stat -f %Lp "$CFG/slack-format.log")" = 600 ] && ok "D 로그 파일 권한 600" || ko "D 권한" "$(stat -f %Lp "$CFG/slack-format.log")"
 [ "$(grep -c '비밀본문마커\|비밀제목마커\|LRM-9' "$CFG/slack-format.log" || true)" = 0 ] && ok "D 로그에 본문·제목·번호가 없음" || ko "D 본문 기록" "$(cat "$CFG/slack-format.log")"
@@ -915,6 +915,23 @@ printf message_not_found > "$LOG/fail.upd"
 run_n --kind progress --update 1700000000.000900 "x"
 [ "$RC" = 1 ] && grep -q message_not_found "$SB/out" && ok "S chat.update 실패 → 종료 코드 1, 오류 출력" || ko "S 실패" "rc=$RC $(cat "$SB/out")"
 rm -f "$LOG/fail.upd"
+
+# ---- T. 본문 티켓·커밋 번호 → '참고:' 줄 자동 이동(거부 대신) ---------------------------------
+HEXV=abc1234def
+run_n --kind done $'✅ 완료\n\n• 무엇: LRM-635 수정, 커밋 '"$HEXV"$' 반영'
+[ "$RC" = 0 ] && posted && grep -q '^참고 줄로 옮김: LRM-635, '"$HEXV"'$' "$SB/err" && ! grep -q '본문에' "$SB/err" \
+  && [ "$(text | sed '/^참고:/,$d' | grep -c -e LRM-635 -e "$HEXV")" = 0 ] && [ "$(text | tail -n 1)" = "참고: LRM-635 · $HEXV" ] \
+  && ok "T 본문 LRM-635·커밋 해시 → 거부 없이 전송, 본문엔 없고 맨 아래 '참고:' 줄에만 있음, 옮김 한 줄 안내" || ko "T 이동" "rc=$RC $(text) / $(cat "$SB/err")"
+LRM_FORMAT=strict run_n --kind done $'✅ 완료\n\n• 무엇: LRM-635 수정'
+[ "$RC" = 0 ] && posted && [ "$(text | grep -c LRM-635)" = 1 ] && [ "$(text | tail -n 1)" = '참고: LRM-635' ] && ok "T strict 모드도 번호 때문에 거부하지 않음" || ko "T strict" "rc=$RC $(text) / $(cat "$SB/err")"
+run_n --kind done $'✅ 완료\n\n• 무엇: LRM-7 수정\n\n참고: 문서 a'
+[ "$RC" = 0 ] && [ "$(text | grep -c '^참고:')" = 1 ] && [ "$(text | tail -n 1)" = '참고: 문서 a · LRM-7' ] && ok "T 이미 '참고:' 줄이 있으면 새 줄 없이 그 줄에 합침" || ko "T 참고 합침" "rc=$RC $(text)"
+run_n --kind done $'✅ 완료\n\n• 무엇: LRM-7 수정\n\n참고: LRM-7 문서'
+[ "$(text | tail -n 1)" = '참고: LRM-7 문서' ] && ok "T 참고 줄에 이미 있는 번호는 중복해 적지 않음" || ko "T 참고 중복" "$(text)"
+run_n --kind done $'✅ 완료\n\n```\nLRM-1 abc1234def\n```\n• 무엇: `LRM-2` 와 https://x.example/LRM-3 은 그대로'
+[ "$RC" = 0 ] && [ "$(errn)" = 0 ] && text | grep -q 'LRM-1 abc1234def' && text | grep -q '`LRM-2`' && text | grep -q 'x.example/LRM-3' && ! text | grep -q '^참고:' && ok "T 코드 구간·주소 안 번호는 그대로, 참고 줄도 안 만듦" || ko "T 코드 구간" "rc=$RC $(text) / $(cat "$SB/err")"
+run_n --no-check --kind done $'✅ 완료\n\n• 무엇: LRM-9 수정'
+[ "$(text | grep -c LRM-9)" = 1 ] && ! text | grep -q '^참고:' && ok "T --no-check 면 이동하지 않음" || ko "T no-check" "$(text)"
 
 printf '\n결과: PASS %s, FAIL %s\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

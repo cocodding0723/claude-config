@@ -232,9 +232,11 @@ hb_of() { bd show "$1" --json | python3 -c 'import json,sys;d=json.load(sys.stdi
 git -C "$GR" checkout -q w; h0=$(hb_of "$bm"); sleep 1
 (cd "$GR" && "$RUN" test --out "$SB/ev/bm1.log" --card "$bm" --actor wb -- true >/dev/null 2>&1); rc=$?
 [ "$rc" = 0 ] && [ "$(meta_of "$bm" evidence_test)" = "$HEAD_W" ] && [ "$(hb_of "$bm")" \> "$h0" ] && ok "board-run --card: 성공 시 증거 커밋·heartbeat 기록" || ko "board-run --card 성공" "rc=$rc ev=$(meta_of "$bm" evidence_test)"
+bd comments "$bm" 2>/dev/null | tr -d '\n' | tr -s ' ' | grep -q "evidence:test=.*bm1.log commit=$HEAD_W" && ok "board-run --card: 증거 줄을 카드 코멘트에도 남김(옮겨 달 필요 없음)" || ko "board-run --card 증거 줄" "$(bd comments "$bm" 2>&1 | tail -4)"
 bf=$(new_card "beat 실패"); claim "$bf" wb
 (cd "$GR" && "$RUN" test --out "$SB/ev/bm2.log" --card "$bf" --actor wb -- false >/dev/null 2>&1); rc=$?
 [ "$rc" = 1 ] && [ -z "$(meta_of "$bf" evidence_test)" ] && ok "board-run --card: 시험 실패는 증거 안 남기고 종료 코드 유지" || ko "board-run --card 실패" "rc=$rc"
+bd comments "$bf" 2>/dev/null | grep -q "evidence:test=" && ko "board-run --card: 실패한 시험의 증거 줄이 남음" || ok "board-run --card: 실패한 시험은 증거 줄도 남기지 않음"
 bd2=$(new_card "beat 미커밋"); claim "$bd2" wb
 (cd "$GR" && echo x > dirty.txt && "$RUN" test --out "$SB/ev/bm3.log" --card "$bd2" --actor wb -- true >/dev/null 2>&1; rm -f dirty.txt)
 [ -z "$(meta_of "$bd2" evidence_test)" ] && ok "board-run --card: 커밋 안 된 트리는 증거 안 남김" || ko "미커밋 증거" ""

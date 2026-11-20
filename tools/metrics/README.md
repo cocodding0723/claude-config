@@ -8,26 +8,35 @@
 
 | 지표 | 정의 | 자료 | 방향 |
 |---|---|---|---|
-| 지시→완료 시간 | 작업 카드 만든 시각→닫힌 시각의 중앙값·p90(시간). epic·결정·할 일 카드 제외. 옛 작업 장부는 `received_at`→`done_at` 을 따로 | `bd list --all`, `tasks.jsonl` | 짧아지는지. 재작업률과 같이 본다 |
+| 카드 수명 | 작업 카드 만든 시각→닫힌 시각의 중앙값·p90(시간), 15분 안에 닫힌 카드 수, 시작(`started_at`)→닫힘 중앙값. epic·결정·할 일 카드 제외. 옛 작업 장부는 `received_at`→`done_at`(접수→완료)을 따로 | `bd list --all`, `tasks.jsonl` | 짧아지는지. 재작업률과 같이 본다 |
 | 기능당 사용자 접점 | 기능(카드·부모 epic 의 `feature:<slug>`)마다 결정 카드 수 + 사용자 답으로 닫힌 수. 옛 자료는 허브 단위(결정 요청 + 전달된 답) | `bd list`, `hub-reports.jsonl`, `answer-delivery.jsonl` | 줄어드는지 |
 | 재작업률 | (되돌림 커밋 + 다시 연 카드 + 완료 뒤 재지시) ÷ 완료 수 | `git log --all`(제목 `Revert`·`revert:`), `bd history`, `tasks.jsonl` history | 낮아지는지 |
+| 거부 수 | 사고 기록의 `merge_reject`(병합 거부)·`report_stopped`(보고 전송 거부) 기간 안 수. 재작업률 식에는 섞지 않고 한 줄로 따로 냄. 파일이 없으면 0 이 아니라 `기록 없음` | `<작업판>/incidents.jsonl`(`METRICS_INCIDENTS`). 한 줄에 `{"at": ISO 시각, "kind": ...}` | 낮아지는지. 재작업률의 빈틈 확인용 |
 | 검수 대기 수 | 지금 값: 하위 카드가 다 닫힌 열린 epic(묶음 검수 대기) + 열린 `gate:approval` 결정 카드(사용자 확인 대기) | `bd list` | 3개면 새 착수만 멈춤 |
 | 메인 접점 | 메인 세션의 사용자 입력 일평균(허브 붙여넣기·시스템 주입·명령 제외), 자동 압축 일평균 | 메인 세션 기록 | 사용자 입력 절반 이하, 압축 0 에 가깝게 |
+
+## 투입량 단계 정의 (참고)
+
+- 토큰: 기간(KST) 안 assistant 줄만, 같은 `message.id` 는 한 번만 센다(한 응답이 내용 조각마다 여러 줄로 기록됨). 입력·출력·캐시 읽기·캐시 쓰기를 나눠 낸다(허브 표 단위 M).
+- 세션 분류: 메인 체크아웃 폴더라도 첫 사용자 줄이 `promptSource` `sdk` 이고 본문이 `You are a memory relevance compressor utility` 로 시작하면 메모리 플러그인 자동 호출이라 `main` 이 아닌 `auto` 로 센다. 메인 접점도 이 분류를 따른다.
 
 ## 지표 다루는 규칙
 
 - 지표를 작업자·코디네이터의 목표로 주지 않는다. 주간 보고에만 쓴다.
-- 지시→완료 시간은 재작업률과 같이 본다. 한쪽만 좋아지면 개선으로 치지 않는다.
+- 카드 수명은 재작업률과 같이 본다. 한쪽만 좋아지면 개선으로 치지 않는다.
 - 표본 수를 값 옆에 적는다. 10 미만은 보고서에 `판단 보류` 가 붙는다.
 - 정의를 바꾸면 바꾼 주를 표에 적고, 그 주 앞뒤를 비교하지 않는다.
 
 ## 환경
 
-`METRICS_BOARD_DIR`(기본 `~/orca/board`) · `METRICS_BD`(bd) · `LRM_HUB_DIR`(기본 `~/.config/lrm-hubs`) · `METRICS_REPOS`(`:` 구분, 기본 `~/orca/LoveRevolutionMaker:~/orca/claude-config`) · `METRICS_HISTORY_MAX`(다시 연 카드 조회 상한, 기본 200)
+`METRICS_BOARD_DIR`(기본 `~/orca/board`) · `METRICS_BD`(bd) · `LRM_HUB_DIR`(기본 `~/.config/lrm-hubs`) · `METRICS_REPOS`(`:` 구분, 기본 `~/orca/LoveRevolutionMaker:~/orca/claude-config`) · `METRICS_INCIDENTS`(사고 기록, 기본 `<작업판>/incidents.jsonl`) · `METRICS_HISTORY_MAX`(다시 연 카드 조회 상한, 기본 200)
 
 ## 한계
 
+- 카드 수명은 사용자 지시부터의 시간이 아니다. 카드는 일을 시작할 때 만들어지는 경우가 많아(게임 카드 49장 중 17장이 15분 안에 닫힘) 지시 시점은 담지 못한다. 15분 안에 닫힌 수와 시작→닫힘 중앙값으로 편향을 가늠한다. `started_at` 이 없는 카드는 시작→닫힘에서 빠진다.
+
 - 검수 대기는 시점 값이다. 주간 최대는 매주 돌린 값을 모아야 나온다.
+- 재작업률은 병합 거부·보고 전송 거부를 세지 않는다(위 거부 수 줄을 같이 본다). 거부 수는 사고 기록을 쓰는 쪽이 `incidents.jsonl` 에 남긴 것만 센다.
 - 다시 연 카드는 기간 안에 갱신된 카드만 `bd history` 로 본다. 상한을 넘으면 보고서에 표시된다.
 - 기능 팀 이전 결정은 허브 단위로만 묶인다. 작업판에 `feature:` 가 없는 결정은 `(기능 없음)` 으로 모인다.
 
