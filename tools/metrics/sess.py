@@ -37,6 +37,27 @@ def add_usage(tu, seen, line):
         tu[k] += v if isinstance(v, int) else 0
 
 
+AUTO_HEAD = "You are a memory relevance compressor utility"
+AUTO_SCAN = 20  # 첫 사용자 줄은 파일 앞쪽에 있음
+
+
+def is_auto(f):
+    """메모리 플러그인 자동 호출: 첫 사용자 줄이 promptSource=sdk 이고 본문이 압축기 지시문으로 시작"""
+    with open(f, "rb") as fh:
+        for _, line in zip(range(AUTO_SCAN), fh):
+            if b'"type":"user"' not in line and b'"type": "user"' not in line:
+                continue
+            try:
+                j = json.loads(line)
+            except ValueError:
+                return False
+            c = (j.get("message") or {}).get("content")
+            if isinstance(c, list):
+                c = "".join(p.get("text", "") for p in c if isinstance(p, dict))
+            return j.get("promptSource") == "sdk" and isinstance(c, str) and c.lstrip().startswith(AUTO_HEAD)
+    return False
+
+
 out = []
 base = claude_base()
 for d in os.listdir(base) if os.path.isdir(base) else []:
@@ -52,7 +73,7 @@ for d in os.listdir(base) if os.path.isdir(base) else []:
                 if b'"input_tokens"' in line:
                     add_usage(tu, seen, line)
         if ts:
-            out.append(dict(src="claude", dir=d, f=os.path.basename(f), ts=ts, tok=tu, size=os.path.getsize(f)))
+            out.append(dict(src="claude", dir=d, f=os.path.basename(f), ts=ts, tok=tu, auto=is_auto(f), size=os.path.getsize(f)))
 for f in glob.glob(os.path.expanduser("~/.codex/sessions/*/*/*/*.jsonl")):
     if os.path.getmtime(f) < lo:
         continue

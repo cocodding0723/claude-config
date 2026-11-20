@@ -1,5 +1,5 @@
 """2단계: 세션을 메인·허브·워커로 나누고 분 단위 동시 실행·허브 유휴 집계 → sess2.json
-분류는 폴더 이름 기준: coord-*-hub = 허브, coord-feat-* = 기능 코디네이터(허브로 셈), orca-workspaces 하위 = 워커."""
+분류는 폴더 이름 기준(메인 폴더라도 메모리 플러그인 자동 호출은 auto 로 따로 셈): coord-*-hub = 허브, coord-feat-* = 기능 코디네이터(허브로 셈), orca-workspaces 하위 = 워커."""
 import collections as C
 import datetime as D
 import json
@@ -21,7 +21,7 @@ def cls(x):
     if re.search(r"coord-[a-z0-9-]+-hub(-hub)?$", d) or re.search(r"coord-feat-[a-z0-9-]+$", d):
         return "hub"
     if d.endswith("-orca-LoveRevolutionMaker"):
-        return "main"
+        return "auto" if x.get("auto") else "main"
     if "orca-workspaces" in d:
         return "worker"
     return "other"

@@ -40,6 +40,14 @@ au() { printf '{"type":"assistant","timestamp":"%s","message":{"id":"%s","usage"
 HOME="$SB/home" bash "$M" --since 2026-11-10 --until 2026-11-10 --out "$SB/tok" >/dev/null 2>&1
 grep -q "^tok-hub 1 [0-9]* [0-9]* 1.0 2.0 3.0 4.0$" "$SB/tok/report.txt" && ok "토큰: 같은 message.id 한 번·기간 밖 0·네 항목 분리" || ko "토큰" "$(grep -A5 '허브 세션' "$SB/tok/report.txt")"
 
+# 분류: 메인 폴더의 메모리 플러그인 자동 호출은 main 이 아니라 auto
+PA="$SB/home2/.claude/projects"; mkdir -p "$PA/-x-orca-LoveRevolutionMaker"
+printf '%s\n' '{"type":"user","timestamp":"2026-11-10T01:00:00","promptSource":"sdk","message":{"role":"user","content":"You are a memory relevance compressor utility. 입력"}}' > "$PA/-x-orca-LoveRevolutionMaker/auto.jsonl"
+printf '%s\n' '{"type":"user","timestamp":"2026-11-10T01:00:00","promptSource":"typed","message":{"role":"user","content":"우편함 먼저 해"}}' > "$PA/-x-orca-LoveRevolutionMaker/human.jsonl"
+HOME="$SB/home2" bash "$M" --since 2026-11-10 --until 2026-11-10 --out "$SB/auto" >/dev/null 2>&1
+grep -q "'main': 1" "$SB/auto/report.txt" && grep -q "'auto': 1" "$SB/auto/report.txt" && ok "분류: 자동 호출은 main 에서 빠져 auto 로" || ko "auto 분류" "$(grep 분류 "$SB/auto/report.txt")"
+grep -q "^메인 접점 1일 · 사용자→메인 메시지 일평균 1.0" "$SB/auto/report.txt" && ok "메인 접점이 같은 분류를 따름(auto 입력 제외)" || ko "메인 접점 분류" "$(grep '메인 접점' "$SB/auto/report.txt")"
+
 # 결과 지표: 임시 작업판·작업 장부·되돌림 커밋. 작업판 시각은 지금이라 오늘 날짜 기간으로 따로 돌림
 O="$HERE/../../tools/metrics/outcome.py"
 TODAY=$(TZ=Asia/Seoul date +%Y-%m-%d)
