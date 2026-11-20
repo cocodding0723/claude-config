@@ -56,5 +56,22 @@ pat=$(git -C "$SB/ws/coord-all-hub" sparse-checkout list 2>/dev/null | tr '\n' '
 [ "$rc" = 0 ] && [ "$pat" = "/* " ] && ok "--paths \"/*\" 가 그대로 들어감" || ko "경로 값 풀림" "rc=$rc 패턴='$pat'"
 [ -f "$SB/ws/coord-all-hub/Assets/a.cs" ] && [ -f "$SB/ws/coord-all-hub/README.md" ] && ok "\"/*\" 로 전체 파일을 받음" || ko "전체 받기" "$(ls "$SB/ws/coord-all-hub" 2>/dev/null | tr '\n' ' ')"
 
+# 4) 자동 압축 기준: 허브 설정에 autoCompactWindow, 기존 키 보존, 재실행 동일, off 면 키 없음
+S="$SB/ws/coord-ac-hub/.claude/settings.local.json"
+rm -rf "$SB/ws/coord-ac-hub"; mkdir -p "$SB/ws/coord-ac-hub/.claude"; echo '{"foo":{"bar":1}}' > "$S"
+# 이미 폴더가 있으면 생성을 건너뛰므로 기존 설정 파일이 남은 채 실행됨
+out=$(COMMON_FILE="$SB/common.txt" run --slug ac); rc=$?
+v=$(jq -r '[.autoCompactWindow, .foo.bar, .enabledPlugins["openviking-memory@openviking"]]|@tsv' "$S" 2>/dev/null)
+[ "$rc" = 0 ] && [ "$v" = $'200000\t1\tfalse' ] && ok "자동 압축 200000 + 기존 키·플러그인 설정 공존" || ko "자동 압축 기본값" "rc=$rc v='$v' $out"
+h1=$(shasum "$S" | cut -c1-12)
+out=$(COMMON_FILE="$SB/common.txt" run --slug ac --force); h2=$(shasum "$S" | cut -c1-12)
+[ "$h1" = "$h2" ] && ok "다시 실행해도 설정 파일이 같음" || ko "재실행" "$h1 != $h2 $out"
+out=$(COMMON_FILE="$SB/common.txt" LRM_HUB_AUTOCOMPACT=off run --slug ac --force)
+[ "$(jq 'has("autoCompactWindow")' "$S")" = false ] && [ "$(jq -r .foo.bar "$S")" = 1 ] && ok "LRM_HUB_AUTOCOMPACT=off: 키 제거, 나머지 보존" || ko "off" "$(cat "$S")"
+out=$(COMMON_FILE="$SB/common.txt" LRM_HUB_AUTOCOMPACT=150000 run --slug ac --force)
+[ "$(jq -r .autoCompactWindow "$S")" = 150000 ] && ok "환경 변수로 값 변경" || ko "값 변경" "$(cat "$S")"
+out=$(COMMON_FILE="$SB/common.txt" LRM_HUB_AUTOCOMPACT=abc run --slug ac --force); rc=$?
+[ "$rc" = 2 ] && ok "잘못된 값은 종료 2" || ko "잘못된 값" "rc=$rc $out"
+
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]
