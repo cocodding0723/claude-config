@@ -9,6 +9,7 @@
 - 사용자가 할 일: 지금은 시험 모드(지우지 않고 목록만 기록)로 돈다. 1주 뒤 로그를 보고 괜찮으면 메인에게 실삭제 전환을 승인한다(6절).
 - 2026-11-19 추가: PR 이 전부 병합된 워크스페이스는 창이 붙어 있어도 정리한다. 30분 넘게 안 쓴 곳을 이번 회차에 표시하고, 다음 회차에 창을 닫은 뒤 보관·삭제한다(2절 "병합된 PR 에 창이 붙은 곳").
 - 2026-11-17 추가: PR 이 병합·닫힌 워크스페이스는 2일을 기다리지 않고 다음 회차에 정리한다. 미커밋이 있어도 전부 `~/orca/archive/<폴더>-<날짜시각>/` 에 보관·대조한 뒤 지운다(2절 "PR 닫힘 즉시 정리").
+- 2026-11-21 정정: 마무리 목록의 허브는 창·하위가 없고 로컬 브랜치가 남으면 보관·삭제한다(「마무리된 허브 정리」). 기본 미리보기는 화면 출력만 하며 로그·잠금·Slack을 쓰지 않는다. 아래 예전 로그·Slack 설명 중 미리보기 쓰기는 이 정정으로 대체한다.
 
 ## 1. 흐름
 
@@ -34,7 +35,7 @@
 
 | 이유 코드 | 뜻 |
 |---|---|
-| `hub` | 폴더 이름이 `coord-` 로 시작하는 허브 |
+| `hub` | 폴더 이름이 `coord-` 로 시작하며 마무리 목록에 없는 허브 |
 | (표시 없음) | 메인 체크아웃(`isMainWorktree`). 루트 `~/orca/workspaces` 밖이라 목록에 오르지 않음 |
 | `current` | 이 스크립트를 실행 중인 폴더 |
 | `children` | 하위 워크스페이스가 아직 남은 곳(워커를 거느린 상위) |
@@ -253,6 +254,41 @@ bash ~/.config/lrm-hubs/release_ws.sh --dispatch <id> [--dry-run] [--json]
 - `create_worker_ws.sh`: 만들기 전에 부모 허브의 하위 수를 센다. 상한(`LRM_HUB_MAX_CHILDREN`, 기본 10) 이상이면 `ws_gc.sh --parent <허브> --apply` 를 1회 돌리고, 그래도 상한 이상이면 stderr 경고와 `hub_report.py add --kind block` 기록을 남긴다. 정리에는 제한 시간(`LRM_HUB_GC_TIMEOUT`, 기본 60초)이 있어, 넘기면 정리기 프로세스 그룹에 TERM 을 보내고 유예(`LRM_HUB_GC_GRACE`, 기본 5초) 뒤에도 남으면 그룹 전체를 KILL 한 뒤 생성을 계속한다. TERM 을 무시하는 자식도 남기지 않는다. 정리 실패·시간 초과도 생성을 막지 않는다.
 
 시험: `bash tests/ws_gc/run.sh`, `bash tests/release_ws/run.sh`, `bash tests/create_worker_ws/run.sh`.
+
+## 마무리된 허브 정리(2026-11-21)
+
+**마무리 목록에 든 허브만 보관 뒤 삭제한다.** `feature_close.sh --yes`가 남긴 `~/.config/lrm-hubs/closed_hubs.txt`를 읽는다. `LRM_CLOSED_HUBS`로 경로를 바꾼다. 목록과 작업 공간 경로는 `pwd -P`로 정규화해 비교한다.
+
+```text
+목록 허브 → 창 없음 → 하위 0 → 로컬 브랜치 유지
+          → 보관 상한 검사 → 복제·대조 → 작업 공간 삭제 → 목록에서 제거
+```
+
+| 조건 | 판정 |
+|---|---|
+| 목록 밖 허브 | `SKIP hub` |
+| 연결된 창 또는 활동 중 워커 | `SKIP live`. 쉬는 워커의 창도 닫지 않고 보존 |
+| 하위 작업 공간 존재 | `SKIP children`. `parentWorktreeId`와 `childWorktreeIds` 모두 확인 |
+| detached HEAD 또는 보호 브랜치 | `SKIP unmerged` 또는 `SKIP protected` |
+| 조건 통과 | `CANDIDATE … hub_closed`, 삭제 뒤 `DELETE … hub_closed`. JSON의 `reason`도 `hub_closed` |
+
+**활동 일수와 PR 상태는 조회하지 않는다.** 마무리 절차가 이미 끝났기 때문이다. 보관은 PR 닫힘 정리의 `archive_all`·`verify_full`을 재사용한다. 별도 복제 경로는 대조·용량 검사 누락을 막기 위해 두지 않는다. 서브모듈 변경, 열린 Unity, `WS_GC_PR_DONE_MAX_MB` 초과는 기존과 같이 보존한다.
+
+**sparse 허브의 미추적 결과물도 보관한다.** `docs/out/` 아래 HTML·증거를 `<archive>/<허브폴더>-<날짜시각>/files/docs/out/`로 복제하고 파일 수·바이트·내용을 대조한다. 추적 변경은 `tracked.patch`와 `staged.patch`에 남긴다. 보관·삭제 실패 시 목록 항목을 유지한다. 브랜치는 삭제하지 않는다.
+
+**기본 미리보기는 영구 파일을 쓰지 않는다.** 로그는 화면에만 출력하고 보관 폴더·로그 파일·잠금·마무리 목록을 만들거나 갱신하지 않는다. Slack 전송도 생략한다. 임시 판정 파일은 실행 종료 때 제거한다. 출력 저장이 필요하면 셸 리다이렉션으로 경로를 지정한다.
+
+복원은 보관본의 `meta.txt`에서 브랜치를 확인한 뒤 수행한다. `<보관폴더>`와 `<허브경로>`는 실제 절대 경로로 바꾼다.
+
+```bash
+git worktree add <허브경로> <브랜치>
+git -C <허브경로> apply --binary <보관폴더>/tracked.patch
+cp -R <보관폴더>/files/. <허브경로>/
+```
+
+`staged.patch`는 스테이징 상태를 복구할 때 `git apply --cached --binary`로 적용한다. 다시 작업할 허브는 마무리 목록에 추가하지 않는다. 자동 재삭제를 막기 위해 목록을 비운 상태로 작업한다.
+
+근거: 기준 `d52c444`, `hubs/scripts/ws_gc.sh`의 허브 판정·보관 경로와 `tests/ws_gc/run.sh`의 `[HUB]` 시험이다. sparse가 추적 파일 범위에 미치는 영향은 [Git sparse-checkout 문서](https://git-scm.com/docs/git-sparse-checkout)를 따른다.
 
 ## 참고
 

@@ -15,6 +15,7 @@ trap '[ -n "${KEEP:-}" ] || rm -rf "${SB:?}"' EXIT
 # 사용자 git 설정·훅이 시험에 끼지 않게 격리
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 export WS_GC_INBOX="$SB/inbox"   # 허브 색인이 실제 ~/.config 로 새지 않게 격리
+export LRM_CLOSED_HUBS="$SB/closed_hubs.txt"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 FAKE="$SB/fake" ROOT="$SB/ws" ARC="$SB/archive" O="$SB/origin" BIN="$SB/bin" W="$ROOT/repoA"
 mkdir -p "$FAKE/pr" "$ROOT" "$ARC" "$O" "$BIN" "$W"
@@ -107,6 +108,9 @@ gc() { # 인자를 ws_gc.sh 에 전달. 결과: RC, $SB/out
   env PATH="$BIN:$PATH" FAKE_DIR="${GC_FAKE:-$FAKE}" FAKE_ROOT="$ROOT" FAKE_RM_REFUSE="sub_clean sub_noise" FAKE_GH_FAIL="feat/ghf" WS_GC_NOTIFY="$HERE/fake_send.sh" \
     bash "$GC" --root "$ROOT" --archive-dir "$ARC" --log "$ARC/ws_gc.log" "$@" > "$SB/out" 2>&1
   RC=$?
+  if ! [[ " $* " = *" --apply "* ]]; then
+    cat "$SB/out" >> "$ARC/ws_gc.log"
+  fi
 }
 has() { grep -q -- "$1" "$ARC/ws_gc.log"; }
 rm_calls() { grep -c '^worktree rm' "$FAKE/orca.calls" || true; }
@@ -132,8 +136,7 @@ chk "dry-run: 메인 체크아웃은 평가 대상 아님" '! has "repoA/mainco"
 chk "dry-run: 부산물 근거 로그(.meta·줄바꿈만)" 'has "NOISE   부산물 Assets/Sound/s.meta" && has "NOISE   줄바꿈만 Assets/Sound/s/a.LICENSE.txt"'
 chk "dry-run: 진짜 LICENSE 변경은 dirty" 'has "SKIP dirty repoA/dirty_lic"'
 chk "dry-run: 요약 줄 기록" 'has "END 삭제 후보 8개"'
-chk "dry-run: Slack progress 1회" '[ "$(wc -l < "$FAKE/notify.calls" | tr -d " ")" = 1 ] && grep -q -- "--kind progress" "$FAKE/notify.calls" && grep -q "시험 점검" "$FAKE/notify.calls"'
-chk "dry-run: Slack 본문에 양식 A 골격" 'grep -q "시험 점검⏎⏎• 결과:" "$FAKE/notify.calls"'
+chk "dry-run: Slack 전송 없음" '[ ! -s "$FAKE/notify.calls" ]'
 gc --no-slack; chk "--no-slack 은 전송 안 함" '[ ! -s "$FAKE/notify.calls" ]'
 gc --days 0 --only recent; chk "--days 0 --only: 최근 활동도 후보로" 'has "CANDIDATE repoA/recent "'
 gc --only merged --json 2>/dev/null; JS=$(env PATH="$BIN:$PATH" FAKE_DIR="$FAKE" FAKE_ROOT="$ROOT" WS_GC_NOTIFY="$HERE/fake_send.sh" bash "$GC" --root "$ROOT" --archive-dir "$ARC" --log "$ARC/ws_gc.log" --only merged --json --no-slack 2>/dev/null)
@@ -422,7 +425,7 @@ chk "[R] regen_meta_bad: apply 에도 보존" '[ -e "$W/regen_meta_bad" ]'
 
 # [5] 잠금: 동시에 4개를 띄우면 하나만 실행(나머지는 건너뜀), 끝난 뒤에는 다시 실행됨
 mkdir -p "$SB/par"
-for i in 1 2 3 4; do (FAKE_SLEEP=2 env PATH="$BIN:$PATH" FAKE_DIR="$FAKE" FAKE_ROOT="$ROOT" WS_GC_NOTIFY="$HERE/fake_send.sh" bash "$GC" --root "$ROOT" --archive-dir "$ARC" --log "$SB/par/log" --dry-run --only nothing_matches > "$SB/par/out$i" 2>&1 &); done
+for i in 1 2 3 4; do (FAKE_SLEEP=2 env PATH="$BIN:$PATH" FAKE_DIR="$FAKE" FAKE_ROOT="$ROOT" WS_GC_NOTIFY="$HERE/fake_send.sh" bash "$GC" --root "$ROOT" --archive-dir "$ARC" --log "$SB/par/log" --apply --only nothing_matches > "$SB/par/out$i" 2>&1 &); done
 sleep 5
 chk "[5] 동시 실행 4개: 하나만 실행" '[ "$(grep -c "START" "$SB/par/log")" = 1 ] && [ "$(cat "$SB"/par/out* | grep -c "이미 실행 중")" = 3 ]' "start=$(grep -c START "$SB/par/log") skipped=$(cat "$SB"/par/out* | grep -c "이미 실행 중")"
 gc --only nothing_matches; chk "[5] 끝난 뒤 다시 실행 가능(잠금이 남지 않음)" '[ "$RC" = 0 ] && has "START"'
@@ -608,6 +611,60 @@ FAKE_TERM_CLOSE_FAIL=1 gc --only ml_fail --apply
 chk "[ML] 창 닫기가 실패하면 지우지 않음(term_close_fail)" '[ -e "$W/ml_fail" ] && has "SKIP term_close_fail repoA/ml_fail" && [ "$(rm_calls)" = 0 ]' "$(pdlog ml_fail)"
 WS_GC_MERGED_LIVE=0 gc --only ml_fail --apply
 chk "[ML] 끄면(WS_GC_MERGED_LIVE=0) 창이 붙은 곳은 예전처럼 보존" '[ -e "$W/ml_fail" ] && has "SKIP live repoA/ml_fail" && ! grep -q "^terminal close" "$FAKE/orca.calls"' "$(pdlog ml_fail)"
+
+for n in live children detached protected big corrupt changed refused; do
+  mk "coord-gc-$n" "feat/gc-$n" local recent
+  printf '%s\n' "$W/coord-gc-$n" >> "$LRM_CLOSED_HUBS"
+done
+git -C "$SEED" worktree add -q -b feat/gc-ready "$W/coord-gc-ready" HEAD
+reg coord-gc-ready refs/heads/feat/gc-ready "$NOW_MS"
+detach coord-gc-detached
+git -C "$W/coord-gc-protected" branch -m dev
+git -C "$W/coord-gc-ready" sparse-checkout init --no-cone
+printf '/docs/\n/.claude/\n/CLAUDE.md\n/AGENTS.md\n' | git -C "$W/coord-gc-ready" sparse-checkout set --no-cone --stdin
+mkdir -p "$W/coord-gc-ready/docs/out/evidence"
+printf 'unique html\n' > "$W/coord-gc-ready/docs/out/report.html"
+printf 'unique evidence\n' > "$W/coord-gc-ready/docs/out/evidence/check.txt"
+git -C "$W/coord-gc-ready" show HEAD:.gitignore > "$W/coord-gc-ready/.gitignore"
+printf '!docs/out/\n!docs/out/**\n' >> "$W/coord-gc-ready/.gitignore"
+ln -s "$W/coord-gc-ready" "$SB/hub-alias"
+printf '%s\n' "$SB/hub-alias" >> "$LRM_CLOSED_HUBS"
+term coord-gc-live
+regen; regen_live
+jq --arg h "repo::$W/coord-gc-children" --arg c "$W/coord-hub" \
+  '.result.worktrees |= map(if .path == $c then .parentWorktreeId = $h else . end)' "$FAKE/worktrees.json" > "$SB/hubs.json"
+mv "$SB/hubs.json" "$FAKE/worktrees.json"
+cp "$LRM_CLOSED_HUBS" "$SB/closed.before"
+cp "$W/coord-gc-ready/docs/out/report.html" "$SB/report.before"
+cp "$W/coord-gc-ready/docs/out/evidence/check.txt" "$SB/check.before"
+chk "[HUB] HTML·증거가 미추적 파일로 조회됨" 'git -C "$W/coord-gc-ready" ls-files -o --exclude-standard | grep -Fxq docs/out/report.html && git -C "$W/coord-gc-ready" ls-files -o --exclude-standard | grep -Fxq docs/out/evidence/check.txt'
+JS=$(jsonrun --only coord-gc-)
+chk "[HUB] 미리보기: 최근·PR 없는 sparse 허브 후보" 'echo "$JS" | jq -e '\''.items[] | select(.name == "repoA/coord-gc-ready") | .reason == "hub_closed" and .verdict == "candidate"'\'' >/dev/null'
+chk "[HUB] 미리보기: 목록·결과물·보관 불변" 'cmp -s "$LRM_CLOSED_HUBS" "$SB/closed.before" && cmp -s "$W/coord-gc-ready/docs/out/report.html" "$SB/report.before" && [ -z "$(ls -d "$ARC"/coord-gc-* 2>/dev/null)" ]'
+for e in live:live children:children detached:unmerged protected:protected; do
+  n=${e%:*}; r=${e#*:}
+  chk "[HUB] 보호: $n → $r" 'echo "$JS" | jq -e --arg n "repoA/coord-gc-$n" --arg r "$r" '\''.items[] | select(.name == $n) | .reason == $r and .verdict == "skip"'\'' >/dev/null'
+done
+gc --only coord-hub
+chk "[HUB] 목록 밖 허브 보존" 'has "SKIP hub repoA/coord-hub" && [ -e "$W/coord-hub" ]'
+WS_GC_PR_DONE_MAX_MB=0 gc --apply --only coord-gc-big
+chk "[HUB] 보관 상한 초과 보존·목록 유지" '[ "$RC" = 0 ] && has "SKIP archive_big repoA/coord-gc-big" && grep -Fxq "$W/coord-gc-big" "$LRM_CLOSED_HUBS"'
+FAKE_TAR_CORRUPT=1 gc --apply --only coord-gc-corrupt
+chk "[HUB] 보관 손상 시 삭제 차단·목록 유지" '[ "$RC" = 1 ] && [ -d "$W/coord-gc-corrupt" ] && grep -Fxq "$W/coord-gc-corrupt" "$LRM_CLOSED_HUBS"'
+FAKE_RM_CHECK_DIRTY=1 FAKE_RM_ADD_EDIT=1 gc --apply --only coord-gc-changed
+chk "[HUB] 보관 뒤 변경 시 강제 삭제 차단" '[ "$RC" = 1 ] && [ -d "$W/coord-gc-changed" ] && ! grep -q -- "--force" "$FAKE/orca.calls"'
+FAKE_RM_REASON=locked gc --apply --only coord-gc-refused
+chk "[HUB] 삭제 거부 시 목록 유지" '[ "$RC" = 1 ] && grep -Fxq "$W/coord-gc-refused" "$LRM_CLOSED_HUBS"'
+FAKE_RM_CHECK_DIRTY=1 gc --apply --only coord-gc-ready --json --no-slack
+D=$(ls -d "$ARC"/coord-gc-ready-* 2>/dev/null | head -1)
+chk "[HUB] 보관 뒤 삭제·정규화한 목록 항목 제거" '[ "$RC" = 0 ] && [ ! -e "$W/coord-gc-ready" ] && ! grep -q "coord-gc-ready\|hub-alias" "$LRM_CLOSED_HUBS" && grep -Fxq "$W/coord-gc-live" "$LRM_CLOSED_HUBS"'
+chk "[HUB] 미추적 docs/out HTML·증거 byte 일치" 'cmp -s "$D/files/docs/out/report.html" "$SB/report.before" && cmp -s "$D/files/docs/out/evidence/check.txt" "$SB/check.before"'
+chk "[HUB] 로그·JSON 정리 사유 hub_closed" 'has "DELETE repoA/coord-gc-ready hub_closed" && sed -n '\''/^{/,$p'\'' "$SB/out" | jq -e '\''.items[] | .reason == "hub_closed" and .verdict == "deleted"'\'' >/dev/null'
+chk "[HUB] 브랜치 유지·창 닫기 없음" 'git -C "$SEED" show-ref --verify --quiet refs/heads/feat/gc-ready && ! grep -q "terminal close\|--delete-branch" "$FAKE/orca.calls"'
+mkdir -p "$SB/dry-check"
+env PATH="$BIN:$PATH" FAKE_DIR="$FAKE" FAKE_ROOT="$ROOT" bash "$GC" --root "$ROOT" --archive-dir "$SB/dry-check/archive" --log "$SB/dry-check/log" --only coord-gc- --dry-run --no-slack > "$SB/dry-check.out" 2>&1
+RC=$?
+chk "[HUB] 미리보기: 로그·잠금·보관 파일 생성 없음" '[ "$RC" = 0 ] && [ -z "$(ls -A "$SB/dry-check")" ]'
 
 bash "$HERE/adopt.sh" || FAIL=$((FAIL + 1))
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
