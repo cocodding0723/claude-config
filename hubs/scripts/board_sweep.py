@@ -42,8 +42,9 @@ REQUIRED = ("rules", "kinds", "kind_prefix", "pr_repo", "pr_label_prefix", "pr_s
             "gh_calls_max", "gh_timeout_sec", "expires_label_prefix", "stale_kinds", "stale_hours", "stale_label",
             "dup_kinds", "slack_kinds", "slack_id_pattern", "slack_label_prefix", "slack_body_line", "candidate_label", "orphan_hours", "skip_label", "protect_ids", "bd_timeout_sec",
             "ws_root", "ws_label_prefix", "branch_label_prefix", "ws_gone_hours",
-            "log_path", "lock_path", "feature_merged_hours", "feature_close_script", "pr_list_limit", "merged_into",
-            "feature_label_prefix", "feature_merged_stages", "feature_merged_marker", "feature_hub_name")
+            "log_path", "lock_path", "feature_merged_hours", "feature_close_script", "merged_into",
+            "feature_label_prefix", "feature_merged_stages", "feature_merged_marker", "feature_hub_name",
+            "feature_merged_retry_hours", "feature_merged_max_tries", "feature_worktree_limit")
 
 EPILOG = """예:
   board_sweep.sh --dry-run        바뀔 동작만 기록(mode=dry)
@@ -88,10 +89,10 @@ def load_config():
     missing = [k for k in REQUIRED if k not in cfg]
     if missing:
         raise ConfigError(f"규칙 표에 없는 키: {', '.join(missing)}. 조치: hubs/board_sweep.tsv 와 맞춤")
-    for k in ("pr_min_digits", "gh_calls_max", "gh_timeout_sec", "bd_timeout_sec", "pr_list_limit"):
+    for k in ("pr_min_digits", "gh_calls_max", "gh_timeout_sec", "bd_timeout_sec", "feature_merged_max_tries", "feature_worktree_limit"):
         if not cfg[k].isdigit():
             raise ConfigError(f"규칙 표 {k} 가 정수가 아님: '{cfg[k]}'")
-    for k in ("stale_hours", "orphan_hours", "ws_gone_hours", "feature_merged_hours"):
+    for k in ("stale_hours", "orphan_hours", "ws_gone_hours", "feature_merged_hours", "feature_merged_retry_hours"):
         try:
             float(cfg[k])
         except ValueError:
@@ -499,6 +500,7 @@ class Sweeper:
     def feature_pr_call(self, cmd, **kwargs):
         if cmd[0] == self.gh_bin:
             if self.gh_calls >= int(self.cfg["gh_calls_max"]):
+                self.log("feature_merged", "-", "gh-cap", f"gh 호출 상한 {self.cfg['gh_calls_max']}회 — 남은 기능은 다음 회차 확인")
                 raise OSError("gh 호출 상한 도달")
             self.gh_calls += 1
         return subprocess.run(cmd, **kwargs)
@@ -507,7 +509,7 @@ class Sweeper:
         name = self.cfg["feature_hub_name"].format(slug=slug)
         if self.feature_hub_paths is None:
             self.feature_hub_paths = []
-            rc, out, _ = self.run(["orca", "worktree", "list", "--json"], int(self.cfg["bd_timeout_sec"]))
+            rc, out, _ = self.run(["orca", "worktree", "list", "--limit", self.cfg["feature_worktree_limit"], "--json"], int(self.cfg["bd_timeout_sec"]))
             if rc == 0:
                 try:
                     rows = json.loads(out).get("result", {}).get("worktrees", [])
@@ -521,8 +523,9 @@ class Sweeper:
 
     def rule_feature_merged(self, cards):
         index = PrIndex(self.gh_bin, run=self.feature_pr_call,
-                        limit=int(self.cfg["pr_list_limit"]), timeout=int(self.cfg["gh_timeout_sec"]))
+                        timeout=int(self.cfg["gh_timeout_sec"]))
         grace = dt.timedelta(hours=float(self.cfg["feature_merged_hours"]))
+        retry = dt.timedelta(hours=float(self.cfg["feature_merged_retry_hours"]))
         prefix = self.cfg["feature_label_prefix"]
         script = os.path.expanduser(self.cfg["feature_close_script"])
         for card in self.all_cards:
@@ -533,13 +536,18 @@ class Sweeper:
             if not slug or (card.get("status") == "closed" and not self.feature_hub_exists(slug)):
                 continue
             rc, out, _ = self.bd("list", "--all", "--parent", card["id"], "--json", "-n", "0")
-            if rc != 0 or any(c.get("status") != "closed" for c in json.loads(out or "[]")):
+            if rc != 0:
+                continue
+            related = {c["id"]: c for c in json.loads(out or "[]")}
+            related.update({c["id"]: c for c in self.all_cards if prefix + slug in (c.get("labels") or [])})
+            related.pop(card["id"], None)
+            if any(c.get("issue_type") != "epic" and c.get("status") != "closed" for c in related.values()):
                 continue
             prs = index.for_card(card)
             if prs is None:
                 continue
             if prs:
-                if not all(state == "MERGED" for _, state in prs):
+                if not prs.branch_matched or not all(state == "MERGED" for _, state in prs):
                     continue
                 proof = "PR " + ", ".join(f"#{n}" for n, _ in prs) + " 병합"
             else:
@@ -561,10 +569,21 @@ class Sweeper:
             if rc != 0:
                 continue
             comments = json.loads(out or "[]")
-            if any(self.cfg["feature_merged_marker"] in str(c.get("text") or "") for c in comments):
+            markers = [c for c in comments if self.cfg["feature_merged_marker"] in str(c.get("text") or "")]
+            log = os.path.join(self.board, ".evidence", f"{card['id']}-feature-close.log")
+            if len(markers) >= int(self.cfg["feature_merged_max_tries"]):
+                self.log("feature_merged", card["id"], "retry-limit", f"자동 마무리 {len(markers)}회 실패 — {log} 확인 후 수동 마무리")
                 continue
+            if markers:
+                marker_times = [parse_time(c.get("created_at")) for c in markers]
+                if any(t is None for t in marker_times) or self.now - max(marker_times) < retry:
+                    continue
             times = [parse_time(card.get(k)) for k in ("updated_at", "started_at", "created_at")]
             times += [parse_time(c.get("created_at")) for c in comments]
+            activity = [self.last_activity(dict(c, comment_count=True)) for c in related.values()]
+            if any(t is None for t in activity):
+                continue
+            times += activity
             last = max((t for t in times if t), default=None)
             if last is None or self.now - last <= grace:
                 continue
@@ -579,7 +598,6 @@ class Sweeper:
                     self.count("error")
                     self.log("feature_merged", card["id"], "comment-failed", err)
                     continue
-                log = os.path.join(self.board, ".evidence", f"{card['id']}-feature-close.log")
                 os.makedirs(os.path.dirname(log), exist_ok=True)
                 with open(log, "a") as stream:
                     subprocess.Popen(["bash", script, "--slug", slug, "--yes"], cwd=self.board,

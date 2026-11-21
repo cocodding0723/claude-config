@@ -28,7 +28,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import answer_store  # noqa: E402
 import pending_judge  # noqa: E402
-from pr_index import PrIndex, TICKET, REPO_HEAD  # noqa: E402
+from pr_index import PrIndex, PrMatches, TICKET, REPO_HEAD  # noqa: E402
 
 TAG = "remind"
 LIST_MAX = 8                 # 칸마다 보여 줄 줄 수. 넘으면 '그 밖에 N건'
@@ -40,7 +40,7 @@ TITLE_TAG = re.compile(r"^\s*(?:\[[^\]]*\]\s*)+")        # 제목 머리의 [LRM
 CLOCK = re.compile(r"\d{1,2}:\d{2}")
 USER_OK_HEAD, SLACK_ANSWER_HEAD = "user-ok:", "Slack 결정 답:"   # board-done --user-ok 와 답 전달기(feedback_route)가 기능 카드에 남기는 코멘트 머리
 PASS_PICK = re.compile(r"=\s*선택\s*\d+\(통과")               # 검수 카드에서 통과를 고른 답
-GH_PR_LIMIT, GH_TIMEOUT_S = 400, 20
+GH_TIMEOUT_S = 20
 HUB_PATH = re.compile(r"^[ \t]*기능 코디네이터 허브:[ \t]*(\S[^\n]*?)[ \t]*$", re.MULTILINE)
 
 
@@ -116,25 +116,28 @@ def reviews(cards: list, comments_of=None, prs_of=None) -> list:
         ok = passed(comments_of(c), stamp(c.get("closed_at"))) if comments_of else False
         prs = prs_of(c) if prs_of else None
         pr = pr_summary(prs)
-        if ok and pr["state"] == "merged":
+        merged = isinstance(prs, PrMatches) and prs.branch_matched and pr["state"] == "merged"
+        if ok and merged:
             continue
-        out.append({"name": name_of(c), "since": stamp(c.get("updated_at")), "passed": ok, "pr": pr, "done": ok or pr["state"] == "merged"})
+        out.append({"name": name_of(c), "since": stamp(c.get("updated_at")), "passed": ok, "pr": pr, "done": ok or merged})
     return out
 
 
 def all_merged(prs) -> bool:
-    return bool(prs) and all(state == "MERGED" for _, state in prs)
+    return bool(prs) and isinstance(prs, PrMatches) and prs.branch_matched and all(state == "MERGED" for _, state in prs)
 
 
 def features(cards: list, flow=None, prs_of=None) -> list:
-    """남은 기능(기능 label 이 있는 기능 카드)의 단계와 하위 카드 진행. 하위 카드는 id 가 '<기능 id>.' 로 시작하는 카드.
+    """남은 기능의 단계와 하위·같은 기능 라벨 카드 진행.
     검수를 통과하고 반영 중인 기능은 카드가 닫혀 있어도 남은 일(PR·병합)"""
     out = []
     for e in cards:
         labels = e.get("labels") or []
         if e.get("issue_type") != "epic" or not any(x.startswith(FEATURE_HEAD) for x in labels):
             continue
-        kids = [c for c in cards if str(c.get("id") or "").startswith(e["id"] + ".")]
+        feature_labels = {x for x in labels if x.startswith(FEATURE_HEAD)}
+        kids = [c for c in cards if c.get("issue_type") != "epic" and
+                (str(c.get("id") or "").startswith(e["id"] + ".") or feature_labels.intersection(c.get("labels") or []))]
         remaining = sum(c.get("status") != "closed" for c in kids)
         prs = prs_of(e) if prs_of else None
         merged = all_merged(prs)
@@ -311,7 +314,7 @@ def main(argv=None) -> int:
     rules = pending_judge.load_rules([hub, os.path.join(HERE, "..")], warn=lambda m: None)
     decisions = waiting(answer_store.AnswerStore(hub).cards(), rules, now)
     board = os.path.expanduser(os.environ.get("BOARD_DIR") or "~/orca/board")
-    index = PrIndex(os.environ.get("LRM_REMIND_GH") or "gh", limit=GH_PR_LIMIT, timeout=GH_TIMEOUT_S)
+    index = PrIndex(os.environ.get("LRM_REMIND_GH") or "gh", timeout=GH_TIMEOUT_S)
     prs_of = lambda c: card_prs(index, c)
     revs = reviews(cards, comment_reader(os.environ.get("BOARD_BD", "bd"), board), prs_of)
     stall_h = float(os.environ.get("LRM_REMIND_STALL_HOURS") or STALL_HOURS)

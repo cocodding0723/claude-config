@@ -7,6 +7,18 @@ import subprocess
 TICKET = re.compile(r"\b[A-Z]{2,}-\d+\b")
 BRANCH_HEAD, REPO_HEAD = "branch:", "repo:"
 PR_FIELDS = "number,state,title,headRefName"
+PR_LIST_LIMIT = 400
+BRANCH_MATCH, TITLE_MATCH = "branch", "title"
+
+
+class PrMatches(list):
+    def __init__(self, rows=(), *, basis=BRANCH_MATCH):
+        super().__init__(rows)
+        self.basis = basis
+
+    @property
+    def branch_matched(self):
+        return self.basis == BRANCH_MATCH
 
 
 def _label(card, head):
@@ -14,7 +26,7 @@ def _label(card, head):
 
 
 class PrIndex:
-    def __init__(self, gh_bin, run=subprocess.run, *, limit, timeout):
+    def __init__(self, gh_bin, run=subprocess.run, *, limit=PR_LIST_LIMIT, timeout):
         self._gh = gh_bin
         self._run = run
         self._limit = limit
@@ -62,15 +74,16 @@ class PrIndex:
         if rows is None:
             return None
         ticket = TICKET.search(str(card.get("title") or ""))
-        found = []
-        if ticket:
-            # 옛 PR은 기능 브랜치와 이름이 달라 제목의 티켓 번호를 우선함.
+        branch = _label(card, BRANCH_HEAD)
+        found = [r for r in rows if branch and r.get("headRefName") == branch]
+        basis = BRANCH_MATCH
+        if not found and ticket:
+            # 같은 티켓을 공유하는 기능이 있어 제목 일치는 표시용으로만 사용함.
+            basis = TITLE_MATCH
             pattern = rf"(?<![A-Za-z0-9]){re.escape(ticket.group(0))}(?![0-9])"
             found = [r for r in rows if re.search(pattern, str(r.get("title") or ""))]
-        branch = _label(card, BRANCH_HEAD)
-        if not found and branch:
-            found = [r for r in rows if r.get("headRefName") == branch]
-        return [(int(r["number"]), str(r.get("state"))) for r in found if str(r.get("number", "")).isdigit()]
+        return PrMatches(((int(r["number"]), str(r.get("state"))) for r in found
+                          if str(r.get("number", "")).isdigit()), basis=basis)
 
     def _call(self, cmd, repo):
         return self._run(cmd, cwd=repo, capture_output=True, text=True, timeout=self._timeout, stdin=subprocess.DEVNULL)

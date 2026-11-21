@@ -31,9 +31,11 @@ log_path	~/orca/board/sweep.log	동작 기록(한 줄 한 건, 탭 구분)
 lock_path	~/orca/board/.board-sweep.lock	중복 실행 방지 잠금 파일
 feature_merged_hours	2	기능 마무리 전 마지막 활동 이후 대기 시간
 feature_close_script	~/.config/lrm-hubs/feature_close.sh	기능 마무리 스크립트
-pr_list_limit	400	저장소별 PR 조회 상한
 merged_into	main,dev	PR 없는 기능의 로컬 병합 대상 브랜치
 feature_label_prefix	feature:	기능 라벨 접두
 feature_merged_stages	stage:verify,stage:review,stage:ship	PR 없는 기능의 병합 확인 허용 단계
 feature_merged_marker	자동 마무리	중복 실행 방지 근거 댓글 표식
 feature_hub_name	coord-feat-{slug}-hub	허브 폴더 이름
+feature_merged_retry_hours	24	마지막 자동 마무리 표시 이후 재시도 간격
+feature_merged_max_tries	3	자동 마무리 최대 시도 횟수
+feature_worktree_limit	1000	기능 허브 탐색 시 작업 공간 조회 상한
