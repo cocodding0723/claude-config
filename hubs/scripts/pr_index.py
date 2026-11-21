@@ -49,8 +49,16 @@ class PrIndex:
                 pass
         return self._rows[common]
 
+    def repo_for_card(self, card):
+        for label in card.get("labels") or []:
+            if label.startswith(REPO_HEAD):
+                repo = label[len(REPO_HEAD):]
+                if self.load(repo) is not None:
+                    return repo
+        return ""
+
     def for_card(self, card):
-        rows = self.load(_label(card, REPO_HEAD))
+        rows = self.load(self.repo_for_card(card))
         if rows is None:
             return None
         ticket = TICKET.search(str(card.get("title") or ""))
