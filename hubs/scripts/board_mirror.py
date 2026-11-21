@@ -42,8 +42,15 @@ class Mirror:
             print(line)
             return
         self.home.mkdir(parents=True, exist_ok=True)
-        with (self.home / "board-mirror.log").open("a", encoding="utf-8") as f:
-            f.write(line.replace("\n", " ") + "\n")
+        data = (line.replace("\n", " ") + "\n").encode("utf-8")
+        limit = int(self.cfg.get("log_bytes", 1024 * 1024))
+        with (self.home / "board-mirror.log").open("a+b") as f:
+            if f.tell() + len(data) > limit:
+                f.seek(max(0, f.tell() - limit // 2))
+                tail = f.read().partition(b"\n")[2]
+                f.truncate(0)
+                f.write(tail)
+            f.write(data[-limit:])
 
     def bd(self, *args):
         p = subprocess.run([os.environ.get("BOARD_BD") or "bd", *args],
@@ -145,7 +152,7 @@ class Mirror:
         self.log(cid, f"기록 {rid} {'건너뜀' if skip else '실패'} {count}회: {reason[:200]}")
         return skip
 
-    def process(self, root, card, state, queued, baseline):
+    def process(self, root, card, state, queued, baseline, baseline_before=None):
         cid = card["id"]
         rows = self.bd("comments", cid, "--json")[-int(self.cfg["seen_limit"]):]
         ids = [str(r["id"]) for r in rows]
@@ -156,8 +163,14 @@ class Mirror:
             old = state.get(cid)
             known = ids[:ids.index(old) + 1] if old in ids else []
         if baseline:
-            print(json.dumps({"baseline": cid, "records": len(rows)}, ensure_ascii=False))
-        else:
+            def old(row):
+                try:
+                    return dt.datetime.fromisoformat(row["created_at"].replace("Z", "+00:00")).timestamp() <= baseline_before
+                except (KeyError, ValueError):
+                    return True
+            known = [str(r["id"]) for r in rows if old(r)]
+            print(json.dumps({"baseline": cid, "records": len(known)}, ensure_ascii=False))
+        if not baseline or len(known) < len(rows):
             sent = {i for q in queued if q.get("mirror_card", q.get("card")) == cid for i in q.get("mirror_ids", [])}
             previous = {q["text"].strip() for q in queued if not q.get("mirror_ids")
                         and (q.get("card") == cid or q.get("hub") == self.hub(root))}
@@ -205,6 +218,7 @@ class Mirror:
         queued = report.read_outbox(self.outbox)
         features = state.setdefault("_features", [])
         bootstrap = state.setdefault("_bootstrap", {})
+        bootstrap_at = state.setdefault("_bootstrap_at", {})
         try:
             jobs = []
             for root in self.roots(cards):
@@ -212,6 +226,8 @@ class Mirror:
                 rid = root["id"]
                 if rid not in features and rid not in state and rid not in bootstrap:
                     bootstrap[rid] = [c["id"] for c in descendants]
+                if rid in bootstrap:
+                    bootstrap_at.setdefault(rid, time.time())
                 jobs.extend((root, card) for card in descendants)
             keys = [[root["id"], card["id"]] for root, card in jobs]
             offset = keys.index(state["_resume"]) if state.get("_resume") in keys else 0
@@ -222,11 +238,13 @@ class Mirror:
                 try:
                     self.remaining()
                     pending = bootstrap.get(rid, [])
-                    completed = self.process(root, card, state, queued, cid in pending and cid not in state)
+                    completed = self.process(root, card, state, queued, cid in pending and cid not in state,
+                                             bootstrap_at.get(rid))
                     if completed and cid in pending:
                         pending.remove(cid)
                     if rid in bootstrap and not pending:
                         bootstrap.pop(rid)
+                        bootstrap_at.pop(rid, None)
                         if rid not in features:
                             features.append(rid)
                 except BudgetExpired:
@@ -253,6 +271,7 @@ def main():
     p.add_argument("--once", action="store_true")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--card", help="미리볼 기능 카드")
+    p.add_argument("--budget-seconds", type=float, help="폴러에 남은 실행 시간")
     p.add_argument("--policy", default=str(Path(__file__).resolve().parents[1] / "board_mirror.tsv"))
     args = p.parse_args()
     mirror = None
@@ -260,6 +279,8 @@ def main():
         raise BudgetExpired("전체 시간 예산 소진")
     try:
         mirror = Mirror(args.policy, args.dry_run, args.card)
+        if args.budget_seconds is not None:
+            mirror.deadline = min(mirror.deadline, time.monotonic() + max(0, args.budget_seconds))
         signal.signal(signal.SIGALRM, expired)
         # flock 대기도 실행 예산에 포함. 루프 검사만으로는 잠금 대기를 끊지 못함
         signal.setitimer(signal.ITIMER_REAL, mirror.remaining())

@@ -351,6 +351,44 @@ class MirrorTest(unittest.TestCase):
         self.assertEqual(0, p.returncode, p.stderr)
         self.assertEqual("2", budget.read_text().strip())
 
+    def test_pending_baseline_sends_records_after_cutoff(self):
+        self.add("과거 기록")
+        mirror = self.mirror()
+        query = mirror.bd
+        def interrupt(*args):
+            if args[:2] == ("comments", "lrm-test.1"):
+                raise bm.BudgetExpired("기준선 중단")
+            return query(*args)
+        mirror.bd = interrupt
+        with contextlib.redirect_stdout(io.StringIO()):
+            mirror.run()
+        self.add("기준선 대기 중 새 기록")
+        self.rows["lrm-test.1"][-1]["created_at"] = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=1)).isoformat()
+        self.run_mirror()
+        self.assertEqual(["id-2"], self.queue()[0]["mirror_ids"])
+
+    def test_log_size_bounded(self):
+        mirror = self.mirror()
+        mirror.cfg["log_bytes"] = "4096"
+        for _ in range(100):
+            mirror.log("lrm-test", "반복 실패" * 20)
+        path = self.home / "board-mirror.log"
+        self.assertLessEqual(path.stat().st_size, 4096)
+        self.assertIn("반복 실패", path.read_text())
+
+    def test_poller_skips_mirror_without_reserve(self):
+        script = (ROOT / "hubs/scripts/slack_poll.sh").read_text()
+        tail = script[script.index('left=$((TOTAL', script.index('# 허브 보고 전송')):script.rindex('exit "$RC"')]
+        for left in (1, 2, 3, 40):
+            capture = self.home / "calls"
+            setup = 'TOTAL="$1"; T0=0; DIR="$2"; PY=python_call; date() { echo 0; }; python_call() { echo "$*" >> "$DIR/calls"; };\n'
+            subprocess.run(["bash", "-c", setup + tail, "test", str(left), str(self.home)], check=True)
+            calls = capture.read_text()
+            self.assertEqual(left > 2, "board_mirror.py" in calls)
+            if left > 2:
+                self.assertIn(f"--budget-seconds {left - 2}", calls)
+            capture.unlink()
+
 
 if __name__ == "__main__":
     unittest.main()
