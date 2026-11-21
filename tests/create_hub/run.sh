@@ -51,6 +51,7 @@ mkdir -p "$SB/home/.claude/skills/orca-hub-create/references"
 cp "$SB/common.txt" "$SB/home/.claude/skills/orca-hub-create/references/common-rules.txt"
 out=$(run --slug inst); rc=$?
 [ "$rc" = 0 ] && [ -f "$SB/ws/coord-inst-hub/docs/a.md" ] && ok "설치본 공통 규칙으로 허브 생성" || ko "설치본 공통 규칙" "rc=$rc $out"
+if echo "$out" | grep -q '허브 생성·기동 실패'; then ko "정상 종료 안내 없음" "$out"; else ok "정상 종료 안내 없음"; fi
 [ ! -e "$SB/ws/coord-inst-hub/Assets" ] && ok "기본 경로는 문서·설정만 받음(코드 없음)" || ko "기본 sparse" "Assets 가 받아짐"
 
 # 3) COMMON_FILE 지정이 먼저. --paths "/*" 는 글자 그대로 들어감(컴퓨터 최상위 폴더 목록으로 풀리지 않음)
@@ -86,7 +87,25 @@ rc=$?
 [ "$rc" = 17 ] && grep -Eq '허브 생성·기동 실패: 줄 [0-9]+, 종료 17, 명령: orca worktree set' "$SB/failure.err" && ok "실패 줄·명령·종료 코드 stderr 출력" || ko "실패 안내" "rc=$rc $(cat "$SB/failure.err")"
 if grep -q '허브 생성·기동 실패' "$SB/failure.out"; then ko "실패 안내 출력 위치" "stdout에 오류 출력"; else ok "실패 안내 stdout 미출력"; fi
 out=$(COMMON_FILE="$SB/common.txt" run --slug ac); rc=$?
-[ "$rc" = 17 ] && echo "$out" | grep -Eq '줄 [0-9]+, 종료 17, 명령: LIVE=\$\(orca terminal list' && ok "명령 치환 실패 위치·전체 명령 출력" || ko "명령 치환 실패 안내" "rc=$rc $out"
+[ "$rc" = 17 ] && echo "$out" | grep -Eq '줄 [0-9]+, 종료 17, 명령: LIVE=\$\(orca terminal list' && ok "명령 치환 실패 위치·명령 출력" || ko "명령 치환 실패 안내" "rc=$rc $out"
+[ "$(echo "$out" | grep -c '허브 생성·기동 실패')" = 1 ] && ok "명령 치환 실패 안내 한 번" || ko "명령 치환 안내 중복" "$out"
+command_line=${out##*명령: }
+[ "${#command_line}" -le 120 ] && ok "실패 명령 최대 120자" || ko "실패 명령 길이" "${#command_line}"
+rm "$SB/home/fail-orca"
+
+echo '{invalid' > "$S"
+out=$(COMMON_FILE="$SB/common.txt" run --slug ac --force); rc=$?
+tail3=$(printf '%s\n' "$out" | tail -3)
+[ "$rc" != 0 ] && echo "$tail3" | grep -q 'json.decoder.JSONDecodeError' && ok "잘못된 JSON: tail -3에 원인 보존" || ko "JSON 원인 누락" "rc=$rc $tail3"
+last=$(printf '%s\n' "$out" | tail -1)
+[[ "$last" == '허브 생성·기동 실패: '*', 명령: python3 '* ]] && ok "heredoc 실패 안내는 마지막 한 줄" || ko "heredoc 안내 위치" "$last"
+[ "$(echo "$out" | grep -c '허브 생성·기동 실패')" = 1 ] && echo "$out" | grep -q 'Traceback (most recent call last)' && ok "원래 traceback 보존, 안내 한 번" || ko "traceback·안내" "$out"
+
+echo '{}' > "$S"
+printf '#!/bin/bash\necho "du: test failure" >&2\nexit 19\n' > "$SB/bin/du"
+chmod +x "$SB/bin/du"
+out=$(COMMON_FILE="$SB/common.txt" run --slug ac --force); rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q 'du: test failure' && ! echo "$out" | grep -q '허브 생성·기동 실패' && ok "du 실패: 정상 종료, 원래 stderr만 보존" || ko "du 실패 오탐" "rc=$rc $out"
 
 echo "----"; echo "통과 $PASS · 실패 $FAIL"
 [ "$FAIL" = 0 ]

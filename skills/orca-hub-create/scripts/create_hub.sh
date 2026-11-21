@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # 코디네이터 허브 생성: sparse 워크스페이스 + Orca 등록 + Opus 코디네이터 기동·제출 확인
 set -Eeuo pipefail
-trap 'printf "허브 생성·기동 실패: 줄 %s, 종료 %s, 명령: %s\n" "$LINENO" "$?" "$BASH_COMMAND" >&2' ERR
+hub_error() {
+  # 명령 치환의 stderr는 보존하고 최상위 실패에서만 안내함
+  [ "$BASH_SUBSHELL" -eq 0 ] || return 0
+  local command="${3%%$'\n'*}"
+  printf '허브 생성·기동 실패: 줄 %s, 종료 %s, 명령: %s\n' "$2" "$1" "${command:0:120}" >&2
+}
+trap 'hub_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
 REPO="${REPO:-$HOME/orca/LoveRevolutionMaker}"
 WS_ROOT="${WS_ROOT:-$HOME/orca/workspaces/LoveRevolutionMaker}"
 SLUG="" NAME="" PATHS="/docs/ /.claude/ /CLAUDE.md /AGENTS.md" ROLE_FILE="" RESUME="" MODEL="claude-opus-5-5" FORCE=0
@@ -99,5 +105,5 @@ for _ in 1 2 3 4 5; do
   if printf '%s' "$T" | grep -q 'paste again'; then orca terminal send --terminal "$H" --enter --json >/dev/null; fi
 done
 [ "$SUBMITTED" = 1 ] || echo "경고: 프롬프트 제출을 확인하지 못함. orca terminal send --terminal $H --enter 로 확인" >&2
-echo "hub=$HUB size=$(du -sh "$HUB" | cut -f1) terminal=$H submitted=$SUBMITTED"
+echo "hub=$HUB size=$(du -sh "$HUB" | cut -f1 || true) terminal=$H submitted=$SUBMITTED"
 
