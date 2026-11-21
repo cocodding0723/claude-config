@@ -64,7 +64,8 @@ class MirrorTest(unittest.TestCase):
         self.assertEqual(1, len(q))
         rep = q[0]
         self.assertEqual(["id-2", "id-3"], rep["mirror_ids"])
-        self.assertEqual(("feat-test", "lrm-test", "/tmp/test"), (rep["hub"], rep["card"], rep["ws"]))
+        self.assertEqual(("feat-test", "lrm-test"), (rep["hub"], rep["card"]))
+        self.assertNotIn("ws", rep)
         self.assertEqual("lrm-test.1", rep["mirror_card"])
         import report_sender
         self.assertEqual("card:lrm-test", report_sender.topic_key(rep))
@@ -254,15 +255,72 @@ class MirrorTest(unittest.TestCase):
         mirror.run()
         self.assertIn("전체 시간 예산 소진", (self.home / "board-mirror.log").read_text())
 
-    def test_outbox_exception_skipped_after_three_attempts(self):
+    def test_outbox_exception_preserves_records_until_recovery(self):
         self.run_mirror()
         self.add("기록기 예외 재현")
-        with patch.object(bm.report, "add", side_effect=ValueError("가짜 기록 실패")):
-            for _ in range(3):
+        with patch.object(bm.report, "add", side_effect=OSError("가짜 대기열 실패")):
+            for _ in range(5):
                 self.run_mirror()
+                state = json.loads((self.home / "board-mirror.state.json").read_text())
+                self.assertEqual("", state["lrm-test.1"])
+                self.assertEqual([], state["_seen"]["lrm-test.1"])
+                self.assertEqual({}, state["_failures"].get("lrm-test.1", {}))
+        self.assertNotIn("건너뜀", (self.home / "board-mirror.log").read_text())
+        self.run_mirror()
         state = json.loads((self.home / "board-mirror.state.json").read_text())
         self.assertEqual("id-1", state["lrm-test.1"])
-        self.assertIn("건너뜀 3회", (self.home / "board-mirror.log").read_text())
+        self.assertEqual(["id-1"], self.queue()[0]["mirror_ids"])
+
+    def test_first_baseline_retries_failed_child_without_replay(self):
+        self.add("과거 하위 기록")
+        mirror = self.mirror()
+        query = mirror.bd
+        def fail_child(*args):
+            if args[:2] == ("comments", "lrm-test.1"):
+                raise ValueError("첫 주기 bd 실패")
+            return query(*args)
+        mirror.bd = fail_child
+        with contextlib.redirect_stdout(io.StringIO()):
+            mirror.run()
+        state = json.loads((self.home / "board-mirror.state.json").read_text())
+        self.assertNotIn("lrm-test", state["_features"])
+        self.assertEqual(["lrm-test.1"], state["_bootstrap"]["lrm-test"])
+        self.run_mirror()
+        self.assertEqual([], self.queue())
+        self.add("기준선 이후 새 기록")
+        self.run_mirror()
+        self.assertEqual(["id-2"], self.queue()[0]["mirror_ids"])
+
+    def test_budget_resume_keeps_initial_baseline_and_reaches_later_cards(self):
+        self.cards.append(dict(id="lrm-test.2", parent="lrm-test", labels=[]))
+        self.rows["lrm-test.2"] = [dict(id="old", text="뒤 카드 과거 기록")]
+        self.add("기존 하위 기록")
+        mirror = self.mirror()
+        query = mirror.bd
+        def interrupt(*args):
+            if args[:2] == ("comments", "lrm-test.1"):
+                raise bm.BudgetExpired("시험 예산 소진")
+            return query(*args)
+        mirror.bd = interrupt
+        with contextlib.redirect_stdout(io.StringIO()):
+            mirror.run()
+        state = json.loads((self.home / "board-mirror.state.json").read_text())
+        self.assertEqual(["lrm-test", "lrm-test.1"], state["_resume"])
+        mirror = self.mirror()
+        query = mirror.bd
+        visited = []
+        def track(*args):
+            if args[0] == "comments":
+                visited.append(args[1])
+            return query(*args)
+        mirror.bd = track
+        with contextlib.redirect_stdout(io.StringIO()):
+            mirror.run()
+        self.assertEqual(["lrm-test.1", "lrm-test.2", "lrm-test"], visited)
+        self.assertEqual([], self.queue())
+        self.add("뒤 카드 새 기록", "lrm-test.2")
+        self.run_mirror()
+        self.assertEqual("lrm-test.2", self.queue()[0]["mirror_card"])
 
     def test_cli_alarm_bounds_lock_wait(self):
         policy = self.home / "policy.tsv"

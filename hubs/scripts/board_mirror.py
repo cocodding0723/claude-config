@@ -129,10 +129,8 @@ class Mirror:
                 path.write_text("\n".join(texts + [ref]), encoding="utf-8")
             body = "\n".join([self.cfg["title"], self.cfg["overflow_format"].format(count=len(texts)),
                                self.cfg["reference"] + " " + card["id"]])
-        ws = next((self.label(card, p) for p in self.cfg["ws_prefixes"].split(",")
-                   if os.path.isabs(self.label(card, p)) and not re.search(r"[\n,]", self.label(card, p))), "")
         rep = report.make_report(self.hub(root), report.NO_TASK, "info", body, files,
-                                 card=root["id"], ws=ws or None)
+                                 card=root["id"])
         rep.update(mirror_ids=ids, mirror_card=card["id"])
         if not validate:
             print(json.dumps(rep, ensure_ascii=False))
@@ -174,7 +172,7 @@ class Mirror:
                     accepted.append(row)
                 except BudgetExpired:
                     raise
-                except Exception as e:
+                except (ValueError, report.ReportError) as e:
                     blocked |= not self.failure(cid, str(row["id"]), e, prior, attempts)
             failures[cid] = attempts
             if blocked:
@@ -184,14 +182,13 @@ class Mirror:
             except BudgetExpired:
                 raise
             except Exception as e:
-                skipped = []
-                for row in accepted:
-                    skipped.append(self.failure(cid, str(row["id"]), e, prior, attempts))
-                if not all(skipped):
-                    return
+                reason = str(e) if not report.has_secret(str(e)) else "비밀 값 의심"
+                self.log(cid, f"대기열 기록 실패 — 다음 회차 재시도: {reason[:200]}")
+                return
         seen[cid] = ids
         state[cid] = ids[-1] if ids else ""
         failures.pop(cid, None)
+        return True
 
     def cleanup(self):
         if self.dry:
@@ -207,20 +204,39 @@ class Mirror:
         cards = self.bd("list", "--all", "--json", "-n", "0")
         queued = report.read_outbox(self.outbox)
         features = state.setdefault("_features", [])
+        bootstrap = state.setdefault("_bootstrap", {})
         try:
+            jobs = []
             for root in self.roots(cards):
-                baseline = root["id"] not in state and root["id"] not in features
-                if root["id"] not in features:
-                    features.append(root["id"])
-                for card in self.descendants(root, cards):
-                    try:
-                        self.remaining()
-                        self.process(root, card, state, queued, baseline)
-                    except BudgetExpired:
-                        raise
-                    except Exception as e:
-                        reason = str(e) if not report.has_secret(str(e)) else "비밀 값 의심"
-                        self.log(card["id"], f"카드 조회·기록 실패: {type(e).__name__} {reason[:200]}")
+                descendants = self.descendants(root, cards)
+                rid = root["id"]
+                if rid not in features and rid not in state and rid not in bootstrap:
+                    bootstrap[rid] = [c["id"] for c in descendants]
+                jobs.extend((root, card) for card in descendants)
+            keys = [[root["id"], card["id"]] for root, card in jobs]
+            offset = keys.index(state["_resume"]) if state.get("_resume") in keys else 0
+            jobs = jobs[offset:] + jobs[:offset]
+            for index, (root, card) in enumerate(jobs):
+                rid, cid = root["id"], card["id"]
+                state["_resume"] = [rid, cid]
+                try:
+                    self.remaining()
+                    pending = bootstrap.get(rid, [])
+                    completed = self.process(root, card, state, queued, cid in pending and cid not in state)
+                    if completed and cid in pending:
+                        pending.remove(cid)
+                    if rid in bootstrap and not pending:
+                        bootstrap.pop(rid)
+                        if rid not in features:
+                            features.append(rid)
+                except BudgetExpired:
+                    raise
+                except Exception as e:
+                    reason = str(e) if not report.has_secret(str(e)) else "비밀 값 의심"
+                    self.log(cid, f"카드 조회·기록 실패: {type(e).__name__} {reason[:200]}")
+                following = jobs[(index + 1) % len(jobs)]
+                state["_resume"] = [following[0]["id"], following[1]["id"]]
+            state.pop("_resume", None)
             self.cleanup()
         except BudgetExpired:
             self.log("-", "전체 시간 예산 소진 — 다음 회차 재개")
