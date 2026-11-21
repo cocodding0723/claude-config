@@ -1,20 +1,20 @@
 # 워크스페이스 자동 정리기(ws_gc) 런북
 
-쓰임이 끝난 Orca 워크스페이스를 하루 3번 점검해 지우는 `ws_gc.sh` 의 판정 규칙, 설치, 실삭제 전환, 되돌리기를 적는다. 작성일은 2026-11-10 이다.
+쓰임이 끝난 Orca 워크스페이스를 30분마다 점검해 보관 뒤 지운다. `ws_gc.sh`의 판정 규칙과 복구 절차다. 작성일은 2026-11-10, 정정일은 2026-11-21이다.
 
 ## 쉬운 말 3줄 요약
 
 - 무엇이 생겼나: PR 이 병합·닫힘이거나 커밋이 전부 서버에 올라가 있고, 미커밋이 없고, 2일 넘게 안 쓴 워크스페이스를 스크립트가 찾아 지운다. 지우기 전에 테스트 결과물은 `~/orca/archive/` 로 복사해 둔다.
 - 왜: 오래된 워크스페이스가 디스크 수십 GB 를 차지하고, 사람이 정리를 잊는다(11-10 조사에서 96개 중 10개가 바로 정리 대상이었다).
-- 사용자가 할 일: 지금은 시험 모드(지우지 않고 목록만 기록)로 돈다. 1주 뒤 로그를 보고 괜찮으면 메인에게 실삭제 전환을 승인한다(6절).
+- 사용자가 할 일: `--dry-run --no-slack`으로 삭제 후보를 확인한다. 설치된 정리기는 30분마다 `--apply`로 돈다(10절).
 - 2026-11-19 추가: PR 이 전부 병합된 워크스페이스는 창이 붙어 있어도 정리한다. 30분 넘게 안 쓴 곳을 이번 회차에 표시하고, 다음 회차에 창을 닫은 뒤 보관·삭제한다(2절 "병합된 PR 에 창이 붙은 곳").
 - 2026-11-17 추가: PR 이 병합·닫힌 워크스페이스는 2일을 기다리지 않고 다음 회차에 정리한다. 미커밋이 있어도 전부 `~/orca/archive/<폴더>-<날짜시각>/` 에 보관·대조한 뒤 지운다(2절 "PR 닫힘 즉시 정리").
-- 2026-11-21 정정: 마무리 목록의 허브는 창·하위가 없고 로컬 브랜치가 남으면 보관·삭제한다(「마무리된 허브 정리」). 기본 미리보기는 화면 출력만 하며 로그·잠금·Slack을 쓰지 않는다. 아래 예전 로그·Slack 설명 중 미리보기 쓰기는 이 정정으로 대체한다.
+- 2026-11-21 정정: 마무리 목록의 허브는 종료 반영 유예 뒤 활동이 없고 창·하위가 없으면 보관·삭제한다(「마무리된 허브 정리」). 미리보기는 화면 출력만 하며 로그·잠금·Slack을 쓰지 않는다.
 
 ## 1. 흐름
 
 ```text
- launchd (하루 3회, 10:07·15:07·22:07)
+ launchd (30분 간격, --apply)
    │
    ▼
  ws_gc.sh ──▶ orca worktree list · terminal list · worker-list   (하나라도 실패하면 중단: 살아 있는 곳을 가릴 수 없음)
@@ -22,11 +22,12 @@
    ▼  워크스페이스마다
  제외 → 활동 → 미커밋 → PR/origin → 서브모듈       (먼저 걸리는 이유 하나로 건너뜀, 로그에 이유 기록)
    │ 전부 통과
-   ├─ --dry-run(기본): CANDIDATE 로그만
+   ├─ --dry-run(기본): 판정 화면 출력만, 영구 쓰기 없음
    └─ --apply : 결과물 복제·파일 수 대조 → orca worktree rm → worker-release
    │
    ▼
- 로그 ~/orca/archive/ws_gc.log + Slack progress 1줄(후보·삭제가 있을 때만)
+ --apply 만 로그 ~/orca/archive/ws_gc.log 기록
+ 삭제 또는 새 실패가 있을 때만 Slack progress 전송
 ```
 
 ## 2. 판정 규칙
@@ -140,6 +141,7 @@ PR 이 끝난 워크스페이스는 위 조건 2(미커밋 0)·3(휴지 일수)�
 | 최소 휴지 일수 | 2 | `--days`·`WS_GC_MIN_IDLE_DAYS` |
 | 로컬 브랜치가 남는 곳의 유예(분) | 60 | `WS_GC_FRESH_GRACE_MIN`. 막 만든 빈 공간 보호용. 이 시간만 지나면 휴지 일수 대신 후보 |
 | PR 닫힘 즉시 정리 유예(분) | 10 | `WS_GC_PR_DONE_GRACE_MIN` |
+| 허브 마무리 뒤 종료 반영 유예(분) | 10 | `WS_GC_HUB_REOPEN_GRACE_MIN`. 이 시간 뒤 활동·커밋만 재개로 판정 |
 | PR 닫힘 즉시 정리 보관 상한(MB) | 2048 | `WS_GC_PR_DONE_MAX_MB`. 넘으면 `archive_big` 로 남김 |
 | 부산물·보관 대상 정규식, 보호 브랜치, 허브 접두사 | 블록 안 | 파일 수정 |
 | Slack 전송 스크립트 | `~/.config/lrm-hubs/slack_notify.sh` | `WS_GC_NOTIFY`(시험용) |
@@ -166,9 +168,9 @@ bash ~/.config/lrm-hubs/ws_gc.sh --json --no-slack   # 요약 JSON(stdout), 상�
 
 종료 코드: 0 정상(건너뜀 포함), 1 삭제 단계 실패 있음, 2 인자 오류, 3 환경 오류(orca·gh·jq 없음, orca 응답 없음).
 
-로그 한 줄 형식: `시각 [DRY|APPLY] 판정 이유 <저장소>/<폴더> — 근거`. 판정은 `START`·`SKIP`·`CANDIDATE`·`DELETE`·`ARCHIVE`·`NOISE`·`RM_RETRY_FORCE`·`WORKER_RELEASE`·`END`·`SLACK`.
+정정(2026-11-21): 출력 한 줄 형식은 `시각 [DRY|APPLY] 판정 이유 <저장소>/<폴더> — 근거`다. 미리보기는 화면에만 출력한다. `--apply`만 로그 파일에 기록한다. 판정은 `START`·`SKIP`·`CANDIDATE`·`DELETE`·`ARCHIVE`·`NOISE`·`RM_RETRY_FORCE`·`WORKER_RELEASE`·`END`·`SLACK`이다.
 
-Slack 요약은 양식 A 를 따른다(`--kind progress`, 태그 `ws-gc`). 예: 첫 줄 `워크스페이스 정리 시험 점검`, 빈 줄, `• 결과: 삭제 후보 8개·예상 용량 4.4GB(시험, 삭제 없음), 건너뜀 236곳(미커밋 50·최근활동 82 …)`. 실전송 확인은 메인이 한 줄로 한다.
+정정(2026-11-21): Slack은 `--apply`에서 삭제 또는 지난번과 다른 실패가 있을 때만 전송한다. 후보가 있는 미리보기도 전송하지 않는다. 제목은 `워크스페이스 자동 정리 완료`, 빈 줄 뒤 `• 결과: …` 형식이다(`--kind progress`, 태그 `ws-gc`).
 
 ```bash
 bash ~/.config/lrm-hubs/ws_gc.sh --dry-run --only LRM-284
@@ -259,20 +261,26 @@ bash ~/.config/lrm-hubs/release_ws.sh --dispatch <id> [--dry-run] [--json]
 
 **마무리 목록에 든 허브만 보관 뒤 삭제한다.** `feature_close.sh --yes`가 남긴 `~/.config/lrm-hubs/closed_hubs.txt`를 읽는다. `LRM_CLOSED_HUBS`로 경로를 바꾼다. 목록과 작업 공간 경로는 `pwd -P`로 정규화해 비교한다.
 
+정정(2026-11-21): 한 줄은 `경로<TAB>마무리 시각(epoch 초)`다. 같은 경로를 다시 마무리하면 시각을 갱신하고 중복을 제거한다. 추가·제거는 공용 `lib/closed_hubs.sh`에서 목록 파일 자체의 `flock`을 공유한다. 제거는 판정 때 읽은 시각과 같은 줄만 지워 판정 뒤 시각이 바뀐 기록을 보존한다. 같은 이름 허브가 여러 개면 `feature_close`는 경고하고 허브 단계를 건너뛴다.
+
 ```text
-목록 허브 → 창 없음 → 하위 0 → 로컬 브랜치 유지
+목록 허브 → 종료 반영 유예 뒤 활동 없음 → 창 없음 → 하위 0 → 로컬 브랜치 유지
           → 보관 상한 검사 → 복제·대조 → 작업 공간 삭제 → 목록에서 제거
 ```
 
 | 조건 | 판정 |
 |---|---|
 | 목록 밖 허브 | `SKIP hub` |
+| 경로만 적힌 옛 목록 또는 잘못된 시각 | `CLOSED_HUBS_WARN` 경고와 `SKIP hub`. 허브와 목록 유지 |
+| Orca 마지막 활동 또는 마지막 커밋이 마무리 시각 + 유예보다 늦음 | `SKIP hub_reopened`. 허브 보존, `--apply`에서 목록 줄 제거 |
 | 연결된 창 또는 활동 중 워커 | `SKIP live`. 쉬는 워커의 창도 닫지 않고 보존 |
 | 하위 작업 공간 존재 | `SKIP children`. `parentWorktreeId`와 `childWorktreeIds` 모두 확인 |
 | detached HEAD 또는 보호 브랜치 | `SKIP unmerged` 또는 `SKIP protected` |
 | 조건 통과 | `CANDIDATE … hub_closed`, 삭제 뒤 `DELETE … hub_closed`. JSON의 `reason`도 `hub_closed` |
 
-**활동 일수와 PR 상태는 조회하지 않는다.** 마무리 절차가 이미 끝났기 때문이다. 보관은 PR 닫힘 정리의 `archive_all`·`verify_full`을 재사용한다. 별도 복제 경로는 대조·용량 검사 누락을 막기 위해 두지 않는다. 서브모듈 변경, 열린 Unity, `WS_GC_PR_DONE_MAX_MB` 초과는 기존과 같이 보존한다.
+**마무리 뒤 활동을 확인하고 PR 조회와 활동 일수 대기는 생략한다.** 다시 연 허브를 보호하기 위해 Orca `lastActivityAt`과 마지막 커밋을 모두 비교한다. 보관은 PR 닫힘 정리의 `archive_all`·`verify_full`을 재사용한다. 서브모듈 변경, 열린 Unity, `WS_GC_PR_DONE_MAX_MB` 초과는 기존과 같이 보존한다. `feature_close --yes`의 목록 등록 뒤 30분 정리 회차가 이 조건을 확인해 허브 폴더를 지운다.
+
+**종료 반영 유예는 기본 10분이다.** `WS_GC_HUB_REOPEN_GRACE_MIN`으로 바꾼다. Orca가 터미널 종료·하위 정리를 늦게 반영하므로, 마무리 시각 + 유예 뒤의 활동·커밋만 재개로 본다. 유예 안 활동은 기존 창·하위 보호 조건을 통과하면 보관·삭제한다.
 
 **sparse 허브의 미추적 결과물도 보관한다.** `docs/out/` 아래 HTML·증거를 `<archive>/<허브폴더>-<날짜시각>/files/docs/out/`로 복제하고 파일 수·바이트·내용을 대조한다. 추적 변경은 `tracked.patch`와 `staged.patch`에 남긴다. 보관·삭제 실패 시 목록 항목을 유지한다. 브랜치는 삭제하지 않는다.
 
@@ -288,7 +296,7 @@ cp -R <보관폴더>/files/. <허브경로>/
 
 `staged.patch`는 스테이징 상태를 복구할 때 `git apply --cached --binary`로 적용한다. 다시 작업할 허브는 마무리 목록에 추가하지 않는다. 자동 재삭제를 막기 위해 목록을 비운 상태로 작업한다.
 
-근거: 기준 `d52c444`, `hubs/scripts/ws_gc.sh`의 허브 판정·보관 경로와 `tests/ws_gc/run.sh`의 `[HUB]` 시험이다. sparse가 추적 파일 범위에 미치는 영향은 [Git sparse-checkout 문서](https://git-scm.com/docs/git-sparse-checkout)를 따른다.
+근거: 기준 `27191cb`, 2026-11-21 정정. `hubs/scripts/ws_gc.sh`의 허브 판정과 `tests/ws_gc/run.sh`의 `[HUB]` 시험, `tests/board_sweep/test_feature_close.py`의 동시 갱신 시험이다. 잠금은 [Python fcntl 문서](https://docs.python.org/3/library/fcntl.html)를 따른다. sparse가 추적 파일 범위에 미치는 영향은 [Git sparse-checkout 문서](https://git-scm.com/docs/git-sparse-checkout)를 따른다.
 
 ## 참고
 

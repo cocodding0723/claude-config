@@ -16,6 +16,7 @@ trap '[ -n "${KEEP:-}" ] || rm -rf "${SB:?}"' EXIT
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 export WS_GC_INBOX="$SB/inbox"   # 허브 색인이 실제 ~/.config 로 새지 않게 격리
 export LRM_CLOSED_HUBS="$SB/closed_hubs.txt"
+export WS_GC_HUB_REOPEN_GRACE_MIN=10
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 FAKE="$SB/fake" ROOT="$SB/ws" ARC="$SB/archive" O="$SB/origin" BIN="$SB/bin" W="$ROOT/repoA"
 mkdir -p "$FAKE/pr" "$ROOT" "$ARC" "$O" "$BIN" "$W"
@@ -614,7 +615,7 @@ chk "[ML] 끄면(WS_GC_MERGED_LIVE=0) 창이 붙은 곳은 예전처럼 보존" 
 
 for n in live children detached protected big corrupt changed refused; do
   mk "coord-gc-$n" "feat/gc-$n" local recent
-  printf '%s\n' "$W/coord-gc-$n" >> "$LRM_CLOSED_HUBS"
+  printf '%s\t%s\n' "$W/coord-gc-$n" "$(date +%s)" >> "$LRM_CLOSED_HUBS"
 done
 git -C "$SEED" worktree add -q -b feat/gc-ready "$W/coord-gc-ready" HEAD
 reg coord-gc-ready refs/heads/feat/gc-ready "$NOW_MS"
@@ -628,7 +629,7 @@ printf 'unique evidence\n' > "$W/coord-gc-ready/docs/out/evidence/check.txt"
 git -C "$W/coord-gc-ready" show HEAD:.gitignore > "$W/coord-gc-ready/.gitignore"
 printf '!docs/out/\n!docs/out/**\n' >> "$W/coord-gc-ready/.gitignore"
 ln -s "$W/coord-gc-ready" "$SB/hub-alias"
-printf '%s\n' "$SB/hub-alias" >> "$LRM_CLOSED_HUBS"
+printf '%s\t%s\n' "$SB/hub-alias" "$(date +%s)" >> "$LRM_CLOSED_HUBS"
 term coord-gc-live
 regen; regen_live
 jq --arg h "repo::$W/coord-gc-children" --arg c "$W/coord-hub" \
@@ -648,16 +649,16 @@ done
 gc --only coord-hub
 chk "[HUB] 목록 밖 허브 보존" 'has "SKIP hub repoA/coord-hub" && [ -e "$W/coord-hub" ]'
 WS_GC_PR_DONE_MAX_MB=0 gc --apply --only coord-gc-big
-chk "[HUB] 보관 상한 초과 보존·목록 유지" '[ "$RC" = 0 ] && has "SKIP archive_big repoA/coord-gc-big" && grep -Fxq "$W/coord-gc-big" "$LRM_CLOSED_HUBS"'
+chk "[HUB] 보관 상한 초과 보존·목록 유지" '[ "$RC" = 0 ] && has "SKIP archive_big repoA/coord-gc-big" && ! has "PR 닫힘()" && grep -Fq "$W/coord-gc-big" "$LRM_CLOSED_HUBS"'
 FAKE_TAR_CORRUPT=1 gc --apply --only coord-gc-corrupt
-chk "[HUB] 보관 손상 시 삭제 차단·목록 유지" '[ "$RC" = 1 ] && [ -d "$W/coord-gc-corrupt" ] && grep -Fxq "$W/coord-gc-corrupt" "$LRM_CLOSED_HUBS"'
+chk "[HUB] 보관 손상 시 삭제 차단·목록 유지" '[ "$RC" = 1 ] && [ -d "$W/coord-gc-corrupt" ] && grep -Fq "$W/coord-gc-corrupt" "$LRM_CLOSED_HUBS"'
 FAKE_RM_CHECK_DIRTY=1 FAKE_RM_ADD_EDIT=1 gc --apply --only coord-gc-changed
 chk "[HUB] 보관 뒤 변경 시 강제 삭제 차단" '[ "$RC" = 1 ] && [ -d "$W/coord-gc-changed" ] && ! grep -q -- "--force" "$FAKE/orca.calls"'
 FAKE_RM_REASON=locked gc --apply --only coord-gc-refused
-chk "[HUB] 삭제 거부 시 목록 유지" '[ "$RC" = 1 ] && grep -Fxq "$W/coord-gc-refused" "$LRM_CLOSED_HUBS"'
+chk "[HUB] 삭제 거부 시 목록 유지" '[ "$RC" = 1 ] && grep -Fq "$W/coord-gc-refused" "$LRM_CLOSED_HUBS"'
 FAKE_RM_CHECK_DIRTY=1 gc --apply --only coord-gc-ready --json --no-slack
 D=$(ls -d "$ARC"/coord-gc-ready-* 2>/dev/null | head -1)
-chk "[HUB] 보관 뒤 삭제·정규화한 목록 항목 제거" '[ "$RC" = 0 ] && [ ! -e "$W/coord-gc-ready" ] && ! grep -q "coord-gc-ready\|hub-alias" "$LRM_CLOSED_HUBS" && grep -Fxq "$W/coord-gc-live" "$LRM_CLOSED_HUBS"'
+chk "[HUB] 보관 뒤 삭제·정규화한 목록 항목 제거" '[ "$RC" = 0 ] && [ ! -e "$W/coord-gc-ready" ] && ! grep -q "coord-gc-ready\|hub-alias" "$LRM_CLOSED_HUBS" && grep -Fq "$W/coord-gc-live" "$LRM_CLOSED_HUBS"'
 chk "[HUB] 미추적 docs/out HTML·증거 byte 일치" 'cmp -s "$D/files/docs/out/report.html" "$SB/report.before" && cmp -s "$D/files/docs/out/evidence/check.txt" "$SB/check.before"'
 chk "[HUB] 로그·JSON 정리 사유 hub_closed" 'has "DELETE repoA/coord-gc-ready hub_closed" && sed -n '\''/^{/,$p'\'' "$SB/out" | jq -e '\''.items[] | .reason == "hub_closed" and .verdict == "deleted"'\'' >/dev/null'
 chk "[HUB] 브랜치 유지·창 닫기 없음" 'git -C "$SEED" show-ref --verify --quiet refs/heads/feat/gc-ready && ! grep -q "terminal close\|--delete-branch" "$FAKE/orca.calls"'
@@ -665,6 +666,25 @@ mkdir -p "$SB/dry-check"
 env PATH="$BIN:$PATH" FAKE_DIR="$FAKE" FAKE_ROOT="$ROOT" bash "$GC" --root "$ROOT" --archive-dir "$SB/dry-check/archive" --log "$SB/dry-check/log" --only coord-gc- --dry-run --no-slack > "$SB/dry-check.out" 2>&1
 RC=$?
 chk "[HUB] 미리보기: 로그·잠금·보관 파일 생성 없음" '[ "$RC" = 0 ] && [ -z "$(ls -A "$SB/dry-check")" ]'
+
+for n in activity commit legacy grace; do
+  mk "coord-reopen-$n" "feat/reopen-$n" local recent
+done
+printf '%s\t%s\n' "$W/coord-reopen-activity" "$((NOW_MS / 1000 - WS_GC_HUB_REOPEN_GRACE_MIN * 60 - 1))" >> "$LRM_CLOSED_HUBS"
+printf '%s\t%s\n' "$W/coord-reopen-commit" "$((NOW_MS / 1000 - WS_GC_HUB_REOPEN_GRACE_MIN * 60 - 1))" >> "$LRM_CLOSED_HUBS"
+printf '%s\t%s\n' "$W/coord-reopen-grace" "$((NOW_MS / 1000 - 1))" >> "$LRM_CLOSED_HUBS"
+printf '%s\n' "$W/coord-reopen-legacy" >> "$LRM_CLOSED_HUBS"
+regen
+jq --arg p "$W/coord-reopen-commit" '.result.worktrees |= map(if .path == $p then .lastActivityAt = 0 else . end)' "$FAKE/worktrees.json" > "$SB/reopen.json"
+mv "$SB/reopen.json" "$FAKE/worktrees.json"
+cp "$LRM_CLOSED_HUBS" "$SB/reopen.before"
+gc --only coord-reopen-
+chk "[HUB] 재개 허브 미리보기: 활동·커밋 감지·목록 불변" 'has "SKIP hub_reopened repoA/coord-reopen-activity" && has "SKIP hub_reopened repoA/coord-reopen-commit" && cmp -s "$LRM_CLOSED_HUBS" "$SB/reopen.before"'
+chk "[HUB] 여유 안 활동·커밋: 삭제 후보" 'has "CANDIDATE repoA/coord-reopen-grace hub_closed"'
+gc --only coord-reopen- --apply
+chk "[HUB] 여유 뒤 재개 허브 보존·목록 제거" '[ "$RC" = 0 ] && [ -d "$W/coord-reopen-activity" ] && [ -d "$W/coord-reopen-commit" ] && ! grep -q "coord-reopen-activity\|coord-reopen-commit" "$LRM_CLOSED_HUBS" && [ "$(rm_calls)" = 1 ]'
+chk "[HUB] 여유 안 활동·커밋: 보관 뒤 삭제" '[ ! -e "$W/coord-reopen-grace" ] && ! grep -q "coord-reopen-grace" "$LRM_CLOSED_HUBS" && [ -d "$(ls -d "$ARC"/coord-reopen-grace-* | head -1)" ]'
+chk "[HUB] 옛 목록 경고·보존·목록 유지" 'has "CLOSED_HUBS_WARN" && has "SKIP hub repoA/coord-reopen-legacy" && [ -d "$W/coord-reopen-legacy" ] && grep -Fxq "$W/coord-reopen-legacy" "$LRM_CLOSED_HUBS"'
 
 bash "$HERE/adopt.sh" || FAIL=$((FAIL + 1))
 echo "----"; echo "통과 $PASS · 실패 $FAIL"

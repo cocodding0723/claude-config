@@ -3,6 +3,7 @@
 # 판정·절차·되돌리기는 ~/.config/lrm-hubs/docs/ws-gc.md(원본 hubs/docs/ws-gc.md).
 set -uo pipefail
 . "$(dirname "$0")/lib/py.sh"  # PY = 3.10 이상 python3 (launchd 짧은 PATH 의 3.9 방지)
+. "$(dirname "$0")/lib/closed_hubs.sh"
 # launchd 의 짧은 PATH 에서도 orca·gh·jq 를 찾도록 뒤에 덧붙임(앞의 PATH 가 우선: 시험의 가짜 명령)
 export PATH="$PATH:/Applications/Orca.app/Contents/Resources/bin:/opt/homebrew/bin:/usr/local/bin"
 
@@ -14,6 +15,7 @@ CFG_MIN_IDLE_DAYS="${WS_GC_MIN_IDLE_DAYS:-2}"            # 마지막 활동 후 
 CFG_FRESH_GRACE_MIN="${WS_GC_FRESH_GRACE_MIN:-60}"       # 브랜치가 남는 깨끗한 곳은 일수 대신 이 분만 지나면 후보(막 만든 빈 공간 보호)
 CFG_HUB_PREFIX="coord-"
 CFG_CLOSED_HUBS="${LRM_CLOSED_HUBS:-$HOME/.config/lrm-hubs/closed_hubs.txt}"
+CFG_HUB_REOPEN_GRACE_MIN="${WS_GC_HUB_REOPEN_GRACE_MIN:-10}"  # Orca 종료 반영 지연을 재개 활동으로 오인하지 않도록 유예함.
 CFG_GAME_REPO_DIR="${WS_GC_GAME_REPO:-LoveRevolutionMaker}"  # 부모 자동 연결 대상 저장소 폴더(<root>/ 바로 아래)
 CFG_TICKET_RE='LRM-[0-9]+'                               # 같은 티켓 판정에 쓰는 이름·브랜치·폴더 패턴
 CFG_PROTECTED_BRANCHES="main master develop dev"         # 이 브랜치(와 release/*)가 붙은 곳은 PR 이력이 있어도 제외
@@ -404,43 +406,32 @@ list_stats() {
 }
 # PR 닫힘 즉시 정리 판정. 0 후보(DETAIL·$TMP/all.txt), 1 건너뜀
 evaluate_pr_done() {
-  local p="$1" br="$2" pb st kb bytes
-  submodules_clean "$p" || { REASON=submodule; DETAIL="PR 닫힘($PR_LABEL)이지만 서브모듈 안 미커밋·미push"; return 1; }
-  if [ -e "$p/Temp/UnityLockfile" ] && lsof -t -- "$p/Temp/UnityLockfile" >/dev/null 2>&1; then REASON=unity_open; DETAIL="PR 닫힘($PR_LABEL)이지만 Unity 가 열려 있음"; return 1; fi
-  classify_changes "$p" || { REASON=dirty; DETAIL="PR 닫힘이지만 변경 목록을 못 읽음"; return 1; }
+  local p="$1" br="$2" pb st kb bytes context="PR 닫힘($PR_LABEL)"
+  [ "$CLEANUP_REASON" != hub_closed ] || context="마무리 허브"
+  submodules_clean "$p" || { REASON=submodule; DETAIL="$context 이지만 서브모듈 안 미커밋·미push"; return 1; }
+  if [ -e "$p/Temp/UnityLockfile" ] && lsof -t -- "$p/Temp/UnityLockfile" >/dev/null 2>&1; then REASON=unity_open; DETAIL="$context 이지만 Unity 가 열려 있음"; return 1; fi
+  classify_changes "$p" || { REASON=dirty; DETAIL="$context 변경 목록을 못 읽음"; return 1; }
   build_full_list
   pb=$(git -C "$p" diff --binary HEAD 2>/dev/null | wc -c | tr -d ' ')
   st=$(list_stats "$p" "$TMP/all.txt")
   bytes=$(( ${st#* } + pb )); kb=$(( (bytes + 1023) / 1024 ))
   PR_DONE_INFO="보관예정 파일 ${st% *}개·추적 변경 ${N_TRACKED_ALL}건(patch $(human $(( (pb + 1023) / 1024 ))))·합계 $(human "$kb")"
-  if [ "$bytes" -gt $((CFG_PR_DONE_MAX_MB * 1048576)) ]; then REASON=archive_big; DETAIL="PR 닫힘($PR_LABEL)이지만 $PR_DONE_INFO 이 상한 ${CFG_PR_DONE_MAX_MB}MB 초과"; return 1; fi
+  if [ "$bytes" -gt $((CFG_PR_DONE_MAX_MB * 1048576)) ]; then REASON=archive_big; DETAIL="$context 이지만 $PR_DONE_INFO 이 상한 ${CFG_PR_DONE_MAX_MB}MB 초과"; return 1; fi
   DETAIL="pr_done PR $PR_LABEL 병합·닫힘 → 활동 대기 생략 branch=$br $PR_DONE_INFO"
   return 0
 }
 protected_branch() { local b="$1" x; for x in $CFG_PROTECTED_BRANCHES; do [ "$b" = "$x" ] && return 0; done; case "$b" in release/*) return 0 ;; esac; return 1; }
 
 closed_hub() {
-  local target entry normalized
-  target=$(cd "$1" 2>/dev/null && pwd -P) || return 1
-  [ -f "$CFG_CLOSED_HUBS" ] || return 1
-  while IFS= read -r entry || [ -n "$entry" ]; do
-    [ -n "$entry" ] || continue
-    normalized=$(cd "$entry" 2>/dev/null && pwd -P) || continue
-    [ "$normalized" != "$target" ] || return 0
-  done < "$CFG_CLOSED_HUBS"
-  return 1
+  CLOSED_AT=$(closed_hubs_registry read "$CFG_CLOSED_HUBS" "$1") || return 1
+  [ -n "$CLOSED_AT" ] || return 1
+  if [ "$CLOSED_AT" = legacy ]; then
+    log "CLOSED_HUBS_WARN $1 — 마무리 시각 없음·형식 오류, 허브 보존"; return 1
+  fi
 }
 closed_hub_clear() {
   [ "$APPLY" = 1 ] || return 0
-  "$PY" - "$CFG_CLOSED_HUBS" "$HUB_CANONICAL" <<'PY'
-import fcntl, os, sys
-with open(sys.argv[1], "r+") as stream:
-    fcntl.flock(stream, fcntl.LOCK_EX)
-    lines = stream.readlines()
-    stream.seek(0)
-    stream.writelines(line for line in lines if os.path.realpath(line.rstrip("\n")) != sys.argv[2])
-    stream.truncate()
-PY
+  closed_hubs_registry clear "$CFG_CLOSED_HUBS" "$HUB_CANONICAL" "$CLOSED_AT"
 }
 
 # 수거 표시: 경로<TAB>표시 시각. 시험 모드(dry-run)는 표시를 쓰지도 지우지도 않음
@@ -466,12 +457,19 @@ sweep_ready() {
 
 # evaluate 경로 최근활동ms 살아있는하위수 → 0 후보, 1 건너뜀(REASON·DETAIL)
 evaluate() {
-  local p="$1" last_ms="$2" kids="$3" br last_c last age prs keep_br hub=0
+  local p="$1" last_ms="$2" kids="$3" br last_c last age prs keep_br hub=0 reopen_after
   REASON="" DETAIL="" PR_LABEL="" UNMERGED_KEPT=0 keep_br=0 PR_DONE=0 PRS_OK=0 prs="" LIVE_TERM=0 CLOSE_TERMS=0
   CLEANUP_REASON=pr_done HUB_CANONICAL=""
   case "$(basename "$p")" in "$CFG_HUB_PREFIX"*)
     closed_hub "$p" || { REASON=hub; return 1; }
     hub=1; HUB_CANONICAL=$(cd "$p" && pwd -P)
+    last_c=$(git -C "$p" log -1 --format=%ct 2>/dev/null || echo 0)
+    reopen_after=$((CLOSED_AT + CFG_HUB_REOPEN_GRACE_MIN * 60))
+    if [ "$last_ms" -gt $((reopen_after * 1000)) ] || [ "$last_c" -gt "$reopen_after" ]; then
+      REASON=hub_reopened; DETAIL="마무리 유예 뒤 활동 — 허브 보존·마무리 목록 해제"
+      closed_hub_clear || { N_FAIL=$((N_FAIL + 1)); log "CLOSED_HUBS_FAIL $p — 목록 갱신 실패"; }
+      return 1
+    fi
     if grep -Fxq -- "$p" "$TMP/terms.tsv.paths" || grep -Fxq -- "$p" "$TMP/live_workers"; then REASON=live; return 1; fi
     ;; esac
   [ -e "$p/.git" ] || { REASON=missing; return 1; }
@@ -489,7 +487,7 @@ evaluate() {
     [ -n "$br" ] && git -C "$p" show-ref --verify --quiet "refs/heads/$br" || { REASON=unmerged; DETAIL="이름 있는 로컬 브랜치 없음"; return 1; }
     PR_DONE=1; CLEANUP_REASON=hub_closed
     evaluate_pr_done "$p" "$br" || return 1
-    DETAIL="hub_closed 마무리 목록 → 활동·PR 조회 생략 branch=$br $PR_DONE_INFO"
+    DETAIL="hub_closed 마무리 유예 뒤 활동 없음 → PR 조회 생략 branch=$br $PR_DONE_INFO"
     return 0
   fi
   last_c=$(git -C "$p" log -1 --format=%ct 2>/dev/null || echo 0)
@@ -748,6 +746,8 @@ process_place() {
 }
 # PR 닫힘 즉시 정리 후보의 보관·삭제(process_place 에서 부름)
 process_pr_done() {
+  local context="PR 닫힘"
+  [ "$CLEANUP_REASON" != hub_closed ] || context="마무리 허브"
   if [ "$CLEANUP_REASON" = hub_closed ]; then N_HUBCLOSED=$((N_HUBCLOSED + 1)); else N_PRDONE=$((N_PRDONE + 1)); fi
   if [ "$APPLY" = 0 ]; then
     log "CANDIDATE $name $DETAIL size=$(human "$size_kb")"
@@ -765,8 +765,8 @@ process_pr_done() {
   fi
   dest=$(pr_done_dest "$p")
   if ! archive_all "$p" "$dest"; then
-    echo archive_fail >> "$TMP/skips"; N_FAIL=$((N_FAIL + 1)); log "SKIP archive_fail $name — PR 닫힘 보관·대조 실패, 삭제 안 함(보관본 $dest 확인)"
-    echo "$name" >> "$TMP/failed.txt"; item failed archive_fail "PR 닫힘 보관·대조 실패"; return 0
+    echo archive_fail >> "$TMP/skips"; N_FAIL=$((N_FAIL + 1)); log "SKIP archive_fail $name — $context 보관·대조 실패, 삭제 안 함(보관본 $dest 확인)"
+    echo "$name" >> "$TMP/failed.txt"; item failed archive_fail "$context 보관·대조 실패"; return 0
   fi
   if remove_pr_done "$p" "$dest"; then
     N_DEL=$((N_DEL + 1)); FREED_KB=$((FREED_KB + size_kb))
@@ -779,8 +779,8 @@ process_pr_done() {
     release_workers "$p"
     mark_clear "$p"
   else
-    echo rm_fail >> "$TMP/skips"; N_FAIL=$((N_FAIL + 1)); log "SKIP rm_fail $name — PR 닫힘 정리 중 삭제 거부·보관 뒤 변경, 보관본은 남음($dest)"
-    echo "$name" >> "$TMP/failed.txt"; item failed rm_fail "PR 닫힘 정리 중 삭제 거부"
+    echo rm_fail >> "$TMP/skips"; N_FAIL=$((N_FAIL + 1)); log "SKIP rm_fail $name — $context 정리 중 삭제 거부·보관 뒤 변경, 보관본은 남음($dest)"
+    echo "$name" >> "$TMP/failed.txt"; item failed rm_fail "$context 정리 중 삭제 거부"
   fi
 }
 while IFS=$'\t' read -r p last_ms kids parent; do
@@ -799,7 +799,7 @@ done < "$TMP/rows.tsv"
 
 # ── 요약 ──────────────────────────────────────────────────────────────────────────────────
 label() { case "$1" in
-  hub) echo 허브 ;; current) echo 현재작업 ;; children) echo 하위있음 ;; live) echo 터미널·워커 ;; idle) echo 최근활동 ;; dirty) echo 미커밋 ;;
+  hub) echo 허브 ;; hub_reopened) echo 허브재개 ;; current) echo 현재작업 ;; children) echo 하위있음 ;; live) echo 터미널·워커 ;; idle) echo 최근활동 ;; dirty) echo 미커밋 ;;
   pr_open) echo PR열림 ;; unmerged) echo 미병합 ;; gh_fail) echo PR조회실패 ;; protected) echo 보호브랜치 ;; submodule) echo 서브모듈 ;;
   not_orca) echo 미등록 ;; missing) echo 폴더없음 ;; archive_fail) echo 보관실패 ;; lock_busy) echo 잠금대기 ;; rm_fail) echo 삭제실패 ;;
   archive_big) echo 보관과대 ;; unity_open) echo Unity열림 ;; live_marked) echo 정리예정 ;; term_close_fail) echo 창닫기실패 ;; *) echo "$1" ;; esac; }
@@ -818,7 +818,7 @@ if [ "$JSON" = 1 ]; then
     '{mode:$mode, candidates:$cand, candidates_outputs_only:$candout, deleted:$del, deleted_outputs_only:$delout, failed:$fail, freed_kb:$freed, candidate_kb:$candkb, skipped:$skips, keep_code:$keep, items:$items}'
 fi
 
-# Slack: 양식 A(첫 줄 주제 → 빈 줄 → • 결과). 변화가 있을 때만: 시험은 후보가 있을 때, 실삭제는 삭제가 있거나 지난번과 다른 실패가 있을 때.
+# Slack: 삭제 또는 지난번과 다른 실패만 전송함. 미리보기의 영구 쓰기 방지.
 # 30분마다 도는 실삭제에서 같은 실패가 반복돼도 다시 보내지 않도록 실패 목록을 .ws_gc.lastfail 에 남겨 대조함. 전송 실패는 정리 결과에 영향 없음
 FAIL_SIG=$(sort -u "$TMP/failed.txt" | tr '\n' ',')
 SEND=0
@@ -828,7 +828,7 @@ if [ "$APPLY" = 1 ]; then
   [ -n "$ONLYPATH$PARENT" ] || printf '%s' "$FAIL_SIG" > "$CFG_ARCHIVE/.ws_gc.lastfail"
 fi
 if [ "$SLACK" = 1 ] && [ "$SEND" = 1 ]; then
-  TITLE=$([ "$APPLY" = 1 ] && echo "워크스페이스 자동 정리 완료" || echo "워크스페이스 정리 시험 점검")
+  TITLE="워크스페이스 자동 정리 완료"
   MSG="$TITLE"$'\n\n'"• 결과: $RESULT, 건너뜀 ${N_SKIP}곳(${SKIP_TXT:-없음})"
   [ "$N_KEEP_CODE" -gt 0 ] && MSG="$MSG"$'\n'"• 코드 변경이 있어 남긴 곳 ${N_KEEP_CODE}곳(허브가 커밋 또는 정리)"
   [ "$N_FAIL" -gt 0 ] && MSG="$MSG"$'\n'"• 삭제 못 한 곳 ${N_FAIL}곳(보관본은 남음)"
