@@ -34,7 +34,7 @@ usage() {
   --dry-run    --yes 와 함께 쓰면 실행할 명령만 출력
   --json       결과를 JSON 한 줄로 출력
 종료 코드: 0 완료(또는 점검 결과 남은 것 없음), 1 실행 단계 일부 실패, 2 인자 오류,
-          3 환경 오류(bd·orca·jq·git 없음, 허브 없음), 4 점검에서 남은 것 있음(--yes 없이 멈춤)
+          3 환경 오류(bd·orca·jq·git 없음), 4 점검에서 남은 것 있음(--yes 없이 멈춤)
 예:
   feature_close.sh --slug mailbox
   feature_close.sh --slug mailbox --yes --dry-run --json
@@ -61,7 +61,10 @@ for c in bd orca jq git; do command -v "$c" >/dev/null 2>&1 || die "$c 없음 �
 BRANCH="feature/$SLUG"
 HUB="$CFG_WS_ROOT/coord-feat-${SLUG}-hub"
 LABEL="feature:$SLUG"
-[ -d "$HUB" ] || die "허브 없음: $HUB — slug 확인(ls $CFG_WS_ROOT | grep coord-feat-)" 3
+WT=$(orca worktree list --limit 1000 --json 2>/dev/null) || die "orca worktree list 실패 — Orca 실행 여부 확인(orca status). 아무것도 바꾸지 않음" 3
+FOUND=$(echo "$WT" | jq -r --arg n "coord-feat-${SLUG}-hub" '.result.worktrees[]? | select((.path | split("/") | last) == $n) | .path' | head -1)
+if [ -n "$FOUND" ] && [ -d "$FOUND" ]; then HUB="$FOUND"; fi
+if [ -d "$HUB" ]; then HUB=$(cd "$HUB" && pwd -P); else HUB=""; fi
 
 # epic·카드
 ALL=$(cd "$CFG_BOARD" && bd list --all -l "$LABEL" --json 2>/dev/null) || ALL="[]"
@@ -75,13 +78,12 @@ OPEN_CARDS=$(jq -nc --argjson a "$ALL" --argjson k "${KIDS:-[]}" \
   '[$a[], $k[]] | unique_by(.id) | map(select(.issue_type != "epic" and (.status == "in_progress" or .status == "open" or .status == "blocked"))) | map({id, title, status, assignee})')
 
 # 하위 작업 공간 → 브랜치 미머지 판정
-WT=$(orca worktree list --limit 1000 --json 2>/dev/null) || die "orca worktree list 실패 — Orca 실행 여부 확인(orca status). 아무것도 바꾸지 않음" 3
 CHILDREN=$(echo "$WT" | jq -c --arg h "$HUB" '[.result.worktrees[] | select(.path == $h) | .id] as $hid
   | [.result.worktrees[] | select((.parentWorktreeId // "") as $p | $hid | index($p)) | {path, branch:(.branch // "" | sub("^refs/heads/"; ""))}]')
 UNMERGED="[]"
 while IFS=$'\t' read -r p b; do
   [ -n "$b" ] || continue
-  if ! git -C "$CFG_REPO" merge-base --is-ancestor "$b" "$BRANCH" 2>/dev/null; then
+  if ! git -C "${HUB:-$CFG_REPO}" merge-base --is-ancestor "$b" "$BRANCH" 2>/dev/null; then
     UNMERGED=$(echo "$UNMERGED" | jq -c --arg p "$p" --arg b "$b" '. + [{path:$p, branch:$b}]')
   fi
 done < <(echo "$CHILDREN" | jq -r '.[] | [.path, .branch] | @tsv')
@@ -117,6 +119,7 @@ run() { # 단계 설명 명령...
   if [ "$rc" = 0 ]; then step "$n" ok "$d"; else step "$n" failed "$d (종료 $rc): $(printf '%s' "$out" | tail -1)"; return "$rc"; fi
 }
 
+if [ -n "$HUB" ]; then
 # 1 작업자 반납: 하위 작업 공간에 붙은 dispatch
 DISPATCHES=$(orca orchestration worker-list --full --limit 100 --json 2>/dev/null | jq -r --argjson c "$CHILDREN" \
   '($c | map(.path)) as $ps | .result.workers[]? | select(((.resource.worktreeId // "") | sub("^.*::"; "")) as $p | $ps | index($p)) | .dispatchId' 2>/dev/null)
@@ -136,6 +139,9 @@ run cleanup "하위 작업 공간 정리" bash "$CFG_GC" --parent "$HUB" --days 
 LIVE=$(orca terminal list --worktree "path:$HUB" --json 2>/dev/null | jq '[.result.terminals[]? | select(.orphaned|not)] | length' 2>/dev/null)
 if [ "${LIVE:-0}" -gt 0 ]; then run terminal "코디네이터 터미널 ${LIVE}개 종료" orca terminal close --worktree "path:$HUB" --all --json || FAIL=1
 else step terminal skipped "살아 있는 터미널 없음"; fi
+else
+  step hub skipped "허브 없음 — 기능 카드 마무리만 진행"
+fi
 
 # 4 기능 스레드 마무리 보고. 결과 문서는 --result, 없으면 epic 코멘트("기능 완료" + 결과 HTML 경로)에서 찾음
 if [ -n "$EPIC" ] && [ "$EPIC_STATUS" != closed ]; then
@@ -161,5 +167,12 @@ else
 fi
 
 [ "$DRY" = 1 ] && emit dry_run 0
+if [ "$FAIL" = 0 ] && [ -n "$HUB" ]; then
+  CLOSED_HUBS="${LRM_CLOSED_HUBS:-$HOME/.config/lrm-hubs/closed_hubs.txt}"
+  if mkdir -p "$(dirname "$CLOSED_HUBS")" && { grep -Fxq -- "$HUB" "$CLOSED_HUBS" 2>/dev/null || printf '%s\n' "$HUB" >> "$CLOSED_HUBS"; }; then
+    step registry ok "마무리 목록: $HUB"
+  else step registry failed "마무리 목록 기록 실패: $CLOSED_HUBS"; FAIL=1
+  fi
+fi
 [ "$FAIL" = 0 ] && emit closed 0
 emit partial 1
