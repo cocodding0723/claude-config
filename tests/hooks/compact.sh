@@ -46,3 +46,18 @@ done
 echo 'PASS 대상 밖·잘못된 입력: 출력 없음, 종료 0'
 jq -e '.hooks.PreCompact | length == 1 and .[0].hooks[0].command == "bash ~/.claude/hooks/lib/pre_compact.sh"' "$ROOT/claude/settings.base.json" >/dev/null
 echo 'PASS PreCompact 설정 등록'
+mkdir -p "$SB/no-python"
+for tool in bash basename perl jq cat grep sed cut; do
+  ln -s "$(command -v "$tool")" "$SB/no-python/$tool"
+done
+cat > "$SB/bin/board-stage" <<'EOF'
+#!/usr/bin/env bash
+printf '단계: 3 구현\n다음 할 일:\n- 원문\n'
+printf '%3000s\n' x
+EOF
+out=$(PATH="$SB/no-python" bash "$RESTORE" /w/coord-feat-test-hub)
+for expected in lrm-test '3 구현' '다음 할 일:' '#2, #3'; do
+  [[ "$out" == *"$expected"* ]]
+done
+[ "${#out}" -gt 2000 ] && [[ "$out" != *'[생략]'* ]]
+echo 'PASS python3 없는 PATH: 카드·단계·지시 원문 보존'
