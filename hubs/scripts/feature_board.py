@@ -16,14 +16,19 @@ import sys
 class Format:
     title = 36
     line = 100
-    timeout = 5
+    timeout = 15
+    message = 3000
+    references = 8
+    reference_chars = 800
     ended = ("closed", "tombstone")
     echoes = ("Slack 결정 답:", "Slack 답:", "Slack 스레드", "Slack 보고:",
               "[Slack", "[slack", "되울림:", "[board-mirror]")
     blocked = re.compile(r"^(?:\[block\]|🔴|막힘\s*[:：]|차단\s*[:：]|blocked\s*[:：])", re.I)
-    ids = re.compile(r"\b(?:lrm-[\w.-]+|D-[A-Za-z0-9_-]+|(?=[a-f0-9]*\d)(?=[a-f0-9]*[a-f])[a-f0-9]{7,40})\b", re.I)
-    pr = re.compile(r"https://github\.com/[^\s<>]+/pull/\d+|\bPR\s*#\d+", re.I)
-    docs = re.compile(r"https?://[^\s<>\"']+\.html|(?<![\w:/])(?:/|docs/)[^\s<>\"']+\.html")
+    ids = re.compile(r"(?<![A-Za-z0-9.-])(?:lrm-[A-Za-z0-9.-]+|D-[A-Za-z0-9_-]+|[a-f0-9]{7,40})(?![A-Za-z0-9.-])", re.I)
+    pr = re.compile(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/\d+|\bPR\s*#\d+", re.I)
+    docs = re.compile(r"(?<![A-Za-z0-9_-])docs/out/(?:[^\s<>\"'/]+/)*([^\s<>\"'/]+\.html)")
+    urls = re.compile(r"https?://[^\s<>\"']+")
+    paths = re.compile(r"https?://[^\s<>\"']+|(?<![\w:])(?:~/|/|docs/)[^\s<>\"']+")
 
 
 def stamp(value):
@@ -35,8 +40,9 @@ def stamp(value):
 
 
 def plain(value, limit=Format.line):
-    text = Format.docs.sub("", Format.pr.sub("", str(value or "")))
+    text = Format.paths.sub("", Format.pr.sub("", str(value or "")))
     text = Format.ids.sub("", text)
+    text = re.sub(r"@(here|channel)\b", r"＠\1", text, flags=re.I)
     text = " ".join(text.replace(" / ", " — ").split()).strip(" :：-·")
     text = text if len(text) <= limit else text[:limit - 1] + "…"
     return html.escape(text, quote=False)
@@ -48,14 +54,50 @@ def field(description, name):
 
 
 def visible_comments(comments):
-    return sorted((c for c in comments if c.get("text", "").strip()
+    return sorted((c for c in comments if (c.get("text") or "").strip()
                    and not c["text"].lstrip().startswith(Format.echoes)),
-                  key=lambda c: (stamp(c.get("created_at")), str(c.get("id", ""))))
+                  key=lambda c: stamp(c.get("created_at")))
+
+
+def references(texts):
+    found = []
+    for text in texts:
+        text = text or ""
+        matches = [(m.start(), m.group(0)) for m in Format.pr.finditer(text)]
+        local = Format.urls.sub(lambda m: " " * len(m.group(0)), text)
+        matches.extend((m.start(), m.group(1)) for m in Format.docs.finditer(local))
+        clean = Format.paths.sub(lambda m: " " * len(m.group(0)), text)
+        matches.extend((m.start(), m.group(0)) for m in Format.ids.finditer(clean))
+        found.extend(value for _, value in sorted(matches, key=lambda m: m[0]))
+    unique = list(dict.fromkeys(found))
+    chosen = []
+    for value in unique[:Format.references]:
+        escaped = html.escape(value, quote=False)
+        if len(" · ".join([*chosen, escaped])) > Format.reference_chars:
+            break
+        chosen.append(escaped)
+    if len(unique) > len(chosen):
+        chosen.append(f"외 {len(unique) - len(chosen)}개")
+    return "참고: " + " · ".join(chosen)
+
+
+def bounded(lines, details, tail):
+    kept = []
+    for detail in details:
+        omitted = len(details) - len(kept) - 1
+        marker = [f"- 외 {omitted}개"] if omitted else []
+        if len("\n".join([*lines, *kept, detail, *marker, *tail])) > Format.message:
+            break
+        kept.append(detail)
+    if len(kept) < len(details):
+        kept.append(f"- 외 {len(details) - len(kept)}개")
+    return "\n".join([*lines, *kept, *tail])
 
 
 def render(epic, children, comments, stages):
     """같은 스냅샷에서 같은 Slack 본문 생성. stages는 (키, 이름) 순서 목록."""
-    children = sorted(children, key=lambda c: str(c.get("id", "")))
+    children = sorted(children, key=lambda c: tuple((1, int(p)) if p.isdigit() else (0, p)
+                                                   for p in re.split(r"(\d+)", str(c.get("id") or ""))))
     records = visible_comments(comments)
     latest = records[-1] if records else {}
     waiting = [c for c in children if c.get("status") not in Format.ended
@@ -76,24 +118,23 @@ def render(epic, children, comments, stages):
     current = selected[-1] if selected else None
     bar = " → ".join(f"{'▶ ' if key == current else ''}{i} {name}" for i, (key, name) in enumerate(stages))
     lines.append("- 단계: " + bar + (" (미지정)" if current is None else ""))
-    done = sum(c.get("status") == "closed" for c in children)
+    done = sum(c.get("status") in Format.ended for c in children)
     lines.append(f"- 결과: 하위 카드 {done}/{len(children)} 완료")
-    lines.extend(f"- {'✅' if c.get('status') == 'closed' else '⏳'} {plain(c.get('title'), Format.title)}" for c in children)
-    lines.append("- 지금: " + (plain(latest.get("text", "").strip().splitlines()[0]) if latest else "기록 없음"))
-    lines.append("👉 사용자 할 일: " + ("없음" if not waiting else plain(waiting[0].get("title"))))
-    lines.extend("- 답 기다림: " + plain(c.get("title")) for c in waiting[1:])
+    if done:
+        lines.append(f"- 완료 {done}개")
+    details = ["- ⏳ " + plain(c.get("title"), Format.title) for c in children
+               if c.get("status") not in Format.ended]
+    tail = ["- 지금: " + (plain(latest["text"].strip().splitlines()[0]) if latest else "기록 없음"),
+            "👉 사용자 할 일: " + ("없음" if not waiting else plain(waiting[0].get("title")))]
+    if len(waiting) > 1:
+        tail.append(f"- 답 기다림: 외 {len(waiting) - 1}개")
     dates = [stamp(c.get(k)) for c in [epic, *children] for k in ("updated_at", "created_at", "closed_at")]
     dates.extend(stamp(c.get("created_at")) for c in records)
     updated = max(dates)
-    lines.append("- 최근 갱신: " + (updated.strftime("%Y-%m-%d %H:%M:%S UTC") if updated.year > 1 else "시각 미기재"))
-    refs = [str(epic.get("id", ""))]
-    texts = [c.get("text", "") for c in records]
-    for pattern in (Format.pr, Format.docs):
-        found = sorted({m.group(0) for text in texts for m in pattern.finditer(text)})
-        refs.extend(found)
-    refs.extend(Format.ids.findall("\n".join([str(name), *[c.get("title", "") for c in children], *texts])))
-    lines.extend(["", "참고: " + html.escape(" · ".join(dict.fromkeys(refs)), quote=False)])
-    return "\n".join(lines)
+    tail.append("- 최근 갱신: " + (updated.strftime("%Y-%m-%d %H:%M:%S UTC") if updated.year > 1 else "시각 미기재"))
+    texts = [c.get("text") for c in reversed(records)]
+    tail.extend(["", references([*texts, name, *[c.get("title") for c in children], epic.get("id")])])
+    return bounded(lines, details, tail)
 
 
 def summary(text):

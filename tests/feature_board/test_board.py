@@ -30,8 +30,9 @@ class BoardTests(unittest.TestCase):
         text = self.text()
         self.assertTrue(text.startswith("🟢 진행 보고 정리\n\n"))
         for part in ("- 무엇: 기록 자동 표시", "▶ 3 구현", "6 반영", "1/2 완료",
-                     "✅ 첫 작업", "⏳ 둘째 작업", "- 지금: 검증 시작", "👉 사용자 할 일: 없음"):
+                     "완료 1개", "⏳ 둘째 작업", "- 지금: 검증 시작", "👉 사용자 할 일: 없음"):
             self.assertIn(part, text)
+        self.assertNotIn("첫 작업", text)
 
     def test_every_stage_and_missing_stage(self):
         for key, name in STAGES:
@@ -70,7 +71,7 @@ class BoardTests(unittest.TestCase):
         self.assertNotIn("12:00:00", self.text())
 
     def test_long_text_ids_links_and_escaping(self):
-        self.comments[0]["text"] = "lrm-test.2 abc1234 PR #123 <확인> / " + "길" * 160 + "\n문서 /tmp/설계.html"
+        self.comments[0]["text"] = "lrm-test.2 abc1234 PR #123 <확인> / " + "길" * 160 + "\n문서 /tmp/hub/docs/out/설계.html"
         text = self.text()
         body, refs = text.split("\n참고:")
         self.assertNotIn("lrm-test", body)
@@ -79,13 +80,74 @@ class BoardTests(unittest.TestCase):
         self.assertIn("&lt;확인&gt;", body)
         self.assertIn("…", body)
         self.assertIn("PR #123", refs)
-        self.assertIn("/tmp/설계.html", refs)
+        self.assertIn("설계.html", refs)
+        self.assertNotIn("/tmp", refs)
         self.assertIn("abc1234", refs)
 
-    def test_document_links_do_not_capture_prose_or_url_fragments(self):
-        text = "기능 1/1은 완료. 함수 add/run 재사용. https://docs.python.org/3/library/subprocess.html 참고. 문서 /tmp/보고.html"
-        self.assertEqual(["https://docs.python.org/3/library/subprocess.html", "/tmp/보고.html"],
-                         fb.Format.docs.findall(text))
+    def test_references_allow_only_results_pr_hashes_and_card_ids(self):
+        text = ("lrm-i46u의 abc1234 PR #3 https://github.com/org/repo/pull/4 "
+                "https://example.com/abcdef1.html https://example.com/docs/out/외부.html /Users/me/private.html "
+                "/Users/me/hub/docs/out/day/보고.html docs/out/검수.html")
+        refs = fb.references([text])
+        for expected in ("lrm-i46u", "abc1234", "PR #3", "https://github.com/org/repo/pull/4", "보고.html", "검수.html"):
+            self.assertIn(expected, refs)
+        for forbidden in ("lrm-i46u의", "abcdef1", "example.com", "외부.html", "/Users", "private.html", "docs/out"):
+            self.assertNotIn(forbidden, refs)
+        self.assertIn("의 확인", fb.plain("lrm-i46u의 확인"))
+
+    def test_same_second_preserves_bd_order_for_now_and_block_resolution(self):
+        self.comments = [{"id": 9, "text": "막힘: 실패", "created_at": "2026-11-21T10:01:00Z"},
+                         {"id": 10, "text": "해결: 성공", "created_at": "2026-11-21T10:01:00Z"}]
+        self.assertTrue(self.text().startswith("🟢 진행"))
+        self.assertIn("- 지금: 해결: 성공", self.text())
+
+    def test_null_text_and_titles_are_empty(self):
+        self.epic.update(title=None, description=None)
+        self.children[1].update(title=None, labels=["kind:decision"])
+        self.comments.append({"id": 2, "text": None})
+        self.assertIn("기능 이름 없음", self.text())
+        self.assertIn("- 지금: 검증 시작", self.text())
+        self.assertNotIn("None", self.text())
+
+    def test_natural_child_order(self):
+        self.children = [{"id": f"lrm-test.{i}", "title": title} for i, title in ((10, "열째"), (2, "둘째"))]
+        text = self.text()
+        self.assertLess(text.index("둘째"), text.index("열째"))
+
+    def test_mentions_in_titles_are_inert(self):
+        self.epic["title"] = "@here @channel <!here> <!channel>"
+        self.children[1].update(title="@channel <!subteam^S123>", labels=["kind:decision"])
+        text = self.text()
+        for mention in ("@here", "@channel", "<!"):
+            self.assertNotIn(mention, text)
+        self.assertIn("＠here", text)
+
+    def test_recent_references_limit_and_overflow(self):
+        self.comments = [{"text": f"PR #{i}", "created_at": f"2026-11-21T10:{i:02}:00Z"} for i in range(12)]
+        refs = self.text().split("\n참고: ")[1]
+        self.assertEqual([f"PR #{i}" for i in range(11, 3, -1)] + ["외 5개"], refs.split(" · "))
+
+    def test_message_cap_with_sixty_cards_and_three_hundred_records(self):
+        for title in ("긴" * 100, "<&>" * 100):
+            for status in ("open", "closed", "tombstone"):
+                with self.subTest(title=title[:3], status=status):
+                    self.children = [{"id": f"lrm-test.{i}", "title": title, "status": status,
+                                      "labels": ["kind:decision"]} for i in range(60)]
+                    self.comments = [{"text": f"진행 {title} PR #{i}"} for i in range(300)]
+                    text = self.text()
+                    self.assertLessEqual(len(text), 3000)
+                    self.assertIn("- 지금:", text)
+                    self.assertIn("👉 사용자 할 일:", text)
+                    self.assertIn("- 최근 갱신:", text)
+                    self.assertIn("참고: PR #299", text)
+                    self.assertNotIn("&l…", text)
+                    if status in fb.Format.ended:
+                        self.assertIn("- 완료 60개", text)
+                        self.assertNotIn("⏳", text)
+
+    def test_reference_budget_includes_escaping(self):
+        text = fb.references(["docs/out/" + "&" * 2000 + ".html"])
+        self.assertEqual("참고: 외 1개", text)
 
     def test_same_snapshot_same_digest_without_mutation(self):
         before = copy.deepcopy((self.epic, self.children, self.comments))
@@ -115,6 +177,9 @@ class BoardTests(unittest.TestCase):
                 reader.text("lrm-test")
 
     def test_bd_failures_do_not_become_empty_board(self):
+        with patch.object(fb.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "[]", "")) as run:
+            fb.BdReader().query("show", "lrm-test")
+            self.assertEqual(15, run.call_args.kwargs["timeout"])
         for output in ("bad json", "null", "{}", '["bad"]'):
             with patch.object(fb.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, output, "")):
                 with self.assertRaises(RuntimeError):
