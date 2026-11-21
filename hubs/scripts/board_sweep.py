@@ -533,25 +533,27 @@ class Sweeper:
     def feature_hub_exists(self, slug):
         return bool(self.feature_hubs(slug))
 
-    def feature_hub_reopened(self, slug, baseline):
-        if baseline is None:
-            return False
-        cutoff = baseline + dt.timedelta(minutes=float(self.cfg["feature_hub_reopen_grace_min"]))
+    def feature_hub_times(self, slug):
+        times = []
         for path, activity_ms in self.feature_hubs(slug).items():
             try:
                 activity = dt.datetime.fromtimestamp(0, dt.timezone.utc) + dt.timedelta(milliseconds=float(activity_ms))
-                if activity > cutoff:
-                    return True
+                times.append(activity)
             except (TypeError, ValueError, OverflowError):
                 pass
             rc, out, _ = self.run(["git", "-C", path, "log", "-1", "--format=%ct"], int(self.cfg["bd_timeout_sec"]))
             if rc == 0:
                 try:
-                    if dt.datetime.fromtimestamp(int(out.strip()), dt.timezone.utc) > cutoff:
-                        return True
+                    times.append(dt.datetime.fromtimestamp(int(out.strip()), dt.timezone.utc))
                 except (ValueError, OverflowError, OSError):
                     pass
-        return False
+        return times
+
+    def feature_hub_reopened(self, times, baseline):
+        if baseline is None:
+            return False
+        cutoff = baseline + dt.timedelta(minutes=float(self.cfg["feature_hub_reopen_grace_min"]))
+        return any(t > cutoff for t in times)
 
     def feature_logged(self, card_id, action, reason_prefix):
         try:
@@ -578,7 +580,10 @@ class Sweeper:
                 continue
             labels = card.get("labels") or []
             slug = next((lab[len(prefix):] for lab in labels if lab.startswith(prefix)), "")
-            if not slug or (card.get("status") == "closed" and not self.feature_hub_exists(slug)):
+            if not slug:
+                continue
+            hubs = self.feature_hubs(slug)
+            if card.get("status") == "closed" and not hubs:
                 continue
             rc, out, _ = self.bd("list", "--all", "--parent", card["id"], "--json", "-n", "0")
             if rc != 0:
@@ -633,7 +638,14 @@ class Sweeper:
             except OSError:
                 pass
             baseline = max((t for t in baselines if t is not None), default=None)
+            if not self.feature_hub_available:
+                reason = f"reason=hub_unknown baseline={baseline.isoformat() if baseline else 'none'}"
+                if not self.feature_logged(card["id"], "skip", reason):
+                    self.log("feature_merged", card["id"], "skip", reason)
+                continue
+            hub_times = self.feature_hub_times(slug)
             times = [parse_time(card.get(k)) for k in ("updated_at", "started_at", "created_at")]
+            times += hub_times
             times += [parse_time(c.get("created_at")) for c in comments]
             activity = [self.last_activity(dict(c, comment_count=True)) for c in related.values()]
             if any(t is None for t in activity):
@@ -642,15 +654,11 @@ class Sweeper:
             last = max((t for t in times if t), default=None)
             if last is None or self.now - last <= grace:
                 continue
-            if baseline is not None:
-                self.feature_hubs(slug)
-                state = "hub_unknown" if not self.feature_hub_available else (
-                    "hub_reopened" if self.feature_hub_reopened(slug, baseline) else None)
-                if state is not None:
-                    reason = f"reason={state} baseline={baseline.isoformat()}"
-                    if not self.feature_logged(card["id"], "skip", reason):
-                        self.log("feature_merged", card["id"], "skip", reason)
-                    continue
+            if self.feature_hub_reopened(hub_times, baseline):
+                reason = f"reason=hub_reopened baseline={baseline.isoformat()}"
+                if not self.feature_logged(card["id"], "skip", reason):
+                    self.log("feature_merged", card["id"], "skip", reason)
+                continue
             reason = f"{proof}·열린 카드 없음 → 기능 마무리 ({self.cfg['feature_merged_marker']})"
             if not os.path.isfile(script):
                 self.count("error")

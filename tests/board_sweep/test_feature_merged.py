@@ -201,10 +201,42 @@ class FeatureMergedTest(unittest.TestCase):
         with self.hub_inventory(commit=int(parse_time('2026-11-16T00:10:00Z').timestamp())):
             self.assertEqual(self.sweep(), 1)
 
-    def test_open_first_attempt_keeps_existing_behavior(self):
+    def test_first_attempt_recent_hub_activity_blocks(self):
+        self.card['updated_at'] = '2026-11-17T00:00:00Z'
         with self.hub_inventory(activity=parse_time('2026-11-17T02:00:00Z').timestamp() * 1000) as run:
+            self.assertEqual(self.sweep(), 0)
+        self.assertEqual(self.writes, [])
+        self.assertEqual(sum(c.args[0][0] == 'orca' for c in run.call_args_list), 1)
+
+    def test_first_attempt_recent_hub_commit_blocks_without_activity(self):
+        self.card['updated_at'] = '2026-11-17T00:00:00Z'
+        with self.hub_inventory(commit=int(parse_time('2026-11-17T02:00:00Z').timestamp())):
+            self.assertEqual(self.sweep(), 0)
+        self.assertEqual(self.writes, [])
+
+    def test_first_attempt_old_hub_activity_and_commit_allow_close(self):
+        self.card['updated_at'] = '2026-11-17T00:00:00Z'
+        stamp = parse_time(self.card['updated_at']).timestamp()
+        with self.hub_inventory(activity=stamp * 1000, commit=int(stamp)) as run:
             self.assertEqual(self.sweep(), 1)
-        run.assert_not_called()
+        self.assertEqual(sum(c.args[0][0] == 'git' for c in run.call_args_list), 1)
+
+    def test_first_attempt_without_hub_uses_card_activity(self):
+        self.card['updated_at'] = '2026-11-17T00:00:00Z'
+        self.assertEqual(self.sweep(), 1)
+        self.card['updated_at'] = '2026-11-17T02:00:00Z'
+        self.assertEqual(self.sweep(), 0)
+
+    def test_hub_quiet_boundary_blocks_first_attempt_and_retry(self):
+        for retry in (False, True):
+            self.comments = ([dict(author='board-sweep', text='정리(자동): 자동 마무리',
+                                   created_at='2026-11-16T00:00:00Z')] if retry else [])
+            for field in ('activity', 'commit'):
+                stamp = parse_time('2026-11-17T01:00:00Z').timestamp()
+                values = {field: stamp * 1000 if field == 'activity' else int(stamp)}
+                with self.subTest(retry=retry, field=field), self.hub_inventory(**values):
+                    self.assertEqual(self.sweep(), 0)
+        self.assertEqual(self.writes, [])
 
     def test_only_automatic_author_and_line_prefix_count(self):
         self.comments = [dict(author=author, text=text, created_at='2026-11-17T00:00:00Z')
@@ -268,13 +300,20 @@ class FeatureMergedTest(unittest.TestCase):
         self.assertEqual(self.sweep(), 0)
         self.assertEqual(Path(self.cfg['log_path']).read_text().count('reason=hub_unknown'), 2)
 
-    def test_failed_inventory_without_baseline_keeps_existing_behavior(self):
-        self.card['status'] = 'closed'
-        hub = Path(self.cfg['ws_root']) / 'other-repo/coord-feat-demo-hub'
-        hub.mkdir(parents=True)
-        self.orca_result = (1, '', 'failed')
-        self.assertEqual(self.sweep(), 1)
-        self.assertNotIn('reason=hub_unknown', Path(self.cfg['log_path']).read_text())
+    def test_failed_inventory_without_baseline_skips_and_logs_once(self):
+        for status in ('open', 'closed'):
+            with self.subTest(status=status):
+                Path(self.cfg['log_path']).unlink(missing_ok=True)
+                self.card['status'] = status
+                if status == 'closed':
+                    hub = Path(self.cfg['ws_root']) / 'other-repo/coord-feat-demo-hub'
+                    hub.mkdir(parents=True)
+                self.orca_result = (1, '', 'failed')
+                self.assertEqual(self.sweep(), 0)
+                self.assertEqual(self.sweep(), 0)
+                log = Path(self.cfg['log_path']).read_text()
+                self.assertEqual(log.count('reason=hub_unknown baseline=none'), 1)
+                self.assertEqual(self.writes, [])
 
     def test_failed_inventory_closed_card_without_local_hub_skips_without_reads(self):
         self.card.update(status='closed', closed_at='2026-11-16T00:00:00Z')
