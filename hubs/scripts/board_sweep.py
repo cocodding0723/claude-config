@@ -44,7 +44,7 @@ REQUIRED = ("rules", "kinds", "kind_prefix", "pr_repo", "pr_label_prefix", "pr_s
             "ws_root", "ws_label_prefix", "branch_label_prefix", "ws_gone_hours",
             "log_path", "lock_path", "feature_merged_hours", "feature_close_script", "merged_into",
             "feature_label_prefix", "feature_merged_stages", "feature_merged_marker", "feature_hub_name",
-            "feature_merged_retry_hours", "feature_merged_max_tries", "feature_worktree_limit", "feature_hub_reopen_grace_min")
+            "feature_merged_retry_hours", "feature_merged_max_tries", "feature_worktree_limit", "feature_terminal_limit", "feature_hub_reopen_grace_min")
 
 EPILOG = """예:
   board_sweep.sh --dry-run        바뀔 동작만 기록(mode=dry)
@@ -89,7 +89,7 @@ def load_config():
     missing = [k for k in REQUIRED if k not in cfg]
     if missing:
         raise ConfigError(f"규칙 표에 없는 키: {', '.join(missing)}. 조치: hubs/board_sweep.tsv 와 맞춤")
-    for k in ("pr_min_digits", "gh_calls_max", "gh_timeout_sec", "bd_timeout_sec", "feature_merged_max_tries", "feature_worktree_limit"):
+    for k in ("pr_min_digits", "gh_calls_max", "gh_timeout_sec", "bd_timeout_sec", "feature_merged_max_tries", "feature_worktree_limit", "feature_terminal_limit"):
         if not cfg[k].isdigit():
             raise ConfigError(f"규칙 표 {k} 가 정수가 아님: '{cfg[k]}'")
     for k in ("stale_hours", "orphan_hours", "ws_gone_hours", "feature_merged_hours", "feature_merged_retry_hours", "feature_hub_reopen_grace_min"):
@@ -124,6 +124,13 @@ def now():
     return forced or dt.datetime.now(dt.timezone.utc).astimezone()
 
 
+def parse_milliseconds(value):
+    try:
+        return dt.datetime.fromtimestamp(0, dt.timezone.utc) + dt.timedelta(milliseconds=float(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 class Sweeper:
     _AUTHOR = "board-sweep"
     _COMMENT_PREFIX = "정리(자동):"
@@ -144,6 +151,7 @@ class Sweeper:
         self.kind_prefix = cfg["kind_prefix"]
         self.protect = as_list(cfg["protect_ids"])
         self.feature_hub_rows = None
+        self.feature_terminal_rows = []
         self.feature_hub_available = False
 
     # ---------- 바깥 명령 ----------
@@ -516,18 +524,26 @@ class Sweeper:
             rc, out, _ = self.run(["orca", "worktree", "list", "--limit", self.cfg["feature_worktree_limit"], "--json"], int(self.cfg["bd_timeout_sec"]))
             if rc == 0:
                 try:
-                    rows = json.loads(out)["result"]["worktrees"]
-                    if not isinstance(rows, list) or any(not isinstance(r, dict) for r in rows):
+                    result = json.loads(out)["result"]
+                    rows = result["worktrees"]
+                    if result.get("truncated") or not isinstance(rows, list) or any(not isinstance(r, dict) for r in rows):
                         raise ValueError("invalid worktree list")
-                    self.feature_hub_rows = {r["path"]: r.get("lastActivityAt") for r in rows if isinstance(r.get("path"), str)}
-                    self.feature_hub_available = True
+                    self.feature_hub_rows = {r["path"]: r for r in rows if isinstance(r.get("path"), str)}
+                    rc, out, _ = self.run(["orca", "terminal", "list", "--limit", self.cfg["feature_terminal_limit"], "--json"], int(self.cfg["bd_timeout_sec"]))
+                    if rc == 0:
+                        result = json.loads(out)["result"]
+                        terminals = result["terminals"]
+                        if result.get("truncated") or not isinstance(terminals, list) or any(not isinstance(r, dict) for r in terminals):
+                            raise ValueError("invalid terminal list")
+                        self.feature_terminal_rows = terminals
+                        self.feature_hub_available = True
                 except (ValueError, KeyError, TypeError):
                     pass
-        hubs = {p: at for p, at in self.feature_hub_rows.items() if Path(p).name == name and os.path.isdir(p)}
+        hubs = {p: row for p, row in self.feature_hub_rows.items() if Path(p).name == name and os.path.isdir(p)}
         root = Path(os.path.expanduser(self.cfg["ws_root"]))
         for p in (root / name, *root.glob(f"*/{name}")):
             if p.is_dir():
-                hubs.setdefault(str(p), None)
+                hubs.setdefault(str(p), {})
         return hubs
 
     def feature_hub_exists(self, slug):
@@ -535,19 +551,23 @@ class Sweeper:
 
     def feature_hub_times(self, slug):
         times = []
-        for path, activity_ms in self.feature_hubs(slug).items():
-            try:
-                activity = dt.datetime.fromtimestamp(0, dt.timezone.utc) + dt.timedelta(milliseconds=float(activity_ms))
-                times.append(activity)
-            except (TypeError, ValueError, OverflowError):
-                pass
+        for path, hub in self.feature_hubs(slug).items():
+            related = {path: hub}
+            children = hub.get("childWorktreeIds") or []
+            related.update({p: row for p, row in self.feature_hub_rows.items()
+                            if (hub.get("id") is not None and row.get("parentWorktreeId") == hub["id"])
+                            or (row.get("id") is not None and row["id"] in children)})
+            times += [parse_milliseconds(row.get("lastActivityAt")) for row in related.values()]
+            output = [parse_milliseconds(row.get("lastOutputAt")) for row in self.feature_terminal_rows
+                      if row.get("worktreePath") in related]
+            times.append(max((t for t in output if t is not None), default=None))
             rc, out, _ = self.run(["git", "-C", path, "log", "-1", "--format=%ct"], int(self.cfg["bd_timeout_sec"]))
             if rc == 0:
                 try:
                     times.append(dt.datetime.fromtimestamp(int(out.strip()), dt.timezone.utc))
                 except (ValueError, OverflowError, OSError):
                     pass
-        return times
+        return [t for t in times if t is not None]
 
     def feature_hub_reopened(self, times, baseline):
         if baseline is None:

@@ -44,9 +44,12 @@ class FeatureMergedTest(unittest.TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
         self.orca_result = (0, json.dumps({'result': {'worktrees': []}}), '')
+        self.terminal_result = (0, json.dumps({'result': {'terminals': []}}), '')
         run = Sweeper.run
         def commands(sweeper, cmd, timeout):
-            return self.orca_result if cmd[0] == 'orca' else run(sweeper, cmd, timeout)
+            if cmd[0] == 'orca':
+                return self.terminal_result if cmd[1] == 'terminal' else self.orca_result
+            return run(sweeper, cmd, timeout)
         inventory = patch.object(Sweeper, 'run', autospec=True, side_effect=commands)
         inventory.start()
         self.addCleanup(inventory.stop)
@@ -147,12 +150,15 @@ class FeatureMergedTest(unittest.TestCase):
         self.assertEqual(self.sweep(), 0)
         self.assertEqual(Path(self.cfg['log_path']).read_text().count('\tretry-limit\t'), 2)
 
-    def hub_inventory(self, activity=None, commit=None, registered=True):
+    def hub_inventory(self, activity=None, commit=None, registered=True, children=(), terminals=()):
         hub = Path(self.cfg['ws_root']) / 'other-repo/coord-feat-demo-hub'
         hub.mkdir(parents=True, exist_ok=True)
-        rows = [dict(path=str(hub), lastActivityAt=activity)] if registered else []
+        rows = [dict(id='hub', path=str(hub), lastActivityAt=activity, childWorktreeIds=['listed-child'])] if registered else []
+        rows += list(children)
         def run(cmd, timeout):
             if cmd[0] == 'orca':
+                if cmd[1] == 'terminal':
+                    return 0, json.dumps({'result': {'terminals': list(terminals)}}), ''
                 return 0, json.dumps({'result': {'worktrees': rows}}), ''
             self.assertEqual(cmd, ['git', '-C', str(hub), 'log', '-1', '--format=%ct'])
             return (0, str(commit), '') if commit is not None else (1, '', 'not a repository')
@@ -168,7 +174,7 @@ class FeatureMergedTest(unittest.TestCase):
         self.assertIn('reason=hub_reopened', Path(self.cfg['log_path']).read_text())
         with self.hub_inventory(activity=activity) as run:
             self.assertEqual(self.sweep(), 1)
-        self.assertEqual(sum(c.args[0][0] == 'orca' for c in run.call_args_list), 1)
+        self.assert_inventory_once(run)
 
     def test_closed_hub_without_marker_uses_closed_time(self):
         self.card.update(status='closed', closed_at='2026-11-16T00:00:00Z')
@@ -206,7 +212,84 @@ class FeatureMergedTest(unittest.TestCase):
         with self.hub_inventory(activity=parse_time('2026-11-17T02:00:00Z').timestamp() * 1000) as run:
             self.assertEqual(self.sweep(), 0)
         self.assertEqual(self.writes, [])
-        self.assertEqual(sum(c.args[0][0] == 'orca' for c in run.call_args_list), 1)
+        self.assert_inventory_once(run)
+
+    def assert_inventory_once(self, run):
+        for command, limit in [('worktree', 'feature_worktree_limit'), ('terminal', 'feature_terminal_limit')]:
+            calls = [c.args[0] for c in run.call_args_list if c.args[0][:2] == ['orca', command]]
+            self.assertEqual(calls, [['orca', command, 'list', '--limit', self.cfg[limit], '--json']])
+
+    def terminal_activity(self, path, timestamp):
+        return dict(worktreePath=str(path), lastOutputAt=parse_time(timestamp).timestamp() * 1000)
+
+    def test_first_attempt_recent_hub_output_blocks(self):
+        hub = Path(self.cfg['ws_root']) / 'other-repo/coord-feat-demo-hub'
+        old = parse_time('2026-11-17T00:00:00Z').timestamp()
+        terminals = [self.terminal_activity(hub, '2026-11-17T02:00:00Z')]
+        with self.hub_inventory(activity=old * 1000, commit=int(old), terminals=terminals):
+            self.assertEqual(self.sweep(), 0)
+        self.assertEqual(self.writes, [])
+
+    def test_first_attempt_recent_child_output_blocks_for_both_links(self):
+        child = self.root / 'reviewer'
+        for link in (dict(id='child', parentWorktreeId='hub'), dict(id='listed-child')):
+            with self.subTest(link=link), self.hub_inventory(
+                    children=[dict(path=str(child), **link)],
+                    terminals=[self.terminal_activity(child, '2026-11-17T02:00:00Z')]):
+                self.assertEqual(self.sweep(), 0)
+        self.assertEqual(self.writes, [])
+
+    def test_first_attempt_recent_child_activity_blocks_for_both_links(self):
+        for link in (dict(id='child', parentWorktreeId='hub'), dict(id='listed-child')):
+            child = dict(path=str(self.root / 'reviewer'),
+                         lastActivityAt=parse_time('2026-11-17T02:00:00Z').timestamp() * 1000, **link)
+            with self.subTest(link=link), self.hub_inventory(children=[child]):
+                self.assertEqual(self.sweep(), 0)
+        self.assertEqual(self.writes, [])
+
+    def test_old_output_allows_close_and_inventory_is_cached(self):
+        hub = Path(self.cfg['ws_root']) / 'other-repo/coord-feat-demo-hub'
+        child = self.root / 'reviewer'
+        old = parse_time('2026-11-17T00:00:00Z').timestamp()
+        terminals = [self.terminal_activity(path, '2026-11-17T00:00:00Z') for path in (hub, child)]
+        with self.hub_inventory(activity=old * 1000, commit=int(old),
+                                children=[dict(id='listed-child', path=str(child), lastActivityAt=old * 1000)],
+                                terminals=terminals) as run:
+            self.assertEqual(self.sweep(), 1)
+            self.sweeper.feature_hub_times('demo')
+            self.sweeper.feature_hub_times('other')
+        self.assert_inventory_once(run)
+
+    def test_terminal_failure_skips_and_logs_once(self):
+        for result in ((1, '', 'failed'), (127, '', 'TimeoutExpired'), (0, 'bad json', ''),
+                       (0, '{}', ''), (0, '{"result":{"terminals":{}}}', ''),
+                       (0, '{"result":{"terminals":[null]}}', ''),
+                       (0, '{"result":{"terminals":[],"truncated":true}}', '')):
+            with self.subTest(result=result):
+                Path(self.cfg['log_path']).unlink(missing_ok=True)
+                self.terminal_result = result
+                self.assertEqual(self.sweep(), 0)
+                self.sweeper.feature_hubs('other')
+                self.assertFalse(self.sweeper.feature_hub_available)
+                self.assertEqual(self.sweep(), 0)
+                self.assertEqual(Path(self.cfg['log_path']).read_text().count('reason=hub_unknown'), 1)
+                self.assertEqual(self.writes, [])
+
+    def test_output_after_baseline_protects_hub_and_child(self):
+        self.card.update(status='closed', closed_at='2026-11-16T00:00:00Z')
+        hub = Path(self.cfg['ws_root']) / 'other-repo/coord-feat-demo-hub'
+        child = self.root / 'reviewer'
+        for path in (hub, child):
+            with self.subTest(path=path), self.hub_inventory(
+                    children=[dict(id='listed-child', path=str(child))],
+                    terminals=[self.terminal_activity(path, '2026-11-16T00:11:00Z')]):
+                self.assertEqual(self.sweep(), 0)
+        self.assertIn('reason=hub_reopened', Path(self.cfg['log_path']).read_text())
+
+    def test_unrelated_terminal_output_is_ignored(self):
+        terminals = [self.terminal_activity(self.root / 'unrelated', '2026-11-17T02:00:00Z')]
+        with self.hub_inventory(terminals=terminals):
+            self.assertEqual(self.sweep(), 1)
 
     def test_first_attempt_recent_hub_commit_blocks_without_activity(self):
         self.card['updated_at'] = '2026-11-17T00:00:00Z'
@@ -391,11 +474,10 @@ class FeatureMergedTest(unittest.TestCase):
         self.card['status'] = 'closed'
         hub = Path(self.cfg['ws_root']) / 'other-repo/coord-feat-demo-hub'
         hub.mkdir(parents=True)
-        with patch.object(Sweeper, 'run', return_value=(0, json.dumps({'result': {'worktrees': [dict(path=str(hub))]}}), '')):
+        with self.hub_inventory():
             self.assertEqual(self.sweep(), 1)
         hub.rmdir()
-        with patch.object(Sweeper, 'run', return_value=(0, '{"result":{"worktrees":[]}}', '')):
-            self.assertEqual(self.sweep(), 0)
+        self.assertEqual(self.sweep(), 0)
 
     def test_dry_run_logs_without_writes_or_spawn(self):
         self.assertEqual(self.sweep(dry=True), 0)
@@ -434,11 +516,16 @@ class FeatureMergedTest(unittest.TestCase):
         hub.mkdir(parents=True)
         for output in ('invalid json', '{"result":{"worktrees":[]}}'):
             sweeper = Sweeper(self.cfg, True)
-            with patch.object(sweeper, 'run', return_value=(0, output, '')) as run:
+            results = [(0, output, ''), self.terminal_result]
+            with patch.object(sweeper, 'run', side_effect=results) as run:
                 self.assertTrue(sweeper.feature_hub_exists('demo'))
                 self.assertFalse(sweeper.feature_hub_exists('absent'))
-                self.assertEqual(run.call_count, 1)
-                self.assertIn(self.cfg['feature_worktree_limit'], run.call_args.args[0])
+                if output == 'invalid json':
+                    self.assertEqual(run.call_count, 1)
+                    self.assertFalse(sweeper.feature_hub_available)
+                else:
+                    self.assert_inventory_once(run)
+                    self.assertTrue(sweeper.feature_hub_available)
 
 
 if __name__ == '__main__':

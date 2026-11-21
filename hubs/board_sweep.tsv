@@ -39,4 +39,5 @@ feature_hub_name	coord-feat-{slug}-hub	허브 폴더 이름
 feature_merged_retry_hours	24	마지막 자동 마무리 표시 이후 재시도 간격
 feature_merged_max_tries	3	자동 마무리 최대 시도 횟수
 feature_worktree_limit	1000	기능 허브 탐색 시 작업 공간 조회 상한
+feature_terminal_limit	1000	기능 허브 활동 확인 시 창 조회 상한
 feature_hub_reopen_grace_min	10	마무리 뒤 허브 재개 판정 유예(분). ws_gc WS_GC_HUB_REOPEN_GRACE_MIN과 같은 값으로 설정
