@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'hubs/scripts'))
-from board_sweep import Sweeper, read_table
+from board_sweep import Sweeper, parse_time, read_table
 
 
 class FeatureMergedTest(unittest.TestCase):
@@ -126,15 +126,100 @@ class FeatureMergedTest(unittest.TestCase):
         self.assertEqual(self.sweep(), 0)
 
     def test_retry_interval_and_limit(self):
-        self.comments = [dict(text='정리(자동): 자동 마무리', created_at='2026-11-16T04:00:00Z')]
+        self.comments = [dict(author='board-sweep', text='정리(자동): 자동 마무리', created_at='2026-11-16T04:00:00Z')]
         self.assertEqual(self.sweep(), 0)
         self.comments[0]['created_at'] = '2026-11-16T03:00:00Z'
         self.assertEqual(self.sweep(), 1)
         self.comments *= int(self.cfg['feature_merged_max_tries'])
         self.assertEqual(self.sweep(), 0)
+        self.assertEqual(self.sweep(), 0)
         log = Path(self.cfg['log_path']).read_text()
-        self.assertIn('retry-limit', log)
+        self.assertEqual(log.count('\tretry-limit\t'), 1)
         self.assertIn('.evidence/epic-feature-close.log', log)
+        self.comments.append(self.comments[0])
+        self.assertEqual(self.sweep(), 0)
+        self.assertEqual(Path(self.cfg['log_path']).read_text().count('\tretry-limit\t'), 2)
+
+    def hub_inventory(self, activity=None, commit=None, registered=True):
+        hub = Path(self.cfg['ws_root']) / 'other-repo/coord-feat-demo-hub'
+        hub.mkdir(parents=True, exist_ok=True)
+        rows = [dict(path=str(hub), lastActivityAt=activity)] if registered else []
+        def run(cmd, timeout):
+            if cmd[0] == 'orca':
+                return 0, json.dumps({'result': {'worktrees': rows}}), ''
+            self.assertEqual(cmd, ['git', '-C', str(hub), 'log', '-1', '--format=%ct'])
+            return (0, str(commit), '') if commit is not None else (1, '', 'not a repository')
+        return patch.object(Sweeper, 'run', side_effect=run)
+
+    def test_closed_hub_activity_after_marker_skips(self):
+        self.card.update(status='closed', closed_at='2026-11-15T00:00:00Z')
+        self.comments = [dict(author='board-sweep', text='정리(자동): 자동 마무리', created_at='2026-11-16T00:00:00Z')]
+        activity = parse_time('2026-11-16T00:10:00Z').timestamp() * 1000
+        with self.hub_inventory(activity=activity + 1):
+            self.assertEqual(self.sweep(), 0)
+        self.assertEqual(self.writes, [])
+        self.assertIn('reason=hub_reopened', Path(self.cfg['log_path']).read_text())
+        with self.hub_inventory(activity=activity) as run:
+            self.assertEqual(self.sweep(), 1)
+        self.assertEqual(sum(c.args[0][0] == 'orca' for c in run.call_args_list), 1)
+
+    def test_closed_hub_without_marker_uses_closed_time(self):
+        self.card.update(status='closed', closed_at='2026-11-16T00:00:00Z')
+        with self.hub_inventory(activity=parse_time('2026-11-16T00:11:00Z').timestamp() * 1000):
+            self.assertEqual(self.sweep(), 0)
+        self.assertIn('reason=hub_reopened', Path(self.cfg['log_path']).read_text())
+
+    def test_reopened_hub_logs_once_per_baseline(self):
+        self.card.update(status='closed', closed_at='2026-11-15T00:00:00Z')
+        with self.hub_inventory(activity=parse_time('2026-11-16T00:11:00Z').timestamp() * 1000):
+            self.assertEqual(self.sweep(), 0)
+            self.assertEqual(self.sweep(), 0)
+            self.assertEqual(Path(self.cfg['log_path']).read_text().count('reason=hub_reopened'), 1)
+            self.card['closed_at'] = '2026-11-16T00:00:00Z'
+            self.assertEqual(self.sweep(), 0)
+        self.assertEqual(Path(self.cfg['log_path']).read_text().count('reason=hub_reopened'), 2)
+
+    def test_latest_marker_overrides_old_close_and_marker(self):
+        self.card.update(status='closed', closed_at='2026-11-14T00:00:00Z')
+        self.comments = [dict(author='board-sweep', text='정리(자동): 자동 마무리', created_at=t)
+                         for t in ('2026-11-16T00:00:00Z', '2026-11-15T00:00:00Z')]
+        with self.hub_inventory(activity=parse_time('2026-11-15T00:20:00Z').timestamp() * 1000):
+            self.assertEqual(self.sweep(), 1)
+
+    def test_hub_commit_protects_filesystem_fallback(self):
+        self.card.update(status='closed', closed_at='2026-11-16T00:00:00Z')
+        with self.hub_inventory(commit=int(parse_time('2026-11-16T00:11:00Z').timestamp()), registered=False):
+            self.assertEqual(self.sweep(), 0)
+        self.assertIn('reason=hub_reopened', Path(self.cfg['log_path']).read_text())
+        with self.hub_inventory(commit=int(parse_time('2026-11-16T00:10:00Z').timestamp())):
+            self.assertEqual(self.sweep(), 1)
+
+    def test_open_first_attempt_keeps_existing_behavior(self):
+        with self.hub_inventory(activity=parse_time('2026-11-17T02:00:00Z').timestamp() * 1000) as run:
+            self.assertEqual(self.sweep(), 1)
+        run.assert_not_called()
+
+    def test_only_automatic_author_and_line_prefix_count(self):
+        self.comments = [dict(author=author, text=text, created_at='2026-11-17T00:00:00Z')
+                         for author, text in [('person', '정리(자동): 자동 마무리'),
+                                              ('board-sweep', '인용: 정리(자동): 자동 마무리'),
+                                              ('board-sweep', '정리(자동): 다른 규칙'),
+                                              (None, '정리(자동): 자동 마무리')]]
+        self.assertEqual(self.sweep(), 1)
+
+    def test_open_retry_also_protects_reopened_hub(self):
+        self.comments = [dict(author='board-sweep', text='정리(자동): 자동 마무리', created_at='2026-11-16T00:00:00Z')]
+        with self.hub_inventory(activity=parse_time('2026-11-16T00:11:00Z').timestamp() * 1000):
+            self.assertEqual(self.sweep(), 0)
+        self.assertIn('reason=hub_reopened', Path(self.cfg['log_path']).read_text())
+
+    def test_retry_limit_without_existing_log(self):
+        self.comments = [dict(author='board-sweep', text='정리(자동): 자동 마무리', created_at='2026-11-16T00:00:00Z')]
+        self.comments *= int(self.cfg['feature_merged_max_tries'])
+        self.assertFalse(Path(self.cfg['log_path']).exists())
+        self.assertEqual(self.sweep(), 0)
+        self.assertEqual(self.sweep(), 0)
+        self.assertEqual(Path(self.cfg['log_path']).read_text().count('\tretry-limit\t'), 1)
 
     def test_title_only_match_does_not_close(self):
         self.card['title'] = '[LRM-731] demo'

@@ -23,7 +23,7 @@ if a[:1] == ["list"]:
 elif a[:1] == ["comments"]:
     print(json.dumps(st.get("comments", {}).get(a[1], []), ensure_ascii=False))
 elif a[:1] == ["comment"]:
-    st.setdefault("comments", {}).setdefault(a[1], []).append({"text": a[2], "created_at": "2026-11-17T03:00:00Z"})
+    st.setdefault("comments", {}).setdefault(a[1], []).append({"text": a[2], "author": os.environ.get("BD_ACTOR"), "created_at": "2026-11-17T03:00:00Z"})
     save()
 elif a[:1] == ["close"]:
     if a[1] in os.environ.get("FAKE_BD_BLOCK", "").split(","):

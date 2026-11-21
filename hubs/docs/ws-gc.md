@@ -281,6 +281,7 @@ bash ~/.config/lrm-hubs/release_ws.sh --dispatch <id> [--dry-run] [--json]
 **마무리 뒤 활동을 확인하고 PR 조회와 활동 일수 대기는 생략한다.** 다시 연 허브를 보호하기 위해 Orca `lastActivityAt`과 마지막 커밋을 모두 비교한다. 보관은 PR 닫힘 정리의 `archive_all`·`verify_full`을 재사용한다. 서브모듈 변경, 열린 Unity, `WS_GC_PR_DONE_MAX_MB` 초과는 기존과 같이 보존한다. `feature_close --yes`의 목록 등록 뒤 30분 정리 회차가 이 조건을 확인해 허브 폴더를 지운다.
 
 **종료 반영 유예는 기본 10분이다.** `WS_GC_HUB_REOPEN_GRACE_MIN`으로 바꾼다. Orca가 터미널 종료·하위 정리를 늦게 반영하므로, 마무리 시각 + 유예 뒤의 활동·커밋만 재개로 본다. 유예 안 활동은 기존 창·하위 보호 조건을 통과하면 보관·삭제한다.
+자동 마무리 재시도도 같은 기준으로 재개된 허브를 제외하므로, `board_sweep.tsv`의 `feature_hub_reopen_grace_min`과 `WS_GC_HUB_REOPEN_GRACE_MIN`을 같은 값으로 설정한다.
 
 **sparse 허브의 미추적 결과물도 보관한다.** `docs/out/` 아래 HTML·증거를 `<archive>/<허브폴더>-<날짜시각>/files/docs/out/`로 복제하고 파일 수·바이트·내용을 대조한다. 추적 변경은 `tracked.patch`와 `staged.patch`에 남긴다. 보관·삭제 실패 시 목록 항목을 유지한다. 브랜치는 삭제하지 않는다.
 
