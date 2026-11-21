@@ -7,7 +7,9 @@ description: 게임 기능 하나를 맡을 코디네이터를 사용자의 명�
 
 사용자가 터미널 명령 대신 이 스킬로 코디네이터를 만든다. **사용자가 직접 부른 때에만 실행한다.** 세션이 스스로 판단해 코디네이터를 만들거나 끝내지 않는다(만든 뒤 지시·보고도 옮기지 않는다. 사용자가 코디네이터 창이나 그 Slack 스레드에 직접 지시한다).
 
-스크립트: `~/orca/claude-config/hubs/scripts/feature_open.sh`, `feature_close.sh`. 옵션은 각 `--help` 가 기준이다.
+스크립트: `~/orca/claude-config/hubs/scripts/feature_open.sh`, `feature_close.sh`, `feature_project.sh`. 옵션은 각 `--help` 가 기준이다.
+
+프로젝트마다 저장소·Jira 연동·브랜치 규칙·기준 브랜치가 다르다. 값은 `hubs/feature_projects.tsv` 한 곳에 있고 `feature_open.sh --project <키>` 로 고른다(생략하면 티켓 형식에 맞는 행, 그것도 없으면 lrm). 지금 등록: `lrm`(Jira 필수), `smg`(선택), `claude-config`(Jira 안 씀).
 
 ## 인자
 
@@ -21,6 +23,9 @@ description: 게임 기능 하나를 맡을 코디네이터를 사용자의 명�
 | `skip <slug> <급함\|이해\|계획>` | 진행 중인 기능의 준비 건너뛰기 |
 | `skip <slug> --undo <이해\|계획>` | 건너뛰기 취소(아직 지나지 않은 항목만) |
 | `close <slug>` | 코디네이터 끝내기 |
+| `project` | 등록된 프로젝트 보기(`feature_project.sh list`) |
+| `project add <키> <저장소>` | 새 프로젝트 등록. Jira 연동을 사용자에게 고르게 함(아래 「프로젝트 등록」) |
+| `open --project <키> <기능 이름> …` | 그 프로젝트로 열기. Jira 를 안 쓰는 프로젝트는 티켓 없이 연다 |
 | `sprint [YYYYMMDD]` | 이 스프린트의 시작일 보기·바꾸기(브랜치의 스프린트 폴더 이름에 씀) |
 
 ## 목록
@@ -34,7 +39,7 @@ cd ~/orca/board && bd list --type epic --status open,in_progress --label-pattern
 
 ## 열기
 
-1. 인자를 맞춘다. 첫 낱말이 `LRM-숫자` 꼴이면 그 티켓을 쓴다. 아니면 티켓이 없는 것이므로 아래 「티켓이 없을 때」를 먼저 한다. 기능 이름은 필수다. 기준 브랜치를 안 줬으면 `dev` 로 하고 그렇게 했다고 말한다.
+1. 인자를 맞춘다. 먼저 프로젝트를 정한다: `--project` 를 줬으면 그것, 지금 세션의 저장소가 표에 있으면 그 행, 아니면 lrm. 첫 낱말이 티켓 꼴이면 그 티켓을 쓴다. 티켓이 없을 때: 그 프로젝트의 Jira 칸이 `required` 면 아래 「티켓이 없을 때」를 먼저 하고, `none`·`optional` 이면 티켓 없이 연다(`--slug` 필수). 기능 이름은 필수다. 기준 브랜치를 안 줬으면 표의 기준 브랜치를 쓰고 그렇게 했다고 말한다.
 2. 브랜치 이름에 들어갈 것을 정한다. 게임 저장소 규칙(`CLAUDE.md` Branch Convention)은 `sprint-<스프린트 시작일>/<타입>-<티켓>-<작업명>` 이다.
    - **스프린트 시작일**: 오늘 날짜가 아니다. `~/.config/lrm-hubs/sprint-start`(한 줄 `YYYYMMDD`)에 정해 둔 값을 스크립트가 읽는다. 파일이 없으면 아래 「스프린트 시작일」대로 사용자에게 한 번 묻고 적어 둔다. 날짜를 지어내지 않는다.
    - **영문 작업명**(`--slug`): 사용자가 안 줬으면 기능 이름을 영문 소문자 2~4낱말로 옮긴다(우편함 → `mailbox`, 미션 카드 게이지 → `mission-card-gauge`). 허브 이름과 `/orca-feature close` 에 쓰는 이름이 된다.
@@ -64,7 +69,15 @@ cd ~/orca/board && bd list --type epic --status open,in_progress --label-pattern
 3. 받은 티켓 번호로 「열기」 2번(브랜치 이름 정하기)부터 이어 간다.
 4. 열 때 접수 내용을 함께 넘긴다: `feature_open.sh … --goal "<목표 원문>" --verify "<확인 방법 원문>"` (범위 밖을 말했으면 `--out`). 기능 카드 설명의 접수 칸에 적히고, 코디네이터는 거기서 읽어 7단계의 0단계를 시작한다.
 
-개인·설정 작업(Jira 발급 금지 대상)이면 티켓을 만들지 않고 `orca-hub-create` 로 안내한다.
+개인·설정 작업(Jira 발급 금지 대상)이면 티켓을 만들지 않는다. 그 저장소가 표에 `none` 으로 있으면 티켓 없이 열고, 없으면 「프로젝트 등록」부터 한다.
+
+## 프로젝트 등록 (처음 셋업할 때)
+
+표에 없는 저장소에서 처음 기능을 열 때 한 번 한다.
+
+1. **Jira 연동을 사용자에게 묻는다.** 기본값을 정해 주지 않는다. `required`(티켓 없이는 안 염) · `optional`(있으면 씀) · `none`(Jira 안 씀) 중 하나. `none` 이 아니면 티켓 형식(예 `^JM-[0-9]+$`)도 받는다.
+2. 미리 보기: `feature_project.sh add <키> --repo <저장소> --jira <고른 값> [--ticket-re <형식>] --dry-run`. 브랜치 규칙·기준 브랜치는 저장소 CLAUDE.md 와 origin 기본 브랜치로 기본값이 잡힌다. 다르면 `--branch`·`--base` 로 준다.
+3. `--dry-run` 을 빼고 실행한다. 바꿀 때는 `--replace`.
 
 ## 급한 일: 준비 건너뛰기
 
@@ -101,4 +114,4 @@ cd ~/orca/board && bd list --type epic --status open,in_progress --label-pattern
 
 - 코디네이터에게 줄 지시문을 대신 보내지 않는다. 사용자가 원하면 맡길 문장(목표 + 확인 방법) 초안만 준다.
 - 이미 살아 있는 코디네이터를 다시 띄우지 않는다(`feature_open.sh` 가 재사용한다).
-- 티켓 없는 개인·설정 작업용 허브는 만들지 않는다. `orca-hub-create` 로 안내한다.
+- 표에 없는 저장소를 Jira 연동을 묻지 않고 등록하지 않는다.
