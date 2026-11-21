@@ -52,7 +52,8 @@ class AuditTest(unittest.TestCase):
         self.save()
         text = audit.board.render(self.root, [self.child], [dict(r, issue_id=cid) for cid, rows in self.rows.items() for r in rows],
                                   [(s.key, s.name) for s in audit.board_flow.STAGES])
-        self.state = {"topics": {"card:lrm-test": {"fmt": audit.board.summary(text)}}}
+        self.state = {"topics": {"card:lrm-test": {"fmt": audit.board.summary(text)}},
+                      "reports": {"q1": {"sent": int(self.now - 1000)}, "q2": {"sent": int(self.now - 1000)}}}
         self.save()
 
     def tearDown(self):
@@ -74,7 +75,7 @@ class AuditTest(unittest.TestCase):
     def test_all_pass_read_only_and_cli_json(self):
         before = {p: p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
         result = self.inspect()
-        self.assertEqual(["통과"] * 4, [r["status"] for r in result["rows"]])
+        self.assertEqual(["통과"] * 5, [r["status"] for r in result["rows"]])
         self.assertEqual(60, result["compactions"][0]["tokens"])
         self.assertEqual([], result["missing_records"])
         p = subprocess.run([sys.executable, "-B", str(ROOT / "hubs/scripts/report_audit.py"), "feat-test", "--json",
@@ -91,6 +92,7 @@ class AuditTest(unittest.TestCase):
     def test_board_mismatch_missing_and_duplicate_ids(self):
         self.state["topics"]["card:lrm-test"]["fmt"] = "0" * 64
         self.queue = [self.queue[0], dict(self.queue[0], id="q3")]
+        self.state["reports"]["q3"] = {"sent": int(self.now - 1000)}
         self.save()
         result = self.inspect()
         self.assertEqual("실패", result["rows"][0]["status"])
@@ -147,6 +149,60 @@ class AuditTest(unittest.TestCase):
         row = dict(created_at="2026-11-21T10:20:00Z", text=audit.said.said_line(2, at, "사용자 새 지시"))
         result = audit.restored([boundary], [row], self.now, [(at, "사용자 새 지시")])
         self.assertNotIn(f"미기록 지시@{int(at)}", result[0]["missing"])
+
+    def test_grace_shared_filters_baseline_and_skips_are_separate(self):
+        self.rows["lrm-test.1"].extend([self.row("recent", "최근 기록", "10:59"),
+            self.row("ref", "참고: lrm-test", "10:30"), self.row("same", "이미 보낸 본문", "10:31"),
+            self.row("base", "첫 기준선", "10:32"), self.row("skip", "문제 기록", "10:33")])
+        self.queue.append(dict(id="manual", at=int(self.now - 1000), hub="feat-test", task="없음", kind="info",
+                               text="이미 보낸 본문", files=[], card="lrm-test"))
+        (self.home / "board-mirror.state.json").write_text(json.dumps({
+            "_baseline_ids": {"lrm-test.1": ["base"]}, "_skipped_ids": {"lrm-test.1": ["skip"]}}))
+        self.save()
+        result = self.inspect()
+        self.assertEqual([], result["missing_records"])
+        self.assertEqual("통과", result["rows"][1]["status"])
+        self.assertEqual([["lrm-test.1", "base"]], [list(x) for x in result["baseline_records"]])
+        self.assertEqual(1, len(result["skipped_records"]))
+        self.assertEqual(1, len(result["grace_records"]))
+        self.assertIn("건너뜀 1건", result["rows"][4]["detail"])
+
+    def test_queued_is_not_sent_and_four_minute_limit(self):
+        self.state["reports"].pop("q2")
+        self.rows["lrm-test.1"].append(self.row("overdue", "4분 넘긴 기록", "10:55"))
+        self.save()
+        result = self.inspect()
+        self.assertIn(dict(card="lrm-test.1", id="child"), result["missing_records"])
+        self.assertIn(dict(card="lrm-test.1", id="overdue"), result["missing_records"])
+        self.assertIn("대기열 3 / 보냄 2 / 대상 4건", result["rows"][1]["detail"])
+
+    def test_nonobject_session_rows_uppercase_label_and_global_uuid(self):
+        self.root["labels"][0] = "feature:Test"
+        self.save()
+        rows = [None, [], 42, "text", dict(type="system", subtype="compact_boundary", uuid="same-compact",
+                timestamp="2026-11-21T10:15:00Z"), dict(type="assistant", timestamp="2026-11-21T10:16:00Z",
+                message=dict(usage=dict(input_tokens=12)))]
+        self.session.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+        (self.session.parent / "copy.jsonl").write_text(self.session.read_text())
+        result = self.inspect()
+        self.assertEqual(1, len(result["compactions"]))
+        self.assertEqual(12, result["compactions"][0]["tokens"])
+        self.assertEqual("lrm-test", result["card"])
+
+    def test_internal_error_exits_two(self):
+        with patch.object(sys, "argv", ["report_audit.py", "feat-test"]), patch.object(
+                audit, "inspect", side_effect=TypeError("가짜 내부 오류")), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(2, audit.main())
+
+    def test_legacy_seen_records_are_not_silently_classified_as_baseline(self):
+        self.queue = self.queue[:1]
+        self.save()
+        (self.home / "board-mirror.state.json").write_text(json.dumps({"_seen": {"lrm-test.1": ["child"]}}))
+        result = self.inspect()
+        self.assertEqual([], result["missing_records"])
+        self.assertEqual([], result["baseline_records"])
+        self.assertEqual([("lrm-test.1", "child")], result["unclassified_records"])
+        self.assertIn("분류 불가 1건", result["rows"][4]["detail"])
 
 
 if __name__ == "__main__":

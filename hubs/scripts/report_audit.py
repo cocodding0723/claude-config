@@ -29,6 +29,7 @@ def json_file(path):
 
 def sessions(paths, since, now):
     boundaries = []
+    seen = set()
     for path in paths:
         records = []
         with open(path, encoding="utf-8") as f:
@@ -39,14 +40,14 @@ def sessions(paths, since, now):
                     if line.endswith("\n"):
                         raise ValueError(f"세션 JSON 오류: {path}")
                     continue
-                if not row.get("isSidechain"):
+                if isinstance(row, dict) and not row.get("isSidechain"):
                     records.append(row)
-        seen = set()
         for index, row in enumerate(records):
             at = said.stamp(row.get("timestamp"))
-            if row.get("subtype") != "compact_boundary" or not since <= at <= now or at in seen:
+            key = row.get("uuid") or (str(Path(path).resolve()), at)
+            if row.get("subtype") != "compact_boundary" or not since <= at <= now or key in seen:
                 continue
-            seen.add(at)
+            seen.add(key)
             first = next((r for r in records[index + 1:] if r.get("type") == "assistant"
                           and said.stamp(r.get("timestamp")) >= at), None)
             usage = (first or {}).get("message", {}).get("usage", {})
@@ -92,7 +93,7 @@ def inspect(hub, reader, home, since, now):
     if not hub.startswith("feat-") or not hub_report.hub_status.SLUG_RE.fullmatch(hub):
         raise ValueError("기능 허브 이름 오류 — feat-<slug> 지정")
     cards = reader.query("list", "--all", "--limit", "0")
-    roots = [c for c in cards if c.get("issue_type") == "epic" and "feature:" + hub[5:] in c.get("labels", [])]
+    roots = [c for c in cards if c.get("issue_type") == "epic" and "feature:" + hub[5:] in [l.lower() for l in c.get("labels", [])]]
     if not roots:
         raise ValueError("기능 카드 없음 — 허브 이름 확인")
     root = sorted(roots, key=lambda c: (c.get("status") != "closed", c.get("created_at", "")))[-1]
@@ -105,17 +106,35 @@ def inspect(hub, reader, home, since, now):
         d.get("type") == "parent-child" and d.get("depends_on_id") == root["id"] for d in c.get("dependencies", []))]
     direct = {root["id"], *(c["id"] for c in children)}
     text = board.render(root, children, [r for r in records if r["issue_id"] in direct], reader.stages())
-    topic = json_file(home / "report-sender.state.json").get("topics", {}).get("card:" + root["id"], {})
+    sender = json_file(home / "report-sender.state.json")
+    topic = sender.get("topics", {}).get("card:" + root["id"], {})
     summary = topic.get("fmt", "").rsplit(":", 1)[-1]
     connected = bool(re.fullmatch(r"[0-9a-f]{64}", summary))
     equal = summary == board.summary(text)
-    expected = {(r["issue_id"], str(r["id"])) for r in records if since <= said.stamp(r.get("created_at")) <= now
-                and r.get("text", "").strip() and not re.search(mirror.cfg["skip_pattern"], r["text"].strip())}
     queue = hub_report.read_outbox(str(home / hub_report.OUTBOX_NAME))
-    counts = Counter((q.get("mirror_card", q.get("card")), str(i)) for q in queue if q.get("hub") == hub
-                     and q.get("at", 0) <= now for i in q.get("mirror_ids", []))
-    missing = sorted(expected - counts.keys())
-    duplicates = sorted(key for key in expected if counts[key] > 1)
+    eligible = [r for c in related for r in mirror.filter_records(root, c["id"],
+                [r for r in records if r["issue_id"] == c["id"]], queue)
+                if since <= said.stamp(r.get("created_at")) <= now]
+    pairs = {(r["issue_id"], str(r["id"])) for r in eligible}
+    mirror_state = json_file(home / "board-mirror.state.json")
+    def tracked(name):
+        return {(cid, str(i)) for cid, ids in mirror_state.get(name, {}).items() for i in ids} & pairs
+    baseline, skipped = tracked("_baseline_ids"), tracked("_skipped_ids")
+    counts, sent = Counter(), Counter()
+    for q in queue:
+        if q.get("hub") != hub or q.get("at", 0) > now:
+            continue
+        keys = [(q.get("mirror_card", q.get("card")), str(i)) for i in q.get("mirror_ids", [])]
+        counts.update(keys)
+        delivered = sender.get("reports", {}).get(q["id"], {}).get("sent", 0)
+        if delivered and delivered <= now:
+            sent.update(keys)
+    # 이전 장부에는 기준선·건너뜀 구분이 없음. 알려진 기록을 누락으로 단정하지 않음
+    unclassified = tracked("_seen") - counts.keys() - baseline - skipped
+    grace = {(r["issue_id"], str(r["id"])) for r in eligible if said.stamp(r.get("created_at")) > now - 240} - baseline - skipped - unclassified
+    expected = pairs - baseline - skipped - unclassified - grace
+    missing = sorted(expected - sent.keys())
+    duplicates = sorted(key for key in expected if sent[key] > 1)
     ws = board_flow.coordinator_ws(root)
     paths = said.transcripts(ws) if ws else []
     boundaries = sessions(paths, since, now)
@@ -127,14 +146,18 @@ def inspect(hub, reader, home, since, now):
     rows = [dict(item="현황판 = 카드 상태", status="미연결" if not connected else "통과" if equal else "실패",
                  detail="전송기 현황판 요약값 없음" if not connected else f"현재 {board.summary(text)} / 전송 {summary}"),
             dict(item="옮긴 기록 수 = 해당 기록 수", status="실패" if missing or duplicates else "통과",
-                 detail=f"{len(expected) - len(missing)}/{len(expected)}건, 중복 {len(duplicates)}건"),
+                 detail=f"대기열 {len(expected & counts.keys())} / 보냄 {len(expected & sent.keys())} / 대상 {len(expected)}건, 중복 {len(duplicates)}건; 기준선 {len(baseline)}, 유예 {len(grace)}"),
             dict(item="압축 뒤 누락", status="확인 불가" if not paths else "실패" if missed else "대기" if any(r["pending"] for r in recovery) else "통과",
                  detail=f"누락 {missed}건, 30분 관찰 중 {sum(r['pending'] for r in recovery)}회"),
             dict(item="압축 횟수·직후 입력 토큰", status="확인 불가" if not paths else "실패" if unknown_tokens else "대기" if any(r["tokens"] is None for r in boundaries) else "통과",
-                 detail=f"{len(boundaries)}회: " + ", ".join(str(r["tokens"]) if r["tokens"] is not None else "응답 미관찰" for r in boundaries))]
+                 detail=f"{len(boundaries)}회: " + ", ".join(str(r["tokens"]) if r["tokens"] is not None else "응답 미관찰" for r in boundaries)),
+            dict(item="의도적 건너뜀·이전 장부", status="주의" if skipped or unclassified else "통과",
+                 detail=f"3회 건너뜀 {len(skipped)}건, 이전 장부 분류 불가 {len(unclassified)}건")]
     return dict(hub=hub, card=root["id"], since=since, until=now, rows=rows,
                 missing_records=[dict(card=c, id=i) for c, i in missing],
                 duplicate_records=[dict(card=c, id=i) for c, i in duplicates],
+                baseline_records=sorted(baseline), skipped_records=sorted(skipped),
+                grace_records=sorted(grace), unclassified_records=sorted(unclassified),
                 compactions=recovery, session_paths=paths)
 
 
@@ -166,7 +189,7 @@ def main():
                 print(f"압축 {dt.datetime.fromtimestamp(compact['at'], dt.timezone.utc).isoformat()}: "
                       + ("관찰 중 " if compact["pending"] else "") + (", ".join(compact["missing"]) or "누락 없음"))
         return 1 if any(r["status"] in ("실패", "확인 불가") for r in result["rows"]) else 0
-    except (OSError, ValueError, RuntimeError, ImportError) as exc:
+    except Exception as exc:
         print(f"감사 자료 조회 실패: {exc}", file=sys.stderr)
         return 2
 

@@ -107,7 +107,18 @@ class Mirror:
             text = text.splitlines()[0] + self.cfg["length_format"].format(chars=chars)
         text = re.sub(self.cfg["ref_pattern"], "", text)
         lines, moved = report.move_refs(text.splitlines())
-        return " ".join(lines).strip(), refs + moved
+        body = []
+        for line in lines:
+            if line.lstrip().startswith(self.cfg["reference"]):
+                refs.append(line.lstrip()[len(self.cfg["reference"]):].strip())
+            else:
+                body.append(line)
+        return " ".join(body).strip(), refs + moved
+
+    def filter_records(self, root, cid, rows, queued):
+        previous = {q["text"].strip() for q in queued if not q.get("mirror_ids")
+                    and (q.get("card") == cid or q.get("hub") == self.hub(root))}
+        return [r for r in rows if self.clean(r)[0] and r.get("text", "").strip() not in previous]
 
     def enqueue(self, root, card, rows, validate=False):
         texts, refs = [], [card["id"]]
@@ -169,13 +180,11 @@ class Mirror:
                 except (KeyError, ValueError):
                     return True
             known = [str(r["id"]) for r in rows if old(r)]
+            state.setdefault("_baseline_ids", {})[cid] = known[-int(self.cfg["seen_limit"]):]
             print(json.dumps({"baseline": cid, "records": len(known)}, ensure_ascii=False))
         if not baseline or len(known) < len(rows):
             sent = {i for q in queued if q.get("mirror_card", q.get("card")) == cid for i in q.get("mirror_ids", [])}
-            previous = {q["text"].strip() for q in queued if not q.get("mirror_ids")
-                        and (q.get("card") == cid or q.get("hub") == self.hub(root))}
-            fresh = [r for r in rows if str(r["id"]) not in set(known) | sent
-                     and r.get("text", "").strip() not in previous]
+            fresh = [r for r in self.filter_records(root, cid, rows, queued) if str(r["id"]) not in set(known) | sent]
             accepted, blocked, attempts = [], False, {}
             prior = failures.get(cid, {})
             for row in fresh:
@@ -186,7 +195,11 @@ class Mirror:
                 except BudgetExpired:
                     raise
                 except (ValueError, report.ReportError) as e:
-                    blocked |= not self.failure(cid, str(row["id"]), e, prior, attempts)
+                    skipped = self.failure(cid, str(row["id"]), e, prior, attempts)
+                    if skipped:
+                        history = state.setdefault("_skipped_ids", {}).setdefault(cid, [])
+                        history[:] = list(dict.fromkeys([*history, str(row["id"])]))[-int(self.cfg["seen_limit"]):]
+                    blocked |= not skipped
             failures[cid] = attempts
             if blocked:
                 return

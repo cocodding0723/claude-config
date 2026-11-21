@@ -376,6 +376,18 @@ class MirrorTest(unittest.TestCase):
         self.assertLessEqual(path.stat().st_size, 4096)
         self.assertIn("반복 실패", path.read_text())
 
+    def test_audit_receives_baseline_skip_and_shared_filter_metadata(self):
+        self.add("과거 기준선")
+        self.run_mirror()
+        self.add("password=pretend-value")
+        self.add("참고: lrm-test")
+        for _ in range(3):
+            self.run_mirror()
+        state = json.loads((self.home / "board-mirror.state.json").read_text())
+        self.assertEqual(["id-1"], state["_baseline_ids"]["lrm-test.1"])
+        self.assertEqual(["id-2"], state["_skipped_ids"]["lrm-test.1"])
+        self.assertEqual([], self.queue())
+
     def test_poller_skips_mirror_without_reserve(self):
         script = (ROOT / "hubs/scripts/slack_poll.sh").read_text()
         tail = script[script.index('left=$((TOTAL', script.index('# 허브 보고 전송')):script.rindex('exit "$RC"')]
