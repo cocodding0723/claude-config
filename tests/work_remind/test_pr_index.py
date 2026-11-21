@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "hubs", "scripts"))
 from pr_index import PrIndex
+import work_remind as wr
 
 
 class PrIndexTest(unittest.TestCase):
@@ -40,9 +41,9 @@ class PrIndexTest(unittest.TestCase):
     def gh_calls(self):
         return [cmd for cmd, _ in self.calls if cmd[0] == "fake-gh"]
 
-    def test_ticket_boundary_and_title_priority(self):
-        self.assertEqual(self.index.for_card(self.card()), [(7, "MERGED")])
-        self.assertEqual(self.index.for_card(self.card()), [(7, "MERGED")])
+    def test_branch_priority(self):
+        self.assertEqual(self.index.for_card(self.card()), [(8, "OPEN")])
+        self.assertTrue(self.index.for_card(self.card()).branch_matched)
         self.assertEqual(self.gh_calls(), [["fake-gh", "pr", "list", "--state", "all", "--limit", "400", "--json", "number,state,title,headRefName"]])
 
     def test_branch_fallback_with_and_without_ticket(self):
@@ -50,6 +51,22 @@ class PrIndexTest(unittest.TestCase):
             self.assertEqual(self.index.for_card(self.card(title=title)), [(8, "OPEN")])
         self.assertEqual(self.index.for_card(self.card(title="없음", branch="missing")), [])
         self.assertEqual(len(self.gh_calls()), 1)
+
+    def test_title_fallback_is_display_only_and_respects_ticket_boundary(self):
+        prs = self.index.for_card(self.card(branch="missing"))
+        self.assertEqual(prs, [(7, "MERGED")])
+        self.assertEqual(prs.basis, "title")
+        self.assertFalse(prs.branch_matched)
+
+    def test_shared_ticket_keeps_other_features_in_progress(self):
+        self.rows = [dict(number=1052, state="MERGED", title="[LRM-731] demo", headRefName="feature/lrm-0az")]
+        cards = [dict(self.card(title="[LRM-731] " + cid, branch="feature/" + cid),
+                      id=cid, issue_type="epic", status="open", labels=["repo:" + self.repo,
+                      "feature:" + cid, "branch:feature/" + cid]) for cid in ("lrm-0az", "lrm-7eq", "lrm-ywd")]
+        features = wr.features(cards, prs_of=self.index.for_card)
+        self.assertEqual([f["name"] for f in features], ["lrm-7eq", "lrm-ywd"])
+        self.assertTrue(all(not f["merged"] for f in features))
+        self.assertTrue(all("#1052" in f["pr"]["note"] for f in features))
 
     def test_common_directory_shares_cache_between_worktrees(self):
         self.index.load(self.repo)

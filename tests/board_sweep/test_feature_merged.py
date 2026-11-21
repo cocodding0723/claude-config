@@ -33,6 +33,8 @@ class FeatureMergedTest(unittest.TestCase):
         self.rows = [dict(number=7, state='MERGED', title='demo', headRefName='feature/demo')]
         self.comments = []
         self.children = []
+        self.labeled = []
+        self.child_comments = []
         self.writes = []
         self.gh_calls = 0
         self.fail_gh = False
@@ -45,9 +47,9 @@ class FeatureMergedTest(unittest.TestCase):
     def bd(self, *args):
         self.reads.append(args)
         if args[0] == 'list':
-            return 0, json.dumps(self.children if '--parent' in args else [self.card]), ''
+            return 0, json.dumps(self.children if '--parent' in args else [self.card, *self.labeled]), ''
         if args[0] == 'comments':
-            return (1, '', 'failed') if self.fail_comments else (0, json.dumps(self.comments), '')
+            return (1, '', 'failed') if self.fail_comments else (0, json.dumps(self.comments if args[1] == self.card['id'] else self.child_comments), '')
         self.writes.append(args)
         return 0, '', ''
 
@@ -123,9 +125,48 @@ class FeatureMergedTest(unittest.TestCase):
         self.fail_comments = True
         self.assertEqual(self.sweep(), 0)
 
-    def test_duplicate_marker_blocks(self):
-        self.comments = [dict(text='정리(자동): 자동 마무리', created_at='2026-11-16T00:00:00Z')]
+    def test_retry_interval_and_limit(self):
+        self.comments = [dict(text='정리(자동): 자동 마무리', created_at='2026-11-16T04:00:00Z')]
         self.assertEqual(self.sweep(), 0)
+        self.comments[0]['created_at'] = '2026-11-16T03:00:00Z'
+        self.assertEqual(self.sweep(), 1)
+        self.comments *= int(self.cfg['feature_merged_max_tries'])
+        self.assertEqual(self.sweep(), 0)
+        log = Path(self.cfg['log_path']).read_text()
+        self.assertIn('retry-limit', log)
+        self.assertIn('.evidence/epic-feature-close.log', log)
+
+    def test_title_only_match_does_not_close(self):
+        self.card['title'] = '[LRM-731] demo'
+        self.rows[0].update(title='[LRM-731] other feature', headRefName='feature/other')
+        self.assertEqual(self.sweep(), 0)
+
+    def test_label_only_open_card_blocks(self):
+        self.labeled = [dict(id='separate', issue_type='task', status='blocked', labels=['feature:demo'])]
+        self.assertEqual(self.sweep(), 0)
+
+    def test_related_update_and_comment_block(self):
+        child = dict(id='child', status='closed', updated_at='2026-11-17T02:00:00Z')
+        self.children = [child]
+        self.assertEqual(self.sweep(), 0)
+        child['updated_at'] = '2026-11-16T00:00:00Z'
+        self.child_comments = [dict(text='activity', created_at='2026-11-17T02:00:00Z')]
+        self.assertEqual(self.sweep(), 0)
+        self.child_comments = []
+        self.assertEqual(self.sweep(), 1)
+        self.children = []
+        self.labeled = [dict(child, labels=['feature:demo'])]
+        self.child_comments = [dict(text='activity', created_at='2026-11-17T02:00:00Z')]
+        self.assertEqual(self.sweep(), 0)
+
+    def test_gh_cap_logs_skip(self):
+        sweeper = Sweeper(self.cfg, True)
+        sweeper.bd = self.bd
+        cards = sweeper.cards()
+        sweeper.gh_calls = int(self.cfg['gh_calls_max'])
+        sweeper.rule_feature_merged(cards)
+        self.assertEqual(self.writes, [])
+        self.assertIn('feature_merged\t-\tgh-cap', Path(self.cfg['log_path']).read_text())
 
     def test_closed_feature_requires_remaining_hub(self):
         self.card['status'] = 'closed'
@@ -178,6 +219,7 @@ class FeatureMergedTest(unittest.TestCase):
                 self.assertTrue(sweeper.feature_hub_exists('demo'))
                 self.assertFalse(sweeper.feature_hub_exists('absent'))
                 self.assertEqual(run.call_count, 1)
+                self.assertIn(self.cfg['feature_worktree_limit'], run.call_args.args[0])
 
 
 if __name__ == '__main__':

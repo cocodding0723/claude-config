@@ -234,20 +234,20 @@ class RealityTest(unittest.TestCase):
         self.open = card("t-o1", "open", labels=["feature:lines", "stage:build"], title="[LRM-689] 승부·찬스 대사", kind="epic")
 
     def test_review_the_user_already_passed_is_not_my_turn(self):
-        got = wr.reviews([self.review], comments_of=lambda c: [(wr.stamp("2026-11-19T02:37:00Z"), SLACK_PASS)], prs_of=lambda c: [])
+        got = wr.reviews([self.review], comments_of=lambda c: [(wr.stamp("2026-11-19T02:37:00Z"), SLACK_PASS)], prs_of=lambda c: wr.PrMatches([]))
         self.assertEqual([(r["name"], r["passed"], r["done"]) for r in got], [("VS 증감 효과음", True, True)])
 
     def test_review_without_a_pass_stays_my_turn_with_its_pr_state(self):
-        got = wr.reviews([self.review], comments_of=lambda c: [], prs_of=lambda c: [(923, "OPEN")])
+        got = wr.reviews([self.review], comments_of=lambda c: [], prs_of=lambda c: wr.PrMatches([(923, "OPEN")]))
         self.assertEqual([(r["done"], r["pr"]["note"]) for r in got], [(False, "PR #923 열림")])
 
     def test_feature_whose_pr_merged_is_marked_merged(self):
-        got = wr.features([self.open, card("t-o1.1")], wr.flow_lib(), prs_of=lambda c: [(1002, "MERGED"), (1005, "MERGED")])
+        got = wr.features([self.open, card("t-o1.1")], wr.flow_lib(), prs_of=lambda c: wr.PrMatches([(1002, "MERGED"), (1005, "MERGED")]))
         self.assertEqual([(f["name"], f["merged"]) for f in got], [("승부·찬스 대사", True)])
 
     def test_message_moves_them_out_of_my_turn_and_out_of_in_progress(self):
-        revs = wr.reviews([self.review], comments_of=lambda c: [(wr.stamp("2026-11-19T02:37:00Z"), SLACK_PASS)], prs_of=lambda c: [])
-        feats = wr.features([self.open, card("t-o1.1")], wr.flow_lib(), prs_of=lambda c: [(1002, "MERGED")])
+        revs = wr.reviews([self.review], comments_of=lambda c: [(wr.stamp("2026-11-19T02:37:00Z"), SLACK_PASS)], prs_of=lambda c: wr.PrMatches([]))
+        feats = wr.features([self.open, card("t-o1.1")], wr.flow_lib(), prs_of=lambda c: wr.PrMatches([(1002, "MERGED")]))
         lines = wr.build(NOW, decisions=[], reviews=revs, features=feats, stalled=[]).splitlines()
         self.assertEqual(lines[0], "📋 남은 작업 11:00 — 내 차례 없음")
         self.assertNotIn("🙋 내 차례", lines)
@@ -257,14 +257,31 @@ class RealityTest(unittest.TestCase):
         self.assertIn("- 승부·찬스 대사: 병합됨, 남은 카드 1 — PR #1002 병합됨", lines)
 
     def test_message_with_pr_notes_passes_the_slack_format_check(self):
-        revs = wr.reviews([self.review], comments_of=lambda c: [], prs_of=lambda c: [(923, "OPEN")])
-        feats = wr.features([self.open, card("t-o1.1")], wr.flow_lib(), prs_of=lambda c: [(1002, "MERGED"), (1005, "MERGED")])
+        revs = wr.reviews([self.review], comments_of=lambda c: [], prs_of=lambda c: wr.PrMatches([(923, "OPEN")]))
+        feats = wr.features([self.open, card("t-o1.1")], wr.flow_lib(), prs_of=lambda c: wr.PrMatches([(1002, "MERGED"), (1005, "MERGED")]))
         text = wr.build(NOW, decisions=[], reviews=revs, features=feats, stalled=[])
         self.assertEqual([g for g in board_cards.text_gaps(text, skip_first=True) if g[2] == "reject"], [])
         self.assertNotRegex(text, r"LRM-\d+")
 
 
 class ClassificationTest(unittest.TestCase):
+    def test_label_only_open_card_keeps_merged_feature_visible(self):
+        cards = [self.epic(), card("separate", labels=["feature:x"]), card("f.1", "closed", labels=["feature:x"])]
+        features = wr.features(cards, prs_of=lambda c: wr.PrMatches([(1, "MERGED")]))
+        self.assertEqual((features[0]["total"], features[0]["remaining"]), (2, 1))
+
+    def test_title_only_merged_pr_stays_in_progress(self):
+        prs = wr.PrMatches([(1052, "MERGED")], basis="title")
+        for status, kids in (("open", []), ("open", [card("f.1")])):
+            features = wr.features([self.epic(status), *kids], prs_of=lambda c: prs)
+            text = wr.build(NOW, [], [], features, [])
+            self.assertIn("🔄 진행 중", text)
+            self.assertIn("#1052", text)
+            self.assertNotIn("병합됨, 남은 카드", text)
+        self.assertEqual(wr.features([self.epic("closed")], prs_of=lambda c: prs), [])
+        review = wr.reviews([self.epic(stage="review")], prs_of=lambda c: prs)
+        self.assertFalse(review[0]["done"])
+
     def epic(self, status="open", stage="build", **extra):
         return dict(card("f", status, labels=["feature:x", "stage:" + stage], kind="epic"), **extra)
 
@@ -273,13 +290,13 @@ class ClassificationTest(unittest.TestCase):
             for stage in ("build", "review", "ship"):
                 for kids in ([], [card("f.1", "closed")]):
                     with self.subTest(status=status, stage=stage, kids=kids):
-                        self.assertEqual(wr.features([self.epic(status, stage), *kids], prs_of=lambda c: [(1, "MERGED")]), [])
+                        self.assertEqual(wr.features([self.epic(status, stage), *kids], prs_of=lambda c: wr.PrMatches([(1, "MERGED")])), [])
 
     def test_all_merged_with_remaining_cards_stays_in_cleanup(self):
         for status in ("open", "closed"):
             for stage in ("build", "review", "ship"):
                 cards = [self.epic(status, stage), card("f.1", "closed"), card("f.2"), card("f.3", "in_progress")]
-                features = wr.features(cards, prs_of=lambda c: [(1, "MERGED")])
+                features = wr.features(cards, prs_of=lambda c: wr.PrMatches([(1, "MERGED")]))
                 self.assertEqual(features[0]["remaining"], 2)
                 text = wr.build(NOW, [], [], features, [])
                 self.assertIn("🧹 정리만 남음", text)
@@ -289,19 +306,19 @@ class ClassificationTest(unittest.TestCase):
     def test_missing_open_or_unmerged_pr_does_not_disappear(self):
         for prs in (None, [], [(1, "OPEN")], [(1, "CLOSED")], [(1, "MERGED"), (2, "OPEN")], [(1, "MERGED"), (2, "CLOSED")]):
             with self.subTest(prs=prs):
-                features = wr.features([self.epic()], prs_of=lambda c: prs)
+                features = wr.features([self.epic()], prs_of=lambda c: None if prs is None else wr.PrMatches(prs))
                 self.assertEqual(len(features), 1)
                 self.assertFalse(features[0]["merged"])
 
     def test_merged_and_passed_review_disappears(self):
         c = self.epic("closed", "review")
         for prs in ([(1, "MERGED")], [(1, "MERGED"), (2, "CLOSED")]):
-            got = wr.reviews([c], comments_of=lambda c: [(NOW, "user-ok: 통과")], prs_of=lambda c: prs)
+            got = wr.reviews([c], comments_of=lambda c: [(NOW, "user-ok: 통과")], prs_of=lambda c: None if prs is None else wr.PrMatches(prs))
             self.assertEqual(got, [])
             self.assertEqual(wr.build(NOW, [], got, [], []), "")
 
     def test_merged_review_without_pass_keeps_existing_cleanup_rule(self):
-        got = wr.reviews([self.epic(stage="review")], comments_of=lambda c: [], prs_of=lambda c: [(1, "MERGED")])
+        got = wr.reviews([self.epic(stage="review")], comments_of=lambda c: [], prs_of=lambda c: wr.PrMatches([(1, "MERGED")]))
         self.assertTrue(got[0]["done"])
         self.assertFalse(got[0]["passed"])
 
@@ -319,7 +336,7 @@ class ClassificationTest(unittest.TestCase):
                 ("기능 코디네이터 허브: " + missing, [], "closed", False),
             ):
                 with self.subTest(description=description, prs=prs, status=status):
-                    features = wr.features([self.epic(status, "ship", description=description)], prs_of=lambda c: prs)
+                    features = wr.features([self.epic(status, "ship", description=description)], prs_of=lambda c: None if prs is None else wr.PrMatches(prs))
                     text = wr.build(NOW, [], [], features, [])
                     self.assertEqual(" — 맡은 코디네이터 없음" in text, want)
                     self.assertIn("🔄 진행 중", text)
@@ -330,7 +347,7 @@ class ClassificationTest(unittest.TestCase):
                                      ("open", [(1, "MERGED"), (2, "CLOSED")], True)):
             cards = [self.epic(status), card("f.1", "in_progress", updated=NOW - 50 * HOUR),
                      card("f2.1", "in_progress", updated=NOW - 50 * HOUR)]
-            got = wr.stalled(cards, NOW, prs_of=lambda c: prs)
+            got = wr.stalled(cards, NOW, prs_of=lambda c: None if prs is None else wr.PrMatches(prs))
             self.assertEqual([s["name"] for s in got], ["f.1", "f2.1"] if visible else ["f2.1"])
 
     def test_invalid_first_repo_falls_back_without_mutating_card(self):
