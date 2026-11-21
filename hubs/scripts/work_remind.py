@@ -28,6 +28,7 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import answer_store  # noqa: E402
 import pending_judge  # noqa: E402
+from pr_index import PrIndex, TICKET, REPO_HEAD  # noqa: E402
 
 TAG = "remind"
 LIST_MAX = 8                 # 칸마다 보여 줄 줄 수. 넘으면 '그 밖에 N건'
@@ -36,13 +37,11 @@ NOTIFY_TIMEOUT_S = 60
 REVIEW_LABEL, SHIP_LABEL = "stage:review", "stage:ship"
 FEATURE_HEAD, STAGE_HEAD = "feature:", "stage:"
 TITLE_TAG = re.compile(r"^\s*(?:\[[^\]]*\]\s*)+")        # 제목 머리의 [LRM-684]·[개인] 같은 표시
-TICKET = re.compile(r"\b[A-Z]{2,}-\d+\b")                # 본문에 티켓 번호를 넣지 않음(양식 A 규칙 5)
 CLOCK = re.compile(r"\d{1,2}:\d{2}")
-BRANCH_HEAD, REPO_HEAD = "branch:", "repo:"
 USER_OK_HEAD, SLACK_ANSWER_HEAD = "user-ok:", "Slack 결정 답:"   # board-done --user-ok 와 답 전달기(feedback_route)가 기능 카드에 남기는 코멘트 머리
 PASS_PICK = re.compile(r"=\s*선택\s*\d+\(통과")               # 검수 카드에서 통과를 고른 답
-GH_CALLS_MAX, GH_TIMEOUT_S = 24, 20                             # 회차당 PR 조회 상한. 넘거나 실패하면 그 기능은 PR 상태 모름으로 둠
-PR_FIELDS = "number,state,title"
+GH_PR_LIMIT, GH_TIMEOUT_S = 400, 20
+HUB_PATH = re.compile(r"^[ \t]*기능 코디네이터 허브:[ \t]*(\S[^\n]*?)[ \t]*$", re.MULTILINE)
 
 
 def flow_lib():
@@ -115,9 +114,16 @@ def reviews(cards: list, comments_of=None, prs_of=None) -> list:
         if c.get("issue_type") != "epic" or REVIEW_LABEL not in (c.get("labels") or []):
             continue
         ok = passed(comments_of(c), stamp(c.get("closed_at"))) if comments_of else False
-        pr = pr_summary(prs_of(c)) if prs_of else pr_summary(None)
+        prs = prs_of(c) if prs_of else None
+        pr = pr_summary(prs)
+        if ok and pr["state"] == "merged":
+            continue
         out.append({"name": name_of(c), "since": stamp(c.get("updated_at")), "passed": ok, "pr": pr, "done": ok or pr["state"] == "merged"})
     return out
+
+
+def all_merged(prs) -> bool:
+    return bool(prs) and all(state == "MERGED" for _, state in prs)
 
 
 def features(cards: list, flow=None, prs_of=None) -> list:
@@ -126,23 +132,38 @@ def features(cards: list, flow=None, prs_of=None) -> list:
     out = []
     for e in cards:
         labels = e.get("labels") or []
-        if e.get("issue_type") != "epic" or not any(x.startswith(FEATURE_HEAD) for x in labels) or (e.get("status") == "closed" and SHIP_LABEL not in labels):
+        if e.get("issue_type") != "epic" or not any(x.startswith(FEATURE_HEAD) for x in labels):
             continue
         kids = [c for c in cards if str(c.get("id") or "").startswith(e["id"] + ".")]
+        remaining = sum(c.get("status") != "closed" for c in kids)
+        prs = prs_of(e) if prs_of else None
+        merged = all_merged(prs)
+        if merged and not remaining:
+            continue
+        if not merged and e.get("status") == "closed" and SHIP_LABEL not in labels:
+            continue
         key = next((x[len(STAGE_HEAD):] for x in labels if x.startswith(STAGE_HEAD)), "")
         st = flow.stage(key) if flow and key else None
-        pr = pr_summary(prs_of(e)) if prs_of else pr_summary(None)
+        pr = pr_summary(prs)
+        hub = HUB_PATH.search(str(e.get("description") or ""))
+        no_coordinator = (e.get("status") != "closed" and prs == [] and hub is not None
+                          and not os.path.isdir(os.path.expanduser(hub.group(1))))
         out.append({"name": name_of(e), "stage": f"{flow.order(st)} {st.name}" if st else (key or "단계 미정"),
-                    "done": sum(c.get("status") == "closed" for c in kids), "total": len(kids), "pr": pr, "merged": pr["state"] == "merged"})
+                    "done": len(kids) - remaining, "total": len(kids), "remaining": remaining,
+                    "pr": pr, "merged": merged, "no_coordinator": no_coordinator})
     return out
 
 
-def stalled(cards: list, now: float, hours: float = STALL_HOURS) -> list:
+def stalled(cards: list, now: float, hours: float = STALL_HOURS, prs_of=None) -> list:
     """진행 중인데 오래 갱신이 없는 카드(기능 카드 제외)"""
     out = []
+    parents = [c for c in cards if c.get("issue_type") == "epic"]
+    finished = {e["id"] for e in parents if e.get("status") == "closed" or (prs_of and all_merged(prs_of(e)))}
     for c in cards:
         at = stamp(c.get("updated_at"))
         if c.get("status") == "in_progress" and c.get("issue_type") != "epic" and at and now - at > hours * 3600:
+            if any(str(c.get("id") or "").startswith(parent + ".") for parent in finished):
+                continue
             out.append({"name": name_of(c), "days": int((now - at) // 86400)})
     return out
 
@@ -167,8 +188,9 @@ def build(now: float, decisions: list, reviews: list, features: list, stalled: l
     lines += section("🙋 내 차례", [f"- 결정: {TICKET.sub('', str(d.get('title') or d.get('decision_id'))).strip()}" for d in decisions]
                      + [f"- 검수: {r['name']}{note(r)}" for r in wait])
     lines += section("🧹 정리만 남음", [f"- {r['name']}: {'통과 답을 이미 냄' if r.get('passed') else '검수 대기 표시'}{note(r)}" for r in reviews if r.get("done")]
-                     + [f"- {f['name']}: {f['stage']}, 카드 {f['done']}/{f['total']}{note(f)}" for f in features if f.get("merged")])
-    lines += section("🔄 진행 중", [f"- {f['name']}: {f['stage']}, 카드 {f['done']}/{f['total']}{note(f)}" for f in features if not f.get("merged")])
+                     + [f"- {f['name']}: 병합됨, 남은 카드 {f['remaining']}{note(f)}" for f in features if f.get("merged")])
+    lines += section("🔄 진행 중", [f"- {f['name']}: {f['stage']}, 카드 {f['done']}/{f['total']}{note(f)}"
+                      + (" — 맡은 코디네이터 없음" if f.get("no_coordinator") else "") for f in features if not f.get("merged")])
     lines += section("⚠️ 멈춘 것", [f"- {s['name']}: {s['days']}일째 갱신 없음" if s["days"] else f"- {s['name']}: 하루 가까이 갱신 없음" for s in stalled])
     return "\n".join(lines)
 
@@ -247,10 +269,6 @@ def board_cards_all() -> list:
     return [c for c in json.loads(p.stdout or "[]") if isinstance(c, dict)]
 
 
-def label_value(card: dict, head: str) -> str:
-    return next((x[len(head):] for x in (card.get("labels") or []) if x.startswith(head)), "")
-
-
 def comment_reader(bd_bin: str, board: str):
     """카드 → 코멘트 [(epoch, 글)]. 조회 실패는 [](통과 답을 못 찾은 것으로 봄 = 내 차례에 그대로 둠)"""
     def read(card):
@@ -263,40 +281,15 @@ def comment_reader(bd_bin: str, board: str):
     return read
 
 
-def pr_reader(gh_bin: str, run=subprocess.run):
-    """카드 → 그 기능의 PR [(번호, 상태)] | None(조회 못 함). 제목에 티켓 번호가 든 PR 을 먼저 찾고, 없으면 기능 브랜치를 head 로 가진 PR.
-    옛 방식 기능은 PR 브랜치 이름이 기능 브랜치와 달라 티켓 번호로 찾아야 잡힘. 회차당 조회 수 상한을 넘으면 None"""
-    calls = [0]
-
-    def ask(repo, args):
-        if calls[0] >= GH_CALLS_MAX:
-            return None
-        calls[0] += 1
-        try:
-            p = run([gh_bin, "pr", "list", *args, "--state", "all", "--limit", "20", "--json", PR_FIELDS], cwd=repo, capture_output=True, text=True,
-                    timeout=GH_TIMEOUT_S, stdin=subprocess.DEVNULL)
-            return [d for d in json.loads(p.stdout or "[]") if isinstance(d, dict)] if p.returncode == 0 else None
-        except (OSError, ValueError, subprocess.TimeoutExpired):
-            return None
-
-    def read(card):
-        repo = os.path.expanduser(label_value(card, REPO_HEAD))
-        if gh_bin == "off" or not repo or not os.path.isdir(repo):
-            return None
-        m = TICKET.search(str(card.get("title") or ""))
-        found = None
-        if m:
-            rows = ask(repo, ["--search", f"{m.group(0)} in:title"])
-            if rows is not None:  # 검색은 낱말 단위라 LRM-63 이 LRM-637 을 끌어올 수 있음: 제목에 그 번호가 통째로 있는 것만
-                found = [d for d in rows if re.search(rf"(?<![A-Za-z0-9]){re.escape(m.group(0))}(?![0-9])", str(d.get("title") or ""))]
-        branch = label_value(card, BRANCH_HEAD)
-        if not found and branch:
-            rows = ask(repo, ["--head", branch])
-            found = rows if rows is not None else found
-        if found is None:
-            return None
-        return [(int(d["number"]), str(d.get("state"))) for d in found if str(d.get("number", "")).isdigit() or isinstance(d.get("number"), int)]
-    return read
+def card_prs(index: PrIndex, card: dict):
+    # 허브 작업 경로가 repo 라벨에 함께 기록된 카드도 실제 저장소 조회가 필요함.
+    labels = card.get("labels") or []
+    other = [x for x in labels if not x.startswith(REPO_HEAD)]
+    for repo in (x for x in labels if x.startswith(REPO_HEAD)):
+        prs = index.for_card(dict(card, labels=[repo, *other]))
+        if prs is not None:
+            return prs
+    return None
 
 
 def main(argv=None) -> int:
@@ -318,10 +311,11 @@ def main(argv=None) -> int:
     rules = pending_judge.load_rules([hub, os.path.join(HERE, "..")], warn=lambda m: None)
     decisions = waiting(answer_store.AnswerStore(hub).cards(), rules, now)
     board = os.path.expanduser(os.environ.get("BOARD_DIR") or "~/orca/board")
-    prs_of = pr_reader(os.environ.get("LRM_REMIND_GH") or "gh")
+    index = PrIndex(os.environ.get("LRM_REMIND_GH") or "gh", limit=GH_PR_LIMIT, timeout=GH_TIMEOUT_S)
+    prs_of = lambda c: card_prs(index, c)
     revs = reviews(cards, comment_reader(os.environ.get("BOARD_BD", "bd"), board), prs_of)
     stall_h = float(os.environ.get("LRM_REMIND_STALL_HOURS") or STALL_HOURS)
-    text = build(now, decisions, revs, features(cards, flow_lib(), prs_of), stalled(cards, now, stall_h))
+    text = build(now, decisions, revs, features(cards, flow_lib(), prs_of), stalled(cards, now, stall_h, prs_of))
     mine = len(decisions) + sum(not r["done"] for r in revs)
     if a.dry_run:
         print(json.dumps({"result": "dry", "mine": mine, "text": text}, ensure_ascii=False) if a.json else (text or "남은 작업 없음"))
