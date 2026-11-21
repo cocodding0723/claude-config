@@ -960,6 +960,7 @@ LRM_HUB_DIR="$DIR" /bin/bash "$(dirname "$0")/slack_push.sh" --kick >/dev/null 2
 left=$((TOTAL - ($(date +%s) - T0)))
 if [ "$left" -ge 1 ]; then
   [ "$left" -gt "${LRM_REPORT_BUDGET_S:-40}" ] && left="${LRM_REPORT_BUDGET_S:-40}"
+  LRM_HUB_DIR="$DIR" "$PY" -I "$(dirname "$0")/board_mirror.py" --once >/dev/null 2>&1 || true
   LRM_REPORT_BUDGET_S="$left" LRM_HUB_DIR="$DIR" "$PY" -I "$(dirname "$0")/report_sender.py" --once >/dev/null 2>&1 || true
 fi
 exit "$RC"
