@@ -31,6 +31,10 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+from pr_index import PrIndex
 
 EXIT_OK, EXIT_CONFIG, EXIT_BD, EXIT_LOCKED = 0, 2, 3, 4
 DONE_STATES = ("MERGED", "CLOSED")
@@ -38,7 +42,8 @@ REQUIRED = ("rules", "kinds", "kind_prefix", "pr_repo", "pr_label_prefix", "pr_s
             "gh_calls_max", "gh_timeout_sec", "expires_label_prefix", "stale_kinds", "stale_hours", "stale_label",
             "dup_kinds", "slack_kinds", "slack_id_pattern", "slack_label_prefix", "slack_body_line", "candidate_label", "orphan_hours", "skip_label", "protect_ids", "bd_timeout_sec",
             "ws_root", "ws_label_prefix", "branch_label_prefix", "ws_gone_hours",
-            "log_path", "lock_path")
+            "log_path", "lock_path", "feature_merged_hours", "feature_close_script", "pr_list_limit", "merged_into",
+            "feature_label_prefix", "feature_merged_stages", "feature_merged_marker", "feature_hub_name")
 
 EPILOG = """예:
   board_sweep.sh --dry-run        바뀔 동작만 기록(mode=dry)
@@ -83,10 +88,10 @@ def load_config():
     missing = [k for k in REQUIRED if k not in cfg]
     if missing:
         raise ConfigError(f"규칙 표에 없는 키: {', '.join(missing)}. 조치: hubs/board_sweep.tsv 와 맞춤")
-    for k in ("pr_min_digits", "gh_calls_max", "gh_timeout_sec", "bd_timeout_sec"):
+    for k in ("pr_min_digits", "gh_calls_max", "gh_timeout_sec", "bd_timeout_sec", "pr_list_limit"):
         if not cfg[k].isdigit():
             raise ConfigError(f"규칙 표 {k} 가 정수가 아님: '{cfg[k]}'")
-    for k in ("stale_hours", "orphan_hours", "ws_gone_hours"):
+    for k in ("stale_hours", "orphan_hours", "ws_gone_hours", "feature_merged_hours"):
         try:
             float(cfg[k])
         except ValueError:
@@ -134,6 +139,7 @@ class Sweeper:
         self.log_path = os.path.expanduser(cfg["log_path"])
         self.kind_prefix = cfg["kind_prefix"]
         self.protect = as_list(cfg["protect_ids"])
+        self.feature_hub_paths = None
 
     # ---------- 바깥 명령 ----------
 
@@ -198,13 +204,14 @@ class Sweeper:
     # ---------- 카드 ----------
 
     def cards(self):
-        rc, out, err = self.bd("list", "--json", "-n", "0")
+        rc, out, err = self.bd("list", "--all", "--json", "-n", "0")
         if rc != 0:
             raise RuntimeError(f"bd list 실패: {(err or out).strip()[:200]}. 조치: BOARD_DIR·bd 설치 확인")
         try:
             cards = json.loads(out or "[]")
         except json.JSONDecodeError:
             raise RuntimeError("bd list 출력이 JSON 아님. 조치: bd 버전 확인")
+        self.all_cards = cards
         return [c for c in cards if c.get("status") != "closed" and not self.excluded(c)]
 
     def excluded(self, card):
@@ -489,8 +496,100 @@ class Sweeper:
             elif working:
                 self.put_down("ws_gone", card, f"작업 공간 {name} 없음 → 할 일로 내려놓음(이어서 하려면 다시 집음)")
 
+    def feature_pr_call(self, cmd, **kwargs):
+        if cmd[0] == self.gh_bin:
+            if self.gh_calls >= int(self.cfg["gh_calls_max"]):
+                raise OSError("gh 호출 상한 도달")
+            self.gh_calls += 1
+        return subprocess.run(cmd, **kwargs)
+
+    def feature_hub_exists(self, slug):
+        name = self.cfg["feature_hub_name"].format(slug=slug)
+        if self.feature_hub_paths is None:
+            self.feature_hub_paths = []
+            rc, out, _ = self.run(["orca", "worktree", "list", "--json"], int(self.cfg["bd_timeout_sec"]))
+            if rc == 0:
+                try:
+                    rows = json.loads(out).get("result", {}).get("worktrees", [])
+                    self.feature_hub_paths = [r["path"] for r in rows if isinstance(r.get("path"), str)]
+                except (ValueError, AttributeError, TypeError):
+                    pass
+        if any(Path(p).name == name and os.path.isdir(p) for p in self.feature_hub_paths):
+            return True
+        root = Path(os.path.expanduser(self.cfg["ws_root"]))
+        return (root / name).is_dir() or any(p.is_dir() for p in root.glob(f"*/{name}"))
+
+    def rule_feature_merged(self, cards):
+        index = PrIndex(self.gh_bin, run=self.feature_pr_call,
+                        limit=int(self.cfg["pr_list_limit"]), timeout=int(self.cfg["gh_timeout_sec"]))
+        grace = dt.timedelta(hours=float(self.cfg["feature_merged_hours"]))
+        prefix = self.cfg["feature_label_prefix"]
+        script = os.path.expanduser(self.cfg["feature_close_script"])
+        for card in self.all_cards:
+            if card.get("issue_type") != "epic" or self.excluded(card) or card["id"] in self.handled:
+                continue
+            labels = card.get("labels") or []
+            slug = next((lab[len(prefix):] for lab in labels if lab.startswith(prefix)), "")
+            if not slug or (card.get("status") == "closed" and not self.feature_hub_exists(slug)):
+                continue
+            rc, out, _ = self.bd("list", "--all", "--parent", card["id"], "--json", "-n", "0")
+            if rc != 0 or any(c.get("status") != "closed" for c in json.loads(out or "[]")):
+                continue
+            prs = index.for_card(card)
+            if prs is None:
+                continue
+            if prs:
+                if not all(state == "MERGED" for _, state in prs):
+                    continue
+                proof = "PR " + ", ".join(f"#{n}" for n, _ in prs) + " 병합"
+            else:
+                if not set(labels).intersection(as_list(self.cfg["feature_merged_stages"])):
+                    continue
+                bp = self.cfg["branch_label_prefix"]
+                branch = next((lab[len(bp):] for lab in labels if lab.startswith(bp)), "")
+                if not branch:
+                    continue
+                repo = index.repo_for_card(card)
+                target = next((ref for ref in as_list(self.cfg["merged_into"])
+                               if self.feature_pr_call(["git", "merge-base", "--is-ancestor", f"refs/heads/{branch}", f"refs/heads/{ref}"],
+                                                       cwd=os.path.expanduser(repo), capture_output=True, text=True,
+                                                       timeout=int(self.cfg["gh_timeout_sec"])).returncode == 0), None)
+                if target is None:
+                    continue
+                proof = f"브랜치 {branch} → {target} 로컬 병합"
+            rc, out, _ = self.bd("comments", card["id"], "--json")
+            if rc != 0:
+                continue
+            comments = json.loads(out or "[]")
+            if any(self.cfg["feature_merged_marker"] in str(c.get("text") or "") for c in comments):
+                continue
+            times = [parse_time(card.get(k)) for k in ("updated_at", "started_at", "created_at")]
+            times += [parse_time(c.get("created_at")) for c in comments]
+            last = max((t for t in times if t), default=None)
+            if last is None or self.now - last <= grace:
+                continue
+            reason = f"{proof}·열린 카드 없음 → 기능 마무리 ({self.cfg['feature_merged_marker']})"
+            if not os.path.isfile(script):
+                self.count("error")
+                self.log("feature_merged", card["id"], "script-missing", script)
+                continue
+            if not self.dry:
+                rc, _, err = self.comment(card["id"], f"정리(자동): {reason}")
+                if rc != 0:
+                    self.count("error")
+                    self.log("feature_merged", card["id"], "comment-failed", err)
+                    continue
+                log = os.path.join(self.board, ".evidence", f"{card['id']}-feature-close.log")
+                os.makedirs(os.path.dirname(log), exist_ok=True)
+                with open(log, "a") as stream:
+                    subprocess.Popen(["bash", script, "--slug", slug, "--yes"], cwd=self.board,
+                                     stdout=stream, stderr=stream, stdin=subprocess.DEVNULL, start_new_session=True)
+            self.handled.add(card["id"])
+            self.count("close")
+            self.log("feature_merged", card["id"], "feature-close", f"{slug}: {reason}")
+
     RULES = {"ws_gone": rule_ws_gone, "pr_done": rule_pr_done, "slack_answered": rule_slack_answered, "expired": rule_expired, "stale": rule_stale,
-             "duplicate": rule_duplicate, "orphan": rule_orphan}
+             "duplicate": rule_duplicate, "orphan": rule_orphan, "feature_merged": rule_feature_merged}
 
     def sweep(self):
         cards = self.cards()

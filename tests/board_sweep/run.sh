@@ -219,4 +219,6 @@ sweep --help
 check "--help 종료 0" '[ "$(rc)" = 0 ] && grep -q "board_sweep.tsv" "$SB/out"'
 
 printf '통과 %d · 실패 %d\n' "$PASS" "$FAIL"
+python3 "$HERE/test_feature_close.py" || FAIL=$((FAIL + 1))
+python3 "$HERE/test_feature_merged.py" || FAIL=$((FAIL + 1))
 [ "$FAIL" = 0 ]
