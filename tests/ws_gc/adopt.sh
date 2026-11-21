@@ -38,6 +38,7 @@ gc() { # 인자 그대로. 결과: RC, $SB/out(stdout+stderr), $ARC 로그
   : > "$FAKE/orca.calls"; : > "$ARC/log"
   env PATH="$BIN:$PATH" FAKE_DIR="$FAKE" FAKE_ROOT="$ROOT" WS_GC_NOTIFY="$HERE/fake_send.sh" "${ENVX[@]}" bash "$GC" --root "$ROOT" --archive-dir "$ARC" --log "$ARC/log" --no-slack "$@" > "$SB/out" 2>&1
   RC=$?
+  [[ " $* " = *" --apply "* ]] || cat "$SB/out" > "$ARC/log"
 }
 sets() { grep -c '^worktree set' "$FAKE/orca.calls" || true; }
 ENVX=(X=1)
