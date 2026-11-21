@@ -6,6 +6,8 @@ export PATH="$PATH:/Applications/Orca.app/Contents/Resources/bin:/opt/homebrew/b
 SRC="${BASH_SOURCE[0]}"
 while [ -L "$SRC" ]; do T=$(readlink "$SRC"); case "$T" in /*) SRC="$T" ;; *) SRC="$(dirname "$SRC")/$T" ;; esac; done
 HERE=$(cd "$(dirname "$SRC")" && pwd -P)
+. "$HERE/lib/py.sh"
+. "$HERE/lib/closed_hubs.sh"
 CFG_REPO="${REPO:-$HOME/orca/LoveRevolutionMaker}"
 CFG_WS_ROOT="${WS_ROOT:-$HOME/orca/workspaces/LoveRevolutionMaker}"
 CFG_BOARD="${LRM_BOARD:-$HOME/orca/board}"
@@ -24,13 +26,14 @@ usage() {
   3 허브 코디네이터 터미널 종료(orca terminal close --worktree ... --all)
   4 기능 Slack 스레드에 결과 문서를 붙이고 마무리 한 줄 보고 예약(hub_report --card <epic>). 실패는 경고만, 종료 코드에 영향 없음
   5 epic 닫기
-점검에서 남은 카드·미머지 브랜치가 있어도 --yes 면 진행한다(목록은 출력). 브랜치·허브 폴더는 지우지 않는다.
+  6 허브 경로·마무리 시각을 마무리 목록에 기록. 30분 정리 회차가 조건을 확인해 보관 뒤 허브 폴더 삭제
+점검에서 남은 카드·미머지 브랜치가 있어도 --yes 면 진행한다(목록은 출력). 브랜치는 유지한다.
 다시 실행해도 안전하다(이미 닫힌 epic·없는 터미널은 건너뜀).
 
 옵션:
   --slug slug  feature_open.sh 에 쓴 slug(필수)
   --result 파일  스레드에 붙일 결과 문서. 생략하면 epic 의 "기능 완료" 코멘트에 적힌 .html 경로를 씀(없으면 문서 없이 한 줄만)
-  --yes        점검 뒤 실제로 실행
+  --yes        점검 뒤 실행하고 허브를 마무리 목록에 등록(30분 정리 회차에서 보관 뒤 폴더 삭제)
   --dry-run    --yes 와 함께 쓰면 실행할 명령만 출력
   --json       결과를 JSON 한 줄로 출력
 종료 코드: 0 완료(또는 점검 결과 남은 것 없음), 1 실행 단계 일부 실패, 2 인자 오류,
@@ -62,8 +65,13 @@ BRANCH="feature/$SLUG"
 HUB="$CFG_WS_ROOT/coord-feat-${SLUG}-hub"
 LABEL="feature:$SLUG"
 WT=$(orca worktree list --limit 1000 --json 2>/dev/null) || die "orca worktree list 실패 — Orca 실행 여부 확인(orca status). 아무것도 바꾸지 않음" 3
-FOUND=$(echo "$WT" | jq -r --arg n "coord-feat-${SLUG}-hub" '.result.worktrees[]? | select((.path | split("/") | last) == $n) | .path' | head -1)
-if [ -n "$FOUND" ] && [ -d "$FOUND" ]; then HUB="$FOUND"; fi
+FOUND=$(echo "$WT" | jq -c --arg n "coord-feat-${SLUG}-hub" '[.result.worktrees[]? | select((.path | split("/") | last) == $n) | .path]')
+case "$(echo "$FOUND" | jq length)" in
+  0) ;;
+  1) HUB=$(echo "$FOUND" | jq -r '.[0]') ;;
+  *) echo "⚠️ 같은 이름 허브 여러 개 — 허브 단계 건너뜀: $FOUND" >&2; HUB="" ;;
+esac
+HUB_ORIGINAL="$HUB"
 if [ -d "$HUB" ]; then HUB=$(cd "$HUB" && pwd -P); else HUB=""; fi
 
 # epic·카드
@@ -78,7 +86,7 @@ OPEN_CARDS=$(jq -nc --argjson a "$ALL" --argjson k "${KIDS:-[]}" \
   '[$a[], $k[]] | unique_by(.id) | map(select(.issue_type != "epic" and (.status == "in_progress" or .status == "open" or .status == "blocked"))) | map({id, title, status, assignee})')
 
 # 하위 작업 공간 → 브랜치 미머지 판정
-CHILDREN=$(echo "$WT" | jq -c --arg h "$HUB" '[.result.worktrees[] | select(.path == $h) | .id] as $hid
+CHILDREN=$(echo "$WT" | jq -c --arg h "$HUB" --arg raw "$HUB_ORIGINAL" '[.result.worktrees[] | select(.path == $h or .path == $raw) | .id] as $hid
   | [.result.worktrees[] | select((.parentWorktreeId // "") as $p | $hid | index($p)) | {path, branch:(.branch // "" | sub("^refs/heads/"; ""))}]')
 UNMERGED="[]"
 while IFS=$'\t' read -r p b; do
@@ -166,11 +174,14 @@ else
   fi
 fi
 
-[ "$DRY" = 1 ] && emit dry_run 0
+if [ "$DRY" = 1 ]; then
+  [ -z "$HUB" ] || step registry planned "마무리 목록에 경로·시각 등록: $HUB — 30분 정리 회차에서 보관 뒤 허브 폴더 삭제"
+  emit dry_run 0
+fi
 if [ "$FAIL" = 0 ] && [ -n "$HUB" ]; then
   CLOSED_HUBS="${LRM_CLOSED_HUBS:-$HOME/.config/lrm-hubs/closed_hubs.txt}"
-  if mkdir -p "$(dirname "$CLOSED_HUBS")" && { grep -Fxq -- "$HUB" "$CLOSED_HUBS" 2>/dev/null || printf '%s\n' "$HUB" >> "$CLOSED_HUBS"; }; then
-    step registry ok "마무리 목록: $HUB"
+  if closed_hubs_registry set "$CLOSED_HUBS" "$HUB"; then
+    step registry ok "마무리 목록: $HUB — 30분 정리 회차에서 보관 뒤 허브 폴더 삭제"
   else step registry failed "마무리 목록 기록 실패: $CLOSED_HUBS"; FAIL=1
   fi
 fi

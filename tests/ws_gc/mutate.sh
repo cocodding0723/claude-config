@@ -36,4 +36,7 @@ mutant H1 "마무리 목록 밖 허브도 정리" 's/closed_hub "\$p" \|\|/true 
 mutant H2 "마무리 허브의 창 검사 제거" 's/if grep -Fxq -- "\$p" "\$TMP\/terms.tsv.paths" \|\| grep -Fxq -- "\$p" "\$TMP\/live_workers"; then/if false; then/'
 mutant H3 "마무리 허브 삭제 뒤 목록 제거 생략" 's/\[ "\$CLEANUP_REASON" = hub_closed \] && ! closed_hub_clear/[ "\$CLEANUP_REASON" = hub_closed ] \&\& false/'
 mutant H4 "parentWorktreeId 하위 검사 제거" 's/\(\$all\[\] \| select\(\.parentWorktreeId == \$wt.id\) \| \.id\)/(empty)/'
+mutant H5 "마무리 허브의 하위 보존 제거" 's/\[ "\$kids" -gt 0 \]/[ "\$hub" = 0 ] \&\& [ "\$kids" -gt 0 ]/'
+mutant H6 "마무리 뒤 활동·커밋 검사 제거" 's/if \[ "\$last_ms" -gt \$\(\(reopen_after \* 1000\)\) \] \|\| \[ "\$last_c" -gt "\$reopen_after" \]; then/if false; then/'
+mutant H7 "마무리 뒤 활동 유예 제거" 's/CLOSED_AT \+ CFG_HUB_REOPEN_GRACE_MIN \* 60/CLOSED_AT/'
 exit "$MISSED"
