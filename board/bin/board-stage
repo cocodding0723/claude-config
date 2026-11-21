@@ -2,6 +2,7 @@
 """기능 카드(epic)의 작업 단계를 옮기거나 지금 단계를 보여 줌. 단계·크기·계획 승인 규칙은 lib/board_flow.py 한 곳.
 단계를 카드에 적어 두면 사용자와 옆 패널이 어디까지 왔는지 보고, 집기 도구가 같은 규칙으로 구현 착수를 막음."""
 import argparse
+import csv
 import json
 import os
 import subprocess
@@ -28,6 +29,19 @@ EPILOG = """\
 
 
 SIZE_ORDER = (bf.SMALL, bf.NORMAL, bf.LARGE)  # 작은 것부터. 낮추기 판정에 씀
+
+
+def print_next(st):
+    if st is None:
+        return
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "stage_next.tsv")
+    with open(path, encoding="utf-8") as source:
+        lines = [row[1] for row in csv.reader(source, delimiter="\t")
+                 if len(row) == 2 and row[0] == st.key]
+    if lines:
+        print("다음 할 일:")
+        for line in lines:
+            print(f"- {line}")
 
 
 def die(msg, code):
@@ -91,6 +105,7 @@ def main():
                 print(f"비어 있는 접수 칸: {', '.join(out['intake_gaps'])}")
             if out["skips"]:
                 print(f"건너뛰기: {', '.join(bf.SKIP_ITEMS[k][0] for k in out['skips'])} (사용자 지정. 상세 board-skip {epic['id']})")
+            print_next(st)
         return
 
     if not a.actor:
@@ -137,6 +152,7 @@ def main():
         print(json.dumps({"card": epic["id"], "stage": st.key, "size": a.size or bf.size_of(epic)}, ensure_ascii=False))
     else:
         print(f"단계: {epic['id']} → {bf.order(st)} {st.name}")
+        print_next(st)
 
 
 if __name__ == "__main__":
