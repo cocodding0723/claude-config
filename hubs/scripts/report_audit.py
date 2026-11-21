@@ -80,12 +80,16 @@ def restored(boundaries, comments, now, typed=()):
             if match:
                 found.update(int(n) for n in re.findall(r"\d+", match[1]))
         current = next((stage(t) for t in reversed(before) if stage(t) is not None), None)
-        stage_ok = current is not None and any(stage(t) is not None and stage(t) >= current for t in after)
+        stages = [stage(t) for t in after if stage(t) is not None]
+        repeated = current is not None and (current in stages or len(stages) != len(set(stages)))
+        warnings = ["단계 반복"] if repeated else []
+        stage_status = "알 수 없음" if current is None else "주의" if repeated else "정상"
         missing = [f"지시 #{n}" for n in pending if n not in found]
         missing.extend(f"미기록 지시@{int(a)}" for a, _ in fresh if int(a) not in sources)
-        if not stage_ok:
-            missing.append("단계" if current is not None else "압축 전 단계 확인 불가")
-        results.append(dict(**boundary, missing=missing, pending=now < at + 1800))
+        if current is not None and any(value < current for value in stages):
+            missing.append("단계 후퇴")
+            stage_status = "실패"
+        results.append(dict(**boundary, missing=missing, warnings=warnings, stage_status=stage_status, pending=now < at + 1800))
     return results
 
 
@@ -129,8 +133,10 @@ def inspect(hub, reader, home, since, now):
         delivered = sender.get("reports", {}).get(q["id"], {}).get("sent", 0)
         if delivered and delivered <= now:
             sent.update(keys)
-    # 이전 장부에는 기준선·건너뜀 구분이 없음. 알려진 기록을 누락으로 단정하지 않음
-    unclassified = tracked("_seen") - counts.keys() - baseline - skipped
+    # 추적 시작 뒤의 미접수는 손실. 시작 시각 없는 새 장부도 예외로 빼지 않음
+    cutoff = mirror_state.get("_baseline_tracking_at", 0 if "_baseline_ids" in mirror_state else now)
+    legacy = {(r["issue_id"], str(r["id"])) for r in eligible if said.stamp(r.get("created_at")) < cutoff}
+    unclassified = (tracked("_seen") - counts.keys() - baseline - skipped) & legacy
     grace = {(r["issue_id"], str(r["id"])) for r in eligible if said.stamp(r.get("created_at")) > now - 240} - baseline - skipped - unclassified
     expected = pairs - baseline - skipped - unclassified - grace
     missing = sorted(expected - sent.keys())
@@ -142,13 +148,15 @@ def inspect(hub, reader, home, since, now):
     recovery = restored(boundaries, root_comments, now,
                         said.typed(ws, said.stamp(root.get("created_at"))) if ws else [])
     missed = sum(len(r["missing"]) for r in recovery if not r["pending"])
+    repeats = sum(bool(r["warnings"]) for r in recovery)
+    unknown_stage = sum(r["stage_status"] == "알 수 없음" for r in recovery)
     unknown_tokens = sum(r["tokens"] is None and not r["pending"] for r in recovery)
     rows = [dict(item="현황판 = 카드 상태", status="미연결" if not connected else "통과" if equal else "실패",
                  detail="전송기 현황판 요약값 없음" if not connected else f"현재 {board.summary(text)} / 전송 {summary}"),
             dict(item="옮긴 기록 수 = 해당 기록 수", status="실패" if missing or duplicates else "통과",
                  detail=f"대기열 {len(expected & counts.keys())} / 보냄 {len(expected & sent.keys())} / 대상 {len(expected)}건, 중복 {len(duplicates)}건; 기준선 {len(baseline)}, 유예 {len(grace)}"),
-            dict(item="압축 뒤 누락", status="확인 불가" if not paths else "실패" if missed else "대기" if any(r["pending"] for r in recovery) else "통과",
-                 detail=f"누락 {missed}건, 30분 관찰 중 {sum(r['pending'] for r in recovery)}회"),
+            dict(item="압축 뒤 누락", status="확인 불가" if not paths else "실패" if missed else "대기" if any(r["pending"] for r in recovery) else "주의" if repeats else "알 수 없음" if unknown_stage else "통과",
+                 detail=f"누락 {missed}건, 단계 반복 {repeats}회, 단계 알 수 없음 {unknown_stage}회, 30분 관찰 중 {sum(r['pending'] for r in recovery)}회"),
             dict(item="압축 횟수·직후 입력 토큰", status="확인 불가" if not paths else "실패" if unknown_tokens else "대기" if any(r["tokens"] is None for r in boundaries) else "통과",
                  detail=f"{len(boundaries)}회: " + ", ".join(str(r["tokens"]) if r["tokens"] is not None else "응답 미관찰" for r in boundaries)),
             dict(item="의도적 건너뜀·이전 장부", status="주의" if skipped or unclassified else "통과",
@@ -186,8 +194,9 @@ def main():
             for record in result["missing_records"]:
                 print(f"✗ 빠진 기록: {record['card']} {record['id']}")
             for compact in result["compactions"]:
+                notes = compact["missing"] + compact["warnings"] + (["단계 알 수 없음"] if compact["stage_status"] == "알 수 없음" else [])
                 print(f"압축 {dt.datetime.fromtimestamp(compact['at'], dt.timezone.utc).isoformat()}: "
-                      + ("관찰 중 " if compact["pending"] else "") + (", ".join(compact["missing"]) or "누락 없음"))
+                      + ("관찰 중 " if compact["pending"] else "") + (", ".join(notes) or "누락 없음"))
         return 1 if any(r["status"] in ("실패", "확인 불가") for r in result["rows"]) else 0
     except Exception as exc:
         print(f"감사 자료 조회 실패: {exc}", file=sys.stderr)

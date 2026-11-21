@@ -385,6 +385,7 @@ class MirrorTest(unittest.TestCase):
             self.run_mirror()
         state = json.loads((self.home / "board-mirror.state.json").read_text())
         self.assertEqual(["id-1"], state["_baseline_ids"]["lrm-test.1"])
+        self.assertGreater(state["_baseline_tracking_at"], 0)
         self.assertEqual(["id-2"], state["_skipped_ids"]["lrm-test.1"])
         self.assertEqual([], self.queue())
 

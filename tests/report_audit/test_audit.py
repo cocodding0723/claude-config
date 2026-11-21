@@ -75,7 +75,7 @@ class AuditTest(unittest.TestCase):
     def test_all_pass_read_only_and_cli_json(self):
         before = {p: p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
         result = self.inspect()
-        self.assertEqual(["통과"] * 5, [r["status"] for r in result["rows"]])
+        self.assertEqual(["통과", "통과", "주의", "통과", "통과"], [r["status"] for r in result["rows"]])
         self.assertEqual(60, result["compactions"][0]["tokens"])
         self.assertEqual([], result["missing_records"])
         p = subprocess.run([sys.executable, "-B", str(ROOT / "hubs/scripts/report_audit.py"), "feat-test", "--json",
@@ -104,7 +104,7 @@ class AuditTest(unittest.TestCase):
         self.save()
         result = self.inspect()
         self.assertEqual("실패", result["rows"][2]["status"])
-        self.assertEqual(["지시 #1", "단계"], result["compactions"][0]["missing"])
+        self.assertEqual(["지시 #1"], result["compactions"][0]["missing"])
 
     def test_recent_compaction_waits_for_thirty_minutes(self):
         result = audit.restored([dict(at=self.now - 60, tokens=60)], [], self.now)
@@ -203,6 +203,35 @@ class AuditTest(unittest.TestCase):
         self.assertEqual([], result["baseline_records"])
         self.assertEqual([("lrm-test.1", "child")], result["unclassified_records"])
         self.assertIn("분류 불가 1건", result["rows"][4]["detail"])
+
+    def test_seen_without_queue_after_tracking_started_is_loss(self):
+        self.queue = self.queue[:1]
+        self.rows["lrm-test.1"].append(self.row("legacy", "이전 기록", "10:10"))
+        self.rows["lrm-test.1"].append(self.row("edge", "추적 시작 초 기록", "10:15"))
+        self.save()
+        state = {"_seen": {"lrm-test.1": ["child", "legacy", "edge"]}, "_baseline_ids": {},
+                 "_baseline_tracking_at": audit.said.stamp("2026-11-21T10:15:00Z")}
+        (self.home / "board-mirror.state.json").write_text(json.dumps(state))
+        result = self.inspect()
+        self.assertEqual([dict(card="lrm-test.1", id="child"), dict(card="lrm-test.1", id="edge")], result["missing_records"])
+        self.assertEqual([("lrm-test.1", "legacy")], result["unclassified_records"])
+        self.assertEqual("실패", result["rows"][1]["status"])
+        state.pop("_baseline_tracking_at")
+        (self.home / "board-mirror.state.json").write_text(json.dumps(state))
+        self.assertEqual(3, len(self.inspect()["missing_records"]))
+
+    def test_stage_absence_advance_repeat_regression_and_unknown(self):
+        at = self.now - 2500
+        before = dict(text="단계: 3 구현", created_at="2026-11-21T10:00:00Z")
+        for texts, status, missing, warnings in [([], "정상", [], []),
+                (["단계: 4 검증"], "정상", [], []), (["단계: 3 구현 — 복원"], "주의", [], ["단계 반복"]),
+                (["단계: 2 설계"], "실패", ["단계 후퇴"], [])]:
+            rows = [before] + [dict(text=t, created_at="2026-11-21T10:20:00Z") for t in texts]
+            result = audit.restored([dict(at=at, tokens=60)], rows, self.now)[0]
+            self.assertEqual((status, missing, warnings), (result["stage_status"], result["missing"], result["warnings"]))
+        result = audit.restored([dict(at=at, tokens=60)], [], self.now)[0]
+        self.assertEqual("알 수 없음", result["stage_status"])
+        self.assertEqual([], result["missing"])
 
 
 if __name__ == "__main__":

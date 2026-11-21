@@ -227,6 +227,9 @@ class Mirror:
 
     def run(self):
         state = json.loads(self.state.read_text()) if self.state.exists() else {}
+        if "_baseline_ids" not in state:
+            state["_baseline_ids"] = {}
+            state["_baseline_tracking_at"] = int(time.time())
         cards = self.bd("list", "--all", "--json", "-n", "0")
         queued = report.read_outbox(self.outbox)
         features = state.setdefault("_features", [])
