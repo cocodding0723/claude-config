@@ -62,5 +62,21 @@ typed 10 "스킵하고 진행"
 expect "사용자가 창에 '스킵하고 진행'이라고 치면 구현으로" 0 "$BIN" "$Y" build co
 unset BOARD_CLAUDE_DIRS
 
+previous=build
+for stage in intake understand design build verify review ship; do
+  bd label remove "$S" "stage:$previous" >/dev/null 2>&1
+  bd label add "$S" "stage:$stage" >/dev/null 2>&1
+  previous=$stage
+  "$BIN" "$S" >"$SB/out" 2>&1
+  count=$(grep -c '^- ' "$SB/out")
+  [ "$count" -ge 2 ] && [ "$count" -le 4 ] && grep -q '다음 할 일:' "$SB/out" && ok "$stage 조회: 다음 할 일 2~4줄" || ko "$stage 안내" "$(cat "$SB/out")"
+done
+expect "구현으로 이동하면 다음 할 일 출력" 0 "$BIN" "$S" build co
+grep -q '다음 할 일:' "$SB/out" && ok "이동 출력에 다음 할 일 포함" || ko "이동 안내" "$(cat "$SB/out")"
+ln -s "$BIN" "$SB/stage-link"
+"$SB/stage-link" "$Y" >"$SB/out" 2>&1
+grep -q '다음 할 일:' "$SB/out" && ok "설치 링크에서도 저장소 TSV 조회" || ko "링크 안내" "$(cat "$SB/out")"
+"$BIN" "$Y" --json | jq -e '.stage == "build" and (has("next") | not)' >/dev/null && ok "JSON 조회 스키마 유지" || ko "JSON 오염" ""
+
 printf '통과 %d · 실패 %d\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

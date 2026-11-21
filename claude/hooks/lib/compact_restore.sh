@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# 압축 직후 코디네이터 허브(coord-…-hub)에 카드 상태를 다시 알림. 인자: cwd. 출력은 세션 문맥에 들어감(20줄 이내).
-# 작업판 조회는 건당 2초 제한, 실패하면 안내 한 줄만 냄. 훅이 세션을 막지 않도록 항상 종료 0.
+# 훅이 세션을 막지 않도록 조회당 2초 제한, 출력 2000자 제한, 종료 0 유지.
 cwd=${1:-}
 hub=$(basename "$cwd")
 case "$hub" in coord-*-hub) ;; *) exit 0 ;; esac
+(
 BIN=${BOARD_BIN:-$HOME/orca/board/bin}
 BDIR=${BOARD_DIR:-$HOME/orca/board}
 cap() { perl -e 'alarm 2; exec @ARGV' "$@" 2>&1; }   # 2초 넘으면 SIGALRM 으로 종료
@@ -15,7 +15,8 @@ case "$hub" in
     card=$(cd "$BDIR" 2>/dev/null && cap bd list --all --type epic --label "feature:$slug" --json | jq -r 'sort_by(.created_at) | reverse | sort_by(.status=="closed") | .[0].id // empty' 2>/dev/null)
     if [ -z "$card" ]; then echo "기능 카드 조회 실패(feature:$slug). 카드 코멘트·역할 파일을 다시 읽을 것."; exit 0; fi
     echo "기능 카드: $card"
-    st=$(BOARD_DIR="$BDIR" cap "$BIN/board-stage" "$card") && printf '%s\n' "$st" | head -6 || echo "단계 조회 실패. board-stage $card 로 확인할 것."
+    echo "진행은 bd comments add $card, 2분 안에 Slack 에 저절로 감. 결정·문서·검수 요청만 hub_report.py"
+    st=$(BOARD_DIR="$BDIR" cap "$BIN/board-stage" "$card") && printf '%s\n' "$st" | python3 -c 'import sys; text=sys.stdin.read(); print(text if len(text) <= 1200 else text[:1150] + "\n[생략] board-stage로 나머지 확인")' || echo "단계 조회 실패. board-stage $card 로 확인할 것."
     said=$(BOARD_DIR="$BDIR" cap "$BIN/board-said" "$card" --check); rc=$?
     case $rc in
       0) echo "처리 안 된 지시: 없음" ;;
@@ -24,4 +25,5 @@ case "$hub" in
     esac ;;
   *) echo "허브: $hub. 역할 파일·카드 코멘트를 다시 읽을 것." ;;
 esac
+) | python3 -c 'import sys; text=sys.stdin.read(); print(text if len(text) <= 1999 else text[:1950] + "\n[생략] 카드·단계·지시 상세는 작업판에서 확인")'
 exit 0
