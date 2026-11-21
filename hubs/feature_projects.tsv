@@ -1,0 +1,11 @@
+# 기능 코디네이터(feature_open.sh)가 프로젝트마다 다르게 쓰는 값. 탭 구분 7칸, 빈 칸은 -
+# key: --project 값·작업판 label project:<key>. 첫 데이터 행이 기본 프로젝트(--project·티켓으로 못 고를 때)
+# repo·ws_root: 저장소와 허브 작업 공간 상위 폴더(~/ 는 $HOME). 환경 REPO·WS_ROOT 가 있으면 그것이 우선
+# ticket: required(티켓 없으면 멈춤) · optional(있으면 씀) · none(Jira 를 쓰지 않는 개인·설정 저장소. 티켓을 주면 거부)
+# ticket_re: 티켓 형식(정규식). --project 없이 티켓만 줬을 때 이 형식에 맞는 첫 행을 고름
+# branch: sprint = sprint-<시작일>/<타입>-<티켓>-<작업명>(--long 이면 feature/<작업명>) · feature = feature/<작업명> · type = <타입>/<작업명>
+# base: --base 를 안 줬을 때 기준 브랜치
+#key	repo	ws_root	ticket	ticket_re	branch	base
+lrm	~/orca/LoveRevolutionMaker	~/orca/workspaces/LoveRevolutionMaker	required	^LRM-[0-9]+$	sprint	dev
+smg	~/orca/student_maker_2_generator	~/orca/workspaces/student_maker_2_generator	optional	^LRM-[0-9]+$	feature	dev
+claude-config	~/orca/claude-config	~/orca/workspaces/claude-config	none	-	type	main

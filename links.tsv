@@ -143,6 +143,7 @@ hubs/scripts/unity_slot.sh	.config/lrm-hubs/unity_slot.sh	link
 hubs/scripts/unity-run	.config/lrm-hubs/unity-run	link
 hubs/scripts/feature_open.sh	.config/lrm-hubs/feature_open.sh	link
 hubs/scripts/feature_close.sh	.config/lrm-hubs/feature_close.sh	link
+hubs/scripts/feature_project.sh	.config/lrm-hubs/feature_project.sh	link
 hubs/roles/role-arch.txt	.config/lrm-hubs/roles/role-arch.txt	link
 hubs/roles/role-automa.txt	.config/lrm-hubs/roles/role-automa.txt	link
 hubs/roles/role-datasrc.txt	.config/lrm-hubs/roles/role-datasrc.txt	link
