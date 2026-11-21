@@ -144,6 +144,7 @@ class Sweeper:
         self.kind_prefix = cfg["kind_prefix"]
         self.protect = as_list(cfg["protect_ids"])
         self.feature_hub_rows = None
+        self.feature_hub_available = False
 
     # ---------- 바깥 명령 ----------
 
@@ -515,9 +516,12 @@ class Sweeper:
             rc, out, _ = self.run(["orca", "worktree", "list", "--limit", self.cfg["feature_worktree_limit"], "--json"], int(self.cfg["bd_timeout_sec"]))
             if rc == 0:
                 try:
-                    rows = json.loads(out).get("result", {}).get("worktrees", [])
+                    rows = json.loads(out)["result"]["worktrees"]
+                    if not isinstance(rows, list) or any(not isinstance(r, dict) for r in rows):
+                        raise ValueError("invalid worktree list")
                     self.feature_hub_rows = {r["path"]: r.get("lastActivityAt") for r in rows if isinstance(r.get("path"), str)}
-                except (ValueError, AttributeError, TypeError):
+                    self.feature_hub_available = True
+                except (ValueError, KeyError, TypeError):
                     pass
         hubs = {p: at for p, at in self.feature_hub_rows.items() if Path(p).name == name and os.path.isdir(p)}
         root = Path(os.path.expanduser(self.cfg["ws_root"]))
@@ -554,10 +558,11 @@ class Sweeper:
             with open(self.log_path, encoding="utf-8") as stream:
                 for line in stream:
                     fields = line.rstrip("\n").split("\t")
-                    if (len(fields) == 6 and fields[2:5] == ["feature_merged", card_id, action]
+                    if (len(fields) == 6 and fields[1] == ("dry" if self.dry else "apply")
+                            and fields[2:5] == ["feature_merged", card_id, action]
                             and (fields[5] == reason_prefix or fields[5].startswith(reason_prefix + " "))):
                         return True
-        except FileNotFoundError:
+        except (OSError, UnicodeDecodeError):
             pass
         return False
 
@@ -617,12 +622,17 @@ class Sweeper:
                 if not self.feature_logged(card["id"], "retry-limit", f"tries={len(markers)}"):
                     self.log("feature_merged", card["id"], "retry-limit", f"tries={len(markers)} 자동 마무리 {len(markers)}회 실패 — {log} 확인 후 수동 마무리")
                 continue
-            baseline = parse_time(card.get("closed_at")) if card.get("status") == "closed" else None
+            baselines = [parse_time(card.get("closed_at"))] if card.get("status") == "closed" else []
             if markers:
                 marker_times = [parse_time(c.get("created_at")) for c in markers]
                 if any(t is None for t in marker_times) or self.now - max(marker_times) < retry:
                     continue
-                baseline = max(marker_times)
+                baselines.append(max(marker_times))
+            try:
+                baselines.append(dt.datetime.fromtimestamp(os.stat(log).st_mtime, dt.timezone.utc))
+            except OSError:
+                pass
+            baseline = max((t for t in baselines if t is not None), default=None)
             times = [parse_time(card.get(k)) for k in ("updated_at", "started_at", "created_at")]
             times += [parse_time(c.get("created_at")) for c in comments]
             activity = [self.last_activity(dict(c, comment_count=True)) for c in related.values()]
@@ -632,11 +642,15 @@ class Sweeper:
             last = max((t for t in times if t), default=None)
             if last is None or self.now - last <= grace:
                 continue
-            if self.feature_hub_reopened(slug, baseline):
-                reason = f"reason=hub_reopened baseline={baseline.isoformat()}"
-                if not self.feature_logged(card["id"], "skip", reason):
-                    self.log("feature_merged", card["id"], "skip", reason)
-                continue
+            if baseline is not None:
+                self.feature_hubs(slug)
+                state = "hub_unknown" if not self.feature_hub_available else (
+                    "hub_reopened" if self.feature_hub_reopened(slug, baseline) else None)
+                if state is not None:
+                    reason = f"reason={state} baseline={baseline.isoformat()}"
+                    if not self.feature_logged(card["id"], "skip", reason):
+                        self.log("feature_merged", card["id"], "skip", reason)
+                    continue
             reason = f"{proof}·열린 카드 없음 → 기능 마무리 ({self.cfg['feature_merged_marker']})"
             if not os.path.isfile(script):
                 self.count("error")
