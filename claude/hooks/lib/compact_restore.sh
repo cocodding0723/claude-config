@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
-# 훅이 세션을 막지 않도록 조회당 2초 제한, 출력 2000자 제한, 종료 0 유지.
+# 훅이 세션을 막지 않도록 조회당 2초 제한·종료 0 유지. python3가 있을 때 출력 2000자 제한.
 cwd=${1:-}
 hub=$(basename "$cwd")
 case "$hub" in coord-*-hub) ;; *) exit 0 ;; esac
+clip() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "$1"
+  else
+    cat
+  fi
+}
 (
 BIN=${BOARD_BIN:-$HOME/orca/board/bin}
 BDIR=${BOARD_DIR:-$HOME/orca/board}
@@ -16,7 +23,7 @@ case "$hub" in
     if [ -z "$card" ]; then echo "기능 카드 조회 실패(feature:$slug). 카드 코멘트·역할 파일을 다시 읽을 것."; exit 0; fi
     echo "기능 카드: $card"
     echo "진행은 bd comments add $card, 2분 안에 Slack 에 저절로 감. 결정·문서·검수 요청만 hub_report.py"
-    st=$(BOARD_DIR="$BDIR" cap "$BIN/board-stage" "$card") && printf '%s\n' "$st" | python3 -c 'import sys; text=sys.stdin.read(); print(text if len(text) <= 1200 else text[:1150] + "\n[생략] board-stage로 나머지 확인")' || echo "단계 조회 실패. board-stage $card 로 확인할 것."
+    st=$(BOARD_DIR="$BDIR" cap "$BIN/board-stage" "$card") && printf '%s\n' "$st" | clip 'import sys; text=sys.stdin.read(); print(text if len(text) <= 1200 else text[:1150] + "\n[생략] board-stage로 나머지 확인")' || echo "단계 조회 실패. board-stage $card 로 확인할 것."
     said=$(BOARD_DIR="$BDIR" cap "$BIN/board-said" "$card" --check); rc=$?
     case $rc in
       0) echo "처리 안 된 지시: 없음" ;;
@@ -25,5 +32,5 @@ case "$hub" in
     esac ;;
   *) echo "허브: $hub. 역할 파일·카드 코멘트를 다시 읽을 것." ;;
 esac
-) | python3 -c 'import sys; text=sys.stdin.read(); print(text if len(text) <= 1999 else text[:1950] + "\n[생략] 카드·단계·지시 상세는 작업판에서 확인")'
+) | clip 'import sys; text=sys.stdin.read(); print(text if len(text) <= 1999 else text[:1950] + "\n[생략] 카드·단계·지시 상세는 작업판에서 확인")'
 exit 0

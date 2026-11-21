@@ -78,5 +78,19 @@ ln -s "$BIN" "$SB/stage-link"
 grep -q '다음 할 일:' "$SB/out" && ok "설치 링크에서도 저장소 TSV 조회" || ko "링크 안내" "$(cat "$SB/out")"
 "$BIN" "$Y" --json | jq -e '.stage == "build" and (has("next") | not)' >/dev/null && ok "JSON 조회 스키마 유지" || ko "JSON 오염" ""
 
+mkdir -p "$SB/tool/bin"
+cp "$BIN" "$SB/tool/bin/board-stage"
+ln -s "$LIB" "$SB/tool/lib"
+COPY="$SB/tool/bin/board-stage"
+expect "안내 표 없어도 단계 이동 성공(0)" 0 "$COPY" "$S" verify co
+[[ "$(labels "$S")" == *stage:verify* ]] && grep -q '^경고:' "$SB/out" && ! grep -q Traceback "$SB/out" && ok "표 없음: 단계 반영·경고만 출력" || ko "표 없음" "$(cat "$SB/out")"
+mkdir "$SB/tool/stage_next.tsv"
+expect "안내 표 읽기 실패도 조회 성공(0)" 0 "$COPY" "$S"
+[ "$(grep -c '^경고:' "$SB/out")" = 1 ] && ! grep -q Traceback "$SB/out" && ok "읽기 실패: 경고 한 줄" || ko "읽기 실패" "$(cat "$SB/out")"
+rmdir "$SB/tool/stage_next.tsv"
+printf 'verify\t"승인" 답 확인\nverify\t"미완료 안내\n' > "$SB/tool/stage_next.tsv"
+expect "안내 표 따옴표 조회 성공(0)" 0 "$COPY" "$S"
+grep -qx -- '- "승인" 답 확인' "$SB/out" && grep -qx -- '- "미완료 안내' "$SB/out" && ok "닫힌·열린 따옴표 원문 보존" || ko "따옴표" "$(cat "$SB/out")"
+
 printf '통과 %d · 실패 %d\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]

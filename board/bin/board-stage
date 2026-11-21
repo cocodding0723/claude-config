@@ -35,9 +35,13 @@ def print_next(st):
     if st is None:
         return
     path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "stage_next.tsv")
-    with open(path, encoding="utf-8") as source:
-        lines = [row[1] for row in csv.reader(source, delimiter="\t")
-                 if len(row) == 2 and row[0] == st.key]
+    try:
+        with open(path, encoding="utf-8") as source:
+            lines = [row[1] for row in csv.reader(source, delimiter="\t", quoting=csv.QUOTE_NONE)
+                     if len(row) == 2 and row[0] == st.key]
+    except (OSError, UnicodeError):
+        print(f"경고: 단계 안내 표 읽기 실패. 조치: {path} 파일·읽기 권한·UTF-8 확인", file=sys.stderr)
+        return
     if lines:
         print("다음 할 일:")
         for line in lines:
