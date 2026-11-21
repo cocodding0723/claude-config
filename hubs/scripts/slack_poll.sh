@@ -959,8 +959,11 @@ LRM_HUB_DIR="$DIR" /bin/bash "$(dirname "$0")/slack_push.sh" --kick >/dev/null 2
 # 회차 총 예산(TOTAL)의 남은 만큼만 전송기 시간 상한으로 넘기고, 남은 예산이 없으면 이번 회차는 건너뜀(300초 잠금 만료 방지)
 left=$((TOTAL - ($(date +%s) - T0)))
 if [ "$left" -ge 1 ]; then
-  [ "$left" -gt "${LRM_REPORT_BUDGET_S:-40}" ] && left="${LRM_REPORT_BUDGET_S:-40}"
   LRM_HUB_DIR="$DIR" "$PY" -I "$(dirname "$0")/board_mirror.py" --once >/dev/null 2>&1 || true
-  LRM_REPORT_BUDGET_S="$left" LRM_HUB_DIR="$DIR" "$PY" -I "$(dirname "$0")/report_sender.py" --once >/dev/null 2>&1 || true
+  left=$((TOTAL - ($(date +%s) - T0)))
+  if [ "$left" -ge 1 ]; then
+    [ "$left" -gt "${LRM_REPORT_BUDGET_S:-40}" ] && left="${LRM_REPORT_BUDGET_S:-40}"
+    LRM_REPORT_BUDGET_S="$left" LRM_HUB_DIR="$DIR" "$PY" -I "$(dirname "$0")/report_sender.py" --once >/dev/null 2>&1 || true
+  fi
 fi
 exit "$RC"

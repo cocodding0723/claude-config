@@ -13,3 +13,8 @@ title	카드 기록
 overflow_format	새 기록 {count}건 — 상세는 첨부 확인
 reference	참고:
 timeout_sec	10
+budget_sec	30
+seen_limit	500
+failure_limit	3
+closed_hours	24
+retention_days	7
