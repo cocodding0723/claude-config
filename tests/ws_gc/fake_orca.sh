@@ -9,7 +9,9 @@ D="${FAKE_DIR:?}"
 echo "$*" >> "$D/orca.calls"
 [ "${FAKE_ORCA_FAIL:-}" = 1 ] && { echo "orca 응답 없음" >&2; exit 1; }
 case "$*" in
-  "worktree list --limit 1000 --json") [ -z "${FAKE_SLEEP:-}" ] || sleep "$FAKE_SLEEP"; cat "$D/worktrees.json" ;;
+  "worktree list --limit 1000 --json")
+    [ -z "${FAKE_SLEEP:-}" ] || sleep "$FAKE_SLEEP"
+    jq '.result.worktrees as $all | .result.worktrees |= map(. as $wt | .name = null | .parentWorktreeId //= ([$all[] | select((.childWorktreeIds // []) | index($wt.id)) | .id][0] // null))' "$D/worktrees.json" ;;
   "terminal list --limit 1000 --json") cat "$D/terminals.json" ;;
   "orchestration worker-list --full --limit 100 --json") cat "$D/workers.json" ;;
   "orchestration worker-release --dispatch "*) echo '{"ok":true,"result":{}}' ;;

@@ -32,4 +32,8 @@ mutant M13 "PR 닫힘 정리: OPEN PR 검사 제거" 's/length > 0 and all\(\.\[
 mutant M14 "PR 닫힘 정리: HEAD 가 PR 마지막 커밋 안인지 검사 제거(PR 뒤 새 커밋)" 's/ && git -C "\$p" merge-base --is-ancestor HEAD "\$oid" 2>\/dev\/null && return 0/ \&\& return 0/'
 mutant M15 "PR 닫힘 정리: 강제 삭제 전 보관본 재대조 제거" 's/    verify_full "\$p" "\$dest" \|\| return 1\n    log "RM_RETRY_FORCE PR/    log "RM_RETRY_FORCE PR/'
 mutant M16 "PR 닫힘 정리: 보관 상한 검사 제거" 's/if \[ "\$bytes" -gt /if [ "\$bytes" -lt 0 ] \&\& [ 1 -gt /'
+mutant H1 "마무리 목록 밖 허브도 정리" 's/closed_hub "\$p" \|\|/true ||/'
+mutant H2 "마무리 허브의 창 검사 제거" 's/if grep -Fxq -- "\$p" "\$TMP\/terms.tsv.paths" \|\| grep -Fxq -- "\$p" "\$TMP\/live_workers"; then/if false; then/'
+mutant H3 "마무리 허브 삭제 뒤 목록 제거 생략" 's/\[ "\$CLEANUP_REASON" = hub_closed \] && ! closed_hub_clear/[ "\$CLEANUP_REASON" = hub_closed ] \&\& false/'
+mutant H4 "parentWorktreeId 하위 검사 제거" 's/\(\$all\[\] \| select\(\.parentWorktreeId == \$wt.id\) \| \.id\)/(empty)/'
 exit "$MISSED"
