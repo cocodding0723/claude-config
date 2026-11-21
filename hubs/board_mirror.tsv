@@ -1,0 +1,20 @@
+# 카드 기록 거름·표현 규칙. 빈 줄·# 줄 제외, 키와 값은 탭 구분
+flow_label	flow:v1
+feature_prefix	feature:
+thread_prefix	slack-thread:
+ws_prefixes	ws:,repo:
+hub_prefix	feat-
+skip_pattern	^(?:Slack 결정 (?:답|질문):|Slack 스레드 .* 연결\.|Slack 피드백\(원문|Slack 답글:|Slack 답:)
+brief_pattern	^지시 #\d+
+long_chars	300
+ref_pattern	(?<![\w-])(?:lrm-[\w.-]+|term_[\w-]+|task_[\w-]+|ctx_[\w-]+|[0-9a-f]{7,40})(?![\w-])
+length_format	 (원문 {chars}자)
+title	카드 기록
+overflow_format	새 기록 {count}건 — 상세는 첨부 확인
+reference	참고:
+timeout_sec	10
+budget_sec	30
+seen_limit	500
+failure_limit	3
+closed_hours	24
+retention_days	7
