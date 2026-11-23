@@ -932,6 +932,59 @@ def load_evidence_parser():
     return None
 
 
+_FLOW = []  # board_flow 모듈 캐시(못 읽으면 None). 한 번 읽으면 프로세스 안에서 재사용
+
+
+def load_flow():
+    """단계 이름·순서·계획 승인 판정(board/lib/board_flow.py)을 재사용. 못 읽으면 None(단계·다음 차례만 null, 수집은 계속).
+    경로는 load_evidence_parser 와 같은 순서. PANEL_BOARD_LIB 가 있으면 그곳만 봄(시험용)"""
+    if _FLOW:
+        return _FLOW[0]
+    here = os.path.dirname(os.path.realpath(__file__))
+    forced = os.environ.get("PANEL_BOARD_LIB")
+    dirs = (forced,) if forced else (os.path.join(here, "..", "..", "board", "lib"), os.path.expanduser("~/orca/board/lib"))
+    mod = None
+    for d in dirs:
+        if os.path.isfile(os.path.join(d, "board_flow.py")):
+            sys.path.insert(0, d)
+            try:
+                import board_flow
+                mod = board_flow
+            except Exception:  # noqa: BLE001 — 가져오기 실패가 수집 전체를 막지 않게 함
+                mod = None
+            break
+    _FLOW.append(mod)
+    return mod
+
+
+def feature_stage(e, flow):
+    """기능 카드의 단계 {key,name,idx,total,names}. flow:v1 이 없거나 stage label 이 없거나 board_flow 를 못 읽으면 None"""
+    if flow is None or flow.FLOW_LABEL not in flow.labels(e):
+        return None
+    st = flow.current(e)
+    if st is None:
+        return None
+    return {"key": st.key, "name": st.name, "idx": flow.order(st), "total": len(flow.STAGES), "names": [x.name for x in flow.STAGES]}
+
+
+def feature_turn(e, stage, asks, flow):
+    """다음 차례 {who: user|ai, why}. 사용자 차례: 계획 승인 대기·검수 대기(board_flow 규칙)·열린 결정 카드.
+    단계도 없고 사용자 차례도 아니면 None. 계획 승인 판정은 집기 도구와 같은 board_flow.claim_block"""
+    if flow is not None and stage is not None:
+        try:
+            if stage["key"] == "review":
+                return {"who": "user", "why": "검수 통과 답 대기"}
+            if stage["key"] == "design" and flow.size_of(e):
+                approved = flow.approval(DIR, e)
+                if flow.claim_block({"id": "", "issue_type": "task", "status": "open"}, e, approved):
+                    return {"who": "user", "why": "계획 승인 대기"}
+        except Exception:  # noqa: BLE001 — 승인 기록을 못 읽어도 수집은 계속
+            pass
+    if asks > 0:
+        return {"who": "user", "why": f"결정 카드 {asks}건 답 대기"}
+    return {"who": "ai", "why": f"{stage['name']} 진행"} if stage is not None else None
+
+
 def collect_comment_texts(ids):
     """진행 중 카드 notes·코멘트 본문. `bd export` 한 번(전체 목록 JSONL, 코멘트 포함)에서 ids 것만 추림 — 카드마다 bd 를 부르지 않음.
     실패하면 None(호출자가 '?' 로 처리)"""
@@ -1004,6 +1057,7 @@ def board_features(rows, now, ev):
         if r.get("parent"):
             kids.setdefault(r["parent"], []).append(r)
     out = []
+    flow = load_flow()
     for e in rows:
         if e.get("issue_type") != "epic":
             continue
@@ -1015,13 +1069,16 @@ def board_features(rows, now, ev):
         stamps = [t for t in (board_time(x.get("updated_at")) for x in [e, *ks]) if t is not None]
         doing = [k for k in work if k.get("status") == "in_progress"]
         slug = next((lb[len("feature:"):] for lb in e.get("labels") or [] if str(lb).startswith("feature:")), None)
+        asks = sum(1 for k in ks if board_kind(k) == "decision" and k.get("status") != "closed")
+        stage = feature_stage(e, flow)
         out.append({"id": str(e.get("id", ""))[:20], "title": str(e.get("title", ""))[:TITLE_MAX * 2], "slug": slug,
+                    "stage": stage, "next": feature_turn(e, stage, asks, flow),
                     "done": sum(1 for k in work if k.get("status") == "closed"), "total": len(work),
                     "doing": [{"title": str(k.get("title", ""))[:TITLE_MAX * 2], "who": str(k.get("assignee") or "")[:40] or None,
                                "beatAt": beat_time(k)} for k in doing[:FEATURE_DOING_MAX]],
                     "doingCount": len(doing), "kids": board_kids(work, kids, now, ev) if e.get("status") != "closed" else [],
                     "blocked": sum(1 for k in work if k.get("status") == "blocked"),
-                    "asks": sum(1 for k in ks if board_kind(k) == "decision" and k.get("status") != "closed"),
+                    "asks": asks,
                     "lastAt": max(stamps) if stamps else None, "closedAt": closed_at if e.get("status") == "closed" else None,
                     "p": e.get("priority") if isinstance(e.get("priority"), int) else 2})
     out.sort(key=lambda f: (f["closedAt"] is not None, f["p"], -(f["lastAt"] or 0)))
