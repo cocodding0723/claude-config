@@ -65,6 +65,18 @@ class Outcome:
     hub: str = ""
     note: str = ""
 
+    def result(self) -> str:
+        """로그·경고에 쓰는 결과 문구. 메인 받은 편지함·확인 카드에 기록만 된 것은 '전달 성공'이라 하지 않음:
+        ok 는 어딘가에 도착했다는 뜻이라, 받을 세션이 없어 메인에 쌓인 경우도 성공으로 찍혀 세션에 닿은 것으로 오해됨(11-19)"""
+        where = f"작업 카드 {self.hub} 세션" if self.via == "ws" else f"허브 {self.hub}"
+        if not self.ok:
+            return "도착 여부 불명 — " + where + " 확인 필요" if self.via == "unknown" else f"전달 실패({self.note})" if self.note else "전달 실패"
+        if self.via in ("ws", "hub"):
+            return f"{where} 전달 성공"
+        if self.via == "main" and not self.note:
+            return "받을 세션 없음 → 메인 확인 카드(작업판 카드·받은 편지함)에 기록, 세션에 닿지 않음"
+        return f"세션에 닿지 않음 → 메인 대리 기록({self.note})" if self.note else "세션에 닿지 않음 → 메인 대리 기록"
+
 
 FEATURE_HEAD = "feat-"  # 기능 코디네이터 허브 이름 머리(feature_open.sh 의 HUB_SLUG)
 
