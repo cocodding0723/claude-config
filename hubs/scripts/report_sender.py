@@ -517,7 +517,7 @@ def refresh_boards(conf: Conf, st: dict, deadline: float, dry=False) -> list:
     cursor = st.setdefault("boards", {}).get("cursor", "")
     candidates = [k for k in candidates if k > cursor] + [k for k in candidates if k <= cursor]
     try:
-        cards = reader.query("list", "--all", "--limit", "0")
+        cards = reader.query("list", "--limit", "0", "--brief")
         by_id = {card["id"]: card for card in cards}
         decisions = feature_board.Decisions(conf.sent)
     except (RuntimeError, OSError, ValueError) as err:
@@ -533,17 +533,20 @@ def refresh_boards(conf: Conf, st: dict, deadline: float, dry=False) -> list:
         cached_cost = 0
         try:
             epic = by_id.get(key[5:])
-            if not epic or epic.get("issue_type") != "epic" or epic.get("status") in feature_board.Format.ended or "flow:v1" not in epic.get("labels", []):
+            labels = epic.get("labels", []) if epic else []
+            if (not epic or epic.get("issue_type") != "epic" or "flow:v1" not in labels
+                    or not any(l.startswith("feature:") for l in labels)
+                    or not any(l.startswith("slack-thread:") for l in labels)):
                 topic["board_skip"] = True
                 st["boards"]["cursor"] = key
                 continue
             if topic.get("board_next", 0) > time.time():
                 continue
-            children = feature_board.children_of(epic, cards)
-            related = feature_board.family_of(epic, cards)
+            children = [c for c in cards if c["id"].startswith(epic["id"] + ".")]
+            related = [epic, *children]
             waiting = decisions.waiting(epic, related, topic["ts"])
             signal = feature_board.summary(json.dumps([BOARD_FORMAT, [
-                {k: c.get(k) for k in ("id", "updated_at", "status", "labels", "comment_count", "title", "description", "closed_at")}
+                {k: c.get(k) for k in ("id", "updated_at", "status", "comment_count")}
                 for c in sorted([epic, *children], key=lambda c: c["id"])], waiting], sort_keys=True))
             if topic.get("board_signal") == signal:
                 st["boards"]["cursor"] = key
@@ -557,7 +560,13 @@ def refresh_boards(conf: Conf, st: dict, deadline: float, dry=False) -> list:
                 break
             before = time.monotonic()
             cached_cost = pending.get("cost", 0)
-            text = pending.get("text") or feature_board.compose(reader, epic, children, waiting)
+            text = pending.get("text")
+            if not text:
+                all_children = ([] if epic.get("dependent_count") == 0 else
+                                reader.query("list", "--parent", epic["id"], "--all", "--limit", "0", "--brief"))
+                all_children = [c for c in all_children if c["id"].startswith(epic["id"] + ".")]
+                snapshot = reader.snapshot(epic, all_children)
+                text = feature_board.compose(snapshot, snapshot.epic, snapshot.cards[1:], waiting)
             topic["board_pending"] = dict(signal=signal, text=text, cost=cached_cost or time.monotonic() - before)
             stamp = f"{BOARD_FORMAT}:{feature_board.summary(text)}"
             if topic.get("fmt") == stamp:

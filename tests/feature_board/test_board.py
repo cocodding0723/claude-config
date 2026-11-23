@@ -188,12 +188,15 @@ class BoardTests(unittest.TestCase):
     def test_child_comment_is_latest_and_query_failure_aborts(self):
         reader = fb.BdReader()
         comment = dict(self.comments[0], text="자식에서 검증 완료")
-        with patch.object(reader, "query", side_effect=[[self.epic], self.children, [], [], [comment]]), \
+        with patch.object(reader, "query", side_effect=[self.children, [self.epic, self.children[0], self.children[1] | {"comments": [comment]}]]) as query, \
                 patch.object(reader, "stages", return_value=STAGES):
             self.assertIn("- 지금: 자식에서 검증 완료", reader.text("lrm-test"))
-        with patch.object(reader, "query", side_effect=[[self.epic], RuntimeError("조회 실패")]):
+            self.assertEqual(2, query.call_count)
+            self.assertEqual(("show", "lrm-test", "lrm-test.1", "lrm-test.2", "--include-comments"), query.call_args.args)
+        with patch.object(reader, "query", side_effect=[self.children, RuntimeError("조회 실패")]) as query:
             with self.assertRaises(RuntimeError):
                 reader.text("lrm-test")
+            self.assertEqual(2, query.call_count)
 
     def test_bd_failures_do_not_become_empty_board(self):
         with patch.object(fb.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "[]", "")) as run:
@@ -230,8 +233,17 @@ class BoardTests(unittest.TestCase):
             self.assertIn("가짜 기능", result.stdout)
             self.assertIn("▶ 0 구현", result.stdout)
             calls = [json.loads(line) for line in (tmp / "calls").read_text().splitlines()]
-            self.assertEqual(["show", "list", "comments"], [c[0] for c in calls])
-            self.assertIn("0", calls[1])
+            self.assertEqual(["list", "show"], [c[0] for c in calls])
+            self.assertIn("0", calls[0])
+            self.assertIn("--include-comments", calls[1])
+
+    def test_concatenated_arrays_decode_and_truncated_tail_aborts(self):
+        for output, expected in (('[] [{"id":"a"}]\n[{"id":"b"}]', [{"id": "a"}, {"id": "b"}]),):
+            with patch.object(fb.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, output, "")):
+                self.assertEqual(expected, fb.BdReader().query("show", "a", "b", "--include-comments"))
+        with patch.object(fb.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, '[{"id":"a"}] [', "")):
+            with self.assertRaises(RuntimeError):
+                fb.BdReader().query("show", "a", "b", "--include-comments")
 
 
 if __name__ == "__main__":

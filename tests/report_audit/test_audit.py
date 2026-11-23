@@ -34,7 +34,10 @@ class AuditTest(unittest.TestCase):
         self.bd = self.home / "fake-bd"
         self.bd.write_text("#!" + sys.executable + "\nimport json,sys\n"
                            + "d=json.load(open(" + repr(str(self.fixture)) + "))\na=sys.argv[3:]\n"
-                           + "print(json.dumps(d['cards'] if a[0]=='list' else d['rows'][a[1]]))\n")
+                           + "if a[0]=='show':\n"
+                           + " for c in d['cards']:\n"
+                           + "  if c['id'] in a[1:]: print(json.dumps([c|{'comments':d['rows'][c['id']]}]))\n"
+                           + "else: print(json.dumps(d['cards']))\n")
         self.bd.chmod(0o755)
         self.config = self.home / "claude"
         folder = self.config / "projects" / re.sub(r"[^A-Za-z0-9]", "-", self.ws)

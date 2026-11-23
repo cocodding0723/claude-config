@@ -17,7 +17,7 @@ class BoardParentTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.epic = {"id": "lrm-test", "issue_type": "epic", "status": "open", "title": "보고 정리", "labels": ["flow:v1", "feature:test"]}
+        self.epic = {"id": "lrm-test", "issue_type": "epic", "status": "open", "title": "보고 정리", "labels": ["flow:v1", "feature:test", "slack-thread:123.456"]}
         self.kids = [{"id": "lrm-test.1", "title": "첫 작업", "status": "open", "parent": "lrm-test"}]
         self.comments = []
         self.board = self.root / "board"
@@ -32,7 +32,10 @@ class BoardParentTests(unittest.TestCase):
                       "d=json.loads((Path(__file__).parent/'data.json').read_text())\n"
                       "a=sys.argv[3:-1]\n"
                       "with (Path(__file__).parent/'queries').open('a') as f: f.write(json.dumps(a)+'\\n')\n"
-                      "print(json.dumps([d['epic']] if a[0]=='show' else [d['epic'],*d['kids']] if a[0]=='list' else d['comments']))\n")
+                      "if a[0]=='show':\n"
+                      " for c in [d['epic'],*d['kids']]: print(json.dumps([c|{'comments':d['comments']}]))\n"
+                      "elif '--parent' in a: print(json.dumps(d['kids']))\n"
+                      "else: print(json.dumps([c for c in [d['epic'],*d['kids']] if c.get('status')!='closed']))\n")
         bd.chmod(0o755)
         notify = self.root / "notify"
         notify.write_text("#!/usr/bin/env python3\nimport json,sys\nfrom pathlib import Path\n"
@@ -69,7 +72,12 @@ class BoardParentTests(unittest.TestCase):
         sender.run(self.conf, boards=True)
         self.assertEqual(1, len(self.calls()))
         queries = [json.loads(line) for line in (self.root / "queries").read_text().splitlines()]
-        self.assertEqual(2, sum(q[0] == "comments" for q in queries))
+        self.assertEqual(1, sum(q[0] == "show" for q in queries))
+        self.assertEqual(0, sum(q[0] == "comments" for q in queries))
+        self.assertEqual(4, len(queries))
+        self.assertIn("--parent", queries[1])
+        self.assertIn("lrm-test.1", queries[2])
+        self.assertIn("--include-comments", queries[2])
         self.kids[0]["status"] = "closed"
         self.write_data()
         sender.run(self.conf, boards=True)
@@ -113,7 +121,7 @@ class BoardParentTests(unittest.TestCase):
 
     def test_closed_non_epic_and_shared_topics_are_skipped(self):
         for changes in ({"status": "closed"}, {"issue_type": "task"}, {"labels": []}):
-            self.epic.update(status="open", issue_type="epic", labels=["flow:v1", "feature:test"])
+            self.epic.update(status="open", issue_type="epic", labels=["flow:v1", "feature:test", "slack-thread:123.456"])
             self.state["topics"]["card:lrm-test"].pop("board_skip", None)
             self.epic.update(changes)
             self.write_data()
@@ -158,6 +166,17 @@ class BoardParentTests(unittest.TestCase):
             sender.run(self.conf)
             refresh.assert_not_called()
 
+    def test_batch_read_failure_skips_without_card_fallback_or_backoff(self):
+        with patch.object(fb.BdReader, "query", side_effect=[[self.epic, *self.kids], self.kids, RuntimeError("일괄 조회 실패")]) as query:
+            self.refresh()
+            self.assertEqual(3, query.call_count)
+            self.assertEqual("show", query.call_args.args[0])
+        topic = self.state["topics"]["card:lrm-test"]
+        self.assertEqual("1:faa6c1234567", topic["fmt"])
+        self.assertEqual(0, topic.get("board_fails", 0))
+        self.assertEqual(0, topic.get("board_next", 0))
+        self.assertEqual([], self.calls())
+
     def test_top_and_other_hub_decisions_belong_by_card_or_hub(self):
         base = dict(ts="222.333", form_kind="decide", options={"1": "승인", "2": "보류"},
                     decision_id="D-PLAN", title="계획 승인", thread_ts="")
@@ -174,6 +193,18 @@ class BoardParentTests(unittest.TestCase):
         self.write_data()
         self.refresh()
         self.assertIn("새 진행 기록", self.calls()[-1][-1])
+
+    def test_other_epic_prefix_does_not_change_signal_or_mix_children(self):
+        self.kids.append(dict(id="lrm-test2.1", title="다른 기능의 하위", status="open"))
+        self.write_data()
+        self.refresh()
+        self.assertNotIn("다른 기능의 하위", self.calls()[-1][-1])
+        self.kids[-1].update(status="blocked", updated_at="2026-11-23T01:00:00Z")
+        self.write_data()
+        self.refresh()
+        self.assertEqual(1, len(self.calls()))
+        queries = [json.loads(line) for line in (self.root / "queries").read_text().splitlines()]
+        self.assertEqual(4, len(queries))
 
     def test_permanent_rejection_backs_off_before_next_board_read(self):
         topic = self.state["topics"]["card:lrm-test"]
@@ -211,15 +242,21 @@ class BoardParentTests(unittest.TestCase):
         self.assertIn("신호 변경 뒤 새 기록", self.calls()[-1][-1])
 
     def test_five_slow_features_obey_cap_and_rotate_without_starvation(self):
-        cards = [self.epic | {"id": f"lrm-slow{i}", "title": f"기능 {i}"} for i in range(5)]
+        cards = [self.epic | {"id": f"lrm-slow{i}", "title": f"기능 {i}", "dependent_count": 0} for i in range(5)]
         self.data.write_text(json.dumps(cards))
         Path(self.conf.bd).write_text("#!/usr/bin/env python3\nimport json,sys,time\nfrom pathlib import Path\n"
                                      "time.sleep(0.12)\n"
                                      "d=json.loads((Path(__file__).parent/'data.json').read_text())\n"
-                                     "print(json.dumps(d if sys.argv[3]=='list' else []))\n")
+                                     "if sys.argv[3]=='show':\n"
+                                     " for c in d:\n"
+                                     "  if c['id'] in sys.argv[4:]: print(json.dumps([c|{'comments':[]}]))\n"
+                                     "elif '--parent' in sys.argv: print('[]')\n"
+                                     "else: print(json.dumps(d))\n")
         self.state["topics"] = {"card:" + c["id"]: {"ts": f"123.{i}"} for i, c in enumerate(cards)}
+        fb.Decisions(self.conf.sent).waiting(cards[0], [], "123.0")
+        fb.BdReader(self.board, self.conf.bd).stages()
         durations = []
-        # bd 호출당 0.12초 + Python 시작·notify·fsync 비용 반영. 1.2초/3회차는 코디네이터 승인 기준.
+        # 하위 없는 에픽 5개, 모듈 로딩 후 bd당 0.12초 + 프로세스·notify·fsync 측정. 1.2초/3회차는 승인 기준.
         with patch.object(sender, "BOARD_BUDGET_S", 1.2):
             for _ in range(3):
                 started = time.monotonic()
@@ -239,7 +276,7 @@ class BoardParentTests(unittest.TestCase):
         with patch.object(fb.BdReader, "query", return_value=cards) as query, \
                 patch.object(fb, "compose") as compose, patch.object(sender, "run_notify") as notify:
             self.refresh()
-            query.assert_called_once_with("list", "--all", "--limit", "0")
+            query.assert_called_once_with("list", "--limit", "0", "--brief")
             compose.assert_not_called()
             notify.assert_not_called()
         print("현황판 변경 없음: 10개, 목록 1회, 추가 bd 조회·본문 계산·Slack 갱신 0회")

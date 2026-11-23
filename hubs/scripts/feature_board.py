@@ -68,7 +68,8 @@ def comment_key(comment):
 def children_of(epic, cards):
     return [c for c in cards if c.get("parent") == epic["id"] or any(
         d.get("type") == "parent-child" and d.get("depends_on_id") == epic["id"]
-        for d in c.get("dependencies", []))]
+        for d in c.get("dependencies", [])) or (c.get("id", "").startswith(epic["id"] + ".")
+        and "." not in c["id"][len(epic["id"]) + 1:])]
 
 
 def family_of(epic, cards):
@@ -106,6 +107,7 @@ class Decisions:
         return [{"title": row.get("title") or row.get("decision_id")} for row in self.sent
                 if pending_judge.is_decision(row)
                 and ((thread and row.get("thread_ts") == thread) or row.get("card") in cards
+                     or (isinstance(row.get("card"), str) and row["card"].startswith(epic["id"] + "."))
                      or row.get("hub", row.get("tag")) in hubs)
                 and not self.store.judge(self.inbox, self.done, row.get("decision_id", ""), row["ts"])[0]]
 
@@ -113,9 +115,26 @@ class Decisions:
 def compose(reader, epic, children, decisions=(), comments=None):
     """전송기·감사의 동일 본문 계약. decisions는 같은 시점의 미답 결정 입력, comments 생략 시 작업판 조회."""
     if comments is None:
+        if isinstance(reader, BdReader):
+            reader = reader.snapshot(epic, children)
+            epic, children = reader.epic, reader.cards[1:]
         comments = [dict(c, issue_id=card["id"]) for card in [epic, *children]
                     for c in reader.query("comments", card["id"])]
     return render(epic, children, comments, reader.stages(), decisions)
+
+
+class Snapshot:
+    def __init__(self, reader, cards):
+        self.reader, self.cards, self.epic = reader, cards, cards[0]
+        self.by_id = {c["id"]: c for c in cards}
+
+    def query(self, kind, card):
+        if kind != "comments":
+            raise RuntimeError("메모리 스냅샷은 댓글 조회만 지원")
+        return self.by_id[card].get("comments") or []
+
+    def stages(self):
+        return self.reader.stages()
 
 
 def references(texts):
@@ -217,9 +236,16 @@ class BdReader:
             result = subprocess.run([self.bd, "-C", str(self.board), *args, "--json"],
                                     capture_output=True, text=True, timeout=timeout,
                                     stdin=subprocess.DEVNULL, check=True)
-            rows = json.loads(result.stdout)
-            if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
-                raise ValueError("JSON 목록 아님")
+            source = result.stdout.strip()
+            if not source:
+                raise ValueError("빈 JSON")
+            rows, decoder = [], json.JSONDecoder()
+            while source:
+                chunk, end = decoder.raw_decode(source)
+                if not isinstance(chunk, list) or any(not isinstance(row, dict) for row in chunk):
+                    raise ValueError("JSON 목록 아님")
+                rows.extend(chunk)
+                source = source[end:].lstrip()
             return rows
         except subprocess.TimeoutExpired as exc:
             if self.deadline is not None and time.monotonic() >= self.deadline:
@@ -238,14 +264,16 @@ class BdReader:
             sys.path.pop(0)
 
     def text(self, epic_id, decisions=()):
-        shown = self.query("show", epic_id)
-        if not shown or shown[0].get("id") != epic_id:
-            raise RuntimeError("기능 카드 없음 — 기능 카드 번호 확인")
-        children = self.query("list", "--parent", epic_id, "--all", "--limit", "0")
-        comments = []
-        for card in [shown[0], *children]:
-            comments.extend(dict(c, issue_id=card["id"]) for c in self.query("comments", card["id"]))
-        return render(shown[0], children, comments, self.stages(), decisions)
+        children = self.query("list", "--parent", epic_id, "--all", "--limit", "0", "--brief")
+        return compose(self, {"id": epic_id}, children, decisions)
+
+    def snapshot(self, epic, children):
+        bases = [epic, *children]
+        shown = self.query("show", *(c["id"] for c in bases), "--include-comments")
+        by_id = {c.get("id"): c for c in shown}
+        if any(c["id"] not in by_id for c in bases):
+            raise RuntimeError("카드 일괄 조회 누락 — 다음 회차 재시도")
+        return Snapshot(self, [dict(c, **by_id[c["id"]]) for c in bases])
 
 
 def main():
