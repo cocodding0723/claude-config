@@ -129,6 +129,11 @@ export type AutoKid = { id: string; title: string; st: 'done' | 'doing' | 'block
 export type EpicView = { all: boolean; epics: Record<string, boolean> }
 
 /** 기능(epic) 한 줄 원료. 시각은 epoch 초 */
+/** 기능 카드의 작업 단계(수집기가 board_flow 에서 읽음). names 는 전체 단계 이름 순서 */
+export type AutoStage = { key: string; name: string; idx: number; total: number; names: string[] }
+/** 다음 차례: 사용자(계획 승인·검수·결정 카드 대기) 또는 AI */
+export type AutoTurn = { who: 'user' | 'ai'; why: string }
+
 export type AutoFeature = {
   id: string
   title: string
@@ -137,6 +142,9 @@ export type AutoFeature = {
   total: number
   doing: Array<{ title: string; who: string | null; beatAt: number | null }>
   doingCount: number
+  /** 단계·다음 차례(옛 파일·옛 방식 기능은 없음 또는 null) */
+  stage?: AutoStage | null
+  next?: AutoTurn | null
   /** 하위 카드 1단(옛 파일에는 없음). subs 는 그 아래 카드 개수 */
   kids?: AutoKid[]
   blocked: number

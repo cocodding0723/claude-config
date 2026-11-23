@@ -318,6 +318,42 @@ test('featureLines: 기능 한 줄(이름·지금 하는 일·진척·분 단위
   assert.equal(b.featureCounts(ls), '입력 필요 1 / 작업 9')
 })
 
+const NAMES = ['가', '나', '다', '라', '마', '바', '사']
+const stageOf = (idx, o = {}) => ({ key: `k${idx}`, name: NAMES[idx], idx, total: NAMES.length, names: NAMES, ...o })
+
+test('featureLines: 단계 있는 기능은 줄 앞에 7칸 띠와 지금 단계 이름, 단계 없는 기능은 글자 그대로', () => {
+  const [plain] = b.featureLines([feat()], null, NOW)
+  const [l] = b.featureLines([feat({ stage: stageOf(3), next: { who: 'ai', why: '라 진행' } })], null, NOW)
+  assert.equal(l.text, '■■■◆□□□ 라 · 메일함 · 목록 화면 (1/3)')
+  assert.equal(plain.text, '메일함 · 목록 화면 (1/3)')
+  assert.equal(b.featureLines([feat({ stage: null, next: null })], null, NOW)[0].text, plain.text)
+  assert.equal(b.stageBand(stageOf(0)), '◆□□□□□□')
+  assert.equal(b.stageBand(stageOf(6)), '■■■■■■◆')
+  assert.equal(b.stageBand(null), undefined)
+})
+
+test('featureLines: 사용자 차례(계획 승인·검수 대기)는 ? 표시와 설명이 줄에 나옴', () => {
+  const plan = feat({ id: 'p', title: '우편', stage: stageOf(2), next: { who: 'user', why: '계획 승인 대기' } })
+  const [l] = b.featureLines([feat(), plan], null, NOW)
+  assert.equal(l.mark, '?')
+  assert.equal(l.text, '■■◆□□□□ 다 · 우편 · 계획 승인 대기 (1/3)')
+  // 검수 대기는 기능 카드가 닫혀 있어도(오래 안 봐도) 사용자 차례라 계속 보임
+  const rev = feat({ id: 'r', stage: stageOf(5), next: { who: 'user', why: '검수 통과 답 대기' }, closedAt: sec(NOW - 5 * 3600000) })
+  const [r] = b.featureLines([rev], null, NOW)
+  assert.equal(r.mark, '?')
+  assert.match(r.text, /검수 통과 답 대기/)
+  assert.equal(b.featureCounts(b.featureLines([plan], null, NOW)), '입력 필요 1 / 작업 0')
+})
+
+test('detailText: 기능마다 전체 단계 이름 띠와 다음 차례 설명, 단계 없는 기능은 한 줄 그대로', () => {
+  const a = auto(0, { sources: { board: { ok: true, err: null, at: sec(NOW), stale: false, value: { counts: {}, doing: [], more: 0, blocked: [],
+    features: [feat({ stage: stageOf(3), next: { who: 'ai', why: '라 진행' } }), feat({ id: 'u', title: '우편', stage: stageOf(2), next: { who: 'user', why: '계획 승인 대기' } }), feat({ id: 'o', title: '옛' })] } } } })
+  const t = b.detailText(a, NOW)
+  assert.match(t, /- 메일함 \(1\/3\) e-1\n {4}단계: 가 · 나 · 다 · \[라\] · 마 · 바 · 사\n {4}다음 차례: AI — 라 진행/)
+  assert.match(t, /다음 차례: 내 차례 — 계획 승인 대기/)
+  assert.match(t, /- 옛 \(1\/3\) o\n {4}- 목록 화면/)
+})
+
 test('problemLines: 있을 때만, 수집 끊김·멈춤 의심·막힌 카드·CI 실패·디스크 부족', () => {
   assert.deepEqual(b.problemLines(auto(0), okBanner, [], NOW), [])
   const a = auto(0, { sources: {
