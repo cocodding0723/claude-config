@@ -58,7 +58,64 @@ def field(description, name):
 def visible_comments(comments):
     return sorted((c for c in comments if (c.get("text") or "").strip()
                    and not c["text"].lstrip().startswith(Format.echoes)),
-                  key=lambda c: stamp(c.get("created_at")))
+                  key=comment_key)
+
+
+def comment_key(comment):
+    return stamp(comment.get("created_at")), str(comment.get("id", "")).zfill(20)
+
+
+def children_of(epic, cards):
+    return [c for c in cards if c.get("parent") == epic["id"] or any(
+        d.get("type") == "parent-child" and d.get("depends_on_id") == epic["id"]
+        for d in c.get("dependencies", []))]
+
+
+def family_of(epic, cards):
+    selected = {epic["id"]}
+    while True:
+        added = {c["id"] for c in cards if c.get("parent") in selected or any(
+            d.get("type") == "parent-child" and d.get("depends_on_id") in selected for d in c.get("dependencies", []))}
+        if added <= selected:
+            return [c for c in cards if c["id"] in selected]
+        selected |= added
+
+
+class Decisions:
+    def __init__(self, sent):
+        import answer_store
+        self.store = answer_store.AnswerStore(str(Path(sent).parent))
+        self.sent = []
+        try:
+            with open(sent, encoding="utf-8") as stream:
+                for line in stream:
+                    try:
+                        row = json.loads(line)
+                        if isinstance(row, dict):
+                            self.sent.append(row)
+                    except ValueError:
+                        continue
+        except FileNotFoundError:
+            pass
+        self.inbox, self.done = self.store.read_inbox(), self.store.read_done()
+
+    def waiting(self, epic, children, thread):
+        import pending_judge
+        hubs = {"feat-" + label[len("feature:"):] for label in epic.get("labels", []) if label.startswith("feature:")}
+        cards = {epic["id"], *(c["id"] for c in children)}
+        return [{"title": row.get("title") or row.get("decision_id")} for row in self.sent
+                if pending_judge.is_decision(row)
+                and ((thread and row.get("thread_ts") == thread) or row.get("card") in cards
+                     or row.get("hub", row.get("tag")) in hubs)
+                and not self.store.judge(self.inbox, self.done, row.get("decision_id", ""), row["ts"])[0]]
+
+
+def compose(reader, epic, children, decisions=(), comments=None):
+    """전송기·감사의 동일 본문 계약. decisions는 같은 시점의 미답 결정 입력, comments 생략 시 작업판 조회."""
+    if comments is None:
+        comments = [dict(c, issue_id=card["id"]) for card in [epic, *children]
+                    for c in reader.query("comments", card["id"])]
+    return render(epic, children, comments, reader.stages(), decisions)
 
 
 def references(texts):
@@ -141,6 +198,10 @@ def summary(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+class BudgetExpired(RuntimeError):
+    pass
+
+
 class BdReader:
     def __init__(self, board=None, bd=None, timeout=Format.timeout, deadline=None):
         self.board = Path(board or os.environ.get("BOARD_DIR") or "~/orca/board").expanduser()
@@ -152,7 +213,7 @@ class BdReader:
         try:
             timeout = self.timeout if self.deadline is None else min(self.timeout, self.deadline - time.monotonic())
             if timeout <= 0:
-                raise RuntimeError("현황판 조회 예산 초과")
+                raise BudgetExpired("현황판 조회 예산 초과")
             result = subprocess.run([self.bd, "-C", str(self.board), *args, "--json"],
                                     capture_output=True, text=True, timeout=timeout,
                                     stdin=subprocess.DEVNULL, check=True)
@@ -160,6 +221,10 @@ class BdReader:
             if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
                 raise ValueError("JSON 목록 아님")
             return rows
+        except subprocess.TimeoutExpired as exc:
+            if self.deadline is not None and time.monotonic() >= self.deadline:
+                raise BudgetExpired("현황판 조회 예산 초과") from exc
+            raise RuntimeError("작업판 조회 시간 초과 — bd 응답 확인") from exc
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
             raise RuntimeError(f"작업판 {args[0]} 조회 실패({type(exc).__name__}) — bd·작업판 경로 확인") from exc
 

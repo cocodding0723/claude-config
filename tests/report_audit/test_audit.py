@@ -89,6 +89,22 @@ class AuditTest(unittest.TestCase):
         self.save()
         self.assertEqual("미연결", self.inspect()["rows"][0]["status"])
 
+    def test_pending_decision_and_same_second_order_match_shared_sender_text(self):
+        self.state["topics"]["card:lrm-test"]["ts"] = "123.456"
+        self.rows["lrm-test"].extend([self.row("z", "검증 완료", "10:40"), self.row("a", "막힘: 검증 중", "10:40")])
+        card = dict(ts="222.333", thread_ts="", card="lrm-test.1", tag="other", form_kind="decide",
+                    decision_id="D-PLAN", title="계획 승인", options={"1": "승인", "2": "보류"})
+        (self.home / "slack-sent.jsonl").write_text(json.dumps(card) + "\n")
+        reader = audit.board.BdReader(self.home, str(self.bd))
+        comments = [dict(r, issue_id=cid) for cid, rows in self.rows.items() for r in rows]
+        decisions = audit.board.Decisions(self.home / "slack-sent.jsonl").waiting(self.root, [self.child], "123.456")
+        text = audit.board.compose(reader, self.root, [self.child], decisions, comments)
+        self.assertTrue(text.startswith("🟡"))
+        self.assertIn("- 지금: 검증 완료", text)
+        self.state["topics"]["card:lrm-test"]["fmt"] = "2:" + audit.board.summary(text)
+        self.save()
+        self.assertEqual("통과", self.inspect()["rows"][0]["status"])
+
     def test_board_mismatch_missing_and_duplicate_ids(self):
         self.state["topics"]["card:lrm-test"]["fmt"] = "0" * 64
         self.queue = [self.queue[0], dict(self.queue[0], id="q3")]

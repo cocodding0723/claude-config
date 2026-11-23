@@ -17,8 +17,8 @@ class BoardParentTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.epic = {"id": "lrm-test", "issue_type": "epic", "status": "open", "title": "보고 정리"}
-        self.kids = [{"id": "lrm-test.1", "title": "첫 작업", "status": "open"}]
+        self.epic = {"id": "lrm-test", "issue_type": "epic", "status": "open", "title": "보고 정리", "labels": ["flow:v1", "feature:test"]}
+        self.kids = [{"id": "lrm-test.1", "title": "첫 작업", "status": "open", "parent": "lrm-test"}]
         self.comments = []
         self.board = self.root / "board"
         (self.board / "lib").mkdir(parents=True)
@@ -31,7 +31,8 @@ class BoardParentTests(unittest.TestCase):
                       "from pathlib import Path\n"
                       "d=json.loads((Path(__file__).parent/'data.json').read_text())\n"
                       "a=sys.argv[3:-1]\n"
-                      "print(json.dumps([d['epic']] if a[0]=='show' else d['kids'] if a[0]=='list' else d['comments']))\n")
+                      "with (Path(__file__).parent/'queries').open('a') as f: f.write(json.dumps(a)+'\\n')\n"
+                      "print(json.dumps([d['epic']] if a[0]=='show' else [d['epic'],*d['kids']] if a[0]=='list' else d['comments']))\n")
         bd.chmod(0o755)
         notify = self.root / "notify"
         notify.write_text("#!/usr/bin/env python3\nimport json,sys\nfrom pathlib import Path\n"
@@ -56,18 +57,22 @@ class BoardParentTests(unittest.TestCase):
         return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
     def test_idle_round_updates_once_then_changed_snapshot_updates(self):
-        sender.run(self.conf)
+        sender.run(self.conf, boards=True)
         calls = self.calls()
         self.assertEqual(1, len(calls))
         self.assertIn("--update", calls[0])
+        self.assertIn("--tag", calls[0])
+        self.assertNotIn("--kind", calls[0])
         topic = sender.load_state(self.conf.state)["topics"]["card:lrm-test"]
         self.assertEqual(f"{sender.BOARD_FORMAT}:{fb.summary(calls[0][-1])}", topic["fmt"])
         self.assertEqual(66, len(topic["fmt"]))
-        sender.run(self.conf)
+        sender.run(self.conf, boards=True)
         self.assertEqual(1, len(self.calls()))
+        queries = [json.loads(line) for line in (self.root / "queries").read_text().splitlines()]
+        self.assertEqual(2, sum(q[0] == "comments" for q in queries))
         self.kids[0]["status"] = "closed"
         self.write_data()
-        sender.run(self.conf)
+        sender.run(self.conf, boards=True)
         self.assertEqual(2, len(self.calls()))
         self.assertIn("1/1 완료", self.calls()[-1][-1])
 
@@ -86,8 +91,12 @@ class BoardParentTests(unittest.TestCase):
             self.refresh()
         self.assertEqual("1:faa6c1234567", self.state["topics"]["card:lrm-test"]["fmt"])
         self.refresh()
+        self.assertEqual([], self.calls())
+        self.state["topics"]["card:lrm-test"]["board_next"] = 0
+        self.refresh()
         self.assertEqual(1, len(self.calls()))
         self.state["topics"]["card:lrm-test"]["fmt"] = "old"
+        self.state["topics"]["card:lrm-test"].pop("board_signal")
         with patch.object(sender, "run_notify", side_effect=sender.NotifyError("message_not_found")):
             self.refresh()
         self.assertTrue(sender.load_state(self.conf.state)["topics"]["card:lrm-test"]["update_dead"])
@@ -103,10 +112,16 @@ class BoardParentTests(unittest.TestCase):
         self.assertEqual([], self.calls())
 
     def test_closed_non_epic_and_shared_topics_are_skipped(self):
-        for changes in ({"status": "closed"}, {"issue_type": "task"}):
+        for changes in ({"status": "closed"}, {"issue_type": "task"}, {"labels": []}):
+            self.epic.update(status="open", issue_type="epic", labels=["flow:v1", "feature:test"])
+            self.state["topics"]["card:lrm-test"].pop("board_skip", None)
             self.epic.update(changes)
             self.write_data()
             self.refresh()
+            self.assertTrue(self.state["topics"]["card:lrm-test"]["board_skip"])
+        with patch.object(fb.BdReader, "query") as query:
+            self.refresh()
+            query.assert_not_called()
         self.state["topics"]["card:lrm-test"]["shared"] = "lrm-parent"
         with patch.object(fb.BdReader, "query") as query:
             self.refresh()
@@ -115,7 +130,7 @@ class BoardParentTests(unittest.TestCase):
 
     def test_dry_outputs_body_and_stamp_without_mutation(self):
         before = Path(self.conf.state).read_text()
-        result = sender.run(self.conf, dry=True)
+        result = sender.run(self.conf, dry=True, boards=True)
         self.assertIn("fmt=2:", result["lines"][0])
         self.assertIn("🟢 진행 보고 정리", result["lines"][0])
         self.assertEqual(before, Path(self.conf.state).read_text())
@@ -132,11 +147,102 @@ class BoardParentTests(unittest.TestCase):
             return notify(conf, args, deadline, upload)
 
         with patch.object(sender, "run_notify", side_effect=fail_update):
-            result = sender.run(self.conf)
+            result = sender.run(self.conf, boards=True)
         self.assertEqual(1, result["sent"])
         self.assertEqual(0, result["failed"])
         self.assertEqual(1, len(self.calls()))
         self.assertNotIn("--update", self.calls()[0])
+
+    def test_synchronous_sender_skips_board_queries(self):
+        with patch.object(sender, "refresh_boards") as refresh:
+            sender.run(self.conf)
+            refresh.assert_not_called()
+
+    def test_top_and_other_hub_decisions_belong_by_card_or_hub(self):
+        base = dict(ts="222.333", form_kind="decide", options={"1": "승인", "2": "보류"},
+                    decision_id="D-PLAN", title="계획 승인", thread_ts="")
+        for binding in ({"card": "lrm-test.1", "tag": "other"}, {"tag": "feat-test"}):
+            Path(self.conf.sent).write_text(json.dumps(base | binding) + "\n")
+            self.state["topics"]["card:lrm-test"].pop("board_signal", None)
+            self.refresh()
+            self.assertTrue(self.calls()[-1][-1].startswith("🟡"))
+
+    def test_comment_count_alone_triggers_full_refresh(self):
+        self.refresh()
+        self.comments.append({"id": "new", "text": "새 진행 기록"})
+        self.epic["comment_count"] = 1
+        self.write_data()
+        self.refresh()
+        self.assertIn("새 진행 기록", self.calls()[-1][-1])
+
+    def test_permanent_rejection_backs_off_before_next_board_read(self):
+        topic = self.state["topics"]["card:lrm-test"]
+        for attempt in (1, 2):
+            topic["board_next"] = 0
+            before = time.time()
+            with patch.object(sender, "run_notify", side_effect=sender.NotifyError("양식 거부", permanent=True)):
+                self.refresh()
+            self.assertEqual(attempt, topic["board_fails"])
+            self.assertGreaterEqual(topic["board_next"], before + self.conf.backoff_s * 2 ** (attempt - 1))
+            with patch.object(fb.BdReader, "query") as query:
+                self.refresh()
+                query.assert_not_called()
+
+    def test_budget_pause_reuses_body_only_for_same_change_signal(self):
+        topic = self.state["topics"]["card:lrm-test"]
+        for changed in (False, True):
+            topic.pop("board_signal", None)
+            topic["fmt"] = "old"
+            cursor = self.state["boards"].get("cursor", "") if "boards" in self.state else ""
+            with patch.object(sender, "run_notify", side_effect=sender.NotifyError("예산 초과", counts=False)):
+                self.refresh()
+            self.assertEqual(cursor, self.state["boards"].get("cursor", ""))
+            self.assertEqual(0, topic.get("board_fails", 0))
+            self.assertEqual(0, topic.get("board_next", 0))
+            self.assertIn("text", topic["board_pending"])
+            if changed:
+                self.epic["comment_count"] = 2
+                self.comments = [{"text": "신호 변경 뒤 새 기록"}]
+                self.write_data()
+            with patch.object(fb, "compose", wraps=fb.compose) as compose:
+                self.refresh()
+                self.assertEqual(int(changed), compose.call_count)
+            self.assertNotIn("board_pending", topic)
+        self.assertIn("신호 변경 뒤 새 기록", self.calls()[-1][-1])
+
+    def test_five_slow_features_obey_cap_and_rotate_without_starvation(self):
+        cards = [self.epic | {"id": f"lrm-slow{i}", "title": f"기능 {i}"} for i in range(5)]
+        self.data.write_text(json.dumps(cards))
+        Path(self.conf.bd).write_text("#!/usr/bin/env python3\nimport json,sys,time\nfrom pathlib import Path\n"
+                                     "time.sleep(0.12)\n"
+                                     "d=json.loads((Path(__file__).parent/'data.json').read_text())\n"
+                                     "print(json.dumps(d if sys.argv[3]=='list' else []))\n")
+        self.state["topics"] = {"card:" + c["id"]: {"ts": f"123.{i}"} for i, c in enumerate(cards)}
+        durations = []
+        # bd 호출당 0.12초 + Python 시작·notify·fsync 비용 반영. 1.2초/3회차는 코디네이터 승인 기준.
+        with patch.object(sender, "BOARD_BUDGET_S", 1.2):
+            for _ in range(3):
+                started = time.monotonic()
+                self.refresh()
+                durations.append(time.monotonic() - started)
+        self.assertLessEqual(max(durations), 1.2)
+        self.assertEqual(5, len(self.calls()))
+        self.assertTrue(all(t.get("fmt", "").startswith("2:") for t in self.state["topics"].values()))
+        print(f"현황판 순환: 5개/3회차, 상한 1.2초, 실측 최대 {max(durations):.3f}초")
+
+    def test_ten_unchanged_features_need_only_one_list_query(self):
+        cards = [self.epic | {"id": f"lrm-same{i}", "title": f"기능 {i}"} for i in range(10)]
+        self.state["topics"] = {"card:" + c["id"]: {"ts": f"123.{i}"} for i, c in enumerate(cards)}
+        with patch.object(fb.BdReader, "query", return_value=cards):
+            self.refresh()
+        self.assertEqual(10, len(self.calls()))
+        with patch.object(fb.BdReader, "query", return_value=cards) as query, \
+                patch.object(fb, "compose") as compose, patch.object(sender, "run_notify") as notify:
+            self.refresh()
+            query.assert_called_once_with("list", "--all", "--limit", "0")
+            compose.assert_not_called()
+            notify.assert_not_called()
+        print("현황판 변경 없음: 10개, 목록 1회, 추가 bd 조회·본문 계산·Slack 갱신 0회")
 
 
 if __name__ == "__main__":

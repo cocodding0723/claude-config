@@ -95,9 +95,12 @@ class BoardTests(unittest.TestCase):
             self.assertNotIn(forbidden, refs)
         self.assertIn("의 확인", fb.plain("lrm-i46u의 확인"))
 
-    def test_same_second_preserves_bd_order_for_now_and_block_resolution(self):
+    def test_same_second_sorts_by_id_for_now_and_block_resolution(self):
         self.comments = [{"id": 9, "text": "막힘: 실패", "created_at": "2026-11-21T10:01:00Z"},
                          {"id": 10, "text": "해결: 성공", "created_at": "2026-11-21T10:01:00Z"}]
+        self.assertTrue(self.text().startswith("🟢 진행"))
+        self.assertIn("- 지금: 해결: 성공", self.text())
+        self.comments.reverse()
         self.assertTrue(self.text().startswith("🟢 진행"))
         self.assertIn("- 지금: 해결: 성공", self.text())
 

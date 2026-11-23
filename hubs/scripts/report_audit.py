@@ -105,13 +105,13 @@ def inspect(hub, reader, home, since, now):
     mirror = board_mirror.Mirror(policy, dry=True)
     related = mirror.descendants(root, cards)
     records = [dict(r, issue_id=c["id"]) for c in related for r in reader.query("comments", c["id"])]
-    records.sort(key=lambda r: said.stamp(r.get("created_at")))
-    children = [c for c in related if c.get("parent") == root["id"] or any(
-        d.get("type") == "parent-child" and d.get("depends_on_id") == root["id"] for d in c.get("dependencies", []))]
+    records.sort(key=board.comment_key)
+    children = board.children_of(root, related)
     direct = {root["id"], *(c["id"] for c in children)}
-    text = board.render(root, children, [r for r in records if r["issue_id"] in direct], reader.stages())
     sender = json_file(home / "report-sender.state.json")
     topic = sender.get("topics", {}).get("card:" + root["id"], {})
+    decisions = board.Decisions(home / "slack-sent.jsonl").waiting(root, board.family_of(root, cards), topic.get("ts"))
+    text = board.compose(reader, root, children, decisions, [r for r in records if r["issue_id"] in direct])
     summary = topic.get("fmt", "").rsplit(":", 1)[-1]
     connected = bool(re.fullmatch(r"[0-9a-f]{64}", summary))
     equal = summary == board.summary(text)
