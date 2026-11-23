@@ -7,7 +7,6 @@
 문서 모아보기(doc_index.py)는 뿌리 아래 *.html 을 이미 수집하므로 보관한 HTML 은 별도 연결 없이 목록에 나옴.
 """
 import argparse
-import contextlib
 import datetime
 import fcntl
 import hashlib
