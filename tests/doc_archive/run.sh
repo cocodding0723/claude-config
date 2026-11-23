@@ -85,5 +85,31 @@ check "list --ticket" "run list --ticket LRM-2 | grep -q 다른일"
 run list --since bad >/dev/null 2>&1; check "list 날짜 오류 종료 3" "[ $? = 3 ]"
 check "색인 없으면 list 빈 결과" "LRM_ARCHIVE_ROOT='$T/none' python3 '$TOOL' list --json | grep -q '^\[\]$'"
 
+# 11 한 번의 add 에 이름이 같은 파일 둘(내용 다름) → 서로 덮어쓰지 않음
+mkdir -p "$T/src/x" "$T/src/y" "$T/src/z"
+printf 'X' > "$T/src/x/index.html"; printf 'Y' > "$T/src/y/index.html"; printf 'X' > "$T/src/z/index.html"
+run add --file "$T/src/x/index.html" --file "$T/src/y/index.html" --title 이름겹침 --date 2026-11-23 >/dev/null; rc=$?
+D2="$LRM_ARCHIVE_ROOT/2026-11-23-이름겹침"
+check "같은 실행 이름 겹침 종료 0" "[ $rc = 0 ]"
+check "두 내용 모두 보존" "[ \$(ls '$D2' | wc -l | tr -d ' ') = 2 ] && cat '$D2'/* | grep -q X && cat '$D2'/* | grep -q Y"
+check "원래 이름은 앞 파일" "[ \"\$(cat '$D2/index.html')\" = X ]"
+# 같은 이름·같은 내용 둘 → 한 번만 보관
+run add --file "$T/src/x/index.html" --file "$T/src/z/index.html" --title 같은내용 --date 2026-11-23 >/dev/null
+check "같은 내용이면 한 번만" "[ \$(ls '$LRM_ARCHIVE_ROOT/2026-11-23-같은내용' | wc -l | tr -d ' ') = 1 ]"
+check "같은 내용 색인 파일 1개" "run list --json | python3 -c 'import sys,json;r=[x for x in json.load(sys.stdin) if x[\"title\"]==\"같은내용\"];assert len(r[0][\"files\"])==1'"
+# dry-run 계획도 같은 규칙
+out=$(run add --file "$T/src/x/index.html" --file "$T/src/y/index.html" --title 계획 --date 2026-11-23 --dry-run --json)
+check "dry-run 도 겹침 구분" "echo '$out' | python3 -c 'import sys,json;d=json.load(sys.stdin);assert len(set(d[\"files\"]))==2'"
+
+# 12 같은 폴더로 동시 보관 → 덮어쓰기 없이 파일 2개, 색인 줄 2개
+mkdir -p "$T/src/p" "$T/src/q"
+printf 'P' > "$T/src/p/doc.html"; printf 'Q' > "$T/src/q/doc.html"
+before=$(lines)
+run add --file "$T/src/p/doc.html" --title 동시 --date 2026-11-23 >/dev/null &
+run add --file "$T/src/q/doc.html" --title 동시 --date 2026-11-23 >/dev/null &
+wait
+check "동시 실행 파일 2개" "[ \$(ls '$LRM_ARCHIVE_ROOT/2026-11-23-동시' | wc -l | tr -d ' ') = 2 ]"
+check "동시 실행 색인 2줄 증가" "[ \$(lines) = \$((before+2)) ]"
+
 echo "$n 항목, 실패 $fail"
 [ "$fail" = 0 ]

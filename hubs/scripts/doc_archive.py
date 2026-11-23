@@ -78,18 +78,31 @@ def collect_sources(files: list[str]) -> list[str]:
     return out
 
 
-def plan_copy(dest_dir: str, src: str) -> tuple[str, str]:
-    """(대상 경로, 동작: copy|same). 같은 이름·다른 내용이면 해시 이름으로 비켜 감"""
+def plan_copy(dest_dir: str, src: str, planned: dict[str, str]) -> tuple[str, str]:
+    """(대상 경로, 동작: copy|same). planned 는 이번 실행에서 이미 계획한 {대상: 해시}.
+    디스크에 있거나 이미 계획된 이름이 같으면 겹침: 내용이 같으면 same, 다르면 해시 이름으로 비켜 감"""
     name = os.path.basename(src)
-    dst = os.path.join(dest_dir, name)
-    if not os.path.exists(dst):
-        return dst, "copy"
     digest = sha(src)
-    if sha(dst) == digest:
-        return dst, "same"
     stem, ext = os.path.splitext(name)
-    dst = os.path.join(dest_dir, f"{stem}-{digest[:HASH_LEN]}{ext}")
-    return dst, ("same" if os.path.exists(dst) else "copy")
+    for dst in (os.path.join(dest_dir, name), os.path.join(dest_dir, f"{stem}-{digest[:HASH_LEN]}{ext}")):
+        have = planned.get(dst) or (sha(dst) if os.path.exists(dst) else None)
+        if have is None:
+            planned[dst] = digest
+            return dst, "copy"
+        if have == digest:
+            return dst, "same"
+    raise ArchiveError(f"이름 겹침을 풀지 못함: {name} — 보관 폴더의 같은 해시 이름 파일을 확인하세요", EXIT_IO)
+
+
+def plan_all(dest_dir: str, sources: list[str]) -> list[tuple[str, str, str]]:
+    """[(원본, 대상, 동작)]. 같은 대상이 두 번 나오면(같은 내용) 한 번만"""
+    planned, steps, seen = {}, [], set()
+    for src in sources:
+        dst, action = plan_copy(dest_dir, src, planned)
+        if dst not in seen:
+            seen.add(dst)
+            steps.append((src, dst, action))
+    return steps
 
 
 def read_index(path: str) -> list[dict]:
@@ -121,34 +134,42 @@ def add(args) -> dict:
     sources = collect_sources(args.files)
     base = root()
     dest_dir = os.path.join(base, folder_name(date, args.title))
-    steps = [(src, *plan_copy(dest_dir, src)) for src in sources]
-    entries = [{"name": os.path.basename(dst), "sha256": sha(src)} for src, dst, _ in steps]
-    row = {"date": date, "title": args.title, "card": args.card, "ticket": args.ticket, "ticket_url": ticket_url(args.ticket),
-           "kind": args.kind, "thread": args.thread, "dir": dest_dir, "files": entries}
     key = lambda r: (r.get("dir"), tuple(sorted((e["name"], e["sha256"]) for e in r.get("files", []))))
-    result = {"dir": dest_dir, "copied": sum(a == "copy" for *_, a in steps), "skipped": sum(a == "same" for *_, a in steps),
-              "files": [dst for _, dst, _ in steps], "row": row, "dry_run": args.dry_run}
+
+    def build():
+        steps = plan_all(dest_dir, sources)
+        row = {"date": date, "title": args.title, "card": args.card, "ticket": args.ticket, "ticket_url": ticket_url(args.ticket),
+               "kind": args.kind, "thread": args.thread, "dir": dest_dir,
+               "files": [{"name": os.path.basename(dst), "sha256": sha(src)} for src, dst, _ in steps]}
+        return steps, row
+
+    def result(steps, row):
+        return {"dir": dest_dir, "copied": sum(a == "copy" for *_, a in steps), "skipped": sum(a == "same" for *_, a in steps),
+                "files": [dst for _, dst, _ in steps], "row": row, "dry_run": args.dry_run}
+
     if args.dry_run:
-        return result
+        return result(*build())
     try:
         os.makedirs(dest_dir, exist_ok=True)
-        for src, dst, action in steps:
-            if action == "copy":
-                shutil.copyfile(src, dst)
-        index = os.path.join(base, INDEX_NAME)
+        # 계획부터 복사·색인 쓰기까지 한 잠금 안: 같은 폴더로 동시에 보관해도 서로 덮어쓰지 않음
         with open(os.path.join(base, ".archive.lock"), "w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
+            steps, row = build()
+            for src, dst, action in steps:
+                if action == "copy":
+                    shutil.copyfile(src, dst)
+            index = os.path.join(base, INDEX_NAME)
             rows = read_index(index)
             same = [i for i, r in enumerate(rows) if key(r) == key(row)]
             if same:
-                rows[same[0]] = {**row, "archived_at": rows[same[0]].get("archived_at", row.get("archived_at"))}
+                rows[same[0]] = {**row, "archived_at": rows[same[0]].get("archived_at")}
                 rows = [r for i, r in enumerate(rows) if i not in same[1:]]
             else:
                 rows.append({**row, "archived_at": datetime.datetime.now().isoformat(timespec="seconds")})
             write_index(index, rows)
     except OSError as e:
         raise ArchiveError(f"보관 실패: {e.strerror} ({e.filename}) — 보관 뿌리 권한과 남은 용량을 확인하세요", EXIT_IO)
-    return result
+    return result(steps, row)
 
 
 def list_rows(args) -> list[dict]:
