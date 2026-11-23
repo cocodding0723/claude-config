@@ -43,9 +43,24 @@ for text, phrases in (
     for phrase in phrases:
         require(phrase in text, "핵심 규칙: " + phrase)
 
-for text in (role, common):
-    require("카드 기록만 남기면 전송기가 옮김, 결정 카드·문서 첨부만" in text,
-            "카드 기록 자동 전송·결정/문서 전용 보고")
+require("카드 기록만 남기면 전송기가 옮김, 결정 카드·문서 첨부만" in role,
+        "기능 카드 기록 자동 전송·결정/문서 전용 보고")
+require("전송기가 옮김" not in common
+        and "진행 보고는 묻지 않고 HTML 로 보내기만" in common
+        and "도식·캡처·결정은 Slack 봇(hub_report.py)으로 직접" in common,
+        "일반 허브의 HTML·Slack 직접 보고 유지")
+require("허브 작업 공간에는 문서·설정만 있고 게임 코드가 없다" in common,
+        "공통 sparse 작업 공간 규칙 유지")
+require("계획 카드를 다시 올리면 기존 승인이 무효" in role,
+        "계획 카드 재발행 승인 무효 경고")
+sys.path.insert(0, str(root / "hubs/scripts"))
+sys.dont_write_bytecode = True
+import decide_card
+
+example = re.search(r"--text (\$'[^']*')", role)[1]
+body = subprocess.check_output(["bash", "-c", "printf '%s' " + example], text=True)
+require(not decide_card.problem(body, "1=승인 => 계획대로 구현,2=수정 요청 => 계획 수정"),
+        "계획 승인 예시의 배경·용어·선택지 검사 통과")
 require("board-stage" not in common and "0 접수" not in common,
         "기능 전용 단계는 역할 파일에 한정")
 require(set(re.findall(r"\{\{(\w+)\}\}", role)) ==

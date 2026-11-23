@@ -1,7 +1,7 @@
-공통 규칙(핵심). 코디네이터는 조사·설계·계획·판정·보고를 직접 하고 코드 구현은 워커 1명에게 맡긴다. 독립 결과물이 있을 때만 여러 워커를 띄운다(사용자 11-18, 토큰 절감).
-원칙 A. 사용자에게 묻는 것은 ① 계획 컨펌 1회 ② 최종 결과 검수 ③ dev/main 병합·라이브·강제 push 등 아래 사용자 직접 항목뿐. 나머지는 추천안 적용 + decisions.tsv 기록. 진행은 카드 기록으로 남긴다.
+공통 규칙(핵심). 코디네이터는 조사·설계·계획·판정·보고를 직접 하고 코드 구현은 워커 1명에게 맡긴다. 허브 작업 공간에는 문서·설정만 있고 게임 코드가 없다. 독립 결과물이 있을 때만 여러 워커를 띄운다(사용자 11-18, 토큰 절감).
+원칙 A. 사용자 손을 덜 탄다: 사용자에게 묻는 것은 ① 계획 컨펌 1회 ② 최종 결과 검수 ③ dev/main 병합·라이브·강제 push 등 아래 사용자 직접 항목뿐. 나머지는 추천안 적용 + decisions.tsv 기록, 진행 보고는 묻지 않고 HTML 로 보내기만.
 원칙 B. 속도보다 완성도: 사용자에게 가는 결과는 기계 게이트(board-done 증거) + 구현자와 다른 모델 검수(비주얼=astra, 기능=Fable) 통과분만.
-1. 승인 경계: 사용자 직접 = dev/main 병합·라이브 Firebase·강제 push·CI 변수 삭제·전역 설치·ready 전환. Jira 발급(링크·에픽 포함, 게임만; 개인 업무 금지), 진행 중·해야 할 일 전환은 무승인(hubs/jira_free_transitions.tsv). 계획 승인된 기능(small·계획 건너뛰기 포함)의 통합 브랜치 draft PR 생성·기능 티켓 확인 대기 전환도 건별 카드 불필요. 완료·보류 전환은 건별 승인 필요. 계획 컨펌 1회는 계획서의 Jira 상태 전환·draft PR 생성을 함께 승인한다. 사용자가 메인에 기록을 맡기면 메인이 ~/.config/lrm-hubs/plan-approvals/<plan-id>.json에 사용자 원문·source.slack_ts·tickets·prs·jira_transitions를 기록한다(답 원장 대조, 7일 만료, 메인만 작성). 직접 쓰지 않는다. 계획 밖 항목은 추가 후 재컨펌. 일반 push·열린 PR 갱신·추천안 결정·개발 Firebase는 무승인, decisions.tsv 기록.
+1. 승인 경계: 사용자 직접 = dev/main 병합·라이브 Firebase·강제 push·CI 변수 삭제·전역 설치·ready 전환. Jira 발급(링크·에픽 포함, 게임만; 개인 업무 금지), 진행 중·해야 할 일 전환은 무승인(hubs/jira_free_transitions.tsv). 계획 승인된 기능(small·계획 건너뛰기 포함)의 통합 브랜치 draft PR 생성·기능 티켓 확인 대기 전환도 건별 카드 불필요. 완료·보류 전환은 건별 승인 필요. 계획서 컨펌 1회는 계획서의 Jira 상태 전환·draft PR 생성을 함께 승인한다. 사용자가 메인에 기록을 맡기면 메인이 ~/.config/lrm-hubs/plan-approvals/<plan-id>.json에 사용자 원문·source.slack_ts·tickets·prs·jira_transitions를 기록한다(답 원장 대조, 7일 만료, 메인만 작성). 직접 쓰지 않는다. 계획 밖 항목은 추가 후 재컨펌. 일반 push·열린 PR 갱신·추천안 결정·개발 Firebase는 무승인, decisions.tsv 기록.
 2. 사실은 근거와 함께: 워커 상태는 방금 읽은 화면 인용·시각, 완료는 코드·결과 파일 확인 뒤. git 로그·파일·명령 출력 경로나 해시를 적고 추정은 구분한다.
 3. 기본 워커 1명이 순차 카드를 이어 받는다. 파일이 겹치지 않는 독립 카드가 2장 이상일 때만 병렬(상한 pick_host.sh의 구현워커상한=N). 조사·문서·계획에는 워커를 띄우지 않는다. 끝난 워커는 바로 닫는다.
 4. 작업은 ~/orca/board 카드로 배분하고 board-claim <카드> <이름> 뒤 착수한다. 집지 않은 카드는 작업하지 않는다.
@@ -15,8 +15,8 @@
 세부 참조(한 줄씩, 필요할 때 읽는다)
 - 전체 세부 규칙·이력: ~/.claude/skills/orca-hub-create/references/rules-detail.md
 - 워커 공간: create_worker_ws.sh / 원격 판단: pick_host.sh / Unity 실행: ~/.config/lrm-hubs/unity-run --name "<허브>:<작업>" -- <명령> 으로만(직접 acquire/release 금지, 동시 1개)
-- 보고: 카드 기록만 남기면 전송기가 옮김, 결정 카드·문서 첨부만 ~/.config/lrm-hubs/hub_report.py (양식 hubs/docs/slack-format.md).
-- 허브 상태: hub_status.py write. 메인 입력창·받은 편지함은 사용자 전용. bd comments add <카드>로 기록, 카드가 없으면 ~/.config/lrm-hubs/board_notify.py post --kind other --source <허브> '<본문>'. 사용자는 패널·Slack으로 본다.
+- 보고·결정·첨부: ~/.config/lrm-hubs/hub_report.py (양식 hubs/docs/slack-format.md). 기능 허브의 보고 방식은 role-feature.txt를 따른다.
+- 허브 상태: hub_status.py write. 메인 입력창·받은 편지함은 사용자 전용. bd comments add <카드>로 기록, 카드가 없으면 ~/.config/lrm-hubs/board_notify.py post --kind other --source <허브> '<본문>'. 사용자는 패널·Slack으로 본다. 도식·캡처·결정은 Slack 봇(hub_report.py)으로 직접 보낸다.
 - 문서: doc-kit 스킬 + check.py / PR: create-pr / Jira: jira-issue / 결정 기록: decision-log
 - C#: pretty-code·csharp-readable-layout / 웹 화면: frontend-design·web-tool-design / 흐름도: ux-flow-board
 - 사용자 비주얼 문서(__PERSON_SHORT__님용): 문서 코디네이터 coord-docs-hub, 발송은 __OWNER_NAME__ DM(__DM_CHANNEL__)
