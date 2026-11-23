@@ -509,13 +509,15 @@ def repair_tail(path: str) -> None:
 
 @contextlib.contextmanager
 def locked(path: str):
-    try:
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        with open(path + ".lock", "a") as lk:
+    # 잠금 열기·flock 실패만 변환. 본문 예외까지 잡으면 원인이 '잠금 실패'로 가려짐
+    with contextlib.ExitStack() as stack:
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            lk = stack.enter_context(open(path + ".lock", "a"))
             fcntl.flock(lk, fcntl.LOCK_EX)
-            yield
-    except OSError as err:
-        raise ReportError(f"outbox 잠금 실패({err.strerror}) — 작업 폴더 권한 확인", EXIT_IO)
+        except OSError as err:
+            raise ReportError(f"outbox 잠금 실패({err.strerror}) — 작업 폴더 권한 확인", EXIT_IO)
+        yield
 
 
 def add(path: str, rep: dict, now: float, dry: bool, stage: bool = False) -> tuple:

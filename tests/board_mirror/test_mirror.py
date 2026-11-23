@@ -156,6 +156,37 @@ class MirrorTest(unittest.TestCase):
             self.assertEqual(0, p.returncode, p.stderr)
         self.assertEqual(1, len(self.queue()))
 
+    def test_bd_found_without_path(self):
+        # launchd 의 짧은 PATH 재현. 가짜 bd 는 BOARD_BD 로만 닿음
+        short = "/usr/bin:/bin"
+        os.environ.pop("BOARD_BD", None)
+        with patch.dict(os.environ, PATH=short):
+            self.assertEqual("/opt/homebrew/bin/bd", bm.Mirror(self.policy, True).bd_path)
+        fixture = self.home / "fixture"
+        fixture.write_text(json.dumps(dict(cards=self.cards, rows=self.rows)))
+        fake = self.home / "bd"
+        fake.write_text("#!" + sys.executable + "\nimport json,sys\n"
+                        + "data=json.load(open(" + repr(str(fixture)) + "))\n"
+                        + "print(json.dumps(data['cards'] if sys.argv[1]=='list' else data['rows'][sys.argv[2]]))\n")
+        fake.chmod(0o755)
+        env = dict(HOME=str(self.home), PATH=short, BOARD_BD=str(fake), BOARD_DIR=str(self.home),
+                   LRM_HUB_DIR=str(self.home),
+                   LRM_REPORT_OUTBOX=str(self.home / "queue"))
+        p = subprocess.run([sys.executable, "-I", str(ROOT / "hubs/scripts/board_mirror.py"),
+                            "--dry-run", "--card", "lrm-test"], env=env, capture_output=True, text=True)
+        self.assertEqual(0, p.returncode, p.stderr)
+        self.assertIn('"baseline": "lrm-test.1"', p.stdout)
+
+    def test_lock_keeps_body_error(self):
+        with self.assertRaises(FileNotFoundError):
+            with bm.report.locked(str(self.home / "state")):
+                raise FileNotFoundError("bd")
+        blocker = self.home / "file"
+        blocker.write_text("")
+        with self.assertRaisesRegex(bm.report.ReportError, "잠금 실패"):
+            with bm.report.locked(str(blocker / "state")):
+                pass
+
     def test_bad_record_isolated_then_skipped_on_third_failure(self):
         self.run_mirror()
         self.add("password=pretend-value")
