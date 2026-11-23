@@ -9,18 +9,23 @@ PASS=0 FAIL=0
 ok() { PASS=$((PASS + 1)); printf 'PASS  %s\n' "$1"; }
 ko() { FAIL=$((FAIL + 1)); printf 'FAIL  %s — %s\n' "$1" "${2:-}"; }
 SB=$(mktemp -d "${TMPDIR:-/tmp}/bdone-test.XXXXXX"); trap 'rm -rf "${SB:?}"' EXIT
-export BOARD_DIR="$SB/board" BD_LAST_TOUCHED_FALLBACK=0
+export BOARD_DIR="$SB/board" LRM_HUB_DIR="$SB/hub" BD_LAST_TOUCHED_FALLBACK=0
+mkdir -p "$SB/hub"
 mkdir -p "$BOARD_DIR" "$SB/ev" && cd "$BOARD_DIR" && git init -q && bd init --quiet >/dev/null 2>&1 \
   || { echo "bd init 실패"; exit 1; }
 
-# 작업자 브랜치 w 가 있는 임시 저장소. 증거 줄은 commit=<w 끝> 로 묶음
-GR="$SB/repo"; git init -q -b main "$GR" && git -C "$GR" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git -C "$GR" branch w
+# 작업자 브랜치 w 가 있는 임시 저장소(Unity 프로젝트 표지 포함: label 없는 카드가 일반 카드로 판정됨). 증거 줄은 commit=<w 끝> 로 묶음
+GR="$SB/repo"; git init -q -b main "$GR" && mkdir -p "$GR/ProjectSettings" && : > "$GR/ProjectSettings/ProjectVersion.txt" && git -C "$GR" add -A && git -C "$GR" -c user.name=t -c user.email=t@t commit -q -m init && git -C "$GR" branch w
 HEAD_W=$(git -C "$GR" rev-parse w); sleep 1
 BL="branch:w,repo:$GR"
 new_card() { bd create "$1" --labels "${2:+$2,}$BL" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'; }
 claim() { BD_ACTOR="$2" bd update "$1" --claim --json >/dev/null; sleep 1; }
 ev() { bd comments add "$1" "evidence:$2 commit=$HEAD_W" >/dev/null; }
 status() { bd show "$1" --json | python3 -c 'import json,sys;d=json.load(sys.stdin);print((d[0] if isinstance(d,list) else d)["status"])'; }
+# 검수 결정 카드 기록(가짜 Slack 기록): sent <번호> <ts> <1번 선택지>, reply <번호> <ts> <source> <pick>
+rid() { python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import board_flow; print(board_flow.review_id(sys.argv[2]))' "$REPO/board/lib" "$1"; }
+sent() { printf '{"decision_id":"%s","ts":"%s","form_kind":"decide","options":{"1":"%s","2":"고칠 점 있음"}}\n' "$1" "$2" "$3" >> "$SB/hub/slack-sent.jsonl"; }
+reply() { printf '{"type":"button","decision_id":"%s","parent_ts":"%s","action":"pick","pick":%s,"source":"%s"}\n' "$1" "$2" "$4" "$3" >> "$SB/hub/slack-inbox.jsonl"; }
 # expect <이름> <기대 종료 코드> <명령...>
 expect() {
   local name=$1 want=$2; shift 2
@@ -113,6 +118,23 @@ expect "프리팹 값 불일치 거부" 7 "$BIN" "$m" w1
 printf '{"mismatches":0}\n' > "$SB/ev/pd.json"
 expect "시안 카드 닫힘" 0 "$BIN" "$m" w1
 
+# 검수 카드 올리기용 가짜 보고 도구(실제 Slack·보고 대기열을 쓰지 않음): 부른 인자를 calls.jsonl 에, 카드를 hub-reports.jsonl 에 적음. FAKE_REPORT_EXIT 로 실패를 흉내
+cat > "$SB/hub/hub_report.py" <<'PY'
+import json, os, sys, time
+a = sys.argv[1:]
+hub = os.environ["LRM_HUB_DIR"]
+d = {a[i]: a[i + 1] for i in range(len(a) - 1) if a[i].startswith("--")}
+with open(os.path.join(hub, "calls.jsonl"), "a") as f:
+    f.write(json.dumps(d, ensure_ascii=False) + "\n")
+code = int(os.environ.get("FAKE_REPORT_EXIT", "0"))
+if code:
+    sys.stderr.write("오류: 가짜 거부\n")
+    sys.exit(code)
+with open(os.path.join(hub, "hub-reports.jsonl"), "a") as f:
+    f.write(json.dumps({"decision_id": d["--decision-id"], "kind": "decide", "text": d["--text"], "at": time.time()}, ensure_ascii=False) + "\n")
+PY
+calls() { [ -f "$SB/hub/calls.jsonl" ] && wc -l < "$SB/hub/calls.jsonl" | tr -d ' ' || echo 0; }
+
 # epic
 e=$(bd create "묶음" -t epic --labels "$BL" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
 k=$(bd create "하위" --parent "$e" --labels "$BL" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
@@ -129,11 +151,68 @@ printf '{"verdict":"fail","reviewer_model":"claude-fable-5","author_model":"gpt-
 expect "검수 불합격 판정 거부" 7 "$BIN" --epic "$e" lead
 printf '{"verdict":"pass","reviewer_model":"claude-fable-5","author_model":"gpt-6-astra"}' > "$SB/ev/rv.json"
 expect "epic 닫힘" 0 "$BIN" --epic "$e" lead
+grep -q '경고: 검수 카드를 올리지 못함' "$SB/out" && grep -q -- '--ask-review' "$SB/out" && grep -q 'hub_report.py add' "$SB/out" \
+  && ok "허브·작업 공간을 못 얻으면 건너뛰고 경고·다시 올리는 명령·직접 올릴 명령을 출력(종료 0)" || ko "허브 모름 경고" "$(cat "$SB/out")"
+[ "$(calls)" = 0 ] && ok "허브를 모르면 보고 도구를 부르지 않음" || ko "허브를 모르는데 보고 도구 호출" "$(calls)"
 bd show "$e" --json | grep -q '"stage:review"' && ok "닫힌 epic 은 사용자 검수 대기 label" || ko "검수 대기 label"
 expect "--user-ok 원문 없으면 2" 2 "$BIN" --epic "$e" lead --user-ok ""
+bd show "$e" --json | grep -q 'review:v1' && ok "검수 대기에 들어갈 때 대조 표시 label 이 붙음" || ko "review:v1 label"
+RV=$(rid "$e")
+expect "검수 카드 답이 없으면 --user-ok 거부(4)" 4 "$BIN" --epic "$e" lead --user-ok "좋아 반영해"
+grep -q "$RV" "$SB/out" && grep -q -- '--user-ok-typed' "$SB/out" && ok "거부 글에 번호와 창에 친 통과 안내가 있음" || ko "거부 안내" "$(cat "$SB/out")"
+sent "$RV" 1.1 "통과"; reply "$RV" 1.1 terminal 1
+expect "터미널에서 남긴 답은 거부(4)" 4 "$BIN" --epic "$e" lead --user-ok "좋아 반영해"
+reply "$RV" 1.1 slack 2
+expect "'고칠 점' 답은 거부(4)" 4 "$BIN" --epic "$e" lead --user-ok "좋아 반영해"
+reply "$RV" 1.1 slack 1; sent "$RV" 2.2 "통과"
+expect "검수 카드를 다시 올리면 옛 카드의 통과는 거부(4)" 4 "$BIN" --epic "$e" lead --user-ok "좋아 반영해"
+bd show "$e" --json | grep -q '"stage:ship"' && ko "거부했는데 반영 단계로 넘어감" || ok "거부하면 단계가 그대로"
+reply "$RV" 2.2 slack 1
 expect "--user-ok 로 검수 대기 해제" 0 "$BIN" --epic "$e" lead --user-ok "좋아 반영해"
 bd show "$e" --json | grep -q '"stage:review"' && ko "검수 대기 해제" || ok "검수 대기 label 떼짐"
 bd show "$e" --json | grep -q '"stage:ship"' && ok "검수 통과 뒤에는 반영 단계 label" || ko "반영 단계 label"
+
+# 검수 카드 자동 올리기·다시 올리기: 기능 카드(label feature:<slug> + 설명의 허브 줄)에서 허브·작업 공간을 얻어 보고 도구를 하위 프로세스로 부름
+rw="$SB/coord-feat-rv-hub"
+re_=$(bd create "[LRM-9] 우편함" -t epic --labels "feature:rv,$BL" -d "- 기능 코디네이터 허브: $rw" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+sleep 1; printf 'png' > "$SB/ev/s4.png"; printf 'mp4' > "$SB/ev/r4.mp4"; cp "$SB/ev/rv.json" "$SB/ev/rv4.json"; ev "$re_" "$SB/ev/s4.png"; ev "$re_" "$SB/ev/r4.mp4"; ev "$re_" "review=$SB/ev/rv4.json"
+RR=$(rid "$re_")
+expect "ask-review: 검수 단계가 아니면 거부(4)" 4 "$BIN" --epic "$re_" lead --ask-review
+grep -q 'stage:review' "$SB/out" && grep -q '조치' "$SB/out" && ok "ask-review: 거부에 원인·조치" || ko "ask-review 거부 문구" "$(cat "$SB/out")"
+[ "$(calls)" = 0 ] && ok "ask-review: 거부하면 보고 도구를 부르지 않음" || ko "거부했는데 호출" "$(calls)"
+expect "epic 닫힘(보고 도구 실패 흉내)" 0 env FAKE_REPORT_EXIT=3 BOARD_FEATURE_CLOSE=off "$BIN" --epic "$re_" lead
+grep -q '경고: 검수 카드를 올리지 못함' "$SB/out" && grep -q "board-done --epic $re_ lead --ask-review" "$SB/out" && grep -q '종료 3' "$SB/out" \
+  && ok "보고 도구가 실패해도 완료 검사는 종료 0, 경고와 다시 올리는 명령 출력" || ko "보고 도구 실패 경고" "$(cat "$SB/out")"
+bd show "$re_" --json | grep -q '"stage:review"' && ok "보고 도구가 실패해도 검수 단계로 넘어감" || ko "검수 단계 label"
+expect "ask-review: 실패하면 종료 9" 9 env FAKE_REPORT_EXIT=3 "$BIN" --epic "$re_" lead --ask-review
+expect "ask-review --dry-run: 올릴 내용만 출력" 0 "$BIN" --epic "$re_" lead --ask-review --dry-run
+grep -q "$RR" "$SB/out" && grep -q '우편함 검수' "$SB/out" && ok "dry-run 에 번호·제목·명령이 보임(티켓 머리표 제거)" || ko "dry-run 출력" "$(cat "$SB/out")"
+n0=$(calls)
+expect "ask-review: 보고 도구가 성공하면 카드를 올림" 0 "$BIN" --epic "$re_" lead --ask-review --review-note "툴팁 위치를 고침"
+python3 - "$SB/hub/calls.jsonl" "$RR" "$rw" <<'PY' && ok "ask-review: 결정 번호·허브·작업 공간·1번 통과·추천 1·메모가 보고 도구 인자로 감" || ko "ask-review 인자" "$(tail -1 "$SB/hub/calls.jsonl")"
+import json, sys
+d = json.loads(open(sys.argv[1]).read().splitlines()[-1])
+assert d["--decision-id"] == sys.argv[2] and d["--hub"] == "feat-rv" and d["--ws"] == sys.argv[3] and d["--card"], d
+assert d["--kind"] == "decide" and d["--recommend"] == "1" and d["--options"].startswith("1=통과 =>"), d
+t = d["--text"].split("\n")
+assert t[0] == "우편함 검수" and t[1].startswith("배경: ") and "확인할 것: 툴팁 위치를 고침" in t, t
+PY
+expect "ask-review: 답 기다리는 카드가 있으면 올리지 않음(종료 0)" 0 "$BIN" --epic "$re_" lead --ask-review
+grep -q '이미 답을 기다리는' "$SB/out" && [ "$(calls)" = $((n0 + 1)) ] && ok "ask-review: 대기열 카드가 있으면 건너뜀" || ko "중복 카드 방지" "$(cat "$SB/out") calls=$(calls)"
+# 고칠 점 답을 받은 뒤 다시 올림: 보낸 카드 기록과 사용자 답이 있어야 '답 기다리는 카드' 가 아님. 제목은 앞 카드 그대로
+printf '{"decision_id":"%s","ts":"9.1","at":"%s","form_kind":"decide","options":{"1":"통과","2":"고칠 점 있음"}}\n' "$RR" "$(( $(date +%s) + 60 ))" >> "$SB/hub/slack-sent.jsonl"
+reply "$RR" 9.1 slack 2
+expect "ask-review: 고칠 점 답 뒤 다시 올림" 0 "$BIN" --epic "$re_" lead --ask-review --json
+python3 - "$SB/out" "$SB/hub/calls.jsonl" "$RR" <<'PY' && ok "ask-review: --json 에 번호·제목·올림 여부, 제목은 앞 카드 그대로" || ko "ask-review --json" "$(cat "$SB/out")"
+import json, sys
+o = json.loads(open(sys.argv[1]).read().splitlines()[-1])
+r = o["review_card"]
+assert r["id"] == sys.argv[3] and r["posted"] is True and not r["skipped"] and not r["failed"], r
+last = json.loads(open(sys.argv[2]).read().splitlines()[-1])
+assert last["--text"].split("\n")[0] == r["title"] == "우편함 검수", (last, r)
+PY
+expect "ask-review: --review-note 만 쓰면 2" 2 "$BIN" --epic "$re_" lead --review-note "x"
+expect "ask-review: --user-ok 와 함께 쓰면 2" 2 "$BIN" --epic "$re_" lead --ask-review --user-ok "통과"
 
 # epic 게이트: 직접 닫은 하위 카드·board-merge 기록 없는 병합 거부
 ME=$(git -C "$GR" rev-parse w)
@@ -167,6 +246,11 @@ bd comments add "$g" "evidence:compile=$SB/ev/g.log" >/dev/null; ev "$g" "editmo
 expect "commit= 없는 board-run 로그는 로그에 적힌 커밋으로 통과" 0 "$BIN" "$g" w1 --dry-run
 bd comments add "$g" "evidence:compile=$SB/ev/g.log commit=$HEAD_W (error CS 0건, 슬롯 조정 뒤 다시 돌림)" >/dev/null
 expect "증거 줄 끝의 괄호 메모는 경로로 읽지 않음" 0 "$BIN" "$g" w1 --dry-run
+bd comments add "$g" "evidence:compile=$SB/ev/g.log commit=$HEAD_W (4종 7/7). 사전 점검 통과, 묶음 시험 17/17 통과" >/dev/null
+expect "commit= 뒤에 이어 쓴 메모(괄호 밖 글 포함)는 경로로 읽지 않음" 0 "$BIN" "$g" w1 --dry-run
+bd comments add "$g" "evidence:compile=$SB/ev/g.log commit=$HEAD_W 메모
+evidence:editmode=$SB/ev/g.xml commit=$HEAD_W" >/dev/null
+expect "메모가 다음 줄의 증거를 삼키지 않음" 0 "$BIN" "$g" w1 --dry-run
 git -C "$GR" -c user.name=t -c user.email=t@t commit -q --allow-empty -m next; git -C "$GR" branch -f w HEAD
 expect "commit= 이 없어도 브랜치가 앞으로 가면 로그의 이전 커밋으로 거부" 6 "$BIN" "$g" w1
 grep -q '낡은 증거' "$SB/out" && ok "거부 사유는 낡은 증거(형식 아님)" || ko "거부 사유" "$(head -c 300 "$SB/out")"
@@ -199,7 +283,9 @@ expect "feature: epic 닫힘" 0 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epi
 sleep 1.5
 [ ! -e "$SB/fc.args" ] && ok "epic 이 닫혀도 코디네이터 정리는 아직 실행하지 않음(검수 답을 받을 세션 유지)" || ko "검수 전 정리 실행됨" "$(cat "$SB/fc.args" 2>/dev/null)"
 expect "--shipped 는 검수 통과 전에는 거부(4)" 4 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epic "$fe" lead --shipped "PR #9 병합"
-expect "feature: 검수 통과 기록" 0 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epic "$fe" lead --user-ok "통과"
+bd label remove "$fe" review:v1 >/dev/null 2>&1   # 대조 표시가 없는 옛 기능: 막지 않고 경고만
+expect "feature: 검수 통과 기록(옛 기능은 대조 없이)" 0 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epic "$fe" lead --user-ok "통과"
+grep -q '옛 기능' "$SB/out" && ok "옛 기능은 확인하지 않았다는 경고를 냄" || ko "옛 기능 경고" "$(cat "$SB/out")"
 sleep 1.5
 [ ! -e "$SB/fc.args" ] && ok "검수 통과만으로는 정리하지 않음(PR·병합이 남음)" || ko "검수 통과에 정리 실행됨" "$(cat "$SB/fc.args" 2>/dev/null)"
 expect "--shipped 근거 없으면 2" 2 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epic "$fe" lead --shipped ""
@@ -310,5 +396,16 @@ printf 'c\n' > "$G2/Code.cs"
 bd comments add "$n3" "evidence:test=$SB/ev/n4.log" >/dev/null
 expect "설정에 없는 코드 수정은 여전히 거부" 7 "$BIN" "$n3" wn --dry-run
 rm -f "$BOARD_DIR/repos.json"
+
+# 카드 종류 자동 판정: kind label 이 없으면 브랜치 끝이 Unity 프로젝트인지로 가림. G2 는 표지(ProjectSettings/ProjectVersion.txt)가 없는 도구 저장소
+ucard() { bd create "$1" --labels "${2}branch:n,repo:$G2" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'; }
+u1=$(ucard "label 없는 도구 저장소 카드" ""); claim "$u1" wn
+expect "label 없는 도구 저장소 카드: 증거 없으면 거부" 6 "$BIN" "$u1" wn --dry-run
+grep -q 'evidence:test 줄 없음' "$SB/out" && ! grep -q 'editmode\|compile' "$SB/out" && ok "label 없는 도구 저장소 카드: Unity 증거가 아니라 test 증거를 요구" || ko "도구 저장소 요구 증거" "$(head -c 300 "$SB/out")"
+(cd "$G2" && "$RUN" test --out "$SB/ev/u1.log" --card "$u1" --actor wn -- true >/dev/null 2>&1)
+expect "label 없는 도구 저장소 카드: test 증거로 통과" 0 "$BIN" "$u1" wn --dry-run
+u2=$(ucard "kind:task 로 적은 카드" "kind:task,"); claim "$u2" wn
+expect "kind:task 를 적으면 도구 저장소여도 일반 카드" 6 "$BIN" "$u2" wn --dry-run
+grep -q 'evidence:editmode 줄 없음' "$SB/out" && ok "kind:task: 컴파일·EditMode 증거 요구" || ko "kind:task 요구 증거" "$(head -c 300 "$SB/out")"
 
 echo "통과 $PASS, 실패 $FAIL"; [ "$FAIL" = 0 ]

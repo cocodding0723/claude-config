@@ -213,7 +213,7 @@ class Decide:
             return
         if not out.ok:
             warn_slack(ts, f"질문 전달 실패: {title or did}\n\n• 무엇: {out.note}\n• 결과: 메인에 직접 알려 주세요")
-        log(f"결정 {did} 질문 받음(답 아님) · {'메인' if out.via == 'main' else f'허브 {out.hub} {out.via}'} 전달 {'성공' if out.ok else '실패'}")
+        log(f"결정 {did} 질문 받음(답 아님) · {out.result()}")
 
     def finish(self, did: str, ch: str, ts: str, msg: dict, label: str, extra: dict) -> None:
         """답 기록(먼저 온 답만) → 카드 닫기 → 메인 전달. 늦은 답이면 카드에 사유만 남기고 아무것도 실행하지 않음"""
@@ -296,8 +296,7 @@ class Decide:
         if not out.ok:
             where = "메인 받은 편지함" if out.via == "main" else f"{out.hub} 허브·메인 받은 편지함"
             warn_slack(ts, f"{'메인' if out.via == 'main' else '허브'} 전달 실패: {title or did} = {label}\n\n• 무엇: 버튼 답은 기록했지만 {where}로 못 보냄 ({out.note})\n• 결과: 메인에 직접 알려 주세요")
-        dest = "메인" if out.via == "main" else f"작업 카드 {out.hub} 세션" if out.via == "ws" else f"허브 {out.hub} {out.via}"
-        log(f"결정 {did} 버튼 답 기록 · {dest} 전달 {'성공' if out.ok else '실패'}")
+        log(f"결정 {did} 버튼 답 기록 · {out.result()}")
 
     def run_action(self, entry: dict, did: str, ts: str, pick) -> None:
         """카드 후속 동작 실행(오래 걸릴 수 있어 별도 스레드). 실행했으면 결과를 스레드에 남김"""

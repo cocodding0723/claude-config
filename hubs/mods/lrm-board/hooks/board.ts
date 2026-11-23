@@ -27,6 +27,8 @@ export const PANEL_CONFIG = {
   beatStaleMin: 30,
   /** 진행률 막대 칸 수 */
   barCells: 8,
+  /** 단계 띠 글자: 지난 단계·지금 단계·남은 단계. 칸 수와 이름은 수집기가 준 값(board_flow)을 씀 */
+  band: { past: '■', now: '◆', rest: '□' },
   /** 데스크톱 알림: 시간당 상한, 같은 항목 다시 알림 간격 */
   notifyPerHour: 5,
   renotifyMin: 30,
@@ -358,6 +360,16 @@ export const todoLines = (cards: AutoCard[] | undefined, nowMs: number): Line[] 
     .sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))
     .map(c => ({ key: `todo:${c.id}`, text: c.title, sub: `${fmtMin(c.createdAt, nowMs)} · 끝나면 bd close ${c.id}` }))
 
+/** 단계 띠 `■■■◆□□□`. 단계 없는 기능(옛 방식)은 undefined */
+export const stageBand = (st: AutoFeature['stage'] | undefined, cfg = PANEL_CONFIG): string | undefined => {
+  if (st === null || st === undefined) return undefined
+  const { past, now, rest } = cfg.band
+  return Array.from({ length: st.total }, (_, i) => (i < st.idx ? past : i === st.idx ? now : rest)).join('')
+}
+
+/** 사용자 차례인 단계 있는 기능의 설명(수집기 next.why). 단계 없는 기능은 기존 표시를 그대로 둠 */
+const userTurn = (f: AutoFeature): string | undefined => (f.stage != null && f.next?.who === 'user' ? f.next.why : undefined)
+
 export type AiMark = '?' | '!' | '✕' | '✻' | '✓' | '-'
 export type FeatureLine = { key: string; mark: AiMark; state: string; text: string; age: string; order: number; folded?: boolean }
 
@@ -370,6 +382,8 @@ const featureSessions = (f: AutoFeature, ai: AutoAi | null | undefined) =>
 
 /** 기능 하나의 상태. 입력 필요 → 멈춤 의심 → 막힘 → 작업 중 → 끝남(안 봄) → 쉼 */
 export const featureState = (f: AutoFeature, ai: AutoAi | null | undefined, nowMs: number, cfg = PANEL_CONFIG): { mark: AiMark; state: string } => {
+  const mine = userTurn(f)
+  if (mine !== undefined) return { mark: '?', state: mine }
   if (f.closedAt !== null) return { mark: '✓', state: '끝남, 아직 안 봄' }
   const sess = featureSessions(f, ai)
   if (f.asks > 0 || sess.some(s => s.state === 'needs_input')) return { mark: '?', state: '답 기다림' }
@@ -386,12 +400,14 @@ export const featureState = (f: AutoFeature, ai: AutoAi | null | undefined, nowM
 /** 🔄 AI 진행: 기능마다 한 줄(상태·이름·지금 하는 일·마지막 변화). 끝난 기능은 doneShowMin 동안만. 많으면 작업 중 접기 */
 export const featureLines = (features: AutoFeature[] | undefined, ai: AutoAi | null | undefined, nowMs: number, cfg = PANEL_CONFIG): FeatureLine[] => {
   const rows = (features ?? [])
-    .filter(f => f.closedAt === null || (ageOf(f.closedAt, nowMs) ?? Infinity) <= cfg.doneShowMin)
+    .filter(f => f.closedAt === null || userTurn(f) !== undefined || (ageOf(f.closedAt, nowMs) ?? Infinity) <= cfg.doneShowMin)
     .map(f => {
       const st = featureState(f, ai, nowMs, cfg)
       const now = f.doing[0]
       const what = st.mark === '✻' && now !== undefined ? `${now.title}${f.doingCount > 1 ? ` 외 ${f.doingCount - 1}` : ''}` : st.state
-      return { key: `ai:${f.id}`, mark: st.mark, state: st.state, text: `${f.title} · ${what} (${f.done}/${f.total})`,
+      const band = stageBand(f.stage, cfg)
+      const head = band === undefined || f.stage == null ? '' : `${band} ${f.stage.name} · `
+      return { key: `ai:${f.id}`, mark: st.mark, state: st.state, text: `${head}${f.title} · ${what} (${f.done}/${f.total})`,
                age: fmtMin(f.closedAt ?? f.lastAt, nowMs), order: MARK_ORDER[st.mark] }
     })
     .sort((a, b) => a.order - b.order)
@@ -511,6 +527,8 @@ export const detailText = (auto: AutoBoard | undefined, nowMs: number): string =
   out.push('## 기능별 진행 카드')
   for (const f of feats) {
     out.push(`- ${f.title} (${f.done}/${f.total}) ${f.id}`)
+    if (f.stage != null) out.push(`    단계: ${f.stage.names.map((n, i) => (i === f.stage?.idx ? `[${n}]` : n)).join(' · ')}`)
+    if (f.next != null) out.push(`    다음 차례: ${f.next.who === 'user' ? '내 차례' : 'AI'} — ${f.next.why}`)
     for (const d of f.doing) out.push(`    - ${d.title} · ${d.who ?? '담당 없음'} · ${fmtMin(d.beatAt, nowMs)}`)
   }
   const hubs = src.hubs?.value

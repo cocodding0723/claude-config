@@ -80,7 +80,7 @@ F=$(echo "$P" | jq -c --arg e "$EPIC" '.sources.board.value.features[] | select(
 [ "$(echo "$P" | jq -r '.sources.ghState.ok')" = false ] && ok "gh-state.json 없음 → ghState 원료 missing(패널은 기존 gh 사용)" || ko "ghState" "$(echo "$P" | jq -c .sources.ghState)"
 
 # heartbeat·증거 상태: 진행 중 하위 카드만 beatAt·ev 를 가짐. 브랜치 끝과 증거 커밋 비교. 카드마다 bd 를 부르지 않고 같은 목록 JSON 에서 읽음
-GR="$SB/gitrepo"; git init -q -b main "$GR" && git -C "$GR" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git -C "$GR" branch wk
+GR="$SB/gitrepo"; git init -q -b main "$GR" && mkdir -p "$GR/ProjectSettings" && : > "$GR/ProjectSettings/ProjectVersion.txt" && git -C "$GR" add -A && git -C "$GR" -c user.name=t -c user.email=t@t commit -q -m init && git -C "$GR" branch wk
 TIP=$(git -C "$GR" rev-parse wk)
 E2=$(b create "증거 기능" -t epic --json | id_of)
 mk() { b create "$1" --parent "$E2" --labels "branch:wk,repo:$GR" --json | id_of; }
@@ -116,6 +116,41 @@ FAILBD="$SB/failbd.sh"; printf '#!/bin/bash\n[ "$1" = export ] && exit 1\nexec b
 P5=$(env -u PANEL_GH_REPOS PANEL_BD="$FAILBD" PANEL_ORCA=/usr/bin/false LRM_HUB_DIR="$SB/hub" bash "$SCRIPTS/panel_collect.sh" --print 2>/dev/null)
 KS=$(echo "$P5" | jq -c --arg e "$E2" '.sources.board.value.features[] | select(.id==$e) | .kids')
 [ "$(ev_of "$K0")/$(ev_of "$K1")/$(ev_of "$K5")" = "unk/ok/unk" ] && ok "코멘트를 못 읽으면(bd export 실패) 없음 대신 ? — metadata 증거는 그대로" || ko "export 실패" "$(echo "$KS" | jq -c '[.[]|{id,ev}]')"
+
+# 단계 띠·다음 차례: 단계 이름·순서와 계획 승인 판정은 board/lib/board_flow.py 를 읽어 씀(수집기에 다시 적지 않음)
+SB_BUILD=$(b create "구현 중 기능" -t epic -l flow:v1,stage:build,size:normal --json | id_of)
+SB_PLAN=$(b create "계획 대기 기능" -t epic -l flow:v1,stage:design,size:normal --json | id_of)
+SB_PLAN0=$(b create "계획서 쓰는 중 기능" -t epic -l flow:v1,stage:design,size:normal --json | id_of)
+SB_CLOSED_BUILD=$(b create "닫힌 구현 단계 기능" -t epic -l flow:v1,stage:build,size:normal --json | id_of); b close "$SB_CLOSED_BUILD" >/dev/null
+SB_CLOSED_VERIFY=$(b create "닫힌 검증 단계 기능" -t epic -l flow:v1,stage:verify,size:normal --json | id_of); b close "$SB_CLOSED_VERIFY" >/dev/null
+SB_CLOSED_REV=$(b create "닫힌 검수 단계 기능" -t epic -l flow:v1,stage:review,size:normal --json | id_of); b close "$SB_CLOSED_REV" >/dev/null
+SB_SMALL=$(b create "작은 설계 기능" -t epic -l flow:v1,stage:design,size:small --json | id_of)
+SB_SKIP=$(b create "건너뛴 기능" -t epic -l flow:v1,stage:design,size:normal,skip:plan --json | id_of)
+SB_REV=$(b create "검수 대기 기능" -t epic -l flow:v1,stage:review,size:normal --json | id_of)
+SB_ASK=$(b create "결정 대기 기능" -t epic -l flow:v1,stage:build,size:normal --json | id_of)
+"$SCRIPTS/board-ask" --runnable no "단계 시험 결정" --options "가 => 하나|나 => 둘" --recommend 가 --parent "$SB_ASK" "${FILL[@]}" >/dev/null
+SB_OLD=$(b create "옛 방식 기능" -t epic -l stage:build --json | id_of)
+SB_NOST=$(b create "단계 칸 없는 새 기능" -t epic -l flow:v1 --json | id_of)
+plan_did() { python3 -I -c 'import sys; sys.path.insert(0, sys.argv[1]); import board_flow; print(board_flow.plan_id(sys.argv[2]))' "$SCRIPTS/../../board/lib" "$1"; }
+printf '{"decision_id":"%s","form_kind":"decide","options":{"1":"승인","2":"수정"},"ts":"1.1","at":1}\n' "$(plan_did "$SB_PLAN")" >> "$SB/hub/slack-sent.jsonl"
+collect_stage() { env -u PANEL_GH_REPOS PANEL_ORCA=/usr/bin/false LRM_HUB_DIR="$SB/hub" "$@" bash "$SCRIPTS/panel_collect.sh" --print 2>/dev/null; }
+PS=$(collect_stage env)
+sf() { echo "$PS" | jq -r --arg e "$1" ".sources.board.value.features[] | select(.id==\$e) | $2"; }
+[ "$(sf "$SB_BUILD" '"\(.stage.key)/\(.stage.name)/\(.stage.idx)/\(.stage.total)"')" = "build/구현/3/7" ] && ok "단계 원료: flow:v1 + stage:build → 키·한글 이름·순번(0부터)·전체 수" || ko "단계 원료" "$(sf "$SB_BUILD" '.stage')"
+[ "$(sf "$SB_BUILD" '.stage.names|join(",")')" = "접수,이해,설계,구현,검증,검수,반영" ] && ok "단계 이름 목록은 board_flow.STAGES 순서 그대로" || ko "단계 이름 목록" "$(sf "$SB_BUILD" '.stage')"
+[ "$(sf "$SB_OLD" '.stage')/$(sf "$SB_NOST" '.stage')" = "null/null" ] && ok "옛 기능(flow:v1 없음)·단계 label 없는 기능은 단계 null" || ko "단계 null" "$(sf "$SB_OLD" '.stage')/$(sf "$SB_NOST" '.stage')"
+[ "$(sf "$SB_OLD" '"\(.done)/\(.total)/\(.asks)/\(.next)"')" = "0/0/0/null" ] && ok "옛 기능의 나머지 원료는 그대로(다음 차례 null)" || ko "옛 기능 원료" "$(sf "$SB_OLD" '.')"
+[ "$(sf "$SB_PLAN" '"\(.next.who)/\(.next.why)"')" = "user/계획 승인 대기" ] && ok "다음 차례: 설계 단계·보통 크기·승인 없음 → 사용자 '계획 승인 대기'" || ko "계획 승인 대기" "$(sf "$SB_PLAN" '.next')"
+[ "$(sf "$SB_PLAN0" '"\(.stage.key)/\(.next.who)"')" = "design/ai" ] && ok "계획 카드를 아직 안 올렸으면 설계 단계여도 AI 차례(계획서 쓰는 중)" || ko "계획 카드 전" "$(sf "$SB_PLAN0" '.next')"
+[ "$(sf "$SB_CLOSED_BUILD" '"\(.stage)/\(.next)"')/$(sf "$SB_CLOSED_VERIFY" '"\(.stage)/\(.next)"')" = "null/null/null/null" ] && ok "닫힌 기능의 낡은 단계(구현·검증)는 단계·다음 차례 null" || ko "닫힌 낡은 단계" "$(sf "$SB_CLOSED_BUILD" '.stage')/$(sf "$SB_CLOSED_VERIFY" '.next')"
+[ "$(sf "$SB_CLOSED_REV" '"\(.stage.key)/\(.next.who)/\(.next.why)"')" = "review/user/검수 통과 답 대기" ] && ok "닫힌 기능이라도 검수 단계면 단계·사용자 차례를 냄(board_flow.HAND_OFF)" || ko "닫힌 검수" "$(sf "$SB_CLOSED_REV" '.stage')"
+[ "$(sf "$SB_SMALL" '.next.who')/$(sf "$SB_SKIP" '.next.who')" = "ai/ai" ] && ok "작은 일·계획 건너뛰기는 승인 대기 아님(AI 차례) — board_flow.claim_block 판정" || ko "승인 불필요" "$(sf "$SB_SMALL" '.next')/$(sf "$SB_SKIP" '.next')"
+[ "$(sf "$SB_REV" '"\(.next.who)/\(.next.why)"')" = "user/검수 통과 답 대기" ] && ok "다음 차례: 검수 단계 → 사용자 '검수 통과 답 대기'" || ko "검수 대기" "$(sf "$SB_REV" '.next')"
+[ "$(sf "$SB_ASK" '"\(.next.who)/\(.next.why)"')" = "user/결정 카드 1건 답 대기" ] && ok "다음 차례: 열린 결정 카드 → 사용자 '결정 카드 N건 답 대기'" || ko "결정 대기" "$(sf "$SB_ASK" '.next')"
+[ "$(sf "$SB_BUILD" '"\(.next.who)/\(.next.why)"')" = "ai/구현 진행" ] && ok "사용자 차례가 아니면 AI 차례 + 단계 설명" || ko "AI 차례" "$(sf "$SB_BUILD" '.next')"
+PN=$(collect_stage env PANEL_BOARD_LIB="$SB/nolib")
+[ "$(echo "$PN" | jq -r '.sources.board.ok')" = true ] && [ "$(echo "$PN" | jq -r --arg e "$SB_BUILD" '.sources.board.value.features[] | select(.id==$e) | "\(.stage)/\(.next)/\(.done)/\(.total)"')" = "null/null/0/0" ] \
+  && ok "board_flow 를 못 읽으면 단계·다음 차례 null 로 내고 수집은 계속" || ko "board_flow 없음" "$(echo "$PN" | jq -c .sources.board.ok)"
 
 # board-answer
 R=$("$SCRIPTS/board-answer" "$D" "옮김. Slack 칸은 숨겨" --json)
