@@ -9,7 +9,8 @@ PASS=0 FAIL=0
 ok() { PASS=$((PASS + 1)); printf 'PASS  %s\n' "$1"; }
 ko() { FAIL=$((FAIL + 1)); printf 'FAIL  %s — %s\n' "$1" "${2:-}"; }
 SB=$(mktemp -d "${TMPDIR:-/tmp}/bdone-test.XXXXXX"); trap 'rm -rf "${SB:?}"' EXIT
-export BOARD_DIR="$SB/board" BD_LAST_TOUCHED_FALLBACK=0
+export BOARD_DIR="$SB/board" LRM_HUB_DIR="$SB/hub" BD_LAST_TOUCHED_FALLBACK=0
+mkdir -p "$SB/hub"
 mkdir -p "$BOARD_DIR" "$SB/ev" && cd "$BOARD_DIR" && git init -q && bd init --quiet >/dev/null 2>&1 \
   || { echo "bd init 실패"; exit 1; }
 
@@ -21,6 +22,10 @@ new_card() { bd create "$1" --labels "${2:+$2,}$BL" --json | python3 -c 'import 
 claim() { BD_ACTOR="$2" bd update "$1" --claim --json >/dev/null; sleep 1; }
 ev() { bd comments add "$1" "evidence:$2 commit=$HEAD_W" >/dev/null; }
 status() { bd show "$1" --json | python3 -c 'import json,sys;d=json.load(sys.stdin);print((d[0] if isinstance(d,list) else d)["status"])'; }
+# 검수 결정 카드 기록(가짜 Slack 기록): sent <번호> <ts> <1번 선택지>, reply <번호> <ts> <source> <pick>
+rid() { python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import board_flow; print(board_flow.review_id(sys.argv[2]))' "$REPO/board/lib" "$1"; }
+sent() { printf '{"decision_id":"%s","ts":"%s","form_kind":"decide","options":{"1":"%s","2":"고칠 점 있음"}}\n' "$1" "$2" "$3" >> "$SB/hub/slack-sent.jsonl"; }
+reply() { printf '{"type":"button","decision_id":"%s","parent_ts":"%s","action":"pick","pick":%s,"source":"%s"}\n' "$1" "$2" "$4" "$3" >> "$SB/hub/slack-inbox.jsonl"; }
 # expect <이름> <기대 종료 코드> <명령...>
 expect() {
   local name=$1 want=$2; shift 2
@@ -131,6 +136,18 @@ printf '{"verdict":"pass","reviewer_model":"claude-fable-5","author_model":"gpt-
 expect "epic 닫힘" 0 "$BIN" --epic "$e" lead
 bd show "$e" --json | grep -q '"stage:review"' && ok "닫힌 epic 은 사용자 검수 대기 label" || ko "검수 대기 label"
 expect "--user-ok 원문 없으면 2" 2 "$BIN" --epic "$e" lead --user-ok ""
+bd show "$e" --json | grep -q 'review:v1' && ok "검수 대기에 들어갈 때 대조 표시 label 이 붙음" || ko "review:v1 label"
+RV=$(rid "$e")
+expect "검수 카드 답이 없으면 --user-ok 거부(4)" 4 "$BIN" --epic "$e" lead --user-ok "좋아 반영해"
+grep -q "$RV" "$SB/out" && grep -q -- '--user-ok-typed' "$SB/out" && ok "거부 글에 번호와 창에 친 통과 안내가 있음" || ko "거부 안내" "$(cat "$SB/out")"
+sent "$RV" 1.1 "통과"; reply "$RV" 1.1 terminal 1
+expect "터미널에서 남긴 답은 거부(4)" 4 "$BIN" --epic "$e" lead --user-ok "좋아 반영해"
+reply "$RV" 1.1 slack 2
+expect "'고칠 점' 답은 거부(4)" 4 "$BIN" --epic "$e" lead --user-ok "좋아 반영해"
+reply "$RV" 1.1 slack 1; sent "$RV" 2.2 "통과"
+expect "검수 카드를 다시 올리면 옛 카드의 통과는 거부(4)" 4 "$BIN" --epic "$e" lead --user-ok "좋아 반영해"
+bd show "$e" --json | grep -q '"stage:ship"' && ko "거부했는데 반영 단계로 넘어감" || ok "거부하면 단계가 그대로"
+reply "$RV" 2.2 slack 1
 expect "--user-ok 로 검수 대기 해제" 0 "$BIN" --epic "$e" lead --user-ok "좋아 반영해"
 bd show "$e" --json | grep -q '"stage:review"' && ko "검수 대기 해제" || ok "검수 대기 label 떼짐"
 bd show "$e" --json | grep -q '"stage:ship"' && ok "검수 통과 뒤에는 반영 단계 label" || ko "반영 단계 label"
@@ -204,7 +221,9 @@ expect "feature: epic 닫힘" 0 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epi
 sleep 1.5
 [ ! -e "$SB/fc.args" ] && ok "epic 이 닫혀도 코디네이터 정리는 아직 실행하지 않음(검수 답을 받을 세션 유지)" || ko "검수 전 정리 실행됨" "$(cat "$SB/fc.args" 2>/dev/null)"
 expect "--shipped 는 검수 통과 전에는 거부(4)" 4 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epic "$fe" lead --shipped "PR #9 병합"
-expect "feature: 검수 통과 기록" 0 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epic "$fe" lead --user-ok "통과"
+bd label remove "$fe" review:v1 >/dev/null 2>&1   # 대조 표시가 없는 옛 기능: 막지 않고 경고만
+expect "feature: 검수 통과 기록(옛 기능은 대조 없이)" 0 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epic "$fe" lead --user-ok "통과"
+grep -q '옛 기능' "$SB/out" && ok "옛 기능은 확인하지 않았다는 경고를 냄" || ko "옛 기능 경고" "$(cat "$SB/out")"
 sleep 1.5
 [ ! -e "$SB/fc.args" ] && ok "검수 통과만으로는 정리하지 않음(PR·병합이 남음)" || ko "검수 통과에 정리 실행됨" "$(cat "$SB/fc.args" 2>/dev/null)"
 expect "--shipped 근거 없으면 2" 2 env BOARD_FEATURE_CLOSE="$SB/fc.sh" "$BIN" --epic "$fe" lead --shipped ""
