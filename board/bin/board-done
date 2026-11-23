@@ -21,7 +21,7 @@ USAGE_EPILOG = """\
 증거는 카드 notes 나 코멘트에 한 줄씩 단다. 로그는 board-run 으로 만든다(마지막 줄에 붙일 증거 줄을 출력함):
   evidence:compile=<board-run compile 로그>   '# exit 0', error CS 줄 0
   evidence:editmode=<board-run editmode --result 로그 또는 NUnit xml>   total·passed ≥1, failed 0, 전부 건너뜀 아님
-  evidence:test=<board-run test 로그>         label kind:tool 카드(Unity 없는 도구 저장소)만. '# exit 0'
+  evidence:test=<board-run test 로그>         도구 카드(label kind:tool, 또는 label 없는 Unity 아닌 저장소)만. '# exit 0'
 board-run 로그는 머리줄 tree= 가 브랜치 끝 커밋의 tree 와 같아야 함(시험 → 커밋 순서도 인정). 손으로 쓴 로그·빈 로그는 거부.
   evidence:mapping=<대응표 md>          시안 카드만. "연결 기능" 빈 칸 0
   evidence:prefab-diff=<비교 결과>      시안 카드만. 불일치 0
@@ -40,7 +40,7 @@ epic 이 닫히면 label stage:review(사용자 검수 대기)를 붙임. 기능
               BOARD_FEATURE_CLOSE(기본 ~/.config/lrm-hubs/feature_close.sh) --slug <slug> --yes 를 분리 실행해 기능 코디네이터를 정리함(BOARD_FEATURE_CLOSE=off 로 끔)
 같은 종류가 여럿이면 마지막 줄(notes 다음 코멘트 순)만 봄. '<종류>=' 를 생략하면 파일 이름으로 추정함. 모든 파일은 존재·비어 있지 않음·카드 claim 이후 수정이어야 함.
 
-카드 종류: label kind:mockup → 시안 카드, kind:tool → 도구 카드(test 증거), 그 외 → 일반 카드.
+카드 종류: label kind:mockup → 시안 카드, kind:tool → 도구 카드(test 증거), kind:task → 일반 카드. label 이 없으면 브랜치 끝에 ProjectSettings/ProjectVersion.txt 가 있을 때 일반 카드, 없으면 도구 카드.
 
 예:
   board-done bd-12 ui-worker
@@ -57,6 +57,7 @@ EXIT_OK, EXIT_USAGE, EXIT_ENV, EXIT_STATE, EXIT_ACTOR, EXIT_MISSING, EXIT_INVALI
 CAPTURE = ("screenshot", "recording")  # 화면 증거. --no-capture 가 생략하는 것
 # 화면에 보이는 것을 바꾸는 파일. 이 가운데 하나라도 바뀐 기능은 캡처를 생략하지 못함(.meta 는 임포트 설정이라 원본이 같이 걸림)
 VISUAL_RE = re.compile(r"\.(prefab|unity|mat|shader|shadergraph|png|jpe?g|psd|tga|gif|anim|controller|overrideController|asset|uxml|uss|ttf|otf|spriteatlas|playable)$", re.I)
+UNITY_MARK = "ProjectSettings/ProjectVersion.txt"  # 이 파일이 브랜치 끝에 있으면 Unity 프로젝트(컴파일·EditMode 증거), 없으면 도구 저장소(test 증거)
 SAID_LABEL = "said:v1"  # 지시 장부를 완료 검사가 보는 기능(feature_open.sh 가 새 기능 카드에 붙임). 그 전에 연 기능은 막지 않음
 
 REQUIRED = {
@@ -134,6 +135,15 @@ def branch_head(card):
     if not head:
         raise Fail(EXIT_ENV, f"{repo} 에서 브랜치 {branch} 를 못 읽음", "repo:·branch: label 확인")
     return repo, branch, head, float(git(repo, "show", "-s", "--format=%ct", head) or 0)
+
+
+def card_kind(labs, repo, head):
+    """카드 종류. label kind:mockup·tool·task 가 있으면 그대로, 없으면 브랜치 끝이 Unity 프로젝트인지로 가림.
+    11-21·23 설정 저장소 카드 2장이 kind:tool 없이 만들어져 Unity 컴파일·EditMode 증거를 요구받았고, 코디네이터가 거부를 본 뒤 label 을 손으로 붙였음"""
+    for k in ("mockup", "tool", "task"):
+        if f"kind:{k}" in labs:
+            return k
+    return "task" if git(repo, "ls-tree", "--name-only", head, UNITY_MARK) else "tool"
 
 
 def unrecorded_merges(epic, kids):
@@ -404,11 +414,10 @@ def gate(card, actor, epic, warnings, no_capture=None):
             raise Fail(EXIT_STATE, f"통합 브랜치에 board-merge 기록 없는 병합 {len(stray)}개: {', '.join(m[:12] for m in stray[:5])}",
                        "직접 git merge 한 카드 브랜치를 board-merge <카드> <작업자> 로 다시 실행(범위·증거 검사 뒤 기록됨)")
         kind = "epic"
-    else:
-        labs = card.get("labels") or []
-        kind = "mockup" if "kind:mockup" in labs else "tool" if "kind:tool" in labs else "task"
 
     repo, branch, head, head_time = branch_head(card)
+    if not epic:
+        kind = card_kind(card.get("labels") or [], repo, head)
     GATE["repo"] = repo
     tree = git(repo, "rev-parse", head + "^{tree}")
     since = max(parse_time(card.get("started_at") or card["created_at"]), head_time)

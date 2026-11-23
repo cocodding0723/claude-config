@@ -15,7 +15,7 @@ export BOARD_DIR="$SB/board"; mkdir -p "$BOARD_DIR" "$SB/ev"
 (cd "$BOARD_DIR" && git init -q && bd init --quiet >/dev/null 2>&1) || { echo "bd init 실패"; exit 1; }
 [ ! -e "$HOME/.claude" ] && ok "준비: Claude 훅 없는 환경" || ko "준비" "훅 폴더 있음"
 
-R="$SB/repo"; git init -q -b feat "$R"; echo base > "$R/base.txt"; git -C "$R" add .; git -C "$R" commit -q -m init
+R="$SB/repo"; git init -q -b feat "$R"; echo base > "$R/base.txt"; mkdir -p "$R/ProjectSettings"; : > "$R/ProjectSettings/ProjectVersion.txt"; git -C "$R" add .; git -C "$R" commit -q -m init
 into() { git -C "$R" rev-parse feat; }
 card() { # card <제목> <브랜치> <file label>
   (cd "$BOARD_DIR" && bd create "$1" --labels "file:$3,branch:$2,repo:$R,base:feat" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')

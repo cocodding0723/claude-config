@@ -80,7 +80,7 @@ F=$(echo "$P" | jq -c --arg e "$EPIC" '.sources.board.value.features[] | select(
 [ "$(echo "$P" | jq -r '.sources.ghState.ok')" = false ] && ok "gh-state.json 없음 → ghState 원료 missing(패널은 기존 gh 사용)" || ko "ghState" "$(echo "$P" | jq -c .sources.ghState)"
 
 # heartbeat·증거 상태: 진행 중 하위 카드만 beatAt·ev 를 가짐. 브랜치 끝과 증거 커밋 비교. 카드마다 bd 를 부르지 않고 같은 목록 JSON 에서 읽음
-GR="$SB/gitrepo"; git init -q -b main "$GR" && git -C "$GR" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git -C "$GR" branch wk
+GR="$SB/gitrepo"; git init -q -b main "$GR" && mkdir -p "$GR/ProjectSettings" && : > "$GR/ProjectSettings/ProjectVersion.txt" && git -C "$GR" add -A && git -C "$GR" -c user.name=t -c user.email=t@t commit -q -m init && git -C "$GR" branch wk
 TIP=$(git -C "$GR" rev-parse wk)
 E2=$(b create "증거 기능" -t epic --json | id_of)
 mk() { b create "$1" --parent "$E2" --labels "branch:wk,repo:$GR" --json | id_of; }
