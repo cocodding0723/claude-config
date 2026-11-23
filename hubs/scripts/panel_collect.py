@@ -958,12 +958,13 @@ def load_flow():
 
 
 def feature_stage(e, flow):
-    """기능 카드의 단계 {key,name,idx,total,names}. flow:v1 이 없거나 stage label 이 없거나 board_flow 를 못 읽으면 None"""
+    """기능 카드의 단계 {key,name,idx,total,names}. flow:v1 이 없거나 stage label 이 없거나 board_flow 를 못 읽으면 None.
+    닫힌 기능은 단계가 board_flow.HAND_OFF(검수·반영)일 때만 냄"""
     if flow is None or flow.FLOW_LABEL not in flow.labels(e):
         return None
     st = flow.current(e)
-    if st is None:
-        return None
+    if st is None or (e.get("status") == "closed" and st.key not in flow.HAND_OFF):
+        return None  # 닫힌 기능에 남은 구현·검증 label 은 낡은 값(자동 마무리). 검수·반영만 의미가 있음
     return {"key": st.key, "name": st.name, "idx": flow.order(st), "total": len(flow.STAGES), "names": [x.name for x in flow.STAGES]}
 
 
@@ -974,7 +975,8 @@ def feature_turn(e, stage, asks, flow):
         try:
             if stage["key"] == "review":
                 return {"who": "user", "why": "검수 통과 답 대기"}
-            if stage["key"] == "design" and flow.size_of(e):
+            # 계획 카드를 올리기 전은 AI 가 계획서를 쓰는 중이라 사용자 차례가 아님
+            if stage["key"] == "design" and flow.size_of(e) and flow.last_card(DIR, flow.plan_id(str(e.get("id", "")))) is not None:
                 approved = flow.approval(DIR, e)
                 if flow.claim_block({"id": "", "issue_type": "task", "status": "open"}, e, approved):
                     return {"who": "user", "why": "계획 승인 대기"}
@@ -1072,7 +1074,8 @@ def board_features(rows, now, ev):
         asks = sum(1 for k in ks if board_kind(k) == "decision" and k.get("status") != "closed")
         stage = feature_stage(e, flow)
         out.append({"id": str(e.get("id", ""))[:20], "title": str(e.get("title", ""))[:TITLE_MAX * 2], "slug": slug,
-                    "stage": stage, "next": feature_turn(e, stage, asks, flow),
+                    "stage": stage,
+                    "next": None if e.get("status") == "closed" and stage is None else feature_turn(e, stage, asks, flow),
                     "done": sum(1 for k in work if k.get("status") == "closed"), "total": len(work),
                     "doing": [{"title": str(k.get("title", ""))[:TITLE_MAX * 2], "who": str(k.get("assignee") or "")[:40] or None,
                                "beatAt": beat_time(k)} for k in doing[:FEATURE_DOING_MAX]],

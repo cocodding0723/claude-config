@@ -39,7 +39,7 @@
 | 〃 | `sources.hubs` → `rows[]`(`hub`·`name`·`agent`·`state`·`quietMin`·`connected`·`dup`)·`counts`·`truncated` | 수집기 | `state`: busy 작업 중 · approval 승인창 · idle 대기 · unknown 확인불가. `truncated` 는 Orca 가 터미널 목록을 잘랐다는 뜻 |
 | 〃 | `sources.pending` → `count`·`items[]`(`title` 40자·`ageMin`·`id`·`state`) | 수집기 | 제목은 우리가 보낸 결정 카드 제목(사용자 원문 아님). `id`(결정 번호)·`state`(`hold` 보류·`conflict` 충돌)는 번호 카드만, 옛 카드는 null |
 | 〃 | `sources.board` → `counts`·`doing[]`·`more`·`blocked[]`·`decisions[]`·`todos[]`·`headline`(`id`·`title`·`done`·`total`·`epics`)·`recent[]`(`title`·`at`·`reason`) | 수집기 | `bd list --all --json`. 카드는 `id`·`title`·`p`·`who`·`createdAt`·`beatAt`(마지막 갱신)·`startedAt`·`comments`, 사람 손 카드만 `desc`(600자)·`gate`(label `gate:approval` 또는 옛 `kind:approval` 이면 `approval`). 라벨 `kind:decision`·`kind:user-todo`(옛 `kind:approval` 은 결정으로 읽음) 카드는 진행 줄에 넣지 않음 |
-| 〃 | `sources.board.value.features[]` 의 `stage`·`next`(11-23) | 수집기 | `stage`: `key`·`name`·`idx`(0부터)·`total`·`names[]` 전체 단계 이름. 이름·순서는 `board/lib/board_flow.py` `STAGES` 에서 읽는다(수집기·패널에 다시 적지 않음). `flow:v1` 이 없거나 `stage:` label 이 없거나 board_flow 를 못 읽으면 `null`. `next`: `who`(`user`·`ai`)·`why`. 사용자 차례는 검수 단계, 설계 단계에서 `board_flow.claim_block` 이 계획 승인 없음으로 판정한 경우, 열린 결정 카드가 있는 경우다 |
+| 〃 | `sources.board.value.features[]` 의 `stage`·`next`(11-23) | 수집기 | `stage`: `key`·`name`·`idx`(0부터)·`total`·`names[]` 전체 단계 이름. 이름·순서는 `board/lib/board_flow.py` `STAGES` 에서 읽는다(수집기·패널에 다시 적지 않음). `flow:v1` 이 없거나 `stage:` label 이 없거나 board_flow 를 못 읽으면 `null`. 닫힌 기능은 단계가 검수·반영(`board_flow.HAND_OFF`)일 때만 `stage`·`next` 를 내고, 자동 마무리로 닫혀 구현·검증 label 이 남은 기능은 둘 다 `null` 이다. `next`: `who`(`user`·`ai`)·`why`. 사용자 차례는 검수 단계, 설계 단계에서 계획 카드가 올라가 있고(`board_flow.last_card`) `board_flow.claim_block` 이 계획 승인 없음으로 판정한 경우(카드를 올리기 전 AI 가 계획서를 쓰는 동안은 AI 차례), 열린 결정 카드가 있는 경우다 |
 | 〃 | `sources.push` → `lines[]`(`at`·`event`·`reason`) | 수집기 | `slack-push.log` 끝 5줄의 결과·사유 코드만 |
 | 〃 | `sources.workers` → `live`·`recent[]`(`title` 40자·`status`·`at`) | 수집기 | 최근 종료 워커(완료 보고) |
 | 〃 | `sources.agents` → `running[]`(`dispatch`·`name` 작업 공간 표시 이름 40자·`hub`·`agent`·`model`·`startedAt`)·`runningMore`·`finished[]`(같은 칸 + `status`·`finishedAt`)·`windowMin`(60)·`complete` | 수집기 | 🔄 AI 진행 칸 워커 줄(11-17) |
@@ -242,6 +242,7 @@
 - 줄 모양: `■■■◆□□□ 구현 · 제목 · 지금 하는 일 (1/3)`. `■` 지난 단계, `◆` 지금 단계, `□` 남은 단계다. 칸 수와 이름은 수집기 값(`stage.total`·`stage.name`)이고 패널 코드에는 단계 이름이 없다. 글자는 `board.ts` `PANEL_CONFIG.band` 한 곳이다.
 - 사용자 차례(`next.who` 가 `user`)인 단계 있는 기능은 기존 `?` 표시를 쓰고 설명(`계획 승인 대기`·`검수 통과 답 대기`·`결정 카드 N건 답 대기`)이 지금 하는 일 자리에 나온다. 검수 대기 기능은 카드가 닫혀 있어도 `doneShowMin` 이 지나도록 계속 보인다. 새 칸은 없다.
 - `/board-detail` 기능 항목 아래에 `단계: 접수 · … · [구현] · …`(지금 단계 대괄호)와 `다음 차례: 내 차례|AI — 설명` 이 붙는다.
+- 닫힌 기능에 낡은 `stage:build`·`stage:verify` 가 남아 있어도 띠를 그리지 않고 기존 `안 봄` 표시 그대로다. 검수 대기로 닫힌 기능만 띠와 `?` 를 보인다.
 - 단계가 없는 기능(옛 방식)의 줄은 이전과 같은 글자다. 패널은 읽기만 하며 단계를 옮기는 것은 `board-stage` 다.
 - 시험: `tests/panel/board_beads.sh`(임시 작업판의 단계·다음 차례·board_flow 못 읽음), `tests/panel/board.test.mjs`(줄·상세 글자). 수집기는 `PANEL_BOARD_LIB` 로 board_flow 위치를 바꿀 수 있다(시험용).
 
