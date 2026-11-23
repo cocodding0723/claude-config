@@ -35,6 +35,7 @@ for text, phrases in (
         "직접 지시(이 창에 사용자가 친 글)는 계획·검수 모델 지적·티켓 기준보다 우선",
         "board-said {{EPIC}}", "--sync", "--mark <번호>", "확인 못 함",
         "large는 사용자 이해 확인", "--user-ok-typed", "--user-ok", "--shipped",
+        "--ask-review", "--review-note", "검수 카드(1=통과, 2=고칠 점 있음)는 완료 검사가 올린다",
         "검수 통과만으로 종료하지 않는다", "board-skip {{EPIC}}", "준비(이해·계획)만",
         "--no-capture", "기존 작업자·공간", "--card {{EPIC}} --ws", "--top",
         "main_inbox.py read --since-offset --box feat-{{SLUG}}",
