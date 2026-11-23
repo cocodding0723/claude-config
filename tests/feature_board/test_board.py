@@ -30,7 +30,7 @@ class BoardTests(unittest.TestCase):
         text = self.text()
         self.assertTrue(text.startswith("🟢 진행 보고 정리\n\n"))
         for part in ("- 무엇: 기록 자동 표시", "▶ 3 구현", "6 반영", "1/2 완료",
-                     "완료 1개", "⏳ 둘째 작업", "- 지금: 검증 시작", "👉 사용자 할 일: 없음"):
+                     "⏳ 둘째 작업", "- 지금: 검증 시작", "👉 사용자 할 일: 없음"):
             self.assertIn(part, text)
         self.assertNotIn("첫 작업", text)
 
@@ -142,8 +142,24 @@ class BoardTests(unittest.TestCase):
                     self.assertIn("참고: PR #299", text)
                     self.assertNotIn("&l…", text)
                     if status in fb.Format.ended:
-                        self.assertIn("- 완료 60개", text)
+                        self.assertIn("60/60 완료" if status == "closed" else "0/0 완료", text)
                         self.assertNotIn("⏳", text)
+
+    def test_numbers_commands_mentions_deleted_and_duplicate_completion(self):
+        self.assertEqual("보상 1000000 골드 /catch-up 실행", fb.plain("보상 1000000 골드 /catch-up 실행"))
+        text = fb.plain("@everyone @channel <!here>")
+        for mention in ("@everyone", "@channel", "<!here>"):
+            self.assertNotIn(mention, text)
+        self.children.append({"id": "lrm-test.3", "status": "tombstone", "title": "삭제됨"})
+        text = self.text()
+        self.assertIn("1/2 완료", text)
+        self.assertNotIn("삭제됨", text)
+        self.assertNotIn("- 완료", text)
+
+    def test_external_decision_is_pure_input(self):
+        text = fb.render(self.epic, self.children, self.comments, STAGES, [{"title": "계획 승인"}])
+        self.assertTrue(text.startswith("🟡"))
+        self.assertIn("👉 사용자 할 일: 계획 승인", text)
 
     def test_reference_budget_includes_escaping(self):
         text = fb.references(["docs/out/" + "&" * 2000 + ".html"])

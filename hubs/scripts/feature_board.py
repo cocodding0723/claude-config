@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 
 class Format:
@@ -24,11 +25,11 @@ class Format:
     echoes = ("Slack 결정 답:", "Slack 답:", "Slack 스레드", "Slack 보고:",
               "[Slack", "[slack", "되울림:", "[board-mirror]")
     blocked = re.compile(r"^(?:\[block\]|🔴|막힘\s*[:：]|차단\s*[:：]|blocked\s*[:：])", re.I)
-    ids = re.compile(r"(?<![A-Za-z0-9.-])(?:lrm-[A-Za-z0-9.-]+|D-[A-Za-z0-9_-]+|[a-f0-9]{7,40})(?![A-Za-z0-9.-])", re.I)
+    ids = re.compile(r"(?<![A-Za-z0-9.-])(?:lrm-[A-Za-z0-9.-]+|D-[A-Za-z0-9_-]+|(?=[a-f0-9]*[a-f])[a-f0-9]{7,40})(?![A-Za-z0-9.-])", re.I)
     pr = re.compile(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/\d+|\bPR\s*#\d+", re.I)
     docs = re.compile(r"(?<![A-Za-z0-9_-])docs/out/(?:[^\s<>\"'/]+/)*([^\s<>\"'/]+\.html)")
     urls = re.compile(r"https?://[^\s<>\"']+")
-    paths = re.compile(r"https?://[^\s<>\"']+|(?<![\w:])(?:~/|/|docs/)[^\s<>\"']+")
+    paths = re.compile(r"https?://[^\s<>\"']+|(?<![\w:])(?:~/|/(?:[^\s/<>\"']+/)+|docs/)[^\s<>\"']+")
 
 
 def stamp(value):
@@ -42,7 +43,8 @@ def stamp(value):
 def plain(value, limit=Format.line):
     text = Format.paths.sub("", Format.pr.sub("", str(value or "")))
     text = Format.ids.sub("", text)
-    text = re.sub(r"@(here|channel)\b", r"＠\1", text, flags=re.I)
+    text = re.sub(r"@(here|channel|everyone)\b", r"＠\1", text, flags=re.I)
+    text = re.sub(r"<!(here|channel|everyone)>", r"＜!\1＞", text, flags=re.I)
     text = " ".join(text.replace(" / ", " — ").split()).strip(" :：-·")
     text = text if len(text) <= limit else text[:limit - 1] + "…"
     return html.escape(text, quote=False)
@@ -94,14 +96,14 @@ def bounded(lines, details, tail):
     return "\n".join([*lines, *kept, *tail])
 
 
-def render(epic, children, comments, stages):
-    """같은 스냅샷에서 같은 Slack 본문 생성. stages는 (키, 이름) 순서 목록."""
-    children = sorted(children, key=lambda c: tuple((1, int(p)) if p.isdigit() else (0, p)
+def render(epic, children, comments, stages, decisions=()):
+    """같은 스냅샷에서 같은 Slack 본문 생성. stages는 (키, 이름) 순서 목록, decisions는 미답 결정 제목 목록."""
+    children = sorted((c for c in children if c.get("status") != "tombstone"), key=lambda c: tuple((1, int(p)) if p.isdigit() else (0, p)
                                                    for p in re.split(r"(\d+)", str(c.get("id") or ""))))
     records = visible_comments(comments)
     latest = records[-1] if records else {}
     waiting = [c for c in children if c.get("status") not in Format.ended
-               and "kind:decision" in (c.get("labels") or [])]
+               and "kind:decision" in (c.get("labels") or [])] + list(decisions)
     blocked = any(c.get("status") == "blocked" for c in [epic, *children])
     # 이전 막힘 기록이 해결 뒤에도 남는 오판 방지. 카드별 최신 기록만 판정.
     active = {c.get("id") for c in [epic, *children] if c.get("status") not in Format.ended}
@@ -120,8 +122,6 @@ def render(epic, children, comments, stages):
     lines.append("- 단계: " + bar + (" (미지정)" if current is None else ""))
     done = sum(c.get("status") in Format.ended for c in children)
     lines.append(f"- 결과: 하위 카드 {done}/{len(children)} 완료")
-    if done:
-        lines.append(f"- 완료 {done}개")
     details = ["- ⏳ " + plain(c.get("title"), Format.title) for c in children
                if c.get("status") not in Format.ended]
     tail = ["- 지금: " + (plain(latest["text"].strip().splitlines()[0]) if latest else "기록 없음"),
@@ -142,15 +142,19 @@ def summary(text):
 
 
 class BdReader:
-    def __init__(self, board=None, bd=None, timeout=Format.timeout):
+    def __init__(self, board=None, bd=None, timeout=Format.timeout, deadline=None):
         self.board = Path(board or os.environ.get("BOARD_DIR") or "~/orca/board").expanduser()
         self.bd = bd or os.environ.get("BOARD_BD") or shutil.which("bd") or "/opt/homebrew/bin/bd"
         self.timeout = timeout
+        self.deadline = deadline
 
     def query(self, *args):
         try:
+            timeout = self.timeout if self.deadline is None else min(self.timeout, self.deadline - time.monotonic())
+            if timeout <= 0:
+                raise RuntimeError("현황판 조회 예산 초과")
             result = subprocess.run([self.bd, "-C", str(self.board), *args, "--json"],
-                                    capture_output=True, text=True, timeout=self.timeout,
+                                    capture_output=True, text=True, timeout=timeout,
                                     stdin=subprocess.DEVNULL, check=True)
             rows = json.loads(result.stdout)
             if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
@@ -168,7 +172,7 @@ class BdReader:
         finally:
             sys.path.pop(0)
 
-    def text(self, epic_id):
+    def text(self, epic_id, decisions=()):
         shown = self.query("show", epic_id)
         if not shown or shown[0].get("id") != epic_id:
             raise RuntimeError("기능 카드 없음 — 기능 카드 번호 확인")
@@ -176,7 +180,7 @@ class BdReader:
         comments = []
         for card in [shown[0], *children]:
             comments.extend(dict(c, issue_id=card["id"]) for c in self.query("comments", card["id"]))
-        return render(shown[0], children, comments, self.stages())
+        return render(shown[0], children, comments, self.stages(), decisions)
 
 
 def main():

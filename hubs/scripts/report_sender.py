@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import ask_open  # noqa: E402
 import board_cards  # noqa: E402
+import feature_board  # noqa: E402
 import hub_report  # noqa: E402
 import hub_status  # noqa: E402
 import ledger  # noqa: E402
@@ -68,6 +69,7 @@ STAGE_KEEP_S = 24 * 3600  # 남은 복사본 보관 기간
 # 카드 주제 부모 메시지(양식 ①~⑥). 양식 문구는 이 블록 한 곳. 버전을 올리면 열린 스레드 부모가 새 양식으로 다시 고쳐짐
 CARD_RE = re.compile(r"[a-z][a-z0-9]{1,15}-[a-z0-9]{1,12}(\.[0-9]{1,3})*")  # slack_notify.sh CARD_ID_RE 와 같은 카드 id
 PARENT_FORMAT = "1"
+BOARD_FORMAT = "2"
 PARENT_TITLE_MAX = 38  # 양식 A 제목 40자 한도에서 이모지 여유
 PARENT_FIELD_MAX = 200
 CARD_FIELDS = ("쉬운 이름", "무엇", "왜")
@@ -391,6 +393,7 @@ def card_info(conf: Conf, card: str) -> "dict | None":
             why_missing = not fields["왜"]
             fields["왜"] = fields["왜"] or WHY_MISSING  # 이유가 없어도 보고는 보냄(경고는 별도)
             conf.cards[card] = {"id": card, "title": str(shown[0].get("title") or ""), "fields": fields, "why_missing": why_missing,
+                                "issue_type": shown[0].get("issue_type"),
                                 "closed": sum(1 for k in kids or [] if isinstance(k, dict) and k.get("status") == "closed"),
                                 "total": len(kids) if kids is not None else None}  # None = 하위 조회 실패(0개와 구분)
     return conf.cards[card]
@@ -473,6 +476,8 @@ def refresh_parent(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
     info = card_info(conf, card_of(rep))
     if not info:
         return
+    if info.get("issue_type") == "epic":
+        return
     if card_gaps(info):
         log(conf, f"경고: 열린 스레드 {key} 부모를 고치지 못함 — {card_gap_error(info)}")
         return
@@ -491,6 +496,59 @@ def refresh_parent(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
     topic["fmt"] = stamp
     save_state(conf.state, st)
     log(conf, f"부모 고쳐 씀 {key} {topic['ts']} {stamp}")
+
+
+def refresh_boards(conf: Conf, st: dict, deadline: float, dry=False) -> list:
+    """보고 없는 회차의 카드 변경도 반영. 실패는 다음 회차 재시도, dry는 전송·상태 저장 없이 변경 예정 본문 반환."""
+    import answer_store
+    import pending_judge
+
+    lines = []
+    store = answer_store.AnswerStore(os.path.dirname(conf.sent))
+    sent = None
+    reader = feature_board.BdReader(conf.board, conf.bd, deadline=deadline)
+    for key, topic in list(st["topics"].items()):
+        if not key.startswith("card:") or topic.get("shared") or topic.get("update_dead"):
+            continue
+        if time.monotonic() >= deadline:
+            break
+        try:
+            cards = reader.query("show", key[5:])
+            if not cards or cards[0].get("issue_type") != "epic" or cards[0].get("status") in feature_board.Format.ended:
+                continue
+            if sent is None:
+                try:
+                    with open(conf.sent, encoding="utf-8") as stream:
+                        sent = []
+                        for line in stream:
+                            with contextlib.suppress(ValueError):
+                                row = json.loads(line)
+                                if isinstance(row, dict):
+                                    sent.append(row)
+                except FileNotFoundError:
+                    sent = []
+            decisions = [{"title": s.get("title") or s.get("decision_id")}
+                         for s in sent if pending_judge.is_decision(s)
+                         and s.get("thread_ts") == topic["ts"]
+                         and not store.first_answer(s.get("decision_id", ""), s["ts"])]
+            text = reader.text(key[5:], decisions)
+            stamp = f"{BOARD_FORMAT}:{feature_board.summary(text)}"
+            if topic.get("fmt") == stamp:
+                continue
+            if dry:
+                lines.append(f"현황판 {key} --update {topic['ts']} fmt={stamp}\n{text}")
+                continue
+            run_notify(conf, ["--kind", "progress", "--update", topic["ts"], text], deadline)
+            topic["fmt"] = stamp
+            save_state(conf.state, st)
+        except NotifyError as err:
+            if any(code in str(err) for code in UPDATE_DEAD_ERRORS):
+                topic["update_dead"] = True
+                save_state(conf.state, st)
+            log(conf, f"경고: 현황판 {key} 고쳐 쓰기 실패 — {err}")
+        except (RuntimeError, ImportError, OSError, ValueError) as err:
+            log(conf, f"경고: 현황판 {key} 조회 실패 — {err}")
+    return lines
 
 
 def ask_waiting(conf: Conf, thread: str) -> list:
@@ -1104,10 +1162,12 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
     todo = [r for r in reports if not st["reports"].get(r["id"], {}).get("sent") and r["id"] not in st["bad"]]
     out["pending"] = len(todo)
     if not todo:
+        out["lines"].extend(refresh_boards(conf, st, deadline, dry))
         return out
     if dry:
         out["status"] = "dry-run"
         out["lines"] = [f"전송 예정 {r['id']} {r['hub']} {r['kind']} → {'결정 카드' if r['kind'] == 'decide' else '주제 ' + topic_key(r)}" for r in todo]
+        out["lines"].extend(refresh_boards(conf, st, deadline, True))
         return out
     blocked = set()  # 앞 보고가 실패한 주제는 순서가 바뀌지 않게 이번 회차에 건너뜀
     tried = 0
@@ -1171,6 +1231,7 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
         out["lines"].append(line)
         log(conf, line)
     out["status"] = "partial" if out["failed"] else "done"
+    out["lines"].extend(refresh_boards(conf, st, deadline))
     return out
 
 
