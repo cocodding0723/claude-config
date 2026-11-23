@@ -16,6 +16,8 @@ import hashlib
 import json
 import os
 import re
+import shlex
+import subprocess
 from dataclasses import dataclass
 
 import board_said
@@ -33,6 +35,24 @@ REVIEW_LABEL = "review:v1"       # 검수 단계로 넘어갈 때(board-done --e
 USER_SOURCES = ("slack", "docsite")  # 사용자가 직접 누른 답만. 터미널 기록은 코디네이터가 쓸 수 있음
 POLLED_TYPES = ("reaction", "thread_reply")  # 폴러가 Slack 에서 읽어 온 사용자 반응·카드 스레드 글(출처 칸 없이 기록됨)
 SENT_NAME, INBOX_NAME = "slack-sent.jsonl", "slack-inbox.jsonl"
+
+# 검수 카드 올리기(ask_review): 보고 도구(hub_report.py add --kind decide)를 하위 프로세스로 불러 결정 카드를 대기열에 넣음
+REPORT_ENV, REPORT_NAME = "LRM_HUB_REPORT", "hub_report.py"  # 보고 도구 경로 덮어쓰기(feature_open.sh 와 같은 이름). 기본은 허브 폴더 아래
+OUTBOX_NAME = "hub-reports.jsonl"  # 보고 대기열. 보고 도구의 LRM_REPORT_OUTBOX 가 있으면 그 경로
+FEATURE_LABEL_HEAD = "feature:"
+HUB_PREFIX = "feat-"             # feature_open.sh 가 기능 허브 이름을 feat-<slug> 로 지음
+REVIEW_TASK = "없음"             # 보고 도구의 작업 번호 칸. 기능 카드 단위 보고라 번호 없음
+TITLE_MAX = 40                   # decide 첫 줄 상한(hub_report.MAX_TITLE)
+TITLE_TAIL = " 검수"
+TITLE_CUT = "…"
+REVIEW_OPTIONS = (f"1={PASS_WORD} => 반영 단계로 넘어가 PR·병합 승인을 요청한다,"
+                  "2=고칠 점 => 답글로 적어 준 내용을 고친 뒤 다시 검수를 요청한다")
+REVIEW_RECOMMEND, REVIEW_REVERSIBLE = "1", "쉬움"
+REVIEW_BACKGROUND = "구현·검증이 끝나 사용자 검수만 남았다. 결과 상세는 작업 스레드의 완료 보고에 있다."
+REVIEW_TERMS = "없음"
+REVIEW_NOTE_HEAD = "확인할 것"
+LABEL_PREFIX = re.compile(r"^\s*\[[^\]]*\]\s*")  # 카드 제목 앞 '[LRM-782]' 같은 티켓 머리표
+SENT_TITLE_HEAD = re.compile(r"^\s*:[^\s:]+:\s*")  # 보낸 카드 기록 제목 앞 슬랙 이모지 코드
 # 코디네이터 창에 직접 친 승인·건너뛰기: 글이 이 말로 시작할 때만("승인", "계획 승인한다", "스킵하고 진행", "전부 추천", "ㅇㅇ 추천대로 가자").
 # "진행해"·"ㄱㄱ" 같은 말은 세지 않음: 다른 얘기 끝에 붙는 말이라 뜻하지 않은 승인이 됨
 # 앞의 맞장구("ㅇㅇ"·"네")는 허용. 11-19~20 실제 입력에서 "전부 추천"·"추천대로"가 승인으로 안 읽혀 Slack 카드를 다시 기다렸음
@@ -289,6 +309,93 @@ def coordinator_ws(epic: "dict | None") -> str:
     """기능 카드 설명에 적힌 코디네이터 작업 공간 경로. 없으면 ''"""
     m = HUB_LINE.search(str((epic or {}).get("description") or ""))
     return m.group(1) if m else ""
+
+
+def feature_hub(epic: "dict | None") -> str:
+    """기능 카드 label feature:<slug> → 허브 이름 feat-<slug>. 없으면 ''"""
+    slug = next((l[len(FEATURE_LABEL_HEAD):] for l in reversed(labels(epic)) if l.startswith(FEATURE_LABEL_HEAD)), "")
+    return HUB_PREFIX + slug if slug else ""
+
+
+def review_title(hub_dir: str, did: str, epic: "dict | None") -> str:
+    """검수 카드 제목(본문 첫 줄). 그 번호로 앞서 올린 카드가 있으면 그 제목 그대로: 보고 도구가 같은 번호의 제목이 달라지면 거부함.
+    앞 카드가 없으면 '<기능 이름> 검수'를 TITLE_MAX 안으로 맞춤"""
+    outbox = os.environ.get("LRM_REPORT_OUTBOX") or os.path.join(hub_dir, OUTBOX_NAME)
+    for r in reversed(read_jsonl(outbox)):
+        first = str(r.get("text") or "").split("\n", 1)[0].strip()
+        if r.get("decision_id") == did and r.get("kind") == "decide" and first:
+            return first
+    for r in reversed(read_jsonl(os.path.join(hub_dir, SENT_NAME))):
+        first = SENT_TITLE_HEAD.sub("", str(r.get("title") or "")).strip()
+        if r.get("decision_id") == did and r.get("form_kind") == "decide" and first:
+            return first
+    name = LABEL_PREFIX.sub("", str((epic or {}).get("title") or "")).strip() or str((epic or {}).get("id") or "")
+    room = TITLE_MAX - len(TITLE_TAIL)
+    if len(name) > room:
+        name = name[:room - len(TITLE_CUT)].rstrip() + TITLE_CUT
+    return name + TITLE_TAIL
+
+
+def num(v) -> float:
+    """기록의 시각 칸(숫자나 숫자 글)을 실수로. 못 읽으면 0"""
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def review_pending(hub_dir: str, did: str) -> bool:
+    """그 번호의 검수 카드가 답을 기다리는가: 보낸 카드에 사용자 답이 아직 없거나, 보낸 뒤 대기열에 새로 들어가 아직 안 나간 카드가 있음"""
+    card = last_card(hub_dir, did)
+    if card is not None and last_answer(hub_dir, did, card) is None:
+        return True
+    since = num(card.get("at")) if card is not None else 0.0
+    outbox = os.environ.get("LRM_REPORT_OUTBOX") or os.path.join(hub_dir, OUTBOX_NAME)
+    return any(r.get("decision_id") == did and r.get("kind") == "decide" and num(r.get("at")) > since
+               for r in read_jsonl(outbox))
+
+
+def review_command(report: str, hub: str, ws: str, epic: dict, title: str, note: str = "") -> list:
+    """검수 카드를 올리는 보고 도구 명령(인자 목록). 본문 = 제목 / 배경 / 용어 / (덧붙임)"""
+    lines = [title, f"배경: {REVIEW_BACKGROUND}", f"용어: {REVIEW_TERMS}"]
+    if note.strip():
+        lines.append(f"{REVIEW_NOTE_HEAD}: {note.strip()}")
+    return ["python3", report, "add", "--hub", hub, "--task", REVIEW_TASK, "--kind", "decide", "--card", str(epic.get("id") or ""),
+            "--ws", ws, "--no-doc", "--text", "\n".join(lines), "--options", REVIEW_OPTIONS, "--recommend", REVIEW_RECOMMEND,
+            "--decision-id", review_id(str(epic.get("id") or "")), "--reversible", REVIEW_REVERSIBLE]
+
+
+def ask_review(epic: dict, hub_dir: str, note: str = "", dry_run: bool = False, run=subprocess.run) -> dict:
+    """검수 결정 카드(1=통과, 2=고칠 점)를 보고 대기열에 올림. 반환:
+    {id(결정 번호), title, posted, skipped(건너뛴 이유, 없으면 ''), failed(실패 사유, 없으면 ''), manual(직접 올릴 명령)}.
+    skipped 는 올릴 필요가 없는 경우(답 대기 카드 있음, dry-run), failed 는 올리지 못한 경우(허브·작업 공간 모름, 보고 도구 없음·거부).
+    허브 이름·작업 공간은 기능 카드에서 얻음: label feature:<slug>, 설명의 '기능 코디네이터 허브:' 줄(--shipped 와 같은 근거)"""
+    did = review_id(str(epic.get("id") or ""))
+    title = review_title(hub_dir, did, epic)
+    hub, ws = feature_hub(epic), coordinator_ws(epic)
+    report = os.environ.get(REPORT_ENV) or os.path.join(hub_dir, REPORT_NAME)
+    cmd = review_command(report, hub or "<허브 이름>", ws or "<작업 공간>", epic, title, note)
+    out = {"id": did, "title": title, "posted": False, "skipped": "", "failed": "", "manual": shlex.join(cmd)}
+    if review_pending(hub_dir, did):
+        out["skipped"] = f"검수 카드 {did} 가 이미 답을 기다리는 중이라 다시 올리지 않음"
+    elif not (hub and ws):
+        out["failed"] = "기능 카드에서 " + ("허브 이름(label feature:<slug>)" if not hub else "작업 공간(설명의 '기능 코디네이터 허브:' 줄)") + "을 얻지 못함"
+    elif dry_run:
+        out["skipped"] = "dry-run: 아래 명령으로 올릴 것"
+    elif not os.path.isfile(report):
+        out["failed"] = f"보고 도구 {report} 없음(경로는 {REPORT_ENV} 로 지정)"
+    else:
+        env = dict(os.environ, LRM_HUB_DIR=hub_dir)
+        try:
+            r = run(cmd, capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL, timeout=60)
+        except (OSError, subprocess.SubprocessError) as e:
+            out["failed"] = f"보고 도구 실행 실패: {e}"
+        else:
+            if r.returncode == 0:
+                out["posted"] = True
+            else:
+                out["failed"] = f"보고 도구 종료 {r.returncode}: {(r.stderr or r.stdout).strip()[:300]}"
+    return out
 
 
 def typed_approval(hub_dir: str, did: str, epic: "dict | None", typed=board_said.typed) -> bool:
