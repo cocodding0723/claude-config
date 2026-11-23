@@ -33,4 +33,4 @@ board-done <카드 id> <작업자>
 
 증거 줄은 카드 notes 나 코멘트에 한 줄씩 단다(`bd comments add <id> "evidence:compile=/abs/compile.log commit=<브랜치 끝>"`).
 board-run 로그는 실행한 작업 트리 내용(tree)이 브랜치 끝과 같아야 한다. 커밋 전에 돌렸어도 그대로 커밋했으면 인정된다.
-손으로 쓴 로그·빈 로그는 거부된다. Unity 없는 도구 저장소 카드는 `kind:tool` + `board-run test -- <시험 명령>`.
+손으로 쓴 로그·빈 로그는 거부된다. Unity 프로젝트가 아닌 저장소의 카드는 도구 카드로 판정돼 `board-run test -- <시험 명령>` 증거를 낸다(`kind:tool` 을 붙이지 않아도 됨. 일반 카드로 강제하려면 `kind:task`).

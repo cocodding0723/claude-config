@@ -15,7 +15,7 @@ export BOARD_DIR="$SB/board"; mkdir -p "$BOARD_DIR" "$SB/ev"
 (cd "$BOARD_DIR" && git init -q && bd init --quiet >/dev/null 2>&1) || { echo "bd init 실패"; exit 1; }
 [ ! -e "$HOME/.claude" ] && ok "준비: Claude 훅 없는 환경" || ko "준비" "훅 폴더 있음"
 
-R="$SB/repo"; git init -q -b feat "$R"; echo base > "$R/base.txt"; git -C "$R" add .; git -C "$R" commit -q -m init
+R="$SB/repo"; git init -q -b feat "$R"; echo base > "$R/base.txt"; mkdir -p "$R/ProjectSettings"; : > "$R/ProjectSettings/ProjectVersion.txt"; git -C "$R" add .; git -C "$R" commit -q -m init
 into() { git -C "$R" rev-parse feat; }
 card() { # card <제목> <브랜치> <file label>
   (cd "$BOARD_DIR" && bd create "$1" --labels "file:$3,branch:$2,repo:$R,base:feat" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
@@ -70,6 +70,19 @@ expect "git merge 를 먼저 했어도 범위 안·증거 통과면 0" 0 "$BIN" 
 branch w-closed src/a/cl.cs 1; c6=$(card 직접닫음 w-closed src/a/); claim "$c6" w1
 (cd "$BOARD_DIR" && BD_ACTOR=w1 bd close "$c6" --reason 직접 --force >/dev/null 2>&1)
 before=$(into); expect "bd close 로 먼저 닫은 카드는 6" 6 "$BIN" "$c6" w1 --repo "$R"; unchanged "$before" "직접 닫은 카드"
+# 작업자가 완료 검사로 먼저 닫은 카드: 다시 열라고 돌려보내지 않고 병합까지 이어감
+branch w-pre src/a/pre.cs 1; c8=$(card 먼저닫음 w-pre src/a/); claim "$c8" w1; evidence "$c8" w-pre
+(cd "$R" && "$HERE/../../board/bin/board-done" "$c8" w1 >/dev/null 2>&1); [ "$(st "$c8")" = closed ] && ok "준비: 완료 검사가 카드를 먼저 닫음" || ko "준비: 먼저 닫기" "$(st "$c8")"
+expect "완료 검사로 먼저 닫힌 카드도 병합 0" 0 "$BIN" "$c8" w1 --repo "$R"
+git -C "$R" merge-base --is-ancestor w-pre feat && ok "먼저 닫힌 카드: 브랜치 병합됨" || ko "먼저 닫힌 카드 병합" "$(tail -3 "$SB/out")"
+[ "$(st "$c8")" = closed ] && ok "먼저 닫힌 카드: 병합 뒤 다시 닫힘" || ko "먼저 닫힌 카드 상태" "$(st "$c8")"
+(cd "$BOARD_DIR" && bd comments "$c8" 2>/dev/null) | grep -q 'board-merge: ' && ok "먼저 닫힌 카드: 병합 기록 남음" || ko "먼저 닫힌 카드 병합 기록"
+# 다시 연 뒤 증거가 낡았으면(브랜치에 커밋이 더 생김) 병합하지 않고 진행 중으로 남김
+branch w-pre2 src/a/pre2.cs 1; c9=$(card 먼저닫고커밋 w-pre2 src/a/); claim "$c9" w1; evidence "$c9" w-pre2
+(cd "$R" && "$HERE/../../board/bin/board-done" "$c9" w1 >/dev/null 2>&1)
+git -C "$R" checkout -q w-pre2; echo 2 > "$R/src/a/pre2.cs"; git -C "$R" commit -q -am more; git -C "$R" checkout -q feat
+before=$(into); expect "먼저 닫힌 뒤 커밋이 더 생기면 6" 6 "$BIN" "$c9" w1 --repo "$R"; unchanged "$before" "먼저 닫힌 뒤 낡은 증거"
+[ "$(st "$c9")" = in_progress ] && ok "낡은 증거: 카드는 진행 중으로 남음(다시 집을 필요 없음)" || ko "낡은 증거 카드 상태" "$(st "$c9")"
 branch w-lab src/a/la.cs 1; branch w-oth src/a/ot.cs 1; c7=$(card 다른브랜치 w-lab src/a/); claim "$c7" w1; evidence "$c7" w-lab
 before=$(into); expect "--branch 가 카드 label 과 다르면 2" 2 "$BIN" "$c7" w1 --repo "$R" --branch w-oth; unchanged "$before" "--branch 불일치"
 expect "--branch 가 label 과 같으면 0" 0 "$BIN" "$c7" w1 --repo "$R" --branch w-lab

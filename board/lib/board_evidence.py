@@ -12,7 +12,8 @@ GUESS = [
     ("screenshot", re.compile(r"\.(png|jpe?g)$", re.I)),
     ("recording", re.compile(r"\.(mp4|mov|webm)$", re.I)),
 ]
-EVIDENCE_RE = re.compile(r"^\s*evidence:\s*(?:([a-z-]+)=)?(\S.*?)(?:\s+commit=([0-9a-f]{7,40}))?(?:\s+\([^\n]*\))?\s*$", re.M)
+# 줄 끝 메모는 경로로 읽지 않음: commit=<해시> 뒤는 아무 글이나(같은 줄만), commit= 이 없으면 괄호로 끝나는 메모만(경로의 공백과 구분)
+EVIDENCE_RE = re.compile(r"^\s*evidence:\s*(?:([a-z-]+)=)?(\S.*?)(?:[ \t]+commit=([0-9a-f]{7,40})(?:[ \t]+[^\n]*)?|[ \t]+\([^\n]*\))?[ \t]*$", re.M)
 
 
 def parse(texts):

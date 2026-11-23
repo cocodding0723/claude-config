@@ -13,8 +13,8 @@ export BOARD_DIR="$SB/board" BD_LAST_TOUCHED_FALLBACK=0
 mkdir -p "$BOARD_DIR" "$SB/ev" && cd "$BOARD_DIR" && git init -q && bd init --quiet >/dev/null 2>&1 \
   || { echo "bd init 실패"; exit 1; }
 
-# 작업자 브랜치 w 가 있는 임시 저장소. 증거 줄은 commit=<w 끝> 로 묶음
-GR="$SB/repo"; git init -q -b main "$GR" && git -C "$GR" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init && git -C "$GR" branch w
+# 작업자 브랜치 w 가 있는 임시 저장소(Unity 프로젝트 표지 포함: label 없는 카드가 일반 카드로 판정됨). 증거 줄은 commit=<w 끝> 로 묶음
+GR="$SB/repo"; git init -q -b main "$GR" && mkdir -p "$GR/ProjectSettings" && : > "$GR/ProjectSettings/ProjectVersion.txt" && git -C "$GR" add -A && git -C "$GR" -c user.name=t -c user.email=t@t commit -q -m init && git -C "$GR" branch w
 HEAD_W=$(git -C "$GR" rev-parse w); sleep 1
 BL="branch:w,repo:$GR"
 new_card() { bd create "$1" --labels "${2:+$2,}$BL" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'; }
@@ -167,6 +167,11 @@ bd comments add "$g" "evidence:compile=$SB/ev/g.log" >/dev/null; ev "$g" "editmo
 expect "commit= 없는 board-run 로그는 로그에 적힌 커밋으로 통과" 0 "$BIN" "$g" w1 --dry-run
 bd comments add "$g" "evidence:compile=$SB/ev/g.log commit=$HEAD_W (error CS 0건, 슬롯 조정 뒤 다시 돌림)" >/dev/null
 expect "증거 줄 끝의 괄호 메모는 경로로 읽지 않음" 0 "$BIN" "$g" w1 --dry-run
+bd comments add "$g" "evidence:compile=$SB/ev/g.log commit=$HEAD_W (4종 7/7). 사전 점검 통과, 묶음 시험 17/17 통과" >/dev/null
+expect "commit= 뒤에 이어 쓴 메모(괄호 밖 글 포함)는 경로로 읽지 않음" 0 "$BIN" "$g" w1 --dry-run
+bd comments add "$g" "evidence:compile=$SB/ev/g.log commit=$HEAD_W 메모
+evidence:editmode=$SB/ev/g.xml commit=$HEAD_W" >/dev/null
+expect "메모가 다음 줄의 증거를 삼키지 않음" 0 "$BIN" "$g" w1 --dry-run
 git -C "$GR" -c user.name=t -c user.email=t@t commit -q --allow-empty -m next; git -C "$GR" branch -f w HEAD
 expect "commit= 이 없어도 브랜치가 앞으로 가면 로그의 이전 커밋으로 거부" 6 "$BIN" "$g" w1
 grep -q '낡은 증거' "$SB/out" && ok "거부 사유는 낡은 증거(형식 아님)" || ko "거부 사유" "$(head -c 300 "$SB/out")"
@@ -310,5 +315,16 @@ printf 'c\n' > "$G2/Code.cs"
 bd comments add "$n3" "evidence:test=$SB/ev/n4.log" >/dev/null
 expect "설정에 없는 코드 수정은 여전히 거부" 7 "$BIN" "$n3" wn --dry-run
 rm -f "$BOARD_DIR/repos.json"
+
+# 카드 종류 자동 판정: kind label 이 없으면 브랜치 끝이 Unity 프로젝트인지로 가림. G2 는 표지(ProjectSettings/ProjectVersion.txt)가 없는 도구 저장소
+ucard() { bd create "$1" --labels "${2}branch:n,repo:$G2" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'; }
+u1=$(ucard "label 없는 도구 저장소 카드" ""); claim "$u1" wn
+expect "label 없는 도구 저장소 카드: 증거 없으면 거부" 6 "$BIN" "$u1" wn --dry-run
+grep -q 'evidence:test 줄 없음' "$SB/out" && ! grep -q 'editmode\|compile' "$SB/out" && ok "label 없는 도구 저장소 카드: Unity 증거가 아니라 test 증거를 요구" || ko "도구 저장소 요구 증거" "$(head -c 300 "$SB/out")"
+(cd "$G2" && "$RUN" test --out "$SB/ev/u1.log" --card "$u1" --actor wn -- true >/dev/null 2>&1)
+expect "label 없는 도구 저장소 카드: test 증거로 통과" 0 "$BIN" "$u1" wn --dry-run
+u2=$(ucard "kind:task 로 적은 카드" "kind:task,"); claim "$u2" wn
+expect "kind:task 를 적으면 도구 저장소여도 일반 카드" 6 "$BIN" "$u2" wn --dry-run
+grep -q 'evidence:editmode 줄 없음' "$SB/out" && ok "kind:task: 컴파일·EditMode 증거 요구" || ko "kind:task 요구 증거" "$(head -c 300 "$SB/out")"
 
 echo "통과 $PASS, 실패 $FAIL"; [ "$FAIL" = 0 ]
