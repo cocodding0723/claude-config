@@ -34,7 +34,11 @@ class AuditTest(unittest.TestCase):
         self.bd = self.home / "fake-bd"
         self.bd.write_text("#!" + sys.executable + "\nimport json,sys\n"
                            + "d=json.load(open(" + repr(str(self.fixture)) + "))\na=sys.argv[3:]\n"
-                           + "print(json.dumps(d['cards'] if a[0]=='list' else d['rows'][a[1]]))\n")
+                           + "if a[0]=='show':\n"
+                           + " for c in d['cards']:\n"
+                           + "  if c['id'] in a[1:]: print(json.dumps([c|{'comments':d['rows'][c['id']]}]))\n"
+                           + "elif '--parent' in a: print(json.dumps([c for c in d['cards'] if c.get('parent')==a[a.index('--parent')+1]]))\n"
+                           + "else: print(json.dumps(d['cards']))\n")
         self.bd.chmod(0o755)
         self.config = self.home / "claude"
         folder = self.config / "projects" / re.sub(r"[^A-Za-z0-9]", "-", self.ws)
@@ -88,6 +92,34 @@ class AuditTest(unittest.TestCase):
         self.state["topics"]["card:lrm-test"]["fmt"] = "1:old-parent"
         self.save()
         self.assertEqual("미연결", self.inspect()["rows"][0]["status"])
+
+    def test_nonprefix_child_uses_parent_list_in_shared_board(self):
+        old = self.child["id"]
+        self.child["id"] = "external-child"
+        self.rows[self.child["id"]] = self.rows.pop(old)
+        self.queue[1]["mirror_card"] = self.child["id"]
+        comments = [dict(r, issue_id=cid) for cid, rows in self.rows.items() for r in rows]
+        text = audit.board.render(self.root, [self.child], comments,
+                                  [(s.key, s.name) for s in audit.board_flow.STAGES])
+        self.state["topics"]["card:lrm-test"]["fmt"] = "2:" + audit.board.summary(text)
+        self.save()
+        self.assertEqual("통과", self.inspect()["rows"][0]["status"])
+
+    def test_pending_decision_and_same_second_order_match_shared_sender_text(self):
+        self.state["topics"]["card:lrm-test"]["ts"] = "123.456"
+        self.rows["lrm-test"].extend([self.row("z", "검증 완료", "10:40"), self.row("a", "막힘: 검증 중", "10:40")])
+        card = dict(ts="222.333", thread_ts="", card="lrm-test.1", tag="other", form_kind="decide",
+                    decision_id="D-PLAN", title="계획 승인", options={"1": "승인", "2": "보류"})
+        (self.home / "slack-sent.jsonl").write_text(json.dumps(card) + "\n")
+        reader = audit.board.BdReader(self.home, str(self.bd))
+        comments = [dict(r, issue_id=cid) for cid, rows in self.rows.items() for r in rows]
+        decisions = audit.board.Decisions(self.home / "slack-sent.jsonl").waiting(self.root, [self.child], "123.456")
+        text = audit.board.compose(reader, self.root, [self.child], decisions, comments)
+        self.assertTrue(text.startswith("🟡"))
+        self.assertIn("- 지금: 검증 완료", text)
+        self.state["topics"]["card:lrm-test"]["fmt"] = "2:" + audit.board.summary(text)
+        self.save()
+        self.assertEqual("통과", self.inspect()["rows"][0]["status"])
 
     def test_board_mismatch_missing_and_duplicate_ids(self):
         self.state["topics"]["card:lrm-test"]["fmt"] = "0" * 64

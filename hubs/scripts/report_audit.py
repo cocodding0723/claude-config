@@ -96,22 +96,25 @@ def restored(boundaries, comments, now, typed=()):
 def inspect(hub, reader, home, since, now):
     if not hub.startswith("feat-") or not hub_report.hub_status.SLUG_RE.fullmatch(hub):
         raise ValueError("기능 허브 이름 오류 — feat-<slug> 지정")
-    cards = reader.query("list", "--all", "--limit", "0")
+    cards = reader.query("list", "--all", "--limit", "0", "--brief")
     roots = [c for c in cards if c.get("issue_type") == "epic" and "feature:" + hub[5:] in [l.lower() for l in c.get("labels", [])]]
     if not roots:
         raise ValueError("기능 카드 없음 — 허브 이름 확인")
     root = sorted(roots, key=lambda c: (c.get("status") != "closed", c.get("created_at", "")))[-1]
     policy = Path(__file__).resolve().parents[1] / "board_mirror.tsv"
     mirror = board_mirror.Mirror(policy, dry=True)
-    related = mirror.descendants(root, cards)
-    records = [dict(r, issue_id=c["id"]) for c in related for r in reader.query("comments", c["id"])]
-    records.sort(key=lambda r: said.stamp(r.get("created_at")))
-    children = [c for c in related if c.get("parent") == root["id"] or any(
-        d.get("type") == "parent-child" and d.get("depends_on_id") == root["id"] for d in c.get("dependencies", []))]
-    direct = {root["id"], *(c["id"] for c in children)}
-    text = board.render(root, children, [r for r in records if r["issue_id"] in direct], reader.stages())
+    children = [c for c in reader.query("list", "--parent", root["id"], "--all", "--limit", "0", "--brief") if c["id"] != root["id"]]
+    related = list({c["id"]: c for c in [root, *children, *[c for c in cards if c["id"].startswith(root["id"] + ".")]]}.values())
+    snapshot = reader.snapshot(root, [c for c in related if c["id"] != root["id"]])
+    root, related = snapshot.epic, snapshot.cards
+    records = [dict(r, issue_id=c["id"]) for c in related for r in snapshot.query("comments", c["id"])]
+    records.sort(key=board.comment_key)
+    child_ids = {c["id"] for c in children}
+    children = [c for c in snapshot.cards if c["id"] in child_ids]
     sender = json_file(home / "report-sender.state.json")
     topic = sender.get("topics", {}).get("card:" + root["id"], {})
+    decisions = board.Decisions(home / "slack-sent.jsonl").waiting(root, related, topic.get("ts"))
+    text = board.compose(snapshot, root, children, decisions)
     summary = topic.get("fmt", "").rsplit(":", 1)[-1]
     connected = bool(re.fullmatch(r"[0-9a-f]{64}", summary))
     equal = summary == board.summary(text)

@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import ask_open  # noqa: E402
 import board_cards  # noqa: E402
+import feature_board  # noqa: E402
 import hub_report  # noqa: E402
 import hub_status  # noqa: E402
 import ledger  # noqa: E402
@@ -68,6 +69,10 @@ STAGE_KEEP_S = 24 * 3600  # 남은 복사본 보관 기간
 # 카드 주제 부모 메시지(양식 ①~⑥). 양식 문구는 이 블록 한 곳. 버전을 올리면 열린 스레드 부모가 새 양식으로 다시 고쳐짐
 CARD_RE = re.compile(r"[a-z][a-z0-9]{1,15}-[a-z0-9]{1,12}(\.[0-9]{1,3})*")  # slack_notify.sh CARD_ID_RE 와 같은 카드 id
 PARENT_FORMAT = "1"
+BOARD_FORMAT = "2"
+BOARD_BUDGET_S = 15
+BOARD_SAVE_S = 0.05
+BOARD_COST_WEIGHT = 0.75
 PARENT_TITLE_MAX = 38  # 양식 A 제목 40자 한도에서 이모지 여유
 PARENT_FIELD_MAX = 200
 CARD_FIELDS = ("쉬운 이름", "무엇", "왜")
@@ -158,6 +163,8 @@ def run_notify(conf: Conf, args: list, deadline: float, upload: bool = False) ->
     try:
         p = subprocess.run([conf.notify, *args], capture_output=True, text=True, timeout=min(UPLOAD_TIMEOUT_S if upload else NOTIFY_TIMEOUT_S, left))
     except subprocess.TimeoutExpired:
+        if time.monotonic() >= deadline:
+            raise NotifyError("회차 시간 예산 초과", counts=False)
         raise NotifyError("전송 시간 초과")
     except OSError as err:
         raise NotifyError(f"전송 스크립트 실행 실패({err.strerror})")
@@ -177,7 +184,7 @@ class StateCorrupt(Exception):
     """상태 파일이 있는데 못 읽음(손상·권한). 빈 상태로 보면 이미 올린 보고를 다시 올리므로 전송을 멈춤"""
 
 
-STATE_KEYS = ("topics", "reports", "warned", "bad", "card_warn")
+STATE_KEYS = ("topics", "reports", "warned", "bad", "card_warn", "boards")
 REQUIRED_KEYS = STATE_KEYS[:3]  # bad·card_warn 은 뒤에 생긴 키라 옛 상태 파일에는 없을 수 있음
 
 
@@ -192,7 +199,7 @@ def load_state(path: str) -> dict:
         raise StateCorrupt(f"읽기 실패({err.strerror})")
     except ValueError:
         raise StateCorrupt("JSON 손상")
-    if not isinstance(st, dict) or any(not isinstance(st.get(k), dict) for k in REQUIRED_KEYS) or not isinstance(st.get("bad", {}), dict):
+    if not isinstance(st, dict) or any(not isinstance(st.get(k), dict) for k in REQUIRED_KEYS) or not isinstance(st.get("bad", {}), dict) or not isinstance(st.get("boards", {}), dict):
         raise StateCorrupt("필수 항목(topics·reports·warned) 없음 또는 모양 오류")  # {} 로 비워진 파일을 새 상태로 보면 보고를 다시 올림
     if (any(not isinstance(v, dict) or not is_ts(v.get("ts")) for v in st["topics"].values())
             or any(not report_state_ok(v) for v in st["reports"].values())
@@ -391,6 +398,8 @@ def card_info(conf: Conf, card: str) -> "dict | None":
             why_missing = not fields["왜"]
             fields["왜"] = fields["왜"] or WHY_MISSING  # 이유가 없어도 보고는 보냄(경고는 별도)
             conf.cards[card] = {"id": card, "title": str(shown[0].get("title") or ""), "fields": fields, "why_missing": why_missing,
+                                "issue_type": shown[0].get("issue_type"),
+                                "labels": shown[0].get("labels") or [],
                                 "closed": sum(1 for k in kids or [] if isinstance(k, dict) and k.get("status") == "closed"),
                                 "total": len(kids) if kids is not None else None}  # None = 하위 조회 실패(0개와 구분)
     return conf.cards[card]
@@ -473,6 +482,8 @@ def refresh_parent(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
     info = card_info(conf, card_of(rep))
     if not info:
         return
+    if info.get("issue_type") == "epic" and "flow:v1" in info.get("labels", []):
+        return
     if card_gaps(info):
         log(conf, f"경고: 열린 스레드 {key} 부모를 고치지 못함 — {card_gap_error(info)}")
         return
@@ -491,6 +502,127 @@ def refresh_parent(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
     topic["fmt"] = stamp
     save_state(conf.state, st)
     log(conf, f"부모 고쳐 씀 {key} {topic['ts']} {stamp}")
+
+
+def board_signal(epic, cards, child_ids, decisions, thread):
+    related = [c for c in cards if c["id"] == epic["id"] or c["id"] in child_ids
+               or c["id"].startswith(epic["id"] + ".")]
+    waiting = decisions.waiting(epic, related, thread)
+    signal = feature_board.summary(json.dumps([BOARD_FORMAT, [
+        {k: c.get(k) for k in ("id", "updated_at", "status", "comment_count")}
+        for c in sorted(related, key=lambda c: c["id"])], sorted(child_ids), waiting], sort_keys=True))
+    return signal, waiting
+
+
+def refresh_boards(conf: Conf, st: dict, deadline: float, dry=False) -> list:
+    """폴러 전용 순환 갱신. 잔여 예산 절반·최대 15초, dry는 전송·상태 저장 없이 변경 예정 본문 반환."""
+    started = time.monotonic()
+    budget = min(BOARD_BUDGET_S, max(0, deadline - started) / 2)
+    deadline = started + budget - min(BOARD_SAVE_S, budget / 10)
+    lines = []
+    reader = feature_board.BdReader(conf.board, conf.bd, deadline=deadline)
+    candidates = sorted(key for key, topic in st["topics"].items() if key.startswith("card:")
+                        and not any(topic.get(k) for k in ("shared", "update_dead"))
+                        and topic.get("board_next", 0) <= time.time())
+    if not candidates or started >= deadline:
+        return lines
+    cursor = st.setdefault("boards", {}).get("cursor", "")
+    candidates = [k for k in candidates if k > cursor] + [k for k in candidates if k <= cursor]
+    try:
+        cards = reader.query("list", "--limit", "0", "--brief")
+        by_id = {card["id"]: card for card in cards}
+        decisions = feature_board.Decisions(conf.sent)
+    except (RuntimeError, OSError, ValueError) as err:
+        log(conf, f"경고: 현황판 변경 조회 실패 — {err}")
+        return lines
+    attempted = False
+    for key in candidates:
+        if time.monotonic() >= deadline:
+            break
+        topic = st["topics"][key]
+        before = None
+        cached_cost = 0
+        try:
+            epic = by_id.get(key[5:])
+            labels = epic.get("labels", []) if epic else []
+            reason = ("열린 목록에 없음" if not epic else "에픽 아님" if epic.get("issue_type") != "epic" else
+                      next((name + " 없음" for name in ("flow:v1", "feature:", "slack-thread:")
+                            if not any(l == name if name == "flow:v1" else l.startswith(name) for l in labels)), ""))
+            if reason:
+                if topic.get("board_skip") != reason:
+                    log(conf, f"현황판 건너뜀: {key[5:]} {reason}")
+                topic["board_skip"] = reason
+                st["boards"]["cursor"] = key
+                continue
+            topic.pop("board_skip", None)
+            if topic.get("board_next", 0) > time.time():
+                continue
+            signal, waiting = board_signal(epic, cards, topic.get("board_children", []), decisions, topic["ts"])
+            if topic.get("board_signal") == signal:
+                st["boards"]["cursor"] = key
+                continue
+            pending = topic.get("board_pending", {})
+            if pending.get("signal") != signal:
+                topic.pop("board_pending", None)
+                pending = {}
+            estimate = topic.get("board_cost", min(2.0, BOARD_BUDGET_S / 3))
+            if attempted and time.monotonic() + estimate >= deadline:
+                log(conf, f"현황판 건너뜀: {epic['id']} 예상 {estimate:.3f}초 > 남은 {max(0, deadline - time.monotonic()):.3f}초")
+                break
+            attempted = True
+            before = time.monotonic()
+            cached_cost = pending.get("cost", 0)
+            text = pending.get("text")
+            if not text:
+                all_children = reader.query("list", "--parent", epic["id"], "--all", "--limit", "0", "--brief")
+                all_children = [c for c in all_children if c["id"] != epic["id"]]
+                topic["board_children"] = [c["id"] for c in all_children]
+                signal, waiting = board_signal(epic, cards, topic["board_children"], decisions, topic["ts"])
+                snapshot = reader.snapshot(epic, all_children)
+                text = feature_board.compose(snapshot, snapshot.epic, snapshot.cards[1:], waiting)
+            topic["board_pending"] = dict(signal=signal, text=text, cost=cached_cost or time.monotonic() - before)
+            stamp = f"{BOARD_FORMAT}:{feature_board.summary(text)}"
+            if topic.get("fmt") == stamp:
+                topic["board_signal"] = signal
+                topic.pop("board_pending", None)
+                st["boards"]["cursor"] = key
+                continue
+            if dry:
+                lines.append(f"현황판 {key} --update {topic['ts']} fmt={stamp}\n{text}")
+                continue
+            hub = next(("feat-" + l[len("feature:"):] for l in epic["labels"] if l.startswith("feature:")), "report-sender")
+            # 상태 이모지는 본문 소유. --kind의 종류 이모지 자동 추가 방지.
+            run_notify(conf, ["--tag", hub, "--update", topic["ts"], text], deadline)
+            topic["fmt"] = stamp
+            topic.update(board_signal=signal, board_fails=0, board_next=0)
+            topic.pop("board_pending", None)
+            st["boards"]["cursor"] = key
+        except feature_board.BudgetExpired:
+            st["boards"]["cursor"] = key
+            log(conf, f"현황판 건너뜀: {key[5:]} 읽기 {time.monotonic() - before:.3f}초 > 상한 {deadline - before:.3f}초 (회차 {budget:.3f}초)")
+        except NotifyError as err:
+            if not err.counts:
+                st["boards"]["cursor"] = key
+                log(conf, f"현황판 건너뜀: {key[5:]} 읽기 {time.monotonic() - before:.3f}초 > 상한 {deadline - before:.3f}초 (회차 {budget:.3f}초)")
+                continue
+            if any(code in str(err) for code in UPDATE_DEAD_ERRORS):
+                topic["update_dead"] = True
+            topic["board_fails"] = min(topic.get("board_fails", 0) + 1, conf.fail_limit)
+            topic["board_next"] = time.time() + min(conf.backoff_s * 2 ** (topic["board_fails"] - 1), BACKOFF_MAX_S)
+            st["boards"]["cursor"] = key
+            log(conf, f"경고: 현황판 {key} 고쳐 쓰기 실패 — {err}")
+        except (RuntimeError, ImportError, OSError, ValueError) as err:
+            st["boards"]["cursor"] = key
+            log(conf, f"경고: 현황판 {key} 조회 실패 — {err}")
+        finally:
+            if not dry:
+                save_state(conf.state, st)
+            if before is not None:
+                elapsed = cached_cost + time.monotonic() - before
+                topic["board_cost"] = topic.get("board_cost", elapsed) * (1 - BOARD_COST_WEIGHT) + elapsed * BOARD_COST_WEIGHT
+    if not dry:
+        save_state(conf.state, st)
+    return lines
 
 
 def ask_waiting(conf: Conf, thread: str) -> list:
@@ -984,17 +1116,17 @@ def log(conf: Conf, line: str) -> None:
             f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + line + "\n")
 
 
-def run(conf: Conf, dry: bool = False) -> dict:
+def run(conf: Conf, dry: bool = False, boards: bool = False) -> dict:
     """한 회차. {'status': idle|done|partial|busy, 'sent': n, 'failed': n, 'pending': n, 'lines': [처리 로그]}"""
     out = {"status": "idle", "sent": 0, "failed": 0, "pending": 0, "lines": []}
     deadline = time.monotonic() + conf.budget_s  # 회차 공통 시간 예산. 경고·주제·본문·진행 줄 전송이 모두 이 안에서 끝남
     if dry:
-        return _round(conf, out, True, deadline)
+        return _round(conf, out, True, deadline, boards)
     with exclusive(conf.state) as got:
         if not got:
             out["status"] = "busy"
             return out
-        return _round(conf, out, False, deadline)
+        return _round(conf, out, False, deadline, boards)
 
 
 def halt(conf: Conf, err: StateCorrupt, out: dict, dry: bool, deadline: float) -> dict:
@@ -1080,7 +1212,7 @@ def repair_outbox(conf: Conf, deadline: float) -> None:
             log(conf, f"outbox 끝줄 복구 실패: {err}")
 
 
-def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
+def _round(conf: Conf, out: dict, dry: bool, deadline: float, boards=False) -> dict:
     if not dry:
         repair_outbox(conf, deadline)
     bad = []
@@ -1104,10 +1236,14 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
     todo = [r for r in reports if not st["reports"].get(r["id"], {}).get("sent") and r["id"] not in st["bad"]]
     out["pending"] = len(todo)
     if not todo:
+        if boards:
+            out["lines"].extend(refresh_boards(conf, st, deadline, dry))
         return out
     if dry:
         out["status"] = "dry-run"
         out["lines"] = [f"전송 예정 {r['id']} {r['hub']} {r['kind']} → {'결정 카드' if r['kind'] == 'decide' else '주제 ' + topic_key(r)}" for r in todo]
+        if boards:
+            out["lines"].extend(refresh_boards(conf, st, deadline, True))
         return out
     blocked = set()  # 앞 보고가 실패한 주제는 순서가 바뀌지 않게 이번 회차에 건너뜀
     tried = 0
@@ -1171,6 +1307,8 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float) -> dict:
         out["lines"].append(line)
         log(conf, line)
     out["status"] = "partial" if out["failed"] else "done"
+    if boards:
+        out["lines"].extend(refresh_boards(conf, st, deadline))
     return out
 
 
@@ -1196,7 +1334,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        res = run(Conf(), args.dry_run)
+        res = run(Conf(), args.dry_run, boards=True)
     except hub_report.ReportError as err:
         sys.stderr.write(f"오류: {err}\n")
         return err.code

@@ -30,7 +30,7 @@ class BoardTests(unittest.TestCase):
         text = self.text()
         self.assertTrue(text.startswith("🟢 진행 보고 정리\n\n"))
         for part in ("- 무엇: 기록 자동 표시", "▶ 3 구현", "6 반영", "1/2 완료",
-                     "완료 1개", "⏳ 둘째 작업", "- 지금: 검증 시작", "👉 사용자 할 일: 없음"):
+                     "⏳ 둘째 작업", "- 지금: 검증 시작", "👉 사용자 할 일: 없음"):
             self.assertIn(part, text)
         self.assertNotIn("첫 작업", text)
 
@@ -95,9 +95,12 @@ class BoardTests(unittest.TestCase):
             self.assertNotIn(forbidden, refs)
         self.assertIn("의 확인", fb.plain("lrm-i46u의 확인"))
 
-    def test_same_second_preserves_bd_order_for_now_and_block_resolution(self):
+    def test_same_second_sorts_by_id_for_now_and_block_resolution(self):
         self.comments = [{"id": 9, "text": "막힘: 실패", "created_at": "2026-11-21T10:01:00Z"},
                          {"id": 10, "text": "해결: 성공", "created_at": "2026-11-21T10:01:00Z"}]
+        self.assertTrue(self.text().startswith("🟢 진행"))
+        self.assertIn("- 지금: 해결: 성공", self.text())
+        self.comments.reverse()
         self.assertTrue(self.text().startswith("🟢 진행"))
         self.assertIn("- 지금: 해결: 성공", self.text())
 
@@ -142,8 +145,24 @@ class BoardTests(unittest.TestCase):
                     self.assertIn("참고: PR #299", text)
                     self.assertNotIn("&l…", text)
                     if status in fb.Format.ended:
-                        self.assertIn("- 완료 60개", text)
+                        self.assertIn("60/60 완료" if status == "closed" else "0/0 완료", text)
                         self.assertNotIn("⏳", text)
+
+    def test_numbers_commands_mentions_deleted_and_duplicate_completion(self):
+        self.assertEqual("보상 1000000 골드 /catch-up 실행", fb.plain("보상 1000000 골드 /catch-up 실행"))
+        text = fb.plain("@everyone @channel <!here>")
+        for mention in ("@everyone", "@channel", "<!here>"):
+            self.assertNotIn(mention, text)
+        self.children.append({"id": "lrm-test.3", "status": "tombstone", "title": "삭제됨"})
+        text = self.text()
+        self.assertIn("1/2 완료", text)
+        self.assertNotIn("삭제됨", text)
+        self.assertNotIn("- 완료", text)
+
+    def test_external_decision_is_pure_input(self):
+        text = fb.render(self.epic, self.children, self.comments, STAGES, [{"title": "계획 승인"}])
+        self.assertTrue(text.startswith("🟡"))
+        self.assertIn("👉 사용자 할 일: 계획 승인", text)
 
     def test_reference_budget_includes_escaping(self):
         text = fb.references(["docs/out/" + "&" * 2000 + ".html"])
@@ -169,12 +188,15 @@ class BoardTests(unittest.TestCase):
     def test_child_comment_is_latest_and_query_failure_aborts(self):
         reader = fb.BdReader()
         comment = dict(self.comments[0], text="자식에서 검증 완료")
-        with patch.object(reader, "query", side_effect=[[self.epic], self.children, [], [], [comment]]), \
+        with patch.object(reader, "query", side_effect=[self.children, [self.epic, self.children[0], self.children[1] | {"comments": [comment]}]]) as query, \
                 patch.object(reader, "stages", return_value=STAGES):
             self.assertIn("- 지금: 자식에서 검증 완료", reader.text("lrm-test"))
-        with patch.object(reader, "query", side_effect=[[self.epic], RuntimeError("조회 실패")]):
+            self.assertEqual(2, query.call_count)
+            self.assertEqual(("show", "lrm-test", "lrm-test.1", "lrm-test.2", "--include-comments"), query.call_args.args)
+        with patch.object(reader, "query", side_effect=[self.children, RuntimeError("조회 실패")]) as query:
             with self.assertRaises(RuntimeError):
                 reader.text("lrm-test")
+            self.assertEqual(2, query.call_count)
 
     def test_bd_failures_do_not_become_empty_board(self):
         with patch.object(fb.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "[]", "")) as run:
@@ -211,8 +233,17 @@ class BoardTests(unittest.TestCase):
             self.assertIn("가짜 기능", result.stdout)
             self.assertIn("▶ 0 구현", result.stdout)
             calls = [json.loads(line) for line in (tmp / "calls").read_text().splitlines()]
-            self.assertEqual(["show", "list", "comments"], [c[0] for c in calls])
-            self.assertIn("0", calls[1])
+            self.assertEqual(["list", "show"], [c[0] for c in calls])
+            self.assertIn("0", calls[0])
+            self.assertIn("--include-comments", calls[1])
+
+    def test_concatenated_arrays_decode_and_truncated_tail_aborts(self):
+        for output, expected in (('[] [{"id":"a"}]\n[{"id":"b"}]', [{"id": "a"}, {"id": "b"}]),):
+            with patch.object(fb.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, output, "")):
+                self.assertEqual(expected, fb.BdReader().query("show", "a", "b", "--include-comments"))
+        with patch.object(fb.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, '[{"id":"a"}] [', "")):
+            with self.assertRaises(RuntimeError):
+                fb.BdReader().query("show", "a", "b", "--include-comments")
 
 
 if __name__ == "__main__":

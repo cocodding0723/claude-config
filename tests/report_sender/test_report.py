@@ -87,6 +87,25 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(self.rows()[0]["decision_id"], "D-0101")
         self.assertEqual(self.add(extra=["--recommend", "1"]).returncode, 2)  # decide 가 아닌데 카드 필드
 
+    def test_decide_rejects_notify_permanent_values_at_intake(self):
+        base = dict(hub="ui", task="C1", kind="decide", files=[], no_doc=True,
+                    text="시각 정하기\n배경: 알림 시각이 서로 달라 하나로 맞추려 함\n용어: 없음",
+                    options="1=오전 => 일찍 도착,2=오후 => 늦게 도착", recommend="1", decision_id="D-TIME")
+        for change in ({"reversible": "yes"}, {"reversible": ""}, {"recommend": "3"},
+                       {"options": "1=가 => 결과,1=나 => 결과"},
+                       {"options": "1=가 => 결과,3=나 => 결과"},
+                       {"options": "1=" + "가" * 81 + " => 결과,2=나 => 결과"},
+                       {"options": "1=✅ => 결과,2=나 => 결과"},
+                       {"options": "1=가\n나 => 결과,2=나 => 결과"}):
+            with self.subTest(change=change), self.assertRaises(hub_report.ReportError):
+                hub_report.make_report(**(base | change))
+        for reversible in hub_report.REVERSIBLE:
+            self.assertEqual(reversible, hub_report.make_report(**base, reversible=reversible)["reversible"])
+        result = self.add(text=base["text"], kind="decide", extra=["--options", base["options"],
+                          "--recommend", "1", "--decision-id", "D-TIME", "--no-doc", "--reversible", "yes"])
+        self.assertEqual(2, result.returncode)
+        self.assertEqual([], self.rows())
+
     def test_decide_requires_background_terms_and_results(self):
         opts = ["--options", "1=9시 => 일찍 도착,2=10시 => 늦게 도착", "--recommend", "1", "--decision-id", "D-0201", "--no-doc"]
         bg, terms = "배경: 알림 개편 중이라 시각을 하나로 맞추려 함", "용어: 푸시 — 앱 밖 알림"
