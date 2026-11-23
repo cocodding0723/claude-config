@@ -88,7 +88,7 @@ mk_current | add_extras > "$SB/.claude/settings.json"
 CUR_BYTES=$(shasum "$SB/.claude/settings.json" | cut -d' ' -f1)
 cp "$SB/.claude/settings.json" "$SB/settings.original"
 hooks_of() { jq '[.hooks[]?[]] | length' "$1"; }
-[ "$(hooks_of "$SB/.claude/settings.json")" = 32 ] && ok "준비: 현재 설정 훅 32개(기본 13+Orca 15+추가 3+중복 1)" || ko "준비" "훅 수 $(hooks_of "$SB/.claude/settings.json")"
+[ "$(hooks_of "$SB/.claude/settings.json")" = 33 ] && ok "준비: 현재 설정 훅 33개(기본 14+Orca 15+추가 3+중복 1)" || ko "준비" "훅 수 $(hooks_of "$SB/.claude/settings.json")"
 SKILLS_BEFORE=$(ls "$SB/.claude/skills" | wc -l | tr -d ' ')
 
 # ---- 1. dry-run: 아무것도 바뀌지 않음 --------------------------------------
@@ -142,6 +142,7 @@ done <<< "$entries"
 [ "$linkbad" = 0 ] && ok "링크 전부 정상(원본 가리킴)"
 [ "$(ls "$SB/.claude/skills" | wc -l | tr -d ' ')" -ge "$SKILLS_BEFORE" ] && [ -d "$SB/.claude/skills/synced" ] && [ -L "$SB/.claude/skills/ext-link" ] && ok "synced 폴더·외부 링크 보존" || ko "synced·외부 링크" "사라짐"
 [ -f "$SB/.claude/hooks/state/logs/hook.log" ] && ok "state 폴더 제자리(기존 로그 유지)" || ko "state" "로그 없음"
+[ -f "$SB/.claude/hooks/lib/pre_compact.sh" ] && jq -e '.hooks.PreCompact[0].hooks[0].command == "bash ~/.claude/hooks/lib/pre_compact.sh"' "$SB/.claude/settings.json" >/dev/null && ok "PreCompact 훅 설치·설정 반영" || ko "PreCompact 설치" ""
 [ ! -e "$REPO/claude/hooks/state" ] && ok "저장소에 state 폴더 없음" || ko "저장소 state" "생김"
 [ "$(cat "$SB/.config/lrm-hubs/slack-bot.env")" = "DUMMY=1" ] && [ ! -L "$SB/.config/lrm-hubs/slack-bot.env" ] && ok "비밀 파일 미접촉" || ko "비밀 파일" "바뀜"
 rend_bad=0

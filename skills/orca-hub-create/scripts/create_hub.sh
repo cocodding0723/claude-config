@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 # 코디네이터 허브 생성: sparse 워크스페이스 + Orca 등록 + Opus 코디네이터 기동·제출 확인
-set -euo pipefail
+set -Eeuo pipefail
+hub_error() {
+  # 명령 치환의 stderr는 보존하고 최상위 실패에서만 안내함
+  [ "$BASH_SUBSHELL" -eq 0 ] || return 0
+  local command="${3%%$'\n'*}"
+  printf '허브 생성·기동 실패: 줄 %s, 종료 %s, 명령: %s\n' "$2" "$1" "${command:0:120}" >&2
+}
+trap 'hub_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
 REPO="${REPO:-$HOME/orca/LoveRevolutionMaker}"
 WS_ROOT="${WS_ROOT:-$HOME/orca/workspaces/LoveRevolutionMaker}"
 SLUG="" NAME="" PATHS="/docs/ /.claude/ /CLAUDE.md /AGENTS.md" ROLE_FILE="" RESUME="" MODEL="claude-opus-5-5" FORCE=0
 BASE="origin/dev" BRANCH="" DRY=0
-# 코디네이터 자동 압축 기준(토큰). 호출마다 지난 대화를 다시 읽는 비용을 줄이려 기본 20만. 0·off 면 설정에 넣지 않음. claude 최소값 100000
-AUTOCOMPACT="${LRM_HUB_AUTOCOMPACT:-200000}"
+# 호출마다 지난 대화를 다시 읽는 비용과 압축 빈도 절충: 기본 40만 토큰. claude 최소값 100000
+AUTOCOMPACT="${LRM_HUB_AUTOCOMPACT:-400000}"
 while [ $# -gt 0 ]; do case "$1" in
   --slug) SLUG="$2"; shift 2;; --name) NAME="$2"; shift 2;; --paths) PATHS="$2"; shift 2;;
   --role-file) ROLE_FILE="$2"; shift 2;; --resume) RESUME="$2"; shift 2;; --model) MODEL="$2"; shift 2;; --force) FORCE=1; shift;;
@@ -57,7 +64,35 @@ ${RESUME:+이어받기: Orca 재시작 등으로 이전 세션이 끝났다. 먼
 인계를 다 읽으면 사용자에게 묻거나 계획만 말하고 멈추지 말고, 인계의 '다음 할 일'부터 바로 진행한다. 승인이 필요한 일만 결정 카드로 묻는다.
 }$(cat "$ROLE_FILE")"
 # 허브·워커는 기억 플러그인 끔(메모리 절약, 11-05). 메인 체크아웃만 켬. 자동 압축 기준은 허브만(메인·워커 제외)
-mkdir -p "$HUB/.claude" && python3 -c "import json,os,sys;f=sys.argv[1];d=json.load(open(f)) if os.path.exists(f) else {};a=int(sys.argv[2]);d.pop(\"autoCompactWindow\",None) if a==0 else d.__setitem__(\"autoCompactWindow\",a);d.setdefault(\"enabledPlugins\",{})[\"openviking-memory@openviking\"]=False;dn=d.setdefault(\"permissions\",{}).setdefault(\"deny\",[]);[dn.append(r) for r in [\"Read(/$HOME/.config/lrm-hubs/slack-bot.env)\",\"Bash(*slack-bot.env*)\",\"Bash(*slack_notify.sh*)\"] if r not in dn];json.dump(d,open(f,\"w\"),indent=2)" "$HUB/.claude/settings.local.json" "$AUTOCOMPACT"
+mkdir -p "$HUB/.claude"
+python3 - "$HUB/.claude/settings.local.json" "$AUTOCOMPACT" "$HOME" <<'PY'
+import json
+import os
+import sys
+
+fixed_settings = {
+    "enableArtifact": False,
+    "disableClaudeAiConnectors": True,
+}
+filename, compact, home = sys.argv[1:]
+settings = {}
+if os.path.exists(filename):
+    with open(filename) as source:
+        settings = json.load(source)
+settings.update(fixed_settings)
+if int(compact) == 0:
+    settings.pop("autoCompactWindow", None)
+else:
+    settings["autoCompactWindow"] = int(compact)
+settings.setdefault("enabledPlugins", {})["openviking-memory@openviking"] = False
+deny = settings.setdefault("permissions", {}).setdefault("deny", [])
+for rule in [f"Read(/{home}/.config/lrm-hubs/slack-bot.env)",
+             "Bash(*slack-bot.env*)", "Bash(*slack_notify.sh*)"]:
+    if rule not in deny:
+        deny.append(rule)
+with open(filename, "w") as target:
+    json.dump(settings, target, indent=2)
+PY
 H=$(orca agent launch --agent claude --worktree "path:$HUB" --model "$MODEL" --effort high \
   --surface terminal --prompt "$PROMPT" --json | jq -r 'first(.. | objects | .handle? // empty | select(startswith("term_")))')
 : "${H:?agent launch 결과에서 터미널 handle 을 찾지 못함}"
@@ -70,5 +105,5 @@ for _ in 1 2 3 4 5; do
   if printf '%s' "$T" | grep -q 'paste again'; then orca terminal send --terminal "$H" --enter --json >/dev/null; fi
 done
 [ "$SUBMITTED" = 1 ] || echo "경고: 프롬프트 제출을 확인하지 못함. orca terminal send --terminal $H --enter 로 확인" >&2
-echo "hub=$HUB size=$(du -sh "$HUB" | cut -f1) terminal=$H submitted=$SUBMITTED"
+echo "hub=$HUB size=$(du -sh "$HUB" | cut -f1 || true) terminal=$H submitted=$SUBMITTED"
 

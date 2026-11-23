@@ -113,7 +113,7 @@ hub_report.py add --kind decide --card <기능 카드> --ws <코디네이터 작
 
 ## 코디네이터 자동 압축 (11-20)
 
-- 새로 여는 코디네이터 허브는 대화 약 20만 토큰에서 자동 압축한다(허브 `.claude/settings.local.json` 의 `autoCompactWindow`). 압축 직후 SessionStart 훅이 기능 카드 id·단계·처리 안 된 지시를 다시 넣는다.
+- 새로 여는 코디네이터 허브는 대화 약 40만 토큰에서 자동 압축한다(허브 `.claude/settings.local.json` 의 `autoCompactWindow`). 압축 직후 SessionStart 훅이 기능 카드 id·단계·처리 안 된 지시를 다시 넣는다.
 - 이유: 호출마다 지난 대화 약 23만 토큰을 다시 읽어 비용이 큰데 기본 기준(약 97만)에서는 거의 압축되지 않았다. 이미 떠 있는 코디네이터와 메인·워커는 그대로다.
 - 끄기·바꾸기: 허브 생성 때 `LRM_HUB_AUTOCOMPACT=off`(또는 100000 이상 숫자). 작업판 조회가 2초를 넘기면 훅은 안내 한 줄만 낸다.
 

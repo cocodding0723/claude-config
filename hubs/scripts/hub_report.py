@@ -26,6 +26,7 @@ import re
 import shutil
 import sys
 import time
+import unicodedata
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))  # -I 실행·복사 설치에서도 같은 폴더의 hub_status 를 찾음
 import board_cards  # noqa: E402
@@ -71,6 +72,11 @@ SECRET_NAME_RE = re.compile(
     r"|^\.?(token|tokens|secret|secrets|credentials?|netrc|npmrc|pgpass|htpasswd|git-credentials)(\.|$)|^kubeconfig$)", re.I)
 SECRET_DIRS = frozenset({".ssh", ".aws", ".gnupg", ".kube", ".docker"})
 NO_DOC_ERR = "decide 는 문서 첨부(--file) 필요 — 결정 근거 문서를 --file 로 첨부하거나, 문서 없는 결정이면 --no-doc 를 명시"
+REVERSIBLE = ("쉬움", "보통", "어려움")
+OPTION_MAX = 80
+OPTION_FAKE = re.compile(r"(?<!\w):[\w+\-]{1,40}:(?!\w)|👉|✅|❌|[0-9#*]️?⃣")
+OPTION_BAD_CATS = ("Cc", "Cs", "Co", "Cn", "Zl", "Zp")
+OPTION_BAD_CHARS = frozenset("‪‫‬‭‮⁦⁧⁨⁩‎‏؜�")
 EXIT_IO, EXIT_USAGE = 1, 2
 
 
@@ -347,6 +353,18 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
         check_decision_id(decision_id)
         if why := decide_card.problem("\n".join(lines), options, decision_id, files):
             raise ReportError(why)
+        rows = decide_card.options(options)
+        nums = [n for n, _, _ in rows]
+        if not 2 <= len(nums) <= 4 or sorted(nums) != [str(i) for i in range(1, len(nums) + 1)]:
+            raise ReportError("--options 범위 오류 — 번호는 1부터 빠짐없이 2~4개")
+        if recommend not in nums:
+            raise ReportError("--recommend 범위 오류 — 선택지 번호 중 하나로 지정")
+        for _, label, _ in rows:
+            if (not label or len(label) > OPTION_MAX or OPTION_FAKE.search(label)
+                    or any(unicodedata.category(c) in OPTION_BAD_CATS or c in OPTION_BAD_CHARS for c in label)):
+                raise ReportError("--options 문구 오류 — 제어 문자·답 이모지 없이 1~80자 문구로 지정")
+        if reversible is not None and reversible not in REVERSIBLE:
+            raise ReportError("--reversible 값 오류 — 쉬움|보통|어려움 중 하나")
         reuse_check(decision_id, lines[0])
         if not files and not no_doc:
             raise ReportError(NO_DOC_ERR)
@@ -491,13 +509,15 @@ def repair_tail(path: str) -> None:
 
 @contextlib.contextmanager
 def locked(path: str):
-    try:
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        with open(path + ".lock", "a") as lk:
+    # 잠금 열기·flock 실패만 변환. 본문 예외까지 잡으면 원인이 '잠금 실패'로 가려짐
+    with contextlib.ExitStack() as stack:
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            lk = stack.enter_context(open(path + ".lock", "a"))
             fcntl.flock(lk, fcntl.LOCK_EX)
-            yield
-    except OSError as err:
-        raise ReportError(f"outbox 잠금 실패({err.strerror}) — 작업 폴더 권한 확인", EXIT_IO)
+        except OSError as err:
+            raise ReportError(f"outbox 잠금 실패({err.strerror}) — 작업 폴더 권한 확인", EXIT_IO)
+        yield
 
 
 def add(path: str, rep: dict, now: float, dry: bool, stage: bool = False) -> tuple:

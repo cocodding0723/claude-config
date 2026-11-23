@@ -69,5 +69,35 @@ typed 10 "스킵하고 진행"
 expect "사용자가 창에 '스킵하고 진행'이라고 치면 구현으로" 0 "$BIN" "$Y" build co
 unset BOARD_CLAUDE_DIRS
 
+previous=build
+for stage in intake understand design build verify review ship; do
+  bd label remove "$S" "stage:$previous" >/dev/null 2>&1
+  bd label add "$S" "stage:$stage" >/dev/null 2>&1
+  previous=$stage
+  "$BIN" "$S" >"$SB/out" 2>&1
+  count=$(grep -c '^- ' "$SB/out")
+  [ "$count" -ge 2 ] && [ "$count" -le 4 ] && grep -q '다음 할 일:' "$SB/out" && ok "$stage 조회: 다음 할 일 2~4줄" || ko "$stage 안내" "$(cat "$SB/out")"
+done
+expect "구현으로 이동하면 다음 할 일 출력" 0 "$BIN" "$S" build co
+grep -q '다음 할 일:' "$SB/out" && ok "이동 출력에 다음 할 일 포함" || ko "이동 안내" "$(cat "$SB/out")"
+ln -s "$BIN" "$SB/stage-link"
+"$SB/stage-link" "$Y" >"$SB/out" 2>&1
+grep -q '다음 할 일:' "$SB/out" && ok "설치 링크에서도 저장소 TSV 조회" || ko "링크 안내" "$(cat "$SB/out")"
+"$BIN" "$Y" --json | jq -e '.stage == "build" and (has("next") | not)' >/dev/null && ok "JSON 조회 스키마 유지" || ko "JSON 오염" ""
+
+mkdir -p "$SB/tool/bin"
+cp "$BIN" "$SB/tool/bin/board-stage"
+ln -s "$LIB" "$SB/tool/lib"
+COPY="$SB/tool/bin/board-stage"
+expect "안내 표 없어도 단계 이동 성공(0)" 0 "$COPY" "$S" verify co
+[[ "$(labels "$S")" == *stage:verify* ]] && grep -q '^경고:' "$SB/out" && ! grep -q Traceback "$SB/out" && ok "표 없음: 단계 반영·경고만 출력" || ko "표 없음" "$(cat "$SB/out")"
+mkdir "$SB/tool/stage_next.tsv"
+expect "안내 표 읽기 실패도 조회 성공(0)" 0 "$COPY" "$S"
+[ "$(grep -c '^경고:' "$SB/out")" = 1 ] && ! grep -q Traceback "$SB/out" && ok "읽기 실패: 경고 한 줄" || ko "읽기 실패" "$(cat "$SB/out")"
+rmdir "$SB/tool/stage_next.tsv"
+printf 'verify\t"승인" 답 확인\nverify\t"미완료 안내\n' > "$SB/tool/stage_next.tsv"
+expect "안내 표 따옴표 조회 성공(0)" 0 "$COPY" "$S"
+grep -qx -- '- "승인" 답 확인' "$SB/out" && grep -qx -- '- "미완료 안내' "$SB/out" && ok "닫힌·열린 따옴표 원문 보존" || ko "따옴표" "$(cat "$SB/out")"
+
 printf '통과 %d · 실패 %d\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
