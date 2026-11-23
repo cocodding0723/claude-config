@@ -103,15 +103,17 @@ def inspect(hub, reader, home, since, now):
     root = sorted(roots, key=lambda c: (c.get("status") != "closed", c.get("created_at", "")))[-1]
     policy = Path(__file__).resolve().parents[1] / "board_mirror.tsv"
     mirror = board_mirror.Mirror(policy, dry=True)
-    related = [root, *[c for c in cards if c["id"].startswith(root["id"] + ".")]]
+    children = [c for c in reader.query("list", "--parent", root["id"], "--all", "--limit", "0", "--brief") if c["id"] != root["id"]]
+    related = list({c["id"]: c for c in [root, *children, *[c for c in cards if c["id"].startswith(root["id"] + ".")]]}.values())
     snapshot = reader.snapshot(root, [c for c in related if c["id"] != root["id"]])
     root, related = snapshot.epic, snapshot.cards
     records = [dict(r, issue_id=c["id"]) for c in related for r in snapshot.query("comments", c["id"])]
     records.sort(key=board.comment_key)
-    children = board.children_of(root, snapshot.cards[1:])
+    child_ids = {c["id"] for c in children}
+    children = [c for c in snapshot.cards if c["id"] in child_ids]
     sender = json_file(home / "report-sender.state.json")
     topic = sender.get("topics", {}).get("card:" + root["id"], {})
-    decisions = board.Decisions(home / "slack-sent.jsonl").waiting(root, board.family_of(root, cards), topic.get("ts"))
+    decisions = board.Decisions(home / "slack-sent.jsonl").waiting(root, related, topic.get("ts"))
     text = board.compose(snapshot, root, children, decisions)
     summary = topic.get("fmt", "").rsplit(":", 1)[-1]
     connected = bool(re.fullmatch(r"[0-9a-f]{64}", summary))

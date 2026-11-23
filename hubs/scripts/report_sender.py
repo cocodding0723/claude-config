@@ -72,6 +72,7 @@ PARENT_FORMAT = "1"
 BOARD_FORMAT = "2"
 BOARD_BUDGET_S = 15
 BOARD_SAVE_S = 0.05
+BOARD_COST_WEIGHT = 0.75
 PARENT_TITLE_MAX = 38  # 양식 A 제목 40자 한도에서 이모지 여유
 PARENT_FIELD_MAX = 200
 CARD_FIELDS = ("쉬운 이름", "무엇", "왜")
@@ -398,6 +399,7 @@ def card_info(conf: Conf, card: str) -> "dict | None":
             fields["왜"] = fields["왜"] or WHY_MISSING  # 이유가 없어도 보고는 보냄(경고는 별도)
             conf.cards[card] = {"id": card, "title": str(shown[0].get("title") or ""), "fields": fields, "why_missing": why_missing,
                                 "issue_type": shown[0].get("issue_type"),
+                                "labels": shown[0].get("labels") or [],
                                 "closed": sum(1 for k in kids or [] if isinstance(k, dict) and k.get("status") == "closed"),
                                 "total": len(kids) if kids is not None else None}  # None = 하위 조회 실패(0개와 구분)
     return conf.cards[card]
@@ -480,7 +482,7 @@ def refresh_parent(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
     info = card_info(conf, card_of(rep))
     if not info:
         return
-    if info.get("issue_type") == "epic":
+    if info.get("issue_type") == "epic" and "flow:v1" in info.get("labels", []):
         return
     if card_gaps(info):
         log(conf, f"경고: 열린 스레드 {key} 부모를 고치지 못함 — {card_gap_error(info)}")
@@ -502,6 +504,16 @@ def refresh_parent(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
     log(conf, f"부모 고쳐 씀 {key} {topic['ts']} {stamp}")
 
 
+def board_signal(epic, cards, child_ids, decisions, thread):
+    related = [c for c in cards if c["id"] == epic["id"] or c["id"] in child_ids
+               or c["id"].startswith(epic["id"] + ".")]
+    waiting = decisions.waiting(epic, related, thread)
+    signal = feature_board.summary(json.dumps([BOARD_FORMAT, [
+        {k: c.get(k) for k in ("id", "updated_at", "status", "comment_count")}
+        for c in sorted(related, key=lambda c: c["id"])], sorted(child_ids), waiting], sort_keys=True))
+    return signal, waiting
+
+
 def refresh_boards(conf: Conf, st: dict, deadline: float, dry=False) -> list:
     """폴러 전용 순환 갱신. 잔여 예산 절반·최대 15초, dry는 전송·상태 저장 없이 변경 예정 본문 반환."""
     started = time.monotonic()
@@ -510,7 +522,7 @@ def refresh_boards(conf: Conf, st: dict, deadline: float, dry=False) -> list:
     lines = []
     reader = feature_board.BdReader(conf.board, conf.bd, deadline=deadline)
     candidates = sorted(key for key, topic in st["topics"].items() if key.startswith("card:")
-                        and not any(topic.get(k) for k in ("shared", "update_dead", "board_skip"))
+                        and not any(topic.get(k) for k in ("shared", "update_dead"))
                         and topic.get("board_next", 0) <= time.time())
     if not candidates or started >= deadline:
         return lines
@@ -523,31 +535,29 @@ def refresh_boards(conf: Conf, st: dict, deadline: float, dry=False) -> list:
     except (RuntimeError, OSError, ValueError) as err:
         log(conf, f"경고: 현황판 변경 조회 실패 — {err}")
         return lines
+    attempted = False
     for key in candidates:
         if time.monotonic() >= deadline:
             break
         topic = st["topics"][key]
-        previous = st["boards"].get("cursor", "")
         before = None
-        paused = False
         cached_cost = 0
         try:
             epic = by_id.get(key[5:])
             labels = epic.get("labels", []) if epic else []
-            if (not epic or epic.get("issue_type") != "epic" or "flow:v1" not in labels
-                    or not any(l.startswith("feature:") for l in labels)
-                    or not any(l.startswith("slack-thread:") for l in labels)):
-                topic["board_skip"] = True
+            reason = ("열린 목록에 없음" if not epic else "에픽 아님" if epic.get("issue_type") != "epic" else
+                      next((name + " 없음" for name in ("flow:v1", "feature:", "slack-thread:")
+                            if not any(l == name if name == "flow:v1" else l.startswith(name) for l in labels)), ""))
+            if reason:
+                if topic.get("board_skip") != reason:
+                    log(conf, f"현황판 건너뜀: {key[5:]} {reason}")
+                topic["board_skip"] = reason
                 st["boards"]["cursor"] = key
                 continue
+            topic.pop("board_skip", None)
             if topic.get("board_next", 0) > time.time():
                 continue
-            children = [c for c in cards if c["id"].startswith(epic["id"] + ".")]
-            related = [epic, *children]
-            waiting = decisions.waiting(epic, related, topic["ts"])
-            signal = feature_board.summary(json.dumps([BOARD_FORMAT, [
-                {k: c.get(k) for k in ("id", "updated_at", "status", "comment_count")}
-                for c in sorted([epic, *children], key=lambda c: c["id"])], waiting], sort_keys=True))
+            signal, waiting = board_signal(epic, cards, topic.get("board_children", []), decisions, topic["ts"])
             if topic.get("board_signal") == signal:
                 st["boards"]["cursor"] = key
                 continue
@@ -556,14 +566,18 @@ def refresh_boards(conf: Conf, st: dict, deadline: float, dry=False) -> list:
                 topic.pop("board_pending", None)
                 pending = {}
             estimate = topic.get("board_cost", min(2.0, BOARD_BUDGET_S / 3))
-            if time.monotonic() + estimate >= deadline:
+            if attempted and time.monotonic() + estimate >= deadline:
+                log(conf, f"현황판 건너뜀: {epic['id']} 예상 {estimate:.3f}초 > 남은 {max(0, deadline - time.monotonic()):.3f}초")
                 break
+            attempted = True
             before = time.monotonic()
             cached_cost = pending.get("cost", 0)
             text = pending.get("text")
             if not text:
                 all_children = reader.query("list", "--parent", epic["id"], "--all", "--limit", "0", "--brief")
-                all_children = [c for c in all_children if c["id"].startswith(epic["id"] + ".")]
+                all_children = [c for c in all_children if c["id"] != epic["id"]]
+                topic["board_children"] = [c["id"] for c in all_children]
+                signal, waiting = board_signal(epic, cards, topic["board_children"], decisions, topic["ts"])
                 snapshot = reader.snapshot(epic, all_children)
                 text = feature_board.compose(snapshot, snapshot.epic, snapshot.cards[1:], waiting)
             topic["board_pending"] = dict(signal=signal, text=text, cost=cached_cost or time.monotonic() - before)
@@ -584,14 +598,13 @@ def refresh_boards(conf: Conf, st: dict, deadline: float, dry=False) -> list:
             topic.pop("board_pending", None)
             st["boards"]["cursor"] = key
         except feature_board.BudgetExpired:
-            paused = True
-            st["boards"]["cursor"] = previous
-            break
+            st["boards"]["cursor"] = key
+            log(conf, f"현황판 건너뜀: {key[5:]} 읽기 {time.monotonic() - before:.3f}초 > 상한 {deadline - before:.3f}초 (회차 {budget:.3f}초)")
         except NotifyError as err:
             if not err.counts:
-                paused = True
-                st["boards"]["cursor"] = previous
-                break
+                st["boards"]["cursor"] = key
+                log(conf, f"현황판 건너뜀: {key[5:]} 읽기 {time.monotonic() - before:.3f}초 > 상한 {deadline - before:.3f}초 (회차 {budget:.3f}초)")
+                continue
             if any(code in str(err) for code in UPDATE_DEAD_ERRORS):
                 topic["update_dead"] = True
             topic["board_fails"] = min(topic.get("board_fails", 0) + 1, conf.fail_limit)
@@ -604,8 +617,9 @@ def refresh_boards(conf: Conf, st: dict, deadline: float, dry=False) -> list:
         finally:
             if not dry:
                 save_state(conf.state, st)
-            if before is not None and not paused:
-                topic["board_cost"] = max(topic.get("board_cost", 0), cached_cost + time.monotonic() - before)
+            if before is not None:
+                elapsed = cached_cost + time.monotonic() - before
+                topic["board_cost"] = topic.get("board_cost", elapsed) * (1 - BOARD_COST_WEIGHT) + elapsed * BOARD_COST_WEIGHT
     if not dry:
         save_state(conf.state, st)
     return lines

@@ -33,8 +33,9 @@ class BoardParentTests(unittest.TestCase):
                       "a=sys.argv[3:-1]\n"
                       "with (Path(__file__).parent/'queries').open('a') as f: f.write(json.dumps(a)+'\\n')\n"
                       "if a[0]=='show':\n"
-                      " for c in [d['epic'],*d['kids']]: print(json.dumps([c|{'comments':d['comments']}]))\n"
-                      "elif '--parent' in a: print(json.dumps(d['kids']))\n"
+                      " for c in [d['epic'],*d['kids']]:\n"
+                      "  if c['id'] in a[1:]: print(json.dumps([c|{'comments':d['comments']}]))\n"
+                      "elif '--parent' in a: print(json.dumps([c for c in d['kids'] if c.get('parent')==d['epic']['id'] or c['id'].startswith(d['epic']['id']+'.')]))\n"
                       "else: print(json.dumps([c for c in [d['epic'],*d['kids']] if c.get('status')!='closed']))\n")
         bd.chmod(0o755)
         notify = self.root / "notify"
@@ -129,7 +130,7 @@ class BoardParentTests(unittest.TestCase):
             self.assertTrue(self.state["topics"]["card:lrm-test"]["board_skip"])
         with patch.object(fb.BdReader, "query") as query:
             self.refresh()
-            query.assert_not_called()
+            query.assert_called_once_with("list", "--limit", "0", "--brief")
         self.state["topics"]["card:lrm-test"]["shared"] = "lrm-parent"
         with patch.object(fb.BdReader, "query") as query:
             self.refresh()
@@ -213,6 +214,99 @@ class BoardParentTests(unittest.TestCase):
         self.refresh()
         self.assertIn("하위 카드 1/1 완료", self.calls()[-1][-1])
 
+    def test_skip_reason_is_logged_once_and_rechecked_after_reopen(self):
+        topic = self.state["topics"]["card:lrm-test"]
+        for changes in ({"status": "closed"}, {"labels": ["flow:v1", "feature:test"]}):
+            self.epic.update(changes)
+            self.write_data()
+            self.refresh()
+            reason = topic["board_skip"]
+            before = Path(self.conf.log).read_text().count(reason)
+            self.refresh()
+            self.assertEqual(before, Path(self.conf.log).read_text().count(reason))
+            self.epic.update(status="open", labels=["flow:v1", "feature:test", "slack-thread:123.456"])
+            self.write_data()
+            self.refresh()
+            self.assertNotIn("board_skip", topic)
+        self.assertEqual(1, len(self.calls()))
+
+    def test_nonflow_epic_and_flow_epic_have_disjoint_parent_owners(self):
+        rep = dict(kind="info", hub="feat-test", card="lrm-test", task="C1")
+        self.epic["description"] = "무엇: 진행 기록 자동 표시\n왜: 중복 갱신 방지"
+        for flow in (False, True):
+            self.epic["labels"] = ["feature:test", "slack-thread:123.456"] + (["flow:v1"] if flow else [])
+            self.conf.cards.clear()
+            self.state["topics"]["card:lrm-test"]["fmt"] = "old"
+            self.write_data()
+            count = len(self.calls())
+            sender.refresh_parent(self.conf, rep, self.state, time.monotonic() + 10)
+            self.assertEqual(count + int(not flow), len(self.calls()))
+            self.refresh()
+            self.assertEqual(count + 1, len(self.calls()))
+            self.assertEqual("--kind" in self.calls()[-1], not flow)
+
+    def test_nonprefix_child_is_rendered_and_future_changes_trigger_refresh(self):
+        self.kids[0]["id"] = "external-child"
+        self.write_data()
+        self.refresh()
+        topic = self.state["topics"]["card:lrm-test"]
+        self.assertEqual(["external-child"], topic["board_children"])
+        self.assertIn("첫 작업", self.calls()[-1][-1])
+        self.kids[0].update(title="이름 바뀐 하위", updated_at="2026-11-23T04:00:00Z")
+        self.write_data()
+        self.refresh()
+        self.assertEqual(2, len(self.calls()))
+        self.assertIn("이름 바뀐 하위", self.calls()[-1][-1])
+
+    def slow_pair(self):
+        cards = [self.epic | {"id": cid, "title": cid} for cid in ("lrm-fast", "lrm-slow")]
+        self.data.write_text(json.dumps(cards))
+        for card in cards:
+            (self.root / (card["id"] + ".json")).write_text(json.dumps([card | {"comments": []}]))
+        delay = self.root / "delay"
+        delay.write_text("1.5")
+        Path(self.conf.bd).write_text('#!/bin/sh\nrootdir=${0%/*}\n'
+                                     'case "$3" in\n'
+                                     ' list) case "$*" in *--parent*) printf "[]";; *) cat "$rootdir/data.json";; esac;;\n'
+                                     ' show) if [ "$4" = lrm-slow ]; then sleep "$(cat "$rootdir/delay")"; fi; cat "$rootdir/$4.json";;\nesac\n')
+        self.state["topics"] = {"card:" + card["id"]: {"ts": f"123.{i}"} for i, card in enumerate(cards)}
+        fb.Decisions(self.conf.sent).waiting(cards[0], [], "123.0")
+        fb.BdReader(self.board, self.conf.bd).stages()
+        return delay
+
+    def test_slow_first_does_not_block_next_feature_next_round(self):
+        self.slow_pair()
+        self.state["boards"]["cursor"] = "card:lrm-fast"
+        with patch.object(sender, "BOARD_BUDGET_S", 1.0):
+            self.refresh()
+            self.assertEqual([], self.calls())
+            self.assertEqual("card:lrm-slow", self.state["boards"]["cursor"])
+            self.assertIn("lrm-slow 읽기", Path(self.conf.log).read_text())
+            self.refresh()
+            self.assertEqual(1, len(self.calls()))
+            self.assertTrue(self.state["topics"]["card:lrm-fast"].get("fmt"))
+
+    def test_slow_read_logs_rotates_and_recovers_when_it_becomes_fast(self):
+        delay = self.slow_pair()
+        with patch.object(sender, "BOARD_BUDGET_S", 1.0):
+            for turn in range(4):
+                self.refresh()
+                self.assertEqual(1, len(self.calls()))
+                self.assertTrue(self.state["topics"]["card:lrm-fast"].get("fmt"))
+                self.assertEqual("card:lrm-slow", self.state["boards"]["cursor"])
+            log = Path(self.conf.log).read_text()
+            self.assertEqual(4, log.count("lrm-slow 읽기"))
+            slow = self.state["topics"]["card:lrm-slow"]
+            self.assertGreater(slow["board_cost"], 0)
+            self.assertEqual(0, slow.get("board_fails", 0))
+            slow["board_cost"] = 100
+            delay.write_text("0")
+            self.refresh()
+            self.assertEqual(2, len(self.calls()))
+            self.assertLess(slow["board_cost"], 100)
+            self.assertTrue(slow["fmt"].startswith("2:"))
+        print("느린 읽기 1.5초/상한 1초: 빠른 기능 첫 회차 갱신, 4회 건너뜀 기록, 회복 다음 회차 갱신")
+
     def test_permanent_rejection_backs_off_before_next_board_read(self):
         topic = self.state["topics"]["card:lrm-test"]
         for attempt in (1, 2):
@@ -231,10 +325,9 @@ class BoardParentTests(unittest.TestCase):
         for changed in (False, True):
             topic.pop("board_signal", None)
             topic["fmt"] = "old"
-            cursor = self.state["boards"].get("cursor", "") if "boards" in self.state else ""
             with patch.object(sender, "run_notify", side_effect=sender.NotifyError("예산 초과", counts=False)):
                 self.refresh()
-            self.assertEqual(cursor, self.state["boards"].get("cursor", ""))
+            self.assertEqual("card:lrm-test", self.state["boards"]["cursor"])
             self.assertEqual(0, topic.get("board_fails", 0))
             self.assertEqual(0, topic.get("board_next", 0))
             self.assertIn("text", topic["board_pending"])
@@ -275,7 +368,9 @@ class BoardParentTests(unittest.TestCase):
     def test_ten_unchanged_features_need_only_one_list_query(self):
         cards = [self.epic | {"id": f"lrm-same{i}", "title": f"기능 {i}"} for i in range(10)]
         self.state["topics"] = {"card:" + c["id"]: {"ts": f"123.{i}"} for i, c in enumerate(cards)}
-        with patch.object(fb.BdReader, "query", return_value=cards):
+        def query(*args):
+            return [] if "--parent" in args else cards
+        with patch.object(fb.BdReader, "query", side_effect=query):
             self.refresh()
         self.assertEqual(10, len(self.calls()))
         with patch.object(fb.BdReader, "query", return_value=cards) as query, \
