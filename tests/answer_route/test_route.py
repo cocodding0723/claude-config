@@ -224,6 +224,24 @@ class UnitRoute(Base):
         self.assertIn("alpha 허브에 전달하지 못해 대리 전달: terminal_handle_stale", self.main_calls[0])
         self.assertIn(f"사용자 원문: {BODY} (출처: Slack)", self.main_calls[0])
 
+    def test_result_text_says_whether_a_session_was_reached(self):
+        """로그·경고 문구: 세션에 닿았을 때만 '전달 성공'. 메인 기록만 됐으면 닿지 않았다고 분명히 적음(11-19 '메인 전달 성공' 오해)"""
+        O = self.route_mod.Outcome
+        self.assertEqual(O(True, "ws", "lrm-1").result(), "작업 카드 lrm-1 세션 전달 성공")
+        self.assertEqual(O(True, "hub", "alpha").result(), "허브 alpha 전달 성공")
+        main = O(True, "main").result()
+        self.assertIn("받을 세션 없음", main)
+        self.assertIn("메인 확인 카드", main)
+        self.assertNotIn("전달 성공", main)
+        proxy = O(True, "proxy", "alpha", "alpha 허브 전송 실패(terminal_handle_stale)").result()
+        self.assertIn("세션에 닿지 않음", proxy)
+        self.assertIn("terminal_handle_stale", proxy)
+        self.assertNotIn("전달 성공", proxy)
+        self.assertIn("메인 대리 기록", O(True, "main", "lrm-1", "작업 카드 lrm-1 세션 전달 실패(OSError)").result())
+        self.assertIn("도착 여부 불명", O(False, "unknown", "alpha").result())
+        self.assertIn("전달 실패", O(False, "lost", "alpha").result())
+        self.assertIn("전달 실패", O(False, "main").result())
+
     def test_proxy_also_failing_is_lost(self):
         self.map_decision()
         out = self.router("failed", main_ok=False).route("D-0001", "1.1", "slack", BODY)

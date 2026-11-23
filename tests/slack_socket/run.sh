@@ -204,7 +204,7 @@ SUB='{"at":0.9,"type":"interactive","envelope_id":"i3","payload":{"type":"view_s
 EVB="$(act 0.4 i1 $ME pick_2 'D-T1|2' '2. B 안'),$(act 0.6 i2 $ME custom 'D-T1|custom' '직접 입력'),$SUB,$(act 1.2 i4 Uother9 pick_1 'D-T1|1' '1. A')"
 mkdir -p "$SB/s20/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/s20/hub/main.env"
 start s20 "{\"events\":[$EVB],\"history\":[$MSG]}" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s20/orca.calls"
-waitfor s20 out '결정 D-T1 버튼 답 기록 · 메인 전달 성공' 4 && sleep 0.8
+waitfor s20 out '결정 D-T1 버튼 답 기록 · 받을 세션 없음 → 메인 확인 카드' 4 && sleep 0.8
 [ "$(count s20 calls ' ack 1 i[1-4]')" = 4 ] && ok "버튼·모달 요청 모두 ack" || ko "버튼 ack" "$(count s20 calls ' ack 1 i')"
 grep -q 'web chat_update .*✅ 2. B 안 선택됨' "$SB/s20/calls" && ! grep -q 'web chat_update .*"type": "actions"' "$SB/s20/calls" && ok "선택 → 카드를 '✅ 선택됨'으로 갱신·버튼 제거" || ko "카드 갱신" "$(grep 'web chat_update' "$SB/s20/calls" | head -1 | cut -c1-200)"
 grep -q 'web views_open .*"callback_id": "lrm_custom"' "$SB/s20/calls" && ok "'직접 입력' → 모달 열기" || ko "모달" ""
@@ -261,11 +261,11 @@ for n in s23 s24; do
   printf '{"decision_id":"D-T1","hub":"alpha"}\n' > "$SB/$n/hub/hub-reports.jsonl"
 done
 start s23 "{\"events\":[$(act 0.4 i1 $ME pick_2 'D-T1|2' '2. B 안')]}" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s23/orca.calls" HUB_PROC_TABLE="$SB/none"
-waitfor s23 out '결정 D-T1 버튼 답 기록 · 허브 alpha hub 전달 성공' 6
+waitfor s23 out '결정 D-T1 버튼 답 기록 · 허브 alpha 전달 성공' 6
 grep -q -- '--terminal term-hub1 --text 사용자 원문: 결정 D-T1 = 선택 2(B 안) (버튼) (출처: Slack)' "$SB/s23/orca.calls" && grep -q '"text":"\[Slack→메인 참고\] alpha 허브에 직접 전달함' "$SB/s23/hub/hub-inbox/main.jsonl" && ! grep -q -- '--terminal term-main' "$SB/s23/orca.calls" && ! grep -q '"text":"\[Slack→메인\] 결정' "$SB/s23/hub/hub-inbox/main.jsonl" && ok "허브 기록 있음 → 허브에 '사용자 원문: … (출처: Slack)' 직접 전달·메인엔 참고 한 줄만" || ko "허브 직접 전달" "$(cut -c1-140 "$SB/s23/orca.calls" 2>/dev/null)"
 stop s23
 start s24 "{\"events\":[$(act 0.4 i1 $ME pick_2 'D-T1|2' '2. B 안')]}" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s24/orca.calls" HUB_PROC_TABLE="$SB/none" FAKE_HUB_FAIL=1
-waitfor s24 out '결정 D-T1 버튼 답 기록 · 허브 alpha proxy 전달 성공' 6
+waitfor s24 out '결정 D-T1 버튼 답 기록 · 세션에 닿지 않음 → 메인 대리 기록' 6
 grep -q '"text":"\[Slack→메인\] (alpha 허브에 전달하지 못해 대리 전달: terminal_handle_stale) 사용자 원문: 결정 D-T1 = 선택 2(B 안) (버튼) (출처: Slack)' "$SB/s24/hub/hub-inbox/main.jsonl" && ! grep -q -- '--terminal term-main' "$SB/s24/orca.calls" && [ "$(grep -c -- '--terminal term-hub1 --text' "$SB/s24/orca.calls")" = 1 ] && ok "허브 전송 실패 → 메인에 원문 대리 전달(허브 재전송 없음)" || ko "대리 전달" "$(cut -c1-160 "$SB/s24/orca.calls" 2>/dev/null)"
 stop s24
 
@@ -282,7 +282,7 @@ mkdir -p "$SB/s26/hub"; printf 'MAIN_TERMINAL=term-main\n' > "$SB/s26/hub/main.e
 printf '%s\n' '{"type":"button","parent_ts":"1794383274.541929","decision_id":"D-T1","kind":"decide","option_text":"2. B 안","action":"pick","pick":2,"source":"slack"}' > "$SB/s26/hub/slack-inbox.jsonl"
 printf '%s\n' '{"decision_id":"D-T1","parent_ts":"1794383274.541929","state":"pending","ok":null,"at":1}' > "$SB/s26/hub/answer-delivery.jsonl"
 start s26 "{\"events\":[$(act 0.4 i1 $ME pick_1 'D-T1|1' '1. A 안'),$(act 0.8 i2 $ME pick_1 'D-T1|1' '1. A 안')]}" LRM_ORCA="$SB/fake_orca.sh" LRM_PUSH_MAIN=/fake/main FAKE_ORCA_LOG="$SB/s26/orca.calls"
-waitfor s26 out '원문 다시 전달' 4 && waitfor s26 out '결정 D-T1 버튼 답 기록 · 메인 전달 성공' 4 && sleep 0.5
+waitfor s26 out '원문 다시 전달' 4 && waitfor s26 out '결정 D-T1 버튼 답 기록 · 받을 세션 없음 → 메인 확인 카드' 4 && sleep 0.5
 [ "$(grep -c 'D-T1 = 선택 2(B 안)' "$SB/s26/hub/hub-inbox/main.jsonl")" = 1 ] && ! grep -q 'D-T1 = 선택 1' "$SB/s26/hub/hub-inbox/main.jsonl" && grep -q '이전 답의 전달 기록이 없어 다시 전달함' "$SB/s26/calls" && ok "전달 기록 없는 이전 답 → 늦은 클릭이 원문을 1회만 다시 전달·안내" || ko "재전달" "$(cut -c1-160 "$SB/s26/hub/hub-inbox/main.jsonl" 2>/dev/null)"
 stop s26
 
