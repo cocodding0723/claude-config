@@ -27,6 +27,9 @@ SIZES = {SMALL: "작음", NORMAL: "보통", LARGE: "큼"}
 PLAN_HEAD = "D-PLAN"
 ID_BODY_MAX = 16 - len("PLAN")  # 결정 번호는 D- 뒤 16자까지(hub_report.DECISION_ID_RE)
 APPROVE_WORD = "승인"            # 계획 승인 카드의 1번 선택지는 이 말로 시작
+REVIEW_HEAD = "D-REVW"           # 검수 결정 번호 머리글자. D-PLAN 과 겹치지 않음. 몸통 길이는 PLAN 과 같아 ID_BODY_MAX 공용
+PASS_WORD = "통과"               # 검수 결정 카드의 1번 선택지는 이 말로 시작
+REVIEW_LABEL = "review:v1"       # 검수 단계로 넘어갈 때(board-done --epic) 붙음. 이 표시가 있는 기능만 통과 답을 Slack 기록과 대조
 USER_SOURCES = ("slack", "docsite")  # 사용자가 직접 누른 답만. 터미널 기록은 코디네이터가 쓸 수 있음
 POLLED_TYPES = ("reaction", "thread_reply")  # 폴러가 Slack 에서 읽어 온 사용자 반응·카드 스레드 글(출처 칸 없이 기록됨)
 SENT_NAME, INBOX_NAME = "slack-sent.jsonl", "slack-inbox.jsonl"
@@ -199,13 +202,22 @@ def size_of(epic: "dict | None") -> str:
     return v if v in SIZES else ""
 
 
-def plan_id(card_id: str) -> str:
-    """기능 카드 id → 그 기능의 계획 승인 결정 번호. 번호를 손으로 정하지 않게 해 다른 결정의 승인을 끌어다 쓰지 못하게 함.
-    길어서 자르면 다른 기능과 겹칠 수 있어 앞 6자 + id 지문 6자로 만듦"""
+def decision_id(head: str, card_id: str) -> str:
+    """머리글자 + 기능 카드 id → 결정 번호. 길어서 자르면 다른 기능과 겹칠 수 있어 앞 6자 + id 지문 6자로 만듦"""
     body = re.sub(r"[^A-Za-z0-9]", "", card_id or "").upper()
     if len(body) > ID_BODY_MAX:
         body = body[:6] + hashlib.sha1(card_id.encode()).hexdigest()[:6].upper()
-    return PLAN_HEAD + body
+    return head + body
+
+
+def plan_id(card_id: str) -> str:
+    """기능 카드 id → 그 기능의 계획 승인 결정 번호. 번호를 손으로 정하지 않게 해 다른 결정의 승인을 끌어다 쓰지 못하게 함"""
+    return decision_id(PLAN_HEAD, card_id)
+
+
+def review_id(card_id: str) -> str:
+    """기능 카드 id → 그 기능의 검수 결정 번호. 계획 승인 번호와 머리글자가 달라 서로의 답을 쓸 수 없음"""
+    return decision_id(REVIEW_HEAD, card_id)
 
 
 def read_jsonl(path: str) -> list:
@@ -229,12 +241,35 @@ def plan_approved(hub_dir: str, did: str) -> bool:
     """계획 승인 카드에 사용자가 승인으로 답했는가. 기록을 못 읽으면 승인 아님.
     답은 가장 최근에 올린 카드(메시지)에 달린 것만 봄: 계획을 고쳐 같은 번호로 다시 올리면 옛 카드의 승인은 새 계획의 승인이 아님.
     그 카드의 답이 여럿이면 가장 최근 것이 기준(승인 뒤 수정 요청으로 바꾸면 승인이 풀림)"""
+    return first_option_picked(hub_dir, did, APPROVE_WORD)
+
+
+def review_passed(hub_dir: str, did: str) -> bool:
+    """검수 결정 카드에 사용자가 통과로 답했는가. 판정 규칙은 계획 승인과 같음(최근 카드의 최근 사용자 답이 1번 '통과')"""
+    return first_option_picked(hub_dir, did, PASS_WORD)
+
+
+def first_option_picked(hub_dir: str, did: str, word: str) -> bool:
+    """그 번호의 가장 최근 카드 1번 선택지가 word 로 시작하고, 그 카드에 사용자가 낸 가장 최근 답이 1번인가"""
     card = last_card(hub_dir, did)
-    if card is None or not card.get("ts") or not str(card["options"].get("1", "")).strip().startswith(APPROVE_WORD):
+    if card is None or not card.get("ts") or not str(card["options"].get("1", "")).strip().startswith(word):
         return False
     last = last_answer(hub_dir, did, card)
-    # 추천대로(approve)도 pick 에 추천 번호가 들어 있음. 1번(승인)일 때만 승인
+    # 추천대로(approve)도 pick 에 추천 번호가 들어 있음. 1번일 때만 인정
     return last is not None and last["action"] in ("pick", "approve") and last.get("pick") == 1
+
+
+def review_block(epic: "dict | None", hub_dir: str) -> str:
+    """검수 통과 답(--user-ok)을 받아 주면 안 되는 이유(원인 — 조치). 받아도 되면 ''.
+    검수 단계로 넘어갈 때 REVIEW_LABEL 이 붙은 기능만 대조함. 표시 없는 옛 기능은 이미 검수 카드를 번호 없이 올렸을 수 있어 막지 않음(경고는 호출자)"""
+    if REVIEW_LABEL not in labels(epic):
+        return ""
+    did = review_id(str((epic or {}).get("id") or ""))
+    if review_passed(hub_dir, did):
+        return ""
+    return (f"기능 {epic['id']} 의 검수 결정 카드 {did} 에 사용자의 통과 답(1번)이 Slack 기록에 없음 — 검수 결정 카드를 번호 {did}, "
+            f"1번 선택지 '{PASS_WORD}'(2번 '고칠 점 있음')으로 올리고 사용자가 1번을 누른 뒤 다시 실행. "
+            f"번호는 board-stage {epic['id']} 가 보여 줌. 사용자가 코디네이터 창에 '통과'라고 직접 쳤으면 --user-ok-typed")
 
 
 def last_card(hub_dir: str, did: str) -> "dict | None":

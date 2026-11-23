@@ -40,6 +40,13 @@ expect "작음에서 보통으로 올리기는 그냥 됨" 0 "$BIN" "$E" build c
 [ "$RC" = 0 ] && grep -q '3 구현' "$SB/out" && grep -q '보통' "$SB/out" && grep -q '계획 승인: 됨' "$SB/out" && ok "단계만 물으면 지금 단계·크기·계획 승인 여부를 보여 줌" || ko "조회" "rc=$RC $(cat "$SB/out")"
 "$BIN" "$E" --json >"$SB/out" 2>&1
 [ "$(jq -r '[.stage,.size,(.plan_approved|tostring),.plan_id]|join(",")' "$SB/out")" = "build,normal,true,$(planid "$E")" ] && ok "--json 조회" || ko "json" "$(cat "$SB/out")"
+RID=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import board_flow; print(board_flow.review_id(sys.argv[2]))' "$LIB" "$E")
+[ "$(jq -r '[.review_id,(.review_passed|tostring)]|join(",")' "$SB/out")" = "$RID,false" ] && ok "조회가 검수 결정 번호와 통과 여부(아직 안 됨)를 보여 줌" || ko "검수 번호 json" "$(cat "$SB/out")"
+printf '{"decision_id":"%s","ts":"7.1","form_kind":"decide","options":{"1":"통과","2":"고칠 점 있음"}}\n' "$RID" >> "$LRM_HUB_DIR/slack-sent.jsonl"
+printf '{"type":"button","decision_id":"%s","parent_ts":"7.1","action":"pick","pick":1,"source":"slack"}\n' "$RID" >> "$LRM_HUB_DIR/slack-inbox.jsonl"
+"$BIN" "$E" --json >"$SB/out" 2>&1
+[ "$(jq -r '.review_passed|tostring' "$SB/out")" = "true" ] && ok "사용자가 1번을 누르면 검수 통과로 보임" || ko "검수 통과 json" "$(cat "$SB/out")"
+"$BIN" "$E" >"$SB/out" 2>&1; grep -q "검수 통과: 됨 ($RID" "$SB/out" && ok "글 출력에도 검수 결정 번호가 나옴" || ko "검수 번호 글" "$(cat "$SB/out")"
 bd label add "$E" stage:review >/dev/null 2>&1; bd label remove "$E" stage:build >/dev/null 2>&1
 expect "검수 대기 중인 기능의 단계는 건드리지 않음(2)" 2 "$BIN" "$E" build co
 S=$(bd create "[LRM-2] 문구 수정" -t epic --labels "feature:txt,flow:v1" -d $'- 목표: 문구 오타가 고쳐진다\n- 확인 방법: 화면 캡처' --json | jq -r .id)

@@ -103,6 +103,24 @@ STAGE_CASES = [
     ("옛 방식 기능도 단계 표시는 할 수 있고 막지 않음", feature(drop=("flow:v1", "size:normal"), desc=""), "build", False, False),
 ]
 
+REVIEW = "D-REVWLRMSPN"
+REVIEW_SENT = {"decision_id": REVIEW, "ts": "1.1", "form_kind": "decide", "options": {"1": "통과", "2": "고칠 점 있음"}}
+REVIEW_AGAIN = {**REVIEW_SENT, "ts": "2.2"}
+
+# (설명, 보낸 기록들, 받은 기록들, 통과로 보나)
+REVIEW_CASES = [
+    ("Slack 버튼으로 1번(통과)", [REVIEW_SENT], [answer(REVIEW)], True),
+    ("답 없음", [REVIEW_SENT], [], False),
+    ("2번(고칠 점 있음)", [REVIEW_SENT], [answer(REVIEW, pick=2)], False),
+    ("통과 뒤 고칠 점으로 바꿈(최근 답이 기준)", [REVIEW_SENT], [answer(REVIEW), answer(REVIEW, pick=2)], False),
+    ("다시 올린 카드에는 옛 카드의 통과를 쓰지 않음", [REVIEW_SENT, REVIEW_AGAIN], [answer(REVIEW)], False),
+    ("다시 올린 카드에 통과", [REVIEW_SENT, REVIEW_AGAIN], [answer(REVIEW), answer(REVIEW, parent="2.2")], True),
+    ("사용자가 아닌 답(터미널)", [REVIEW_SENT], [answer(REVIEW, source="terminal")], False),
+    ("1번이 '통과'가 아닌 카드는 검수 카드가 아님", [{**REVIEW_SENT, "options": {"1": "승인", "2": "통과"}}], [answer(REVIEW)], False),
+    ("계획 승인 번호의 답은 검수 통과가 아님", [REVIEW_SENT, {**SENT_OK}], [answer(PLAN)], False),
+    ("보낸 기록 없음", [], [answer(REVIEW)], False),
+]
+
 
 class FlowTest(unittest.TestCase):
     def test_which_stage_moves_are_blocked(self):
@@ -139,6 +157,28 @@ class FlowTest(unittest.TestCase):
     def test_missing_records_mean_not_approved(self):
         with tempfile.TemporaryDirectory(prefix="cc-flow-") as d:
             self.assertFalse(bf.plan_approved(d, PLAN))
+
+    def test_review_decision_id_is_derived_and_does_not_collide_with_plan(self):
+        self.assertEqual(bf.review_id("lrm-spn"), REVIEW)
+        self.assertNotEqual(bf.review_id("lrm-spn"), bf.plan_id("lrm-spn"))
+        long_id = "tutorial-coaching-off-1-2"
+        self.assertLessEqual(len(bf.review_id(long_id)) - 2, 16)
+        self.assertNotEqual(bf.review_id(long_id), bf.review_id(long_id + "x"))
+
+    def test_what_counts_as_review_pass(self):
+        for name, sent, inbox, want in REVIEW_CASES:
+            with self.subTest(name), tempfile.TemporaryDirectory(prefix="cc-flow-") as d:
+                for fname, rows in (("slack-sent.jsonl", sent), ("slack-inbox.jsonl", inbox)):
+                    with open(os.path.join(d, fname), "w", encoding="utf-8") as f:
+                        f.write("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows))
+                self.assertEqual(bf.review_passed(d, REVIEW), want)
+
+    def test_only_marked_features_need_the_review_card(self):
+        with tempfile.TemporaryDirectory(prefix="cc-flow-") as d:
+            why = bf.review_block(epic(bf.REVIEW_LABEL), d)
+            self.assertIn(REVIEW, why)
+            self.assertIn("--user-ok-typed", why)
+            self.assertEqual(bf.review_block(epic(), d), "")  # 표시 없는 옛 기능은 막지 않음
 
     def test_stage_names_are_in_order_and_review_keeps_its_old_label(self):
         self.assertEqual([s.key for s in bf.STAGES], ["intake", "understand", "design", "build", "verify", "review", "ship"])
