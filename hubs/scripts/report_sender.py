@@ -562,8 +562,7 @@ def refresh_boards(conf: Conf, st: dict, deadline: float, dry=False) -> list:
             cached_cost = pending.get("cost", 0)
             text = pending.get("text")
             if not text:
-                all_children = ([] if epic.get("dependent_count") == 0 else
-                                reader.query("list", "--parent", epic["id"], "--all", "--limit", "0", "--brief"))
+                all_children = reader.query("list", "--parent", epic["id"], "--all", "--limit", "0", "--brief")
                 all_children = [c for c in all_children if c["id"].startswith(epic["id"] + ".")]
                 snapshot = reader.snapshot(epic, all_children)
                 text = feature_board.compose(snapshot, snapshot.epic, snapshot.cards[1:], waiting)

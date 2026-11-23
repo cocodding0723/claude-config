@@ -206,6 +206,13 @@ class BoardParentTests(unittest.TestCase):
         queries = [json.loads(line) for line in (self.root / "queries").read_text().splitlines()]
         self.assertEqual(4, len(queries))
 
+    def test_zero_dependency_count_does_not_hide_closed_children(self):
+        self.epic["dependent_count"] = 0
+        self.kids[0]["status"] = "closed"
+        self.write_data()
+        self.refresh()
+        self.assertIn("하위 카드 1/1 완료", self.calls()[-1][-1])
+
     def test_permanent_rejection_backs_off_before_next_board_read(self):
         topic = self.state["topics"]["card:lrm-test"]
         for attempt in (1, 2):
@@ -242,21 +249,19 @@ class BoardParentTests(unittest.TestCase):
         self.assertIn("신호 변경 뒤 새 기록", self.calls()[-1][-1])
 
     def test_five_slow_features_obey_cap_and_rotate_without_starvation(self):
-        cards = [self.epic | {"id": f"lrm-slow{i}", "title": f"기능 {i}", "dependent_count": 0} for i in range(5)]
+        cards = [self.epic | {"id": f"lrm-slow{i}", "title": f"기능 {i}"} for i in range(5)]
         self.data.write_text(json.dumps(cards))
-        Path(self.conf.bd).write_text("#!/usr/bin/env python3\nimport json,sys,time\nfrom pathlib import Path\n"
-                                     "time.sleep(0.12)\n"
-                                     "d=json.loads((Path(__file__).parent/'data.json').read_text())\n"
-                                     "if sys.argv[3]=='show':\n"
-                                     " for c in d:\n"
-                                     "  if c['id'] in sys.argv[4:]: print(json.dumps([c|{'comments':[]}]))\n"
-                                     "elif '--parent' in sys.argv: print('[]')\n"
-                                     "else: print(json.dumps(d))\n")
+        for card in cards:
+            (self.root / (card["id"] + ".json")).write_text(json.dumps([card | {"comments": []}]))
+        Path(self.conf.bd).write_text('#!/bin/sh\nsleep 0.12\nrootdir=${0%/*}\n'
+                                     'case "$3" in\n'
+                                     ' list) case "$*" in *--parent*) printf "[]";; *) cat "$rootdir/data.json";; esac;;\n'
+                                     ' show) cat "$rootdir/$4.json";;\nesac\n')
         self.state["topics"] = {"card:" + c["id"]: {"ts": f"123.{i}"} for i, c in enumerate(cards)}
         fb.Decisions(self.conf.sent).waiting(cards[0], [], "123.0")
         fb.BdReader(self.board, self.conf.bd).stages()
         durations = []
-        # 하위 없는 에픽 5개, 모듈 로딩 후 bd당 0.12초 + 프로세스·notify·fsync 측정. 1.2초/3회차는 승인 기준.
+        # bd 대기 0.12초 + notify·fsync 측정. shell 가짜 bd로 실제 Go CLI에 없는 Python 시작 비용 제외.
         with patch.object(sender, "BOARD_BUDGET_S", 1.2):
             for _ in range(3):
                 started = time.monotonic()
