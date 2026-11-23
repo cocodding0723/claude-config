@@ -15,6 +15,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import hub_report as report
 from board_sweep import read_table
+from feature_board import BdReader
 
 
 class BudgetExpired(Exception):
@@ -29,6 +30,8 @@ class Mirror:
         self.state = self.home / "board-mirror.state.json"
         self.outbox = report.outbox_path()
         self.deadline = time.monotonic() + float(self.cfg["budget_sec"])
+        # 현황판과 같은 순서(BOARD_BD → PATH → 대체 경로). launchd 의 짧은 PATH 대비
+        self.bd_path = BdReader().bd
 
     def remaining(self):
         left = self.deadline - time.monotonic()
@@ -53,7 +56,7 @@ class Mirror:
             f.write(data[-limit:])
 
     def bd(self, *args):
-        p = subprocess.run([os.environ.get("BOARD_BD") or "bd", *args],
+        p = subprocess.run([self.bd_path, *args],
                            cwd=os.path.expanduser(os.environ.get("BOARD_DIR") or "~/orca/board"),
                            capture_output=True, text=True, timeout=min(float(self.cfg["timeout_sec"]), self.remaining()))
         if p.returncode:
