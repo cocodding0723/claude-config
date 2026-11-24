@@ -10,13 +10,13 @@ hub_error() {
 trap 'hub_error "$?" "$LINENO" "$BASH_COMMAND"' ERR
 REPO="${REPO:-$HOME/orca/LoveRevolutionMaker}"
 WS_ROOT="${WS_ROOT:-$HOME/orca/workspaces/LoveRevolutionMaker}"
-SLUG="" NAME="" PATHS="/docs/ /.claude/ /CLAUDE.md /AGENTS.md" ROLE_FILE="" RESUME="" MODEL="claude-opus-5-5" FORCE=0
+SLUG="" NAME="" PATHS="/docs/ /.claude/ /CLAUDE.md /AGENTS.md" ROLE_FILE="" RESUME="" MODEL="claude-opus-5-5" EFFORT="high" FORCE=0
 BASE="origin/dev" BRANCH="" DRY=0
 # 호출마다 지난 대화를 다시 읽는 비용과 압축 빈도 절충: 기본 40만 토큰. claude 최소값 100000
 AUTOCOMPACT="${LRM_HUB_AUTOCOMPACT:-400000}"
 while [ $# -gt 0 ]; do case "$1" in
   --slug) SLUG="$2"; shift 2;; --name) NAME="$2"; shift 2;; --paths) PATHS="$2"; shift 2;;
-  --role-file) ROLE_FILE="$2"; shift 2;; --resume) RESUME="$2"; shift 2;; --model) MODEL="$2"; shift 2;; --force) FORCE=1; shift;;
+  --role-file) ROLE_FILE="$2"; shift 2;; --resume) RESUME="$2"; shift 2;; --model) MODEL="$2"; shift 2;; --effort) EFFORT="$2"; shift 2;; --force) FORCE=1; shift;;
   --base) BASE="$2"; shift 2;; --branch) BRANCH="$2"; shift 2;; --dry-run) DRY=1; shift;;
   *) echo "알 수 없는 인자: $1" >&2; exit 2;; esac; done
 : "${SLUG:?--slug 필요}" "${NAME:?--name 필요}" "${ROLE_FILE:?--role-file 필요}"
@@ -38,7 +38,7 @@ if [ -n "$BRANCH" ]; then
 else WT_OPT=(--detach); WT_REF="$BASE"; fi
 if [ "$DRY" = 1 ]; then
   [ -d "$HUB" ] && echo "hub=$HUB (있음, 생성 생략)" || echo "hub=$HUB 생성: git worktree add --no-checkout ${WT_OPT[*]:-} $WT_REF / sparse: $PATHS"
-  echo "기동: orca agent launch --agent claude --worktree path:$HUB --model $MODEL --effort high (role: $ROLE_FILE)"
+  echo "기동: orca agent launch --agent claude --worktree path:$HUB --model $MODEL --effort $EFFORT (role: $ROLE_FILE)"
   exit 0
 fi
 if [ ! -d "$HUB" ]; then
@@ -93,7 +93,7 @@ for rule in [f"Read(/{home}/.config/lrm-hubs/slack-bot.env)",
 with open(filename, "w") as target:
     json.dump(settings, target, indent=2)
 PY
-H=$(orca agent launch --agent claude --worktree "path:$HUB" --model "$MODEL" --effort high \
+H=$(orca agent launch --agent claude --worktree "path:$HUB" --model "$MODEL" --effort "$EFFORT" \
   --surface terminal --prompt "$PROMPT" --json | jq -r 'first(.. | objects | .handle? // empty | select(startswith("term_")))')
 : "${H:?agent launch 결과에서 터미널 handle 을 찾지 못함}"
 # 붙여넣기만 되고 제출 안 되는 경우 대비: 최대 5회 확인. 진행 표시(esc to interrupt·Skill 호출)만 제출로 인정
