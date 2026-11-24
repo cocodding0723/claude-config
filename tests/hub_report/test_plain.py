@@ -1,5 +1,6 @@
 """쉬운 말 검사 시험: 바꾸기·수동 보고 거부 문구·백틱 예외·자동 보고 줄 빼기·결정 카드 양식 유지. 임시 폴더만 씀"""
 import os
+import json
 import subprocess
 import sys
 import tempfile
@@ -21,9 +22,9 @@ class PlainWordsTest(unittest.TestCase):
         self.addCleanup(self.dir.cleanup)
         self.box = os.path.join(self.dir.name, "box.jsonl")
 
-    def add(self, text):
+    def add(self, text, *extra):
         env = {**os.environ, "LRM_REPORT_OUTBOX": self.box}
-        return subprocess.run([sys.executable, "-I", SCRIPT, "add", "--hub", "ui-layer", "--task", "C0012", "--kind", "info", "--text", text],
+        return subprocess.run([sys.executable, "-I", SCRIPT, "add", *extra, "--hub", "ui-layer", "--task", "C0012", "--kind", "info", "--text", text],
                               env=env, capture_output=True, text=True)
 
     def test_rewrite_applied_for_every_kind(self):
@@ -39,6 +40,13 @@ class PlainWordsTest(unittest.TestCase):
         self.assertIn("'--no-unity'", r.stderr)
         self.assertIn(" — ", r.stderr)
         self.assertFalse(os.path.exists(self.box))
+
+    def test_cli_auto_drops_lines_instead_of_rejecting(self):
+        r = self.add("주간 집계 완료\n- local-gate 통과(--no-unity)", "--auto")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        rec = json.loads(open(self.box).read().splitlines()[-1])
+        self.assertEqual(rec["text"], "주간 집계 완료")
+        self.assertEqual(rec.get("plain_dropped"), 1)
 
     def test_every_default_reject_pattern(self):
         for bad in ("--force 로 해제", "board-done 통과", "bd close x", "evidence:compile", "ctx_abc 확인", "term_1 확인",

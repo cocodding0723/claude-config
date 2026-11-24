@@ -185,7 +185,7 @@ def harvest(path: str, rows: list, now: float, dry: bool) -> list:
 
 def hub_report_add(card: dict, doc: str, dry: bool) -> tuple:
     """hub_report.py add --kind decide 호출. 반환 (성공, 메시지). 검사 실패 사유는 hub_report 가 '원인 — 조치' 로 돌려줌"""
-    cmd = [sys.executable, HUB_REPORT, "add", "--hub", card["hub"], "--task", card["task"], "--kind", "decide", "--text", card["text"],
+    cmd = [sys.executable, HUB_REPORT, "add", "--auto", "--hub", card["hub"], "--task", card["task"], "--kind", "decide", "--text", card["text"],
            "--options", card["options"], "--recommend", str(card["recommend"]), "--decision-id", card["did"], "--reversible", REVERSIBLE, "--json"]
     cmd += ["--file", doc] if doc else ["--no-doc"]
     if dry:

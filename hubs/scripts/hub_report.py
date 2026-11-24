@@ -666,6 +666,7 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--no-doc", action="store_true", help="(decide) 근거 문서 없는 결정임을 명시. decide 는 --file 없이는 이게 있어야 기록됨")
     a.add_argument("--now", action="store_true", help="기록 직후 전송기를 1회 실행. 다른 전송기가 돌고 있으면 다음 폴러 회차가 올림")
     a.add_argument("--dry-run", action="store_true", help="쓰지 않고 기록될 보고만 출력")
+    a.add_argument("--auto", action="store_true", help="자동 감시기용: 내부 용어 줄을 거부하지 않고 빼서 보냄(뺀 줄 수는 plain_dropped). 사람이 쓰는 보고에는 쓰지 않음")
     a.add_argument("--json", action="store_true", help="결과를 JSON 한 줄로 출력")
     ck = sub.add_parser("check-text", help="본문(표준 입력)의 로컬 경로·첨부 파일 검사", description="알림 스크립트가 부르는 검사. 본문에 로컬 문서·이미지·영상 경로가 있는데 같은 파일이 첨부로 오지 않거나 첨부가 민감 파일이면 종료 코드 2.")
     ck.add_argument("--attached", action="append", default=[], help="이 메시지가 첨부하거나 같은 보고에서 따로 첨부하는 파일(반복 가능)")
@@ -687,7 +688,7 @@ def main(argv=None) -> int:
     try:
         if args.cmd == "add":
             rep = make_report(args.hub, args.task, args.kind, args.text, args.files,
-                              args.options, args.recommend, args.decision_id, args.reversible, args.thread, args.no_doc, args.card, os.path.expanduser(args.ws) if args.ws else None, args.broadcast, args.top)
+                              args.options, args.recommend, args.decision_id, args.reversible, args.thread, args.no_doc, args.card, os.path.expanduser(args.ws) if args.ws else None, args.broadcast, args.top, strict=not args.auto)
             rep["files"] = [resolve_file(f) for f in rep["files"]]
             for f in rep["files"]:
                 if why := file_problem(f):

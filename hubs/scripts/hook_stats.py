@@ -144,12 +144,12 @@ def slack_text(res: dict) -> str:
     first = res["reasons"][0] if res["reasons"] else None
     most = f"{first['reason']} {first['count']}번" if first else "없음"
     return (f"훅 거부 주간 집계: 최근 {res['days']}일 도구 호출 {res['calls']}번 중 {res['denies']}번 거부({res['rate_pct']}%)\n"
-            f"- 가장 많은 사유: {most}\n- 볼 것: hook_stats.py --days {res['days']} 의 사유별 목록에서 막은 사고가 없는 훅을 좁힘")
+            f"- 가장 많은 사유: {most}\n- 볼 것: `hook_stats.py --days {res['days']}` 의 사유별 목록에서 막은 사고가 없는 훅을 좁힘")
 
 
 def report(res: dict, dry: bool) -> int:
     cmd = [sys.executable, os.environ.get("LRM_HUB_REPORT") or HUB_REPORT, "add", "--hub", REPORT_HUB, "--task", REPORT_TASK,
-           "--kind", REPORT_KIND, "--text", slack_text(res)] + (["--dry-run"] if dry else [])
+           "--kind", REPORT_KIND, "--auto", "--text", slack_text(res)] + (["--dry-run"] if dry else [])
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.SubprocessError) as err:
