@@ -281,3 +281,4 @@ hubs/scripts/doc_archive.py	.config/lrm-hubs/doc_archive.py	link
 hubs/docs/doc-archive.md	.config/lrm-hubs/docs/doc-archive.md	link
 hubs/scripts/lib/closed_hubs.sh	.config/lrm-hubs/lib/closed_hubs.sh	link
 hubs/scripts/pr_index.py	.config/lrm-hubs/pr_index.py	link
+hubs/scripts/review_batch_run.sh	.config/lrm-hubs/review_batch_run.sh	link
