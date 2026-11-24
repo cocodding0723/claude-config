@@ -95,13 +95,14 @@ def main():
         die(f"거부: 카드 {a.card} 없음. 조치: bd list -t epic 으로 id 확인", 2)
     if epic.get("issue_type") != "epic":
         die(f"거부: {a.card} 는 기능 카드(epic)가 아님. 조치: 단계는 기능 카드에 적음 — 상위 카드 id 로 다시 실행", 2)
-    did, rid = bf.plan_id(epic["id"]), bf.review_id(epic["id"])
+    did, rid, uid = bf.plan_id(epic["id"]), bf.review_id(epic["id"]), bf.understand_id(epic["id"])
     approved = bf.approval(hub, epic)
 
     if a.stage is None:
         st, size = bf.current(epic), bf.size_of(epic)
         out = {"card": epic["id"], "stage": st.key if st else "", "size": size, "flow": bf.FLOW_LABEL in bf.labels(epic),
                "plan_id": did, "plan_approved": approved(did), "review_id": rid, "review_passed": bf.review_passed(hub, rid),
+               "understand_id": uid, "understand_confirmed": bf.understood(hub, uid),
                "intake_gaps": bf.intake_gaps(epic.get("description") or ""),
                "skips": list(bf.skips(epic))}
         if a.json:
@@ -109,6 +110,7 @@ def main():
         else:
             where = f"{bf.order(st)} {st.name}" if st else "정해지지 않음"
             print(f"단계: {where}\n크기: {bf.SIZES.get(size, '정해지지 않음')}\n계획 승인: {'됨' if out['plan_approved'] else '안 됨'} ({did})\n"
+                  f"이해 확인: {'됨' if out['understand_confirmed'] else '안 됨'} ({uid}, 큰 기능만 검사)\n"
                   f"검수 통과: {'됨' if out['review_passed'] else '안 됨'} ({rid}, 1번 선택지 '{bf.PASS_WORD}')")
             if out["intake_gaps"]:
                 print(f"비어 있는 접수 칸: {', '.join(out['intake_gaps'])}")
