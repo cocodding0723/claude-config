@@ -10,7 +10,7 @@ long_chars	300
 ref_pattern	(?<![\w-])(?:lrm-[\w.-]+|term_[\w-]+|task_[\w-]+|ctx_[\w-]+|[0-9a-f]{7,40})(?![\w-])
 length_format	 (원문 {chars}자)
 title	카드 기록
-overflow_format	새 기록 {count}건 — 상세는 첨부 확인
+records_head	새 기록:
 reference	참고:
 timeout_sec	10
 budget_sec	30
@@ -18,3 +18,18 @@ seen_limit	500
 failure_limit	3
 closed_hours	24
 retention_days	7
+# 글 양식 3줄: 현황(status_line) · 새 기록(records_head) · 참고(reference). 단계 label → 쉬운 이름·사용자 할 일
+status_line	{title} — 지금 {stage} 단계{doing} · 할 일: {todo}
+status_doing	· 진행 중 {count}장({titles})
+status_none	없음
+stage_names	stage:intake=접수,stage:understand=이해,stage:design=설계,stage:build=구현,stage:verify=검증,stage:review=검수,stage:ship=반영
+stage_todo	stage:design=계획 승인 카드에 답(카드가 올라왔을 때),stage:review=검수 카드에 통과·고칠 점 답,stage:ship=병합 승인
+stage_unknown	정해지지 않은
+doing_titles_max	3
+title_chars	30
+# 사용자에게 뜻이 안 닿는 내부 기록 줄(빈 값 포함). 걸리면 그 기록은 Slack 에 보내지 않고 카드에만 남김
+jargon_pattern	(?:local-gate|unclaim|heartbeat|board-(?:claim|done|merge|stage|run)|\bbd (?:update|close|label)|--[a-z][\w-]+|\(head \)|=\s*\.(?:\s|$)|\[said:\])
+overflow_keep	5
+overflow_format	외 {count}건은 작업판 카드 기록에
+# 보내기 전 쉬운 말 바꾸기: 정규식=>바꿀 말, ' ;; ' 로 구분
+rewrite_rules	지시 처리 #(\d+):\s*(\S+)\s*—=>요청 \1 \2: ;; ^지시 #(\d+)=>요청 \1

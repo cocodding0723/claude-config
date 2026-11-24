@@ -26,6 +26,7 @@ class Mirror:
     def __init__(self, policy, dry=False, card=None):
         self.cfg = read_table(policy)
         self.dry, self.card = dry, card
+        self.cards = []
         self.home = Path(os.environ.get("LRM_HUB_DIR") or "~/.config/lrm-hubs").expanduser()
         self.state = self.home / "board-mirror.state.json"
         self.outbox = report.outbox_path()
@@ -96,11 +97,18 @@ class Mirror:
                 return [c for c in cards if c["id"] in selected]
             selected |= added
 
+    def rewrite(self, text):
+        for rule in self.cfg.get("rewrite_rules", "").split(" ;; "):
+            if "=>" in rule:
+                pat, to = rule.split("=>", 1)
+                text = re.sub(pat, to, text, flags=re.M)
+        return text
+
     def clean(self, row):
         text = row.get("text", "").strip()
-        if not text or re.search(self.cfg["skip_pattern"], text):
+        if not text or re.search(self.cfg["skip_pattern"], text) or re.search(self.cfg["jargon_pattern"], text):
             return "", []
-        refs = re.findall(self.cfg["ref_pattern"], text)
+        refs = re.findall(self.cfg["ref_pattern"], re.sub(r"https?://\S+", "", text))
         chars = len(text)
         author = row.get("author", "")
         if author:
@@ -108,7 +116,10 @@ class Mirror:
             text = re.sub(r"^" + re.escape(author) + r"(?:\s*[:：]\s*|\s+)", "", text, count=1)
         if chars > int(self.cfg["long_chars"]) or re.search(self.cfg["brief_pattern"], text):
             text = text.splitlines()[0] + self.cfg["length_format"].format(chars=chars)
-        text = re.sub(self.cfg["ref_pattern"], "", text)
+        # 링크 안 번호(실행 id 등)는 참고 번호로 떼지 않음. 떼면 링크가 깨짐
+        text = "".join(part if i % 2 else re.sub(self.cfg["ref_pattern"], "", part)
+                       for i, part in enumerate(re.split(r"(https?://\S+)", text)))
+        text = self.rewrite(text)
         lines, moved = report.move_refs(text.splitlines())
         body = []
         for line in lines:
@@ -123,6 +134,22 @@ class Mirror:
                     and (q.get("card") == cid or q.get("hub") == self.hub(root))}
         return [r for r in rows if self.clean(r)[0] and r.get("text", "").strip() not in previous]
 
+    def pairs(self, key):
+        return dict(x.split("=", 1) for x in self.cfg[key].split(","))
+
+    def status(self, root):
+        """기능 현황 한 줄: 지금 단계·진행 중 카드·사용자 할 일. 기록 원문 없이도 무엇을 하는지 알게 함"""
+        names, todo = self.pairs("stage_names"), self.pairs("stage_todo")
+        stage = next((x for x in root.get("labels", []) if x in names), "")
+        tree = self.descendants(root, self.cards) if self.cards else [root]
+        doing = [c for c in tree if c["id"] != root["id"] and c.get("status") == "in_progress"]
+        cut = int(self.cfg["title_chars"])
+        titles = ", ".join((c.get("title") or c["id"])[:cut] for c in doing[:int(self.cfg["doing_titles_max"])])
+        return self.cfg["status_line"].format(
+            title=(root.get("title") or root["id"])[:cut], stage=names.get(stage, self.cfg["stage_unknown"]),
+            doing=" " + self.cfg["status_doing"].format(count=len(doing), titles=titles) if doing else "",
+            todo=todo.get(stage, self.cfg["status_none"]))
+
     def enqueue(self, root, card, rows, validate=False):
         texts, refs = [], [card["id"]]
         for row in rows:
@@ -132,8 +159,20 @@ class Mirror:
                 refs.extend(found)
         if not texts:
             return
+        # 양식 3줄 고정: 현황 · 새 기록 · 참고. 첨부로 넘기지 않고 넘치면 오래된 기록부터 뺌
+        # (11-24 사용자: txt 첨부로는 진행 파악 불가)
         ref = self.cfg["reference"] + " " + " · ".join(dict.fromkeys(refs))
-        body = "\n".join([self.cfg["title"], "- " + "; ".join(texts), ref])
+        head = self.status(root)
+        shown = texts[-int(self.cfg["overflow_keep"]):]
+        while True:
+            more = len(texts) - len(shown)
+            line = "- " + self.cfg["records_head"] + " " + "; ".join(shown)
+            if more:
+                line += " " + self.cfg["overflow_format"].format(count=more)
+            body = "\n".join([head, line, ref])
+            if len(body) <= report.MAX_CHARS or len(shown) == 1:
+                break
+            shown = shown[1:]
         # 기존 인라인 코드를 보존. 경로를 다시 감싸면 첨부 검사에서 코드 경계가 깨짐
         body = "".join(part if i % 2 else report.LOCAL_PATH_RE.sub(lambda m: "`" + m[0] + "`", part)
                        for i, part in enumerate(re.split(r"(`[^`\n]*`)", body)))
@@ -141,15 +180,8 @@ class Mirror:
         ids = [str(r["id"]) for r in rows]
         if report.has_secret(body):
             raise ValueError("비밀 값 의심 기록 — 카드에서 값을 제거한 뒤 재시도")
-        if len(body) > report.MAX_CHARS or report.line_gaps_split(body, "info")[0]:
-            digest = hashlib.sha256(json.dumps([card["id"], ids]).encode()).hexdigest()[:20]
-            path = self.home / "board-mirror-files" / (digest + ".txt")
-            files = [str(path)]
-            if not self.dry and not validate:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text("\n".join(texts + [ref]), encoding="utf-8")
-            body = "\n".join([self.cfg["title"], self.cfg["overflow_format"].format(count=len(texts)),
-                               self.cfg["reference"] + " " + card["id"]])
+        if len(body) > report.MAX_CHARS:
+            raise ValueError("현황 글이 상한 초과 — board_mirror.tsv 의 long_chars·title_chars 를 줄임")
         rep = report.make_report(self.hub(root), report.NO_TASK, "info", body, files,
                                  card=root["id"])
         rep.update(mirror_ids=ids, mirror_card=card["id"])
@@ -234,6 +266,7 @@ class Mirror:
             state["_baseline_ids"] = {}
             state["_baseline_tracking_at"] = int(time.time())
         cards = self.bd("list", "--all", "--json", "-n", "0")
+        self.cards = cards
         queued = report.read_outbox(self.outbox)
         features = state.setdefault("_features", [])
         bootstrap = state.setdefault("_bootstrap", {})

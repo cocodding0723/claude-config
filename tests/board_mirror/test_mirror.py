@@ -106,18 +106,62 @@ class MirrorTest(unittest.TestCase):
             self.run_mirror()
         self.assertEqual(3, len(self.queue()))
 
-    def test_overflow_attachment_and_dry_no_write(self):
+    def test_overflow_no_attachment_and_dry_no_write(self):
         self.run_mirror()
-        for _ in range(8):
-            self.add("설명" * 80)
+        for n in range(8):
+            self.add(f"기록{n} " + "설명" * 40)
         before = {p: p.read_bytes() for p in self.home.rglob("*") if p.is_file()}
-        self.assertIn("새 기록 8건", self.run_mirror(True))
+        self.assertIn("작업판 카드 기록에", self.run_mirror(True))
         self.assertEqual(before, {p: p.read_bytes() for p in self.home.rglob("*") if p.is_file()})
         self.run_mirror()
         rep = self.queue()[0]
-        self.assertEqual(1, len(self.queue()))
-        self.assertEqual(8, Path(rep["files"][0]).read_text().count("설명" * 80))
-        self.assertTrue(rep["staged"])
+        self.assertEqual([], rep["files"])
+        self.assertEqual(3, len(rep["text"].splitlines()))
+        self.assertLessEqual(len(rep["text"]), bm.report.MAX_CHARS)
+        self.assertIn("기록7", rep["text"])
+        self.assertNotIn("기록0 ", rep["text"])
+        self.assertEqual(8, len(rep["mirror_ids"]))
+
+    def test_status_line_stage_doing_todo(self):
+        self.run_mirror()
+        self.root["labels"].append("stage:review")
+        self.cards.append(dict(id="lrm-test.2", parent="lrm-test", status="in_progress", title="셔터 색 맞춤", labels=[]))
+        self.rows["lrm-test.2"] = []
+        self.add("관련 시험 통과")
+        self.run_mirror()
+        head = self.queue()[0]["text"].splitlines()[0]
+        self.assertEqual("시험 기능 — 지금 검수 단계 · 진행 중 1장(셔터 색 맞춤) · 할 일: 검수 카드에 통과·고칠 점 답", head)
+
+    def test_status_without_stage_says_none(self):
+        self.run_mirror()
+        self.add("관련 시험 통과")
+        self.run_mirror()
+        self.assertIn("정해지지 않은 단계 · 할 일: 없음", self.queue()[0]["text"])
+
+    def test_jargon_and_empty_value_records_stay_on_card(self):
+        self.run_mirror()
+        for text in ["local-gate 13/13(--no-unity)", "bd unclaim --force 로 해제",
+                     "draft PR 생성 (head )", "원격 통합 브랜치 = . 확인", "board-done 통과"]:
+            self.add(text)
+        self.run_mirror()
+        self.assertEqual([], self.queue())
+        self.add("자판기 셔터 색 수정 완료")
+        self.run_mirror()
+        self.assertIn("자판기 셔터 색 수정 완료", self.queue()[0]["text"])
+
+    def test_url_numbers_kept(self):
+        self.run_mirror()
+        self.add("CI 취소 https://github.com/o/r/actions/runs/45309007393 확인")
+        self.run_mirror()
+        self.assertIn("runs/45309007393", self.queue()[0]["text"])
+
+    def test_instruction_record_rewritten_plain(self):
+        self.run_mirror()
+        self.add("지시 처리 #3: 반영 — 프레임 캡처 시작")
+        self.run_mirror()
+        text = self.queue()[0]["text"]
+        self.assertIn("요청 3 반영: 프레임 캡처 시작", text)
+        self.assertNotIn("지시 처리", text)
 
     def test_bd_failure_and_dry_bootstrap(self):
         self.assertIn("baseline", self.run_mirror(True))
