@@ -8,6 +8,7 @@ C. Slack 봇 최적화: 지금 구성 조사 — ~/.config/lrm-hubs/slack_notify
 
 진행 순서: A·B·C 리서치·조사는 병렬 워커 3개, 구조안 문서도 각각. 문서는 3단계 검수(독자 검수 → 다른 모델 교차 → 사용자). 문서가 나오면 "[HTML] 경로" + 핵심 3줄을 Slack 봇(hub_report.py)으로 사용자에게 직접 보낸다.
 결정 보고 형식: 질문 한 문장·왜 지금·선택지(결과·비용·되돌리기)·추천+이유.
+동시 진행(11-24 사용자): 에픽 카드는 허브 작업 공간에서 하나씩 처리하지 않는다. 단계마다 board-ready <에픽> --hub <이 허브> 로 '시작 가능' 묶음을 받아 작업자 공간에 나눠 주고, 허브는 배정·병합·검수만 한다. 손댈 파일(file:)은 실제 파일로 좁힌다.
 워커 모델: 리서치·작성 claude-sonnet-5-5, 교차 검수 1회만 Fable 또는 Codex. 끝난 워커는 즉시 닫고 워크스페이스 자동 정리 규칙 적용.
 Git: 이 저장소 작업 브랜치(feat/…·chore/…) 커밋·push 는 바로, 새 PR 은 사용자 검수 뒤, main·dev 병합은 사용자 직접. 커밋 메시지 한국어 명사형, AI 흔적 금지.
 참고 메모리: structure-approval-first, slack-via-bot, docs-as-html, doc-three-stage-review, hub-auto-cleanup-single-session, token-saving-rules.
