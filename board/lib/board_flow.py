@@ -59,6 +59,16 @@ DONE_KIND = "done"
 DONE_TAIL = " 완료"
 REVIEW_TERMS = "없음"
 REVIEW_NOTE_HEAD = "확인할 것"
+# 이해 확인(큰 기능): 설계 이상으로 옮기기 전 사용자가 이해 확인 카드 1번을 눌러야 함. Slack 답만 인정(계획서 결정)
+UNDERSTAND_HEAD = "D-UNDR"       # 몸통 길이는 PLAN 과 같아 ID_BODY_MAX 공용
+CONFIRM_WORD = "확인"            # 이해 확인 카드의 1번 선택지는 이 말로 시작
+UNDERSTAND_FROM = "design"       # 이 단계 이상으로 옮길 때 검사. build 직행 우회 차단. 이미 이 단계 이상인 기능은 면제(진행 중 이동·되돌리기)
+UNDERSTAND_ROUND = "{n}번째 이해 확인 요청"  # 차수마다 본문을 달리함. 보고 도구가 같은 본문을 내용 해시로 중복 무시함
+DUPLICATE_MARK = "중복 무시"     # 보고 도구가 중복일 때 종료 0 과 함께 내는 출력 머리
+UNDERSTAND_TAIL = " 이해 확인"
+UNDERSTAND_OPTIONS = (f"1={CONFIRM_WORD} => 설계 단계로 넘어간다,"
+                      "2=다시 설명 => 답글로 적은 부분을 보완해 다시 올린다")
+UNDERSTAND_BACKGROUND = "큰 기능이라 설계 전에 요구 이해가 맞는지 확인받는다. 이해 정리는 작업 스레드에 있다."
 # 작은 기능 빠른 길: 다른 모델 검수·녹화 없이 닫고 반영 단계로 감. 사용자 검수는 반영 뒤 하루치를 한 장으로 모아 받음
 SMALL_SKIP = ("review", "recording")  # 작은 기능이 board-done --epic 에서 요구받지 않는 증거
 BATCH_LABEL, BATCHED_LABEL = "review:batch", "review:batched"  # 모아 받기 대기 / 모아 올림 끝
@@ -292,6 +302,29 @@ def review_id(card_id: str) -> str:
     return decision_id(REVIEW_HEAD, card_id)
 
 
+def understand_id(card_id: str) -> str:
+    """기능 카드 id → 그 기능의 이해 확인 결정 번호"""
+    return decision_id(UNDERSTAND_HEAD, card_id)
+
+
+def understood(hub_dir: str, did: str) -> bool:
+    """이해 확인 카드의 최근 카드에 사용자가 1번 '확인'으로 답했는가"""
+    return first_option_picked(hub_dir, did, CONFIRM_WORD)
+
+
+def understand_block(epic: "dict | None", target: str, hub_dir: str) -> str:
+    """큰 기능을 이 단계로 옮기기 전 이해 확인이 빠진 이유(원인 — 조치). 문제없으면 ''"""
+    st, now, gate = stage(target), current(epic), order(stage(UNDERSTAND_FROM))
+    if (st is None or FLOW_LABEL not in feature_labels(epic) or size_of(epic) != LARGE
+            or order(st) < gate or (now is not None and order(now) >= gate) or "understand" in skips(epic)):
+        return ""
+    did = understand_id(str(epic.get("id") or ""))
+    if understood(hub_dir, did):
+        return ""
+    return (f"큰 기능 {epic['id']} 의 이해 확인 결정 카드 {did} 에 사용자의 1번('{CONFIRM_WORD}') 답이 Slack 기록에 없음 — "
+            f"카드에 사용자가 1번을 누른 뒤 다시 실행. 급한 일이면 사용자가 이해를 건너뛰게 함(board-skip)")
+
+
 def read_jsonl(path: str) -> list:
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
@@ -374,9 +407,9 @@ def feature_name(epic: "dict | None") -> str:
     return LABEL_PREFIX.sub("", str((epic or {}).get("title") or "")).strip() or str((epic or {}).get("id") or "")
 
 
-def review_title(hub_dir: str, did: str, epic: "dict | None") -> str:
-    """검수 카드 제목(본문 첫 줄). 그 번호로 앞서 올린 카드가 있으면 그 제목 그대로: 보고 도구가 같은 번호의 제목이 달라지면 거부함.
-    앞 카드가 없으면 '<기능 이름> 검수'를 TITLE_MAX 안으로 맞춤"""
+def review_title(hub_dir: str, did: str, epic: "dict | None", tail: str = TITLE_TAIL) -> str:
+    """결정 카드 제목(본문 첫 줄). 그 번호로 앞서 올린 카드가 있으면 그 제목 그대로: 보고 도구가 같은 번호의 제목이 달라지면 거부함.
+    앞 카드가 없으면 '<기능 이름><tail>'을 TITLE_MAX 안으로 맞춤"""
     outbox = os.environ.get("LRM_REPORT_OUTBOX") or os.path.join(hub_dir, OUTBOX_NAME)
     for r in reversed(read_jsonl(outbox)):
         first = str(r.get("text") or "").split("\n", 1)[0].strip()
@@ -387,10 +420,10 @@ def review_title(hub_dir: str, did: str, epic: "dict | None") -> str:
         if r.get("decision_id") == did and r.get("form_kind") == "decide" and first:
             return first
     name = feature_name(epic)
-    room = TITLE_MAX - len(TITLE_TAIL)
+    room = TITLE_MAX - len(tail)
     if len(name) > room:
         name = name[:room - len(TITLE_CUT)].rstrip() + TITLE_CUT
-    return name + TITLE_TAIL
+    return name + tail
 
 
 def num(v) -> float:
@@ -402,7 +435,7 @@ def num(v) -> float:
 
 
 def review_pending(hub_dir: str, did: str) -> bool:
-    """그 번호의 검수 카드가 답을 기다리는가: 보낸 카드에 사용자 답이 아직 없거나, 보낸 뒤 대기열에 새로 들어가 아직 안 나간 카드가 있음"""
+    """그 번호의 결정 카드가 답을 기다리는가: 보낸 카드에 사용자 답이 아직 없거나, 보낸 뒤 대기열에 새로 들어가 아직 안 나간 카드가 있음"""
     card = last_card(hub_dir, did)
     if card is not None and last_answer(hub_dir, did, card) is None:
         return True
@@ -424,14 +457,20 @@ def result_doc(comments) -> str:
     return ""
 
 
-def review_command(report: str, hub: str, ws: str, epic: dict, title: str, note: str = "", doc: str = "") -> list:
-    """검수 카드를 올리는 보고 도구 명령(인자 목록). 본문 = 제목 / 배경 / 용어 / (덧붙임). doc 이 있으면 첨부"""
-    lines = [title, f"배경: {REVIEW_BACKGROUND if doc else REVIEW_BACKGROUND_NODOC}", f"용어: {REVIEW_TERMS}"]
+def review_command(report: str, hub: str, ws: str, epic: dict, title: str, note: str = "") -> list:
+    """검수 카드를 올리는 보고 도구 명령(인자 목록). 본문 = 제목 / 배경 / 용어 / (덧붙임)"""
+    return decide_command(report, hub, ws, epic, title, REVIEW_BACKGROUND_NODOC, REVIEW_OPTIONS, review_id(str(epic.get("id") or "")), note)
+
+
+def decide_command(report: str, hub: str, ws: str, epic: dict, title: str, background: str, options: str, did: str, note: str = "",
+                   extra: str = "", doc: str = "") -> list:
+    """기능 하나에 대한 결정 카드 명령. 검수·이해 확인 카드가 같이 씀. extra 는 제목 다음 줄, doc 은 첨부 문서(없으면 --no-doc)"""
+    lines = [title] + ([extra] if extra else []) + [f"배경: {background}", f"용어: {REVIEW_TERMS}"]
     if note.strip():
         lines.append(f"{REVIEW_NOTE_HEAD}: {note.strip()}")
     return ["python3", report, "add", "--hub", hub, "--task", REVIEW_TASK, "--kind", "decide", "--card", str(epic.get("id") or ""),
-            "--ws", ws, *(["--file", doc] if doc else ["--no-doc"]), "--text", "\n".join(lines), "--options", REVIEW_OPTIONS, "--recommend", REVIEW_RECOMMEND,
-            "--decision-id", review_id(str(epic.get("id") or "")), "--reversible", REVIEW_REVERSIBLE]
+            "--ws", ws, *(["--file", doc] if doc else ["--no-doc"]), "--text", "\n".join(lines), "--options", options, "--recommend", REVIEW_RECOMMEND,
+            "--decision-id", did, "--reversible", REVIEW_REVERSIBLE]
 
 
 def ask_review(epic: dict, hub_dir: str, note: str = "", dry_run: bool = False, run=subprocess.run, doc: str = "") -> dict:
@@ -440,30 +479,34 @@ def ask_review(epic: dict, hub_dir: str, note: str = "", dry_run: bool = False, 
     skipped 는 올릴 필요가 없는 경우(답 대기 카드 있음, dry-run), failed 는 올리지 못한 경우(허브·작업 공간 모름, 보고 도구 없음·거부).
     허브 이름·작업 공간은 기능 카드에서 얻음: label feature:<slug>, 설명의 '기능 코디네이터 허브:' 줄(--shipped 와 같은 근거)"""
     did = review_id(str(epic.get("id") or ""))
-    title = review_title(hub_dir, did, epic)
+    return ask_decide(epic, hub_dir, did, TITLE_TAIL, REVIEW_BACKGROUND if doc else REVIEW_BACKGROUND_NODOC, REVIEW_OPTIONS, "검수",
+                      note, dry_run, run, doc=doc)
+
+
+def ask_understand(epic: dict, hub_dir: str, note: str = "", dry_run: bool = False, run=subprocess.run) -> dict:
+    """이해 확인 결정 카드(1=확인, 2=다시 설명)를 보고 대기열에 올림. 반환 키는 ask_review 와 같음"""
+    did = understand_id(str(epic.get("id") or ""))
+    n = sum(1 for s in read_jsonl(os.path.join(hub_dir, SENT_NAME)) if s.get("decision_id") == did and s.get("form_kind") == "decide") + 1
+    return ask_decide(epic, hub_dir, did, UNDERSTAND_TAIL, UNDERSTAND_BACKGROUND, UNDERSTAND_OPTIONS, "이해 확인", note, dry_run, run,
+                      UNDERSTAND_ROUND.format(n=n))
+
+
+def ask_decide(epic: dict, hub_dir: str, did: str, tail: str, background: str, options: str, what: str,
+               note: str = "", dry_run: bool = False, run=subprocess.run, extra: str = "", doc: str = "") -> dict:
+    """기능 하나의 결정 카드 올리기. 답 대기 카드가 있으면 다시 올리지 않음(여러 번 불러도 1건)"""
+    title = review_title(hub_dir, did, epic, tail)
     hub, ws = feature_hub(epic), coordinator_ws(epic)
     report = os.environ.get(REPORT_ENV) or os.path.join(hub_dir, REPORT_NAME)
-    cmd = review_command(report, hub or "<허브 이름>", ws or "<작업 공간>", epic, title, note, doc)
+    cmd = decide_command(report, hub or "<허브 이름>", ws or "<작업 공간>", epic, title, background, options, did, note, extra, doc)
     out = {"id": did, "title": title, "posted": False, "skipped": "", "failed": "", "manual": shlex.join(cmd)}
     if review_pending(hub_dir, did):
-        out["skipped"] = f"검수 카드 {did} 가 이미 답을 기다리는 중이라 다시 올리지 않음"
+        out["skipped"] = f"{what} 카드 {did} 가 이미 답을 기다리는 중이라 다시 올리지 않음"
     elif not (hub and ws):
         out["failed"] = "기능 카드에서 " + ("허브 이름(label feature:<slug>)" if not hub else "작업 공간(설명의 '기능 코디네이터 허브:' 줄)") + "을 얻지 못함"
     elif dry_run:
         out["skipped"] = "dry-run: 아래 명령으로 올릴 것"
-    elif not os.path.isfile(report):
-        out["failed"] = f"보고 도구 {report} 없음(경로는 {REPORT_ENV} 로 지정)"
     else:
-        env = dict(os.environ, LRM_HUB_DIR=hub_dir)
-        try:
-            r = run(cmd, capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL, timeout=60)
-        except (OSError, subprocess.SubprocessError) as e:
-            out["failed"] = f"보고 도구 실행 실패: {e}"
-        else:
-            if r.returncode == 0:
-                out["posted"] = True
-            else:
-                out["failed"] = f"보고 도구 종료 {r.returncode}: {(r.stderr or r.stdout).strip()[:300]}"
+        out.update(post(cmd, report, hub_dir, run))
     return out
 
 
@@ -489,6 +532,22 @@ def send_done(epic: dict, hub_dir: str, doc: str, dry_run: bool = False, run=sub
     except (OSError, subprocess.SubprocessError) as e:
         return f"보고 도구 실행 실패: {e}"
     return "" if r.returncode == 0 else f"보고 도구 종료 {r.returncode}: {(r.stderr or r.stdout).strip()[:300]}"
+
+
+def post(cmd: list, report: str, hub_dir: str, run) -> dict:
+    """보고 도구 실행 → {posted}·{skipped}(중복 무시) 또는 {failed}"""
+    if not os.path.isfile(report):
+        return {"failed": f"보고 도구 {report} 없음(경로는 {REPORT_ENV} 로 지정)"}
+    env = dict(os.environ, LRM_HUB_DIR=hub_dir)
+    try:
+        r = run(cmd, capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL, timeout=60)
+    except (OSError, subprocess.SubprocessError) as e:
+        return {"failed": f"보고 도구 실행 실패: {e}"}
+    if r.returncode == 0 and str(r.stdout or "").lstrip().startswith(DUPLICATE_MARK):
+        return {"skipped": f"보고 도구가 같은 내용을 이미 기록해 무시함: {r.stdout.strip()[:200]}"}
+    if r.returncode == 0:
+        return {"posted": True}
+    return {"failed": f"보고 도구 종료 {r.returncode}: {(r.stderr or r.stdout).strip()[:300]}"}
 
 
 def batch_did(comments) -> str:
@@ -538,19 +597,8 @@ def ask_review_batch(epics: list, hub_dir: str, day: str, dry_run: bool = False,
         out["failed"] = "모은 기능 어디에서도 허브 이름(label feature:<slug>)과 작업 공간(설명의 '기능 코디네이터 허브:' 줄)을 함께 얻지 못함"
     elif dry_run:
         out["skipped"] = "dry-run: 아래 명령으로 올릴 것"
-    elif not os.path.isfile(report):
-        out["failed"] = f"보고 도구 {report} 없음(경로는 {REPORT_ENV} 로 지정)"
     else:
-        env = dict(os.environ, LRM_HUB_DIR=hub_dir)
-        try:
-            r = run(cmd, capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL, timeout=60)
-        except (OSError, subprocess.SubprocessError) as e:
-            out["failed"] = f"보고 도구 실행 실패: {e}"
-        else:
-            if r.returncode == 0:
-                out["posted"] = True
-            else:
-                out["failed"] = f"보고 도구 종료 {r.returncode}: {(r.stderr or r.stdout).strip()[:300]}"
+        out.update(post(cmd, report, hub_dir, run))
     return out
 
 

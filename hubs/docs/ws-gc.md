@@ -70,7 +70,7 @@ PR 이 끝난 워크스페이스는 위 조건 2(미커밋 0)·3(휴지 일수)�
 | "처음부터 대상이 아닌 곳"(허브·메인·현재 폴더·하위 있음·터미널·워커·보호 브랜치)이 아님 | 그 코드로 건너뜀 |
 | 이름 있는 브랜치가 로컬에 있음(지운 뒤에도 커밋이 남음) | 기존 규칙 |
 | 그 브랜치 PR 이 하나 이상이고 전부 `MERGED`·`CLOSED`(열린 PR 이 하나라도 있으면 아님) | 기존 규칙(열린 PR 이면 결국 `pr_open`) |
-| HEAD 가 병합·닫힌 PR 의 마지막 커밋(`headRefOid`)에 포함됨. PR 뒤에 쌓은 커밋이 있으면 새 PR 준비 중일 수 있어 제외 | 기존 규칙 |
+| HEAD 가 병합·닫힌 PR 의 마지막 커밋(`headRefOid`)에 포함됨. PR 뒤에 쌓은 커밋이 있으면 새 PR 준비 중일 수 있어 제외. 그 커밋이 로컬에 없으면(원격에서 Update branch 등으로 커밋이 더해짐) `gh api …/compare/<HEAD>...<headRefOid>` 의 `status` 가 `ahead`·`identical` 일 때만 포함으로 본다 | 기존 규칙 |
 | 마지막 활동(Orca 활동·마지막 커밋 중 늦은 쪽)이 10분 넘게 전(`WS_GC_PR_DONE_GRACE_MIN`) | 기존 규칙 |
 | 서브모듈 안 미커밋·미push 없음(서브모듈 안은 보관하지 않음) | `submodule` |
 | Unity 가 연 곳이 아님(`Temp/UnityLockfile` 을 잡은 프로세스 없음) | `unity_open` |
@@ -202,7 +202,7 @@ bash ~/.config/lrm-hubs/ws_gc.sh --dry-run --only LRM-284
 - 보관 대상은 허용 목록(`CFG_OUTPUT_DIRS_RE`·`CFG_OUTPUT_ROOT_RE`)의 결과물뿐이다. 다른 위치의 산출물은 보관 대신 작업 공간을 보존한다. 새 종류가 생기면 목록에 더한다.
 - Mac 이 잠든 시각의 회차는 깨어난 뒤 한 번만 실행된다.
 - PR 닫힘 즉시 정리는 브랜치마다 `gh pr list` 를 먼저 부른다(이전에는 휴지·미커밋을 통과한 곳만). 11-17 실측 전체 점검 약 1분.
-- PR 을 다른 곳에서 rebase·수정해 로컬 HEAD 가 PR 마지막 커밋에 없는 곳은(11-17 실측 2곳) 즉시 정리 대상이 아니다. 기존 규칙으로 남는다.
+- PR 을 다른 곳에서 rebase·수정해 로컬 HEAD 가 PR 마지막 커밋에 없는 곳은(11-17 실측 2곳) 즉시 정리 대상이 아니다. 기존 규칙으로 남는다. 2026-11-24 정정: PR 에 원격에서 커밋만 더해진 경우(로컬 HEAD 는 PR 안에 있음)는 GitHub 비교로 확인해 즉시 정리한다. 11-24 실측 병합 PR 8곳 중 7곳이 이 경우라 남아 있었다. rebase 로 HEAD 가 PR 밖이 된 곳은 비교 결과가 `diverged` 라 여전히 남는다.
 - PR 없이 결과물만 남은 곳(예: 문서 출력만 있고 브랜치에 커밋·PR 이 없음)은 대상이 아니다.
 
 ## 9. 시험
@@ -223,7 +223,7 @@ bash tests/ws_gc/mutate.sh   # 결함을 심은 사본에서 시험이 실패하
 | 구분 | 기준(설정은 `ws_gc.sh` 위쪽 `CFG_*` 한 곳) | 처리 |
 |---|---|---|
 | 허용 결과물 | 결과물 폴더 `docs/out/`·`evidence/`·`TestResults/`(`CFG_OUTPUT_DIRS_RE`), 작업 공간 **루트**의 `*.html *.md *.png *.jpg *.jpeg *.gif *.mp4 *.txt *.log`(`CFG_OUTPUT_ROOT_RE`, 확장자 대소문자 무시) | 보관 → 색인 → 삭제 |
-| 캐시 후보 | gitignore 된 `Library/ Temp/ obj/ Logs/ UserSettings/ .vs/ .idea/ node_modules/ .dart_tool/`, `.flutter-plugins(-dependencies)`, `.claude/settings.local.json`, `.DS_Store`, Flutter 생성물(`android/.gradle/ android/app/build/ build/ ios/Flutter/ephemeral/ ios/Pods/`, `android/local.properties`, `ios/Flutter/Generated.xcconfig`, `ios/Flutter/flutter_export_environment.sh`), `Library/BurstCache/`(`CFG_CACHE_RE`). 폴더째 생성 목록(`CFG_CACHE_GENERATED_RE`)에 드는 곳은 안을 열지 않고 접어 둔 채 캐시로 친다. 그 밖 폴더(`android/app/src/` 등)의 미추적·무시 소스는 그대로 보존한다. **폴더 이름만으로 캐시로 치지 않는다.** 폴더 안에서는 "지워도 되는 것" 목록(`CFG_CACHE_GENERATED_RE`: `Library/PackageCache·Artifacts·Bee` 등 도구가 다시 만드는 하위 경로, `Library` 바로 아래의 확장자 없는 파일·`.asset .json .meta .txt .log`, `obj/Debug·Release`, `node_modules/`, `.dart_tool/`, `Temp/`, `Logs/`, `.vs/`)에 든 파일만 버리고, 목록 밖 파일은 확장자와 상관없이(`.cs`·`.kt`·`.mp4` 모두) 미확인으로 보존한다 | 생성 목록 밖 파일이 없을 때만 보관 없이 삭제 |
+| 캐시 후보 | gitignore 된 `Library/ Temp/ obj/ Logs/ UserSettings/ .vs/ .idea/ node_modules/ .dart_tool/`, `.flutter-plugins(-dependencies)`, `.claude/settings.local.json`, `.DS_Store`, Flutter 생성물(`android/.gradle/ android/app/build/ android/app/.cxx/ build/ ios/Flutter/ephemeral/ ios/Pods/`, `android/local.properties`, `ios/Flutter/Generated.xcconfig`, `ios/Flutter/flutter_export_environment.sh`, `ios/Flutter/Flutter.podspec`), `Library/BurstCache/`(`CFG_CACHE_RE`). 폴더째 생성 목록(`CFG_CACHE_GENERATED_RE`)에 드는 곳은 안을 열지 않고 접어 둔 채 캐시로 친다. 그 밖 폴더(`android/app/src/` 등)의 미추적·무시 소스는 그대로 보존한다. **폴더 이름만으로 캐시로 치지 않는다.** 폴더 안에서는 "지워도 되는 것" 목록(`CFG_CACHE_GENERATED_RE`: `Library/PackageCache·Artifacts·Bee` 등 도구가 다시 만드는 하위 경로, `Library` 바로 아래의 확장자 없는 파일·`.asset .json .meta .txt .log`, `obj/Debug·Release`, `node_modules/`, `.dart_tool/`, `Temp/`, `Logs/`, `.vs/`)에 든 파일만 버리고, 목록 밖 파일은 확장자와 상관없이(`.cs`·`.kt`·`.mp4` 모두) 미확인으로 보존한다 | 생성 목록 밖 파일이 없을 때만 보관 없이 삭제 |
 | 소스 폴더 | `Assets/ Packages/ ProjectSettings/` 아래(`CFG_SOURCE_DIR_RE`). 허용 목록과 겹쳐도(예 `Assets/TestResults/`) 항상 | 보존 |
 | 추적 파일 수정 | 추적 파일이 바뀐 모든 경우. `.meta`·`*SDF*.asset` 부산물 예외보다 항상 우선(예외는 미추적 파일에만 적용) | 보존 |
 | 미확인 | 위 어디에도 없는 미추적·gitignore 파일(예 `secret/Foo.cs`, `result.json`, `reports/s.md`, `Foo.CS`) | 보존(`dirty`) |

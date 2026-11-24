@@ -109,7 +109,7 @@ done
 if [ -n "$CARD" ]; then
   start_slug="$(basename "$HUB")"; start_slug="${start_slug#coord-}"; start_slug="${start_slug%-hub}"
   python3 "$CFG_HUB_REPORT" add --hub "$start_slug" --task 없음 --kind info --card "$CARD" --ws "$P" \
-    --text "작업 공간 시작: $NAME${BRANCH:+ (브랜치 $BRANCH)}" >/dev/null 2>&1 || echo "⚠️ 카드 $CARD 의 Slack 스레드 시작 예약 실패 — hub_report.py add --card $CARD --ws $P 로 직접 기록" >&2
+    --text "작업 공간 시작: \`${NAME//\`/}\`${BRANCH:+ (브랜치 \`$BRANCH\`)}" >/dev/null 2>&1 || echo "⚠️ 카드 $CARD 의 Slack 스레드 시작 예약 실패 — hub_report.py add --card $CARD --ws $P 로 직접 기록" >&2
 fi
 if [ "$JSON" = 1 ]; then
   jq -nc --arg path "$P" --arg branch "$BRANCH" --arg displayName "$NAME" --arg parent "$PARENT_OK" \

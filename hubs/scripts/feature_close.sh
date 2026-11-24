@@ -158,7 +158,7 @@ if [ -n "$EPIC" ] && [ "$EPIC_STATUS" != closed ]; then
       | grep -oE '(~|/)[^[:space:]"]+\.html' | tail -1)
     RESULT="${RESULT/#\~/$HOME}"
   fi
-  CLOSE_ARGS=(add --hub "feat-$SLUG" --task 없음 --kind done --card "$EPIC" --text "기능 마무리: 남은 카드 ${N_OPEN}개·미머지 브랜치 ${N_UNM}개. 통합 브랜치 $BRANCH 유지")
+  CLOSE_ARGS=(add --hub "feat-$SLUG" --task 없음 --kind done --card "$EPIC" --text "기능 마무리: 남은 카드 ${N_OPEN}개·미머지 브랜치 ${N_UNM}개. 통합 브랜치 \`$BRANCH\` 유지")
   if [ -n "$RESULT" ] && [ ! -f "$RESULT" ]; then echo "⚠️ 결과 문서 없음: $RESULT — 문서 없이 한 줄만 보고" >&2; RESULT=""; fi
   [ -n "$RESULT" ] && CLOSE_ARGS+=(--file "$RESULT")
   run thread "기능 스레드 마무리 보고 예약${RESULT:+ (결과 문서 $(basename "$RESULT"))}" python3 "$CFG_HUB_REPORT" "${CLOSE_ARGS[@]}" || :

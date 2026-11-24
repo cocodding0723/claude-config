@@ -18,6 +18,10 @@ from board_sweep import read_table
 from feature_board import BdReader
 
 
+def _CODE_STRIP(text):
+    return report._CODE_RE.sub(" ", text)  # 백틱 안 낱말은 따라 칠 명령이라 기계 기록 판정에서 뺌
+
+
 class BudgetExpired(Exception):
     pass
 
@@ -101,9 +105,14 @@ class Mirror:
     def rewrite(self, text):
         return report.plain_rewrite(text, self.rewrite_rules)
 
+    def noise(self, row):
+        """뜻 없는 기계 기록(살아 있음 신호·빈 값). 막힘·실패 낱말이 있으면 기계 기록이어도 사람이 알아야 해서 버리지 않음"""
+        text = _CODE_STRIP(row.get("text", ""))
+        return bool(re.search(self.cfg["noise_pattern"], text)) and not re.search(self.cfg["block_pattern"], row.get("text", ""))
+
     def clean(self, row):
         text = row.get("text", "").strip()
-        if not text or re.search(self.cfg["skip_pattern"], text) or report.plain_hits(text, self.reject_rules, code_ok=False):
+        if not text or re.search(self.cfg["skip_pattern"], text) or self.noise(row):
             return "", []
         refs = re.findall(self.cfg["ref_pattern"], re.sub(r"https?://\S+", "", text))
         chars = len(text)
@@ -116,7 +125,7 @@ class Mirror:
         # 링크 안 번호(실행 id 등)는 참고 번호로 떼지 않음. 떼면 링크가 깨짐
         text = "".join(part if i % 2 else re.sub(self.cfg["ref_pattern"], "", part)
                        for i, part in enumerate(re.split(r"(https?://\S+)", text)))
-        text = self.rewrite(text)
+        text = report.plain_wrap(self.rewrite(text), self.reject_rules)  # 버리지 않고 감쌈. 막힘 기록까지 사라졌음
         lines, moved = report.move_refs(text.splitlines())
         body = []
         for line in lines:
@@ -125,6 +134,10 @@ class Mirror:
             else:
                 body.append(line)
         return " ".join(body).strip(), refs + moved
+
+    def title(self, card, cut):
+        t = (card.get("title") or card["id"])[:cut]
+        return "`" + t.replace("`", "") + "`" if report.plain_hits(t, self.reject_rules, code_ok=False) else t
 
     def filter_records(self, root, cid, rows, queued):
         previous = {q["text"].strip() for q in queued if not q.get("mirror_ids")
@@ -141,13 +154,13 @@ class Mirror:
         tree = self.descendants(root, self.cards) if self.cards else [root]
         doing = [c for c in tree if c["id"] != root["id"] and c.get("status") == "in_progress"]
         cut = int(self.cfg["title_chars"])
-        titles = ", ".join((c.get("title") or c["id"])[:cut] for c in doing[:int(self.cfg["doing_titles_max"])])
+        titles = ", ".join(self.title(c, cut) for c in doing[:int(self.cfg["doing_titles_max"])])
         return self.cfg["status_line"].format(
-            title=(root.get("title") or root["id"])[:cut], stage=names.get(stage, self.cfg["stage_unknown"]),
+            title=self.title(root, cut), stage=names.get(stage, self.cfg["stage_unknown"]),
             doing=" " + self.cfg["status_doing"].format(count=len(doing), titles=titles) if doing else "",
             todo=todo.get(stage, self.cfg["status_none"]))
 
-    def enqueue(self, root, card, rows, validate=False):
+    def enqueue(self, root, card, rows, validate=False, noise=0):
         texts, refs = [], [card["id"]]
         for row in rows:
             text, found = self.clean(row)
@@ -162,7 +175,7 @@ class Mirror:
         head = self.status(root)
         shown = texts[-int(self.cfg["overflow_keep"]):]
         while True:
-            more = len(texts) - len(shown)
+            more = len(texts) - len(shown) + noise  # 버린 기계 기록도 카드에 남아 있음을 알림
             line = "- " + self.cfg["records_head"] + " " + "; ".join(shown)
             if more:
                 line += " " + self.cfg["overflow_format"].format(count=more)
@@ -180,7 +193,7 @@ class Mirror:
         if len(body) > report.MAX_CHARS:
             raise ValueError("현황 글이 상한 초과 — board_mirror.tsv 의 long_chars·title_chars 를 줄임")
         rep = report.make_report(self.hub(root), report.NO_TASK, "info", body, files,
-                                 card=root["id"], strict=False)  # 자동 감시기: 사람이 고칠 수 없어 거부 대신 줄 빼기
+                                 card=root["id"], strict=False)
         rep.update(mirror_ids=ids, mirror_card=card["id"])
         if not validate:
             print(json.dumps(rep, ensure_ascii=False))
@@ -236,7 +249,9 @@ class Mirror:
             if blocked:
                 return
             try:
-                self.enqueue(root, card, accepted)
+                fresh_ids = {str(r["id"]) for r in fresh}
+                noise = sum(1 for r in rows if str(r["id"]) not in set(known) | sent | fresh_ids and self.noise(r))
+                self.enqueue(root, card, accepted, noise=noise)
             except BudgetExpired:
                 raise
             except Exception as e:

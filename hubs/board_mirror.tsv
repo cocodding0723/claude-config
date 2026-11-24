@@ -29,4 +29,7 @@ doing_titles_max	3
 title_chars	30
 overflow_keep	5
 overflow_format	외 {count}건은 작업판 카드 기록에
-# 쉬운 말 바꾸기·거부 패턴은 plain_words.tsv(모든 보고 공용). 거부 패턴에 걸린 기록은 Slack 에 안 보내고 카드에만 남김
+# 쉬운 말 바꾸기·거부 패턴은 plain_words.tsv(모든 보고 공용). 걸린 낱말은 백틱으로 감싸 보냄
+# 기계 기록(noise_pattern)만 버리고 '외 N건' 에 셈. block_pattern 낱말이 있으면 버리지 않음
+noise_pattern	heartbeat|unclaim|\(head \)|=\s*\.(?:\s|$)|\[said:\]
+block_pattern	(?i)막힘|막혔|실패|\[block\]|오류|에러|error|fail
