@@ -827,7 +827,8 @@ def main():
                 done = "고친 것: " + "; ".join("`" + x.replace("`", "") + "`" for _, x in fixes)  # 카드 제목 속 도구 이름이 검사에 걸리지 않게
                 note = f"{note} · {done}" if note else done
                 out["fixes"] = [x for _, x in fixes]
-            res = bf.ask_review(card, hub_dir(), note, dry_run=a.dry_run)
+            doc = bf.result_doc(c.get("text") or "" for c in bd_json("comments", a.card_id) or [])
+            res = bf.ask_review(card, hub_dir(), note, dry_run=a.dry_run, doc=doc)
             out.update(review_card={k: res[k] for k in ("id", "title", "posted", "skipped", "failed")}, ok=not res["failed"], closed=False,
                        exit=EXIT_CARD if res["failed"] else EXIT_OK)
             if res["failed"]:
@@ -891,6 +892,10 @@ def main():
                 if s.label != "stage:ship" and s.label in bf.labels(card):
                     bd("label", "remove", a.card_id, s.label, actor=a.actor)
             out["feature_close"] = "보류: 반영(--shipped) 뒤에 정리"
+            why = bf.send_done(card, hub_dir(), bf.result_doc(c.get("text") or "" for c in bd_json("comments", a.card_id) or []))
+            if why:
+                print(f"경고: 완료 보고를 올리지 못함 — {why}", file=sys.stderr)
+            out["done_report"] = why or "올림"
             out["next"] = (f"작은 기능이라 반영 단계로 넘김. 병합 승인을 받은 뒤 board-done --epic {a.card_id} {a.actor} --shipped \"<PR·병합 커밋>\". "
                            f"검수는 board-done --review-batch 로 모아 받음")
         elif a.epic and not a.dry_run:
@@ -898,7 +903,10 @@ def main():
             bd("label", "add", a.card_id, "stage:review", actor=a.actor)
             bd("label", "add", a.card_id, bf.REVIEW_LABEL, actor=a.actor)  # 이 표시가 붙은 기능만 --user-ok 가 검수 카드 답을 대조
             out["feature_close"] = "보류: 검수 통과(--user-ok)와 반영(--shipped) 뒤에 정리"
-            res = bf.ask_review(card, hub_dir())  # 올리지 못해도 완료 검사는 성공으로 끝냄: 닫힌 기능을 되돌릴 수 없고 --ask-review 로 다시 올릴 수 있음
+            doc = bf.result_doc(c.get("text") or "" for c in bd_json("comments", a.card_id) or [])
+            if not doc:
+                print(f"경고: 완료 보고서 없음 — 기능 카드에 '{bf.DONE_NOTE} <보고서.html 경로>' 코멘트를 남기고 --ask-review 로 다시 올리면 첨부됨", file=sys.stderr)
+            res = bf.ask_review(card, hub_dir(), doc=doc)  # 올리지 못해도 완료 검사는 성공으로 끝냄: 닫힌 기능을 되돌릴 수 없고 --ask-review 로 다시 올릴 수 있음
             out["review_card"] = {k: res[k] for k in ("id", "title", "posted", "skipped", "failed")}
             out["next"] = review_card_text(a.card_id, a.actor, res)
     except Fail as f:
