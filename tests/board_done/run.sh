@@ -198,6 +198,13 @@ t = d["--text"].split("\n")
 assert t[0] == "우편함 검수" and t[1].startswith("배경: ") and "확인할 것: 툴팁 위치를 고침" in t, t
 PY
 expect "ask-review: 답 기다리는 카드가 있으면 올리지 않음(종료 0)" 0 "$BIN" --epic "$re_" lead --ask-review
+# 수정 카드 모아 올리기: 지난 검수 카드 뒤 '수정 완료:' 코멘트가 있으면 그 뒤에 만든 다른 모델 검수 1건을 요구하고 고친 것을 한 장에
+sleep 1; bd comments add "$re_" "수정 완료: $re_.9 툴팁 글자 잘림" >/dev/null
+expect "ask-review: 수정 뒤 검수 증거가 낡으면 거부(7)" 7 "$BIN" --epic "$re_" lead --ask-review --dry-run
+grep -q '오래됨' "$SB/out" && grep -q '조치' "$SB/out" && ok "ask-review: 낡은 검수 증거 거부에 원인·조치" || ko "낡은 검수 거부 문구" "$(cat "$SB/out")"
+sleep 1; cp "$SB/ev/rv.json" "$SB/ev/rv5.json"; ev "$re_" "review=$SB/ev/rv5.json"
+expect "ask-review: 새 검수 증거가 있으면 모아 올림" 0 "$BIN" --epic "$re_" lead --ask-review --dry-run
+grep -q '고친 것: .*툴팁 글자 잘림' "$SB/out" && ok "ask-review: 고친 것이 검수 카드 본문에 모임" || ko "고친 것 모음" "$(cat "$SB/out")"
 grep -q '이미 답을 기다리는' "$SB/out" && [ "$(calls)" = $((n0 + 1)) ] && ok "ask-review: 대기열 카드가 있으면 건너뜀" || ko "중복 카드 방지" "$(cat "$SB/out") calls=$(calls)"
 # 고칠 점 답을 받은 뒤 다시 올림: 보낸 카드 기록과 사용자 답이 있어야 '답 기다리는 카드' 가 아님. 제목은 앞 카드 그대로
 printf '{"decision_id":"%s","ts":"9.1","at":"%s","form_kind":"decide","options":{"1":"통과","2":"고칠 점 있음"}}\n' "$RR" "$(( $(date +%s) + 60 ))" >> "$SB/hub/slack-sent.jsonl"
@@ -407,5 +414,35 @@ expect "label 없는 도구 저장소 카드: test 증거로 통과" 0 "$BIN" "$
 u2=$(ucard "kind:task 로 적은 카드" "kind:task,"); claim "$u2" wn
 expect "kind:task 를 적으면 도구 저장소여도 일반 카드" 6 "$BIN" "$u2" wn --dry-run
 grep -q 'evidence:editmode 줄 없음' "$SB/out" && ok "kind:task: 컴파일·EditMode 증거 요구" || ko "kind:task 요구 증거" "$(head -c 300 "$SB/out")"
+
+# 수정 카드(kind:fix): 검수 단계 기능의 하위 카드. 시험·캡처 증거만 보고 다른 모델 검수는 요구하지 않음. 검수 카드는 올리지 않음
+fx_epic=$(epic_of "검수 중 기능" "branch:logic,repo:$GR,base:main,flow:v1,stage:review,size:normal")
+fx_pre=$(epic_of "구현 중 기능" "branch:logic,repo:$GR,base:main,flow:v1,stage:build,size:normal")
+fx_card() { bd create "$1" --parent "$2" --labels "kind:fix,branch:$3,repo:$GR${4:+,$4}" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'; }
+fx_ev() { (git -C "$GR" checkout -q "$2" && cd "$GR" && "$RUN" compile --out "$SB/ev/$1-c.log" -- echo Compilation succeeded >/dev/null 2>&1); git -C "$GR" checkout -q main
+  good_xml "$SB/ev/$1-e.xml"; bd comments add "$1" "evidence:compile=$SB/ev/$1-c.log" >/dev/null; bd comments add "$1" "evidence:editmode=$SB/ev/$1-e.xml commit=$3" >/dev/null; }
+f1=$(fx_card "툴팁 위치 수정" "$fx_epic" logic "stage:review,size:normal,flow:v1,review:v1"); claim "$f1" wf; fx_ev "$f1" logic "$HEAD_L"
+expect "fix: 캡처 없으면 거부(6)" 6 "$BIN" "$f1" wf --dry-run
+grep -q 'evidence:screenshot 줄 없음' "$SB/out" && ! grep -q 'evidence:review' "$SB/out" && ok "fix: 캡처는 요구하고 다른 모델 검수는 요구하지 않음" || ko "fix 요구 증거" "$(head -c 300 "$SB/out")"
+sleep 1; printf 'png' > "$SB/ev/f1.png"; bd comments add "$f1" "evidence:screenshot=$SB/ev/f1.png commit=$HEAD_L" >/dev/null
+n0=$(calls)
+expect "fix: review 증거 없이 닫힘" 0 "$BIN" "$f1" wf
+grep -q "bd label remove $f1 stage:review" "$SB/out" && grep -q "bd label remove $f1 size:normal" "$SB/out" && ok "fix: 하위 카드의 기능 표시를 경고하고 뗄 명령 안내" || ko "기능 표시 경고" "$(cat "$SB/out")"
+left=$(bd show "$f1" --json | python3 -c 'import json,sys;d=json.load(sys.stdin);d=d[0] if isinstance(d,list) else d;print(",".join(x for x in d.get("labels") or [] if x.startswith(("stage:","size:")) or x in ("flow:v1","review:v1")))')
+[ -z "$left" ] && ok "fix: 닫을 때 물려받은 기능 표시를 뗌" || ko "fix: 물려받은 표시가 남음" "$left"
+[ "$(status "$f1")" = closed ] && ok "fix: bd 상태 closed" || ko "fix: 닫히지 않음"
+bd comments "$fx_epic" --json | grep -q "수정 완료: $f1 툴팁 위치 수정" && ok "fix: 기능 카드에 수정 완료 코멘트" || ko "fix: 기능 카드 코멘트 없음" "$(bd comments "$fx_epic" 2>&1 | tail -3)"
+[ "$(calls)" = "$n0" ] && ok "fix: 검수 카드를 올리지 않음" || ko "fix: 보고 도구 호출됨" "$(calls)"
+bd show "$fx_epic" --json | grep -q '"stage:review"' && ok "fix: 기능 단계는 그대로(검수)" || ko "fix: 기능 단계 바뀜"
+f2=$(fx_card "검수 전 수정" "$fx_pre" logic); claim "$f2" wf
+expect "fix: 기능이 검수 단계가 아니면 거부(2)" 2 "$BIN" "$f2" wf --no-capture "계산식만" --dry-run
+grep -q '거부:' "$SB/out" && grep -q '조치:' "$SB/out" && ok "fix: 거부에 원인·조치" || ko "fix 거부 문구" "$(cat "$SB/out")"
+f3=$(bd create "상위 없는 수정" --labels "kind:fix,branch:logic,repo:$GR" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'); claim "$f3" wf
+expect "fix: 상위 기능 카드가 없으면 거부(2)" 2 "$BIN" "$f3" wf --dry-run
+f4=$(fx_card "로직 수정" "$fx_epic" logic); claim "$f4" wf; fx_ev "$f4" logic "$HEAD_L"
+expect "fix: 화면 파일 변경 없으면 기능 기준으로 --no-capture 통과" 0 "$BIN" "$f4" wf --no-capture "계산식만" --dry-run
+f5=$(fx_card "프리팹 수정" "$fx_epic" vis); claim "$f5" wf; fx_ev "$f5" vis "$HEAD_V"
+expect "fix: 화면 파일이 바뀌면 --no-capture 거부(7)" 7 "$BIN" "$f5" wf --no-capture "간단함" --dry-run
+expect "일반 카드에 --no-capture 는 2" 2 "$BIN" "$u2" wn --no-capture "x" --dry-run
 
 echo "통과 $PASS, 실패 $FAIL"; [ "$FAIL" = 0 ]
