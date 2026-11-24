@@ -158,6 +158,18 @@ class MirrorTest(unittest.TestCase):
         self.run_mirror()
         self.assertIn("작업자가 에디터 시험 12건 통과", self.queue()[0]["text"])
 
+    def test_rules_come_from_shared_plain_words_table(self):
+        table = self.home / "plain.tsv"
+        table.write_text("rewrite\t셔터\t문\nreject\t자판기\t'기계'\n", encoding="utf-8")
+        os.environ["LRM_PLAIN_WORDS"] = str(table)
+        self.run_mirror()
+        self.add("자판기 점검")
+        self.add("셔터 색 수정")
+        self.run_mirror()
+        text = self.queue()[0]["text"]
+        self.assertIn("문 색 수정", text)
+        self.assertNotIn("자판기", text)
+
     def test_url_numbers_kept(self):
         self.run_mirror()
         self.add("CI 취소 https://github.com/o/r/actions/runs/45309007393 확인")

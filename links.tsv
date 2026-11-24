@@ -191,6 +191,7 @@ hubs/scripts/feature_board.py	.config/lrm-hubs/feature_board.py	link
 hubs/scripts/report_audit.py	.config/lrm-hubs/report_audit.py	link
 hubs/scripts/board_mirror.py	.config/lrm-hubs/board_mirror.py	link
 hubs/board_mirror.tsv	.config/lrm-hubs/board_mirror.tsv	link
+hubs/plain_words.tsv	.config/lrm-hubs/plain_words.tsv	link
 hubs/intake-routes.tsv	.config/lrm-hubs/intake-routes.tsv	link
 hubs/launchd/ai.lrm.slacksocket.plist	.config/lrm-hubs/ai.lrm.slacksocket.plist	copy
 hubs/roles/role-vfx.txt.tmpl	.config/lrm-hubs/roles/role-vfx.txt	render
@@ -229,6 +230,7 @@ hubs/launchd/ai.lrm.boardsweep.plist	Library/LaunchAgents/ai.lrm.boardsweep.plis
 hubs/scripts/work_remind.py	.config/lrm-hubs/work_remind.py	link
 hubs/scripts/work_remind.sh	.config/lrm-hubs/work_remind.sh	link
 hubs/launchd/ai.lrm.workremind.plist	Library/LaunchAgents/ai.lrm.workremind.plist	copy
+hubs/launchd/ai.lrm.reviewbatch.plist	Library/LaunchAgents/ai.lrm.reviewbatch.plist	copy
 board/bin/board-done	orca/board/bin/board-done	link
 board/bin/board-claim	orca/board/bin/board-claim	link
 board/bin/board-ready	orca/board/bin/board-ready	link

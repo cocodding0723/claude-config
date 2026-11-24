@@ -55,6 +55,7 @@ REVIEW_NOTE_HEAD = "확인할 것"
 # 작은 기능 빠른 길: 다른 모델 검수·녹화 없이 닫고 반영 단계로 감. 사용자 검수는 반영 뒤 하루치를 한 장으로 모아 받음
 SMALL_SKIP = ("review", "recording")  # 작은 기능이 board-done --epic 에서 요구받지 않는 증거
 BATCH_LABEL, BATCHED_LABEL = "review:batch", "review:batched"  # 모아 받기 대기 / 모아 올림 끝
+BATCH_NOTE = "모아 받기 카드:"   # 모아 올릴 때 기능 카드에 남기는 머리. 결정 번호가 날짜·묶음 지문이라 나중에 다시 계산할 수 없음
 BATCH_HEAD = "D-BTCH"            # 모아 받기 결정 번호 머리글자. 몸통 길이는 PLAN 과 같아 ID_BODY_MAX 공용
 BATCH_TITLE = "작은 기능 {n}건 모아 검수"
 BATCH_OPTIONS = (f"1={PASS_WORD} => 모두 그대로 둔다,"
@@ -444,6 +445,31 @@ def ask_review(epic: dict, hub_dir: str, note: str = "", dry_run: bool = False, 
             else:
                 out["failed"] = f"보고 도구 종료 {r.returncode}: {(r.stderr or r.stdout).strip()[:300]}"
     return out
+
+
+def batch_did(comments) -> str:
+    """기능 카드 코멘트 → 그 기능이 실린 가장 최근 모아 받기 결정 번호. 없으면 ''"""
+    ids = [str(c).split(BATCH_NOTE, 1)[1].split()[0] for c in comments if str(c).startswith(BATCH_NOTE) and str(c).split(BATCH_NOTE, 1)[1].split()]
+    return ids[-1] if ids else ""
+
+
+def batch_verdict(hub_dir: str, did: str) -> tuple:
+    """모아 받기 카드의 사용자 답 → ('pass'|'fix'|'', 답글 원문). 판정은 최근 카드의 최근 사용자 답(터미널 대필 제외).
+    답글(custom)은 고칠 점을 적은 것으로 봄. 보류(hold)·답 없음은 ''"""
+    card = last_card(hub_dir, did)
+    if card is None or not card.get("ts"):
+        return "", ""
+    last = last_answer(hub_dir, did, card)
+    if last is None:
+        return "", ""
+    text = next((str(r.get("text") or "").strip() for r in reversed(read_jsonl(os.path.join(hub_dir, INBOX_NAME)))
+                 if r.get("decision_id") == did and r.get("parent_ts") == card.get("ts") and by_user(r)
+                 and str(r.get("text") or "").strip()), "")
+    if last["action"] in ("pick", "approve") and last.get("pick") == 1:
+        return "pass", ""
+    if (last["action"] in ("pick", "approve") and last.get("pick") == 2) or last["action"] == "custom":
+        return "fix", text
+    return "", ""
 
 
 def batch_command(report: str, hub: str, ws: str, epics: list, did: str) -> list:

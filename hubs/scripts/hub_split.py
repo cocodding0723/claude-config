@@ -408,7 +408,7 @@ def cmd_propose(a, run) -> int:
     check_plan(pl, read_hubs())
     if not a.file and not a.no_doc:
         raise SplitError("결정 카드는 근거 문서 --file 필요(없으면 --no-doc 명시)")
-    args = ["--kind", "decide", "--text", card_text(pl, a.reason), "--options", APPROVE_OPTIONS, "--recommend", "1",
+    args = ["--kind", "decide", "--auto", "--text", card_text(pl, a.reason), "--options", APPROVE_OPTIONS, "--recommend", "1",
             "--decision-id", a.decision_id, "--reversible", "보통"]
     args += [x for f in a.file for x in ("--file", f)] + (["--no-doc"] if a.no_doc else [])
     res = hub_report(args, dry=not a.record)
