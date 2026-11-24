@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""기능 카드의 작업 크기를 손댈 파일로 판정해 보여 줌. 읽기 전용(표시 변경은 board-stage 가 함).
+애매하면 보통으로 붙던 크기를 파일 근거로 정해, 사소한 수정이 전 단계를 밟지 않게 함."""
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(HERE, "..", "lib"))
+import board_scope as bs  # noqa: E402
+import board_size as bz  # noqa: E402
+
+DEFAULT_BOARD = "~/orca/board"
+EXIT_USAGE, EXIT_BD = 2, 4
+
+EPILOG = f"""\
+경로 출처: --paths 가 있으면 그것, 없으면 카드와 하위·손자 카드의 file: 표시 전부.
+  절대 경로는 카드 label repo: 기준 상대 경로로 바꿔 판정함.
+규칙: board/size_rules.tsv(파일 수·모듈 수·에셋 확장자·데이터 폴더·위험 영역 패턴).
+지금 size: 표시와 다르면 바꾸는 board-stage 명령을 안내함. 직접 바꾸지 않음.
+
+종료 코드: 0 정상 · 2 사용법·카드 없음 · 4 환경(bd 실패)
+예:
+  board-size lrm-12
+  board-size lrm-12 --json
+  board-size lrm-12 --paths Assets/Scripts/UI/A.cs Assets/Scripts/UI/B.cs
+  git diff --name-only main | xargs board-size lrm-12 --paths
+환경: BOARD_DIR(기본 {DEFAULT_BOARD})
+"""
+
+
+def die(msg, code):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def bd(*args):
+    return subprocess.run(["bd", *args, "--json"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+
+def bd_json(*args, missing=""):
+    r = bd(*args)
+    if r.returncode != 0:
+        if missing and "not found" in (r.stderr + r.stdout).lower():
+            die(missing, EXIT_USAGE)
+        die(f"실패: bd {' '.join(args)}: {r.stderr.strip()[:200]}. 조치: BOARD_DIR·bd 설치 확인", EXIT_BD)
+    try:
+        return json.loads(r.stdout or "[]")
+    except json.JSONDecodeError:
+        die(f"실패: bd {' '.join(args)} 출력이 JSON 아님. 조치: bd 버전 확인", EXIT_BD)
+
+
+def descendants(card_id):
+    """하위·손자 카드 전부. 순환 방지로 본 id 는 건너뜀"""
+    out, seen, queue = [], {card_id}, [card_id]
+    while queue:
+        for kid in bd_json("children", queue.pop(0)) or []:
+            if kid["id"] not in seen:
+                seen.add(kid["id"])
+                out.append(kid)
+                queue.append(kid["id"])
+    return out
+
+
+def card_paths(card):
+    repo = os.path.expanduser(bs.label(card, "repo")).rstrip("/")
+    out = []
+    for p in bs.labels(card, "file"):
+        q = os.path.expanduser(p)
+        if repo and q.startswith(repo + "/"):
+            q = q[len(repo) + 1:]
+        out.append(q)
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="board-size", description="손댈 파일로 기능 카드의 작업 크기 판정(읽기 전용).",
+                                 epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("card", help="기능 카드 id")
+    ap.add_argument("--paths", nargs="+", help="file: 표시 대신 쓸 경로 목록(예: git diff --name-only 결과)")
+    ap.add_argument("--json", action="store_true", help='{"card","size","current","reasons","paths","command"} 출력')
+    try:
+        a = ap.parse_args()
+    except SystemExit as e:
+        sys.exit(0 if e.code == 0 else EXIT_USAGE)
+
+    board = os.path.expanduser(os.environ.get("BOARD_DIR", DEFAULT_BOARD))
+    if not os.path.isdir(board):
+        die(f"실패: 작업판 폴더 {board} 없음. 조치: BOARD_DIR=<경로> board-size …", EXIT_BD)
+    os.chdir(board)
+
+    gone = f"거부: 카드 {a.card} 없음. 조치: bd list -t epic 으로 id 확인"
+    d = bd_json("show", a.card, missing=gone)
+    card = d[0] if isinstance(d, list) and d else d
+    if not card:
+        die(gone, EXIT_USAGE)
+
+    paths = a.paths or [p for c in [card, *descendants(a.card)] for p in card_paths(c)]
+    size, reasons = bz.judge(paths, bz.load_rules())
+    current = bs.label(card, "size")
+    cmd = "" if current == size else f"board-stage {a.card} <단계> <이름> --size {size}"
+    if a.json:
+        print(json.dumps({"card": a.card, "size": size, "current": current, "reasons": reasons,
+                          "paths": list(dict.fromkeys(paths)), "command": cmd}, ensure_ascii=False, indent=2))
+        return
+    print(f"기능 {a.card} {card.get('title', '')}: 판정 {size} (지금 표시 {current or '없음'})")
+    for r in reasons:
+        print(f"  - {r}")
+    if cmd:
+        print(f"\n표시가 다름. 바꾸려면(단계는 board-stage {a.card} 로 확인):\n  {cmd}")
+
+
+if __name__ == "__main__":
+    main()

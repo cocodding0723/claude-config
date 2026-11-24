@@ -1,0 +1,39 @@
+# 작업 크기 자동 판정 규칙(board/lib/board_size.py 가 읽음). 칸: 종류	값	메모
+# 패턴은 소문자 경로 전체에 fnmatch. 숫자·패턴은 여기서만 고침
+small_max_files	2	이 수 이하만 작음
+large_min_files	11	이 수 이상이면 큼
+large_min_modules	3	최상위 모듈 폴더가 이 수 이상이면 큼
+module_skip	assets	모듈 이름으로 안 보는 공통 상위 폴더
+module_skip	_project
+module_skip	scripts
+module_skip	src
+module_skip	lib
+asset_ext	.prefab	화면·데이터 에셋
+asset_ext	.unity
+asset_ext	.mat
+asset_ext	.shader
+asset_ext	.png
+asset_ext	.anim
+asset_ext	.controller
+asset_ext	.asset
+asset_ext	.uxml
+asset_ext	.uss
+asset_path	*sheet*	시트·데이터 폴더
+asset_path	*/data/*
+asset_path	data/*
+asset_path	*/tables/*
+asset_path	*/streamingassets/*
+asset_path	*/addressableassetsdata/*
+asset_path	*.csv
+risk_path	*save*	저장·세이브
+risk_path	*persist*
+risk_path	*playerprefs*
+risk_path	*iap*	결제·IAP
+risk_path	*purchase*
+risk_path	*billing*
+risk_path	*payment*
+risk_path	*firebase*	서버 통신
+risk_path	*/network/*
+risk_path	*/server/*
+risk_path	*/api/*
+risk_path	*migrat*	데이터 이전

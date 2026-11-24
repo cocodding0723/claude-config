@@ -232,6 +232,9 @@ hubs/launchd/ai.lrm.workremind.plist	Library/LaunchAgents/ai.lrm.workremind.plis
 board/bin/board-done	orca/board/bin/board-done	link
 board/bin/board-claim	orca/board/bin/board-claim	link
 board/bin/board-ready	orca/board/bin/board-ready	link
+board/bin/board-size	orca/board/bin/board-size	link
+board/lib/board_size.py	orca/board/lib/board_size.py	link
+board/size_rules.tsv	orca/board/size_rules.tsv	link
 board/lib/board_scope.py	orca/board/lib/board_scope.py	link
 board/bin/board-merge-check	orca/board/bin/board-merge-check	link
 board/bin/board-merge	orca/board/bin/board-merge	link
