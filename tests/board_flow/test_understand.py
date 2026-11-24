@@ -1,4 +1,5 @@
 """이해 확인(board_flow.understand_block·ask_understand) 시험. 큰 기능만 설계 이상에서 막고, 최근 카드의 1번 Slack 답만 인정, 대기 중이면 재발행 안 함."""
+import hashlib
 import json
 import os
 import shutil
@@ -96,6 +97,56 @@ class Understand(unittest.TestCase):
         os.remove(os.path.join(self.hub, bf.SENT_NAME))
         write(os.path.join(self.hub, bf.OUTBOX_NAME), {"decision_id": DID, "kind": "decide", "text": "우편함 이해 확인", "at": 9})
         self.assertTrue(bf.ask_understand(epic(), self.hub, run=run)["skipped"])
+        self.assertEqual(calls, [])
+
+    def test_in_progress_exempt(self):
+        for now in ("design", "build"):
+            for target in ("design", "build", "verify"):
+                self.assertEqual(bf.understand_block(epic("large", bf.stage(now).label), target, self.hub), "")
+        self.assertTrue(bf.understand_block(epic("large", bf.stage("understand").label), "design", self.hub))
+
+    def dedup_run(self, calls):
+        """실제 보고 도구처럼 같은 명령(본문)은 내용 해시로 중복 무시(종료 0)"""
+        seen = set()
+
+        def run(c, **k):
+            h = hashlib.sha1("\0".join(c).encode()).hexdigest()[:12]
+            if h in seen:
+                return subprocess.CompletedProcess(c, 0, f"{bf.DUPLICATE_MARK}: {h} — 같은 내용이 이미 기록됨\n", "")
+            seen.add(h)
+            calls.append(c)
+            return subprocess.CompletedProcess(c, 0, f"기록: {h}\n", "")
+        return run
+
+    def test_repost_after_second_answer(self):
+        calls = []
+        run = self.dedup_run(calls)
+        self.assertTrue(bf.ask_understand(epic(), self.hub, run=run)["posted"])
+        self.card("1.1")
+        self.answer("1.1", 2)
+        r = bf.ask_understand(epic(), self.hub, run=run)
+        self.assertTrue(r["posted"], r)
+        lines = [c[c.index("--text") + 1].split("\n")[1] for c in calls]
+        self.assertEqual(lines, [bf.UNDERSTAND_ROUND.format(n=1), bf.UNDERSTAND_ROUND.format(n=2)])
+
+    def test_duplicate_not_posted(self):
+        run = self.dedup_run([])
+        bf.ask_understand(epic(), self.hub, run=run)
+        r = bf.ask_understand(epic(), self.hub, run=run)
+        self.assertFalse(r["posted"])
+        self.assertIn(bf.DUPLICATE_MARK, r["skipped"])
+
+    def test_post_failure(self):
+        r = bf.ask_understand(epic(), self.hub, run=lambda c, **k: subprocess.CompletedProcess(c, 1, "", "거부"))
+        self.assertFalse(r["posted"])
+        self.assertIn("거부", r["failed"])
+
+    def test_old_card_answer_not_reposted(self):
+        calls = []
+        self.card("1.1")
+        self.answer("1.1", 1)
+        self.card("2.2")
+        self.assertTrue(bf.ask_understand(epic(), self.hub, run=self.dedup_run(calls))["skipped"])
         self.assertEqual(calls, [])
 
 
