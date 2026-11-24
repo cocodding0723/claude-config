@@ -824,7 +824,7 @@ def main():
                 gap = fix_review_gap(card, fixes)
                 if gap:
                     raise Fail(gap[0], gap[1], f"수정이 반영된 브랜치 끝을 구현과 다른 모델로 한 번 검수하고 bd comments add {a.card_id} 'evidence:review=<판정 json>' 뒤 다시 실행")
-                done = "고친 것: " + "; ".join(x for _, x in fixes)
+                done = "고친 것: " + "; ".join("`" + x.replace("`", "") + "`" for _, x in fixes)  # 카드 제목 속 도구 이름이 검사에 걸리지 않게
                 note = f"{note} · {done}" if note else done
                 out["fixes"] = [x for _, x in fixes]
             res = bf.ask_review(card, hub_dir(), note, dry_run=a.dry_run)
