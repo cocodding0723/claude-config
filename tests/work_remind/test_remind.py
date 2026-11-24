@@ -65,6 +65,18 @@ class BoardTest(unittest.TestCase):
         self.assertEqual([(f["name"], f["stage"], f["done"], f["total"]) for f in got],
                          [("텐션업 불꽃 상승 연출", "3 구현", 1, 3)])
 
+    def test_idle_ready_cards_flagged_when_one_or_none_in_progress(self):
+        """진행 중 1장 + 바로 시작할 카드 1장 → 대기 1장. 의존이 안 끝난 카드는 세지 않음"""
+        self.cards.append(dict(card("t-e1.4"), dependencies=[{"depends_on_id": "t-e1.3", "type": "blocks"}]))
+        got = wr.features(self.cards, wr.flow_lib())[0]
+        self.assertEqual(1, got["idle_ready"])
+        text = wr.build(NOW, [], [], [got], [])
+        self.assertIn("동시에 시작할 수 있는 카드 1장 대기", text)
+
+    def test_idle_ready_zero_when_two_in_progress(self):
+        self.cards.append(card("t-e1.5", "in_progress", assignee="w2"))
+        self.assertEqual(0, wr.features(self.cards, wr.flow_lib())[0]["idle_ready"])
+
     def test_feature_being_shipped_is_still_listed_after_its_card_closed(self):
         """검수를 통과해 반영 중인 기능은 카드가 닫혀 있어도 남은 일(PR·병합)"""
         self.cards.append(card("t-e5", "closed", labels=["feature:ship", "stage:ship"], title="[LRM-700] 반영 중인 기능", kind="epic"))

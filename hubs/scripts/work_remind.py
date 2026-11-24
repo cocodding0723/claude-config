@@ -131,6 +131,7 @@ def features(cards: list, flow=None, prs_of=None) -> list:
     """남은 기능의 단계와 하위·같은 기능 라벨 카드 진행.
     검수를 통과하고 반영 중인 기능은 카드가 닫혀 있어도 남은 일(PR·병합)"""
     out = []
+    closed = {c.get("id") for c in cards if c.get("status") == "closed"}
     for e in cards:
         labels = e.get("labels") or []
         if e.get("issue_type") != "epic" or not any(x.startswith(FEATURE_HEAD) for x in labels):
@@ -139,6 +140,7 @@ def features(cards: list, flow=None, prs_of=None) -> list:
         kids = [c for c in cards if c.get("issue_type") != "epic" and
                 (str(c.get("id") or "").startswith(e["id"] + ".") or feature_labels.intersection(c.get("labels") or []))]
         remaining = sum(c.get("status") != "closed" for c in kids)
+        idle = idle_ready(kids, closed)
         prs = prs_of(e) if prs_of else None
         merged = all_merged(prs)
         if merged and not remaining:
@@ -153,8 +155,19 @@ def features(cards: list, flow=None, prs_of=None) -> list:
                           and not os.path.isdir(os.path.expanduser(hub.group(1))))
         out.append({"name": name_of(e), "stage": f"{flow.order(st)} {st.name}" if st else (key or "단계 미정"),
                     "done": len(kids) - remaining, "total": len(kids), "remaining": remaining,
-                    "pr": pr, "merged": merged, "no_coordinator": no_coordinator})
+                    "pr": pr, "merged": merged, "no_coordinator": no_coordinator, "idle_ready": idle})
     return out
+
+
+def idle_ready(kids: list, closed: set) -> int:
+    """앞선 카드가 다 끝나 바로 시작할 수 있는데 놀고 있는 카드 수. 진행 중이 1장 이하일 때만 셈
+    (11-24 사용자: 동시에 할 수 있는 일이 한 줄로만 진행됨). 파일 겹침은 board-ready 가 판정"""
+    def ready(c):
+        deps = [d.get("depends_on_id") for d in c.get("dependencies") or [] if d.get("type") != "parent-child"]
+        return c.get("status") == "open" and all(d in closed for d in deps)
+    doing = sum(c.get("status") == "in_progress" for c in kids)
+    n = sum(ready(c) for c in kids)
+    return n if doing <= 1 and doing + n >= 2 else 0
 
 
 def stalled(cards: list, now: float, hours: float = STALL_HOURS, prs_of=None) -> list:
@@ -193,7 +206,9 @@ def build(now: float, decisions: list, reviews: list, features: list, stalled: l
     lines += section("🧹 정리만 남음", [f"- {r['name']}: {'통과 답을 이미 냄' if r.get('passed') else '검수 대기 표시'}{note(r)}" for r in reviews if r.get("done")]
                      + [f"- {f['name']}: 병합됨, 남은 카드 {f['remaining']}{note(f)}" for f in features if f.get("merged")])
     lines += section("🔄 진행 중", [f"- {f['name']}: {f['stage']}, 카드 {f['done']}/{f['total']}{note(f)}"
-                      + (" — 맡은 코디네이터 없음" if f.get("no_coordinator") else "") for f in features if not f.get("merged")])
+                      + (" — 맡은 코디네이터 없음" if f.get("no_coordinator") else "")
+                      + (f" — 동시에 시작할 수 있는 카드 {f['idle_ready']}장 대기" if f.get("idle_ready") else "")
+                      for f in features if not f.get("merged")])
     lines += section("⚠️ 멈춘 것", [f"- {s['name']}: {s['days']}일째 갱신 없음" if s["days"] else f"- {s['name']}: 하루 가까이 갱신 없음" for s in stalled])
     return "\n".join(lines)
 
