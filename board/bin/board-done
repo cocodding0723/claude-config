@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """작업판 카드 완료 게이트. 카드 종류별 증거를 검사한 뒤에만 bd close 함."""
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -16,6 +17,7 @@ import board_said as said  # noqa: E402
 import board_scope as bs  # noqa: E402
 import board_config  # noqa: E402
 import board_tree  # noqa: E402
+import board_size  # noqa: E402
 
 USAGE_EPILOG = """\
 증거는 카드 notes 나 코멘트에 한 줄씩 단다. 로그는 board-run 으로 만든다(마지막 줄에 붙일 증거 줄을 출력함):
@@ -28,6 +30,8 @@ board-run 로그는 머리줄 tree= 가 브랜치 끝 커밋의 tree 와 같아�
   evidence:screenshot=<png>  evidence:recording=<mp4>   --epic 만. 화면에 보이는 변화가 없는 기능은 --no-capture "<이유>" 로 생략
      (기준 브랜치 label base: 와 견줘 프리팹·씬·재질·셰이더·그림·애니메이션·데이터 에셋·UI 문서가 하나도 안 바뀌었을 때만 받아 줌. 바뀌었으면 묻지 않고 바로 찍음)
   evidence:review=<판정 json>          --epic 만. {"verdict":"pass","reviewer_model":..,"author_model":..} 두 모델이 달라야 함
+     권장 칸 "first_model"(1차로 훑은 모델)·"missed"(1차가 놓친 지적 수, 0 이상 정수). 없으면 경고만.
+     바뀐 파일이 위험 영역(board/size_rules.tsv risk_path)에 걸리면 reviewer_model 이 상위 모델(strong_model)이어야 함
 증거는 브랜치 끝 커밋의 것이어야 한다. 카드 label branch:<브랜치>·repo:<저장소 경로> 가 필요하다.
 증거 줄 끝의 commit=<해시> 는 적으면 그 브랜치 끝과 같아야 하고, 안 적어도 된다: board-run 로그는 로그에 적힌 커밋으로,
 그 밖의 파일은 그 커밋 시각 이후에 만든 파일인지로 가린다(낡은 증거·다른 커밋 증거 거부).
@@ -264,7 +268,7 @@ def runlog(path):
             "results": res, "text": text}
 
 
-GATE = {"repo": ""}  # 지금 검사 중인 카드의 저장소. tree 비교(board_tree)가 씀
+GATE = {"repo": "", "risk": [], "notes": []}  # 지금 검사 중인 카드의 저장소(tree 비교용), 바뀐 위험 영역, 검수 판정 경고
 
 
 def check_run(path, kind, tree):
@@ -370,7 +374,31 @@ def check_review(path):
         return f"{path} 검수 모델이 구현 모델과 같음({rev})"
     if str(d.get("verdict", "")).lower() != "pass":
         return f"{path} 판정 {d.get('verdict')!r}(pass 아님): {str(d.get('reasons', ''))[:160]}"
+    # 위험 영역은 1차부터 상위 모델(11-24 리서치: 인증·결제·이전에서 Sonnet 누락이 가장 큼)
+    strong = size_rules().strong_model
+    if GATE["risk"] and not any(m in rev for m in strong):
+        return f"{path} 위험 영역({', '.join(GATE['risk'][:3])})인데 판정 모델이 상위 모델({'·'.join(strong)})이 아님({rev})"
+    # 1차 모델·놓친 지적 수: 1차 검수 모델 선택 근거를 쌓으려고 기록. 처음에는 경고만
+    missed = d.get("missed")
+    if not str(d.get("first_model") or "").strip() or not (isinstance(missed, int) and not isinstance(missed, bool) and missed >= 0):
+        GATE["notes"].append(f"{path} 에 first_model(1차 검수 모델)·missed(1차가 놓친 지적 수, 0 이상 정수) 없음 — 다음 판정부터 적음")
     return None
+
+
+def size_rules():
+    if "size_rules" not in GATE:
+        GATE["size_rules"] = board_size.load_rules()
+    return GATE["size_rules"]
+
+
+def risk_changes(card, repo, head, owner=None):
+    """기준 브랜치와 견줘 바뀐 파일 중 위험 영역 패턴(size_rules.tsv risk_path)에 걸린 것. 견줄 수 없으면 []"""
+    base = bs.label(card, "base") or (bs.label(owner, "base") if owner else "")
+    if not base or not git(repo, "rev-parse", "--verify", "-q", base + "^{commit}"):
+        return []
+    names = (git(repo, "diff", "--name-only", f"{base}...{head}") or "").splitlines()
+    pats = size_rules().risk_path
+    return [n for n in names if any(fnmatch.fnmatchcase(n.lower(), p) for p in pats)]
 
 
 def check_prefab_diff(path):
@@ -467,6 +495,8 @@ def gate(card, actor, epic, warnings, no_capture=None):
         elif no_capture is not None:
             raise Fail(EXIT_USAGE, "--no-capture 는 --epic 이나 kind:fix 카드에만 씀", "--no-capture 를 빼고 다시 실행")
     GATE["repo"] = repo
+    GATE["risk"] = risk_changes(card, repo, head, owner)
+    GATE["notes"] = []
     tree = git(repo, "rev-parse", head + "^{tree}")
     since = max(parse_time(card.get("started_at") or card["created_at"]), head_time)
     found = collect_evidence(card)
@@ -712,6 +742,7 @@ def main():
         if a.no_capture is not None and not a.no_capture.strip():
             raise Fail(EXIT_USAGE, "--no-capture 는 이유가 필요", 'board-done [--epic] <id> <이름> --no-capture "<화면에 보이는 변화가 없는 이유>"')
         kind, checks, owner = gate(card, a.actor, a.epic, warnings, a.no_capture)
+        warnings.extend(GATE["notes"])
         out.update(kind=kind, checks=checks, warnings=warnings)
         for w in warnings if not a.json else []:
             print(f"경고: {w}", file=sys.stderr)

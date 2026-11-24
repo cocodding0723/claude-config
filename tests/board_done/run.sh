@@ -476,4 +476,7 @@ for x in "$s1" "$s2"; do L=$(labs "$x"); case ",$L," in *,review:batch,*) ko "re
 expect "review-batch: 모을 기능이 없으면 0" 0 "$BIN" --review-batch
 [ "$(calls)" = $((n0 + 1)) ] && grep -q '모을 기능 없음' "$SB/out" && ok "review-batch: 빈 묶음은 올리지 않음" || ko "빈 묶음" "$(cat "$SB/out")"
 
+# 검수 판정 json 의 위험 영역 상위 모델·1차 모델 기록(함수 단위)
+python3 -B "$REPO/tests/board_done/test_review_meta.py" >"$SB/out" 2>&1 && ok "검수 판정: 위험 영역 상위 모델·1차 모델 기록" || ko "검수 판정 함수 시험" "$(tail -5 "$SB/out")"
+
 echo "통과 $PASS, 실패 $FAIL"; [ "$FAIL" = 0 ]

@@ -17,6 +17,7 @@ class Rules:
     asset_ext: list = field(default_factory=list)
     asset_path: list = field(default_factory=list)
     risk_path: list = field(default_factory=list)
+    strong_model: list = field(default_factory=list)
 
 
 def load_rules(path=RULES_PATH) -> Rules:
