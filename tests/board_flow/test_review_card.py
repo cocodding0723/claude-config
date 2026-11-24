@@ -56,6 +56,34 @@ class AskReview(unittest.TestCase):
         self.assertEqual(kw["env"]["LRM_HUB_DIR"], self.hub)
         self.assertEqual(os.path.basename(cmd[1]), bf.REPORT_NAME)
 
+    def test_result_doc_attached(self):
+        doc = os.path.join(self.hub, "result.html")
+        open(doc, "w").close()
+        found = bf.result_doc(["작업 중", f"기능 완료 결과: {doc}", "기능 완료 /없는/경로.html"])
+        self.assertEqual(found, doc)  # 최근 코멘트의 없는 경로는 건너뛰고 실제 파일을 고름
+        fake = Fake()
+        bf.ask_review(EPIC, self.hub, run=fake, doc=found)
+        cmd = fake.calls[0][0]
+        self.assertEqual(self.args(cmd)["--file"], doc)
+        self.assertNotIn("--no-doc", cmd)
+        self.assertIn("첨부한 완료 보고서", self.args(cmd)["--text"])
+
+    def test_no_result_doc_keeps_no_doc(self):
+        self.assertEqual(bf.result_doc(["진행 중 /tmp/x.html"]), "")  # '기능 완료' 코멘트만 봄
+        fake = Fake()
+        bf.ask_review(EPIC, self.hub, run=fake)
+        self.assertIn("--no-doc", fake.calls[0][0])
+        self.assertIn("찾지 못했다", self.args(fake.calls[0][0])["--text"])
+
+    def test_small_done_report(self):
+        doc = os.path.join(self.hub, "result.html")
+        open(doc, "w").close()
+        fake = Fake()
+        self.assertEqual(bf.send_done(EPIC, self.hub, doc, run=fake), "")
+        a = self.args(fake.calls[0][0])
+        self.assertEqual((a["--kind"], a["--file"]), ("done", doc))
+        self.assertIn("완료 보고서 없음", bf.send_done(EPIC, self.hub, "", run=Fake()))
+
     def test_title_fits_limit(self):
         long = {**EPIC, "title": "가" * 60}
         t = bf.review_title(self.hub, DID, long)

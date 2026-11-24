@@ -49,7 +49,14 @@ TITLE_CUT = "…"
 REVIEW_OPTIONS = (f"1={PASS_WORD} => 반영 단계로 넘어가 PR·병합 승인을 요청한다,"
                   "2=고칠 점 => 답글로 적어 준 내용을 고친 뒤 다시 검수를 요청한다")
 REVIEW_RECOMMEND, REVIEW_REVERSIBLE = "1", "쉬움"
-REVIEW_BACKGROUND = "구현·검증이 끝나 사용자 검수만 남았다. 결과 상세는 작업 스레드의 완료 보고에 있다."
+REVIEW_BACKGROUND = "구현·검증이 끝나 사용자 검수만 남았다. 결과 상세는 첨부한 완료 보고서에 있다."
+REVIEW_BACKGROUND_NODOC = "구현·검증이 끝나 사용자 검수만 남았다. 완료 보고서는 찾지 못했다."
+# 완료 보고서: 기능 카드의 "기능 완료" 코멘트에 적힌 html 경로. 검수 카드·작은 기능 완료 보고에 첨부
+# (11-24 사용자: 완료 때 draft PR 만 오고 보고서가 안 옴)
+DONE_NOTE = "기능 완료"
+DOC_PATH_RE = re.compile(r"(?:~|/)[^\s`'\"]+\.html")
+DONE_KIND = "done"
+DONE_TAIL = " 완료"
 REVIEW_TERMS = "없음"
 REVIEW_NOTE_HEAD = "확인할 것"
 # 작은 기능 빠른 길: 다른 모델 검수·녹화 없이 닫고 반영 단계로 감. 사용자 검수는 반영 뒤 하루치를 한 장으로 모아 받음
@@ -405,17 +412,29 @@ def review_pending(hub_dir: str, did: str) -> bool:
                for r in read_jsonl(outbox))
 
 
-def review_command(report: str, hub: str, ws: str, epic: dict, title: str, note: str = "") -> list:
-    """검수 카드를 올리는 보고 도구 명령(인자 목록). 본문 = 제목 / 배경 / 용어 / (덧붙임)"""
-    lines = [title, f"배경: {REVIEW_BACKGROUND}", f"용어: {REVIEW_TERMS}"]
+def result_doc(comments) -> str:
+    """기능 카드 코멘트 → 가장 최근 "기능 완료" 코멘트의 실제 있는 html 경로. 없으면 ''"""
+    for text in reversed([str(c) for c in comments]):
+        if DONE_NOTE not in text:
+            continue
+        for m in reversed(DOC_PATH_RE.findall(text)):
+            path = os.path.expanduser(m)
+            if os.path.isfile(path):
+                return path
+    return ""
+
+
+def review_command(report: str, hub: str, ws: str, epic: dict, title: str, note: str = "", doc: str = "") -> list:
+    """검수 카드를 올리는 보고 도구 명령(인자 목록). 본문 = 제목 / 배경 / 용어 / (덧붙임). doc 이 있으면 첨부"""
+    lines = [title, f"배경: {REVIEW_BACKGROUND if doc else REVIEW_BACKGROUND_NODOC}", f"용어: {REVIEW_TERMS}"]
     if note.strip():
         lines.append(f"{REVIEW_NOTE_HEAD}: {note.strip()}")
     return ["python3", report, "add", "--hub", hub, "--task", REVIEW_TASK, "--kind", "decide", "--card", str(epic.get("id") or ""),
-            "--ws", ws, "--no-doc", "--text", "\n".join(lines), "--options", REVIEW_OPTIONS, "--recommend", REVIEW_RECOMMEND,
+            "--ws", ws, *(["--file", doc] if doc else ["--no-doc"]), "--text", "\n".join(lines), "--options", REVIEW_OPTIONS, "--recommend", REVIEW_RECOMMEND,
             "--decision-id", review_id(str(epic.get("id") or "")), "--reversible", REVIEW_REVERSIBLE]
 
 
-def ask_review(epic: dict, hub_dir: str, note: str = "", dry_run: bool = False, run=subprocess.run) -> dict:
+def ask_review(epic: dict, hub_dir: str, note: str = "", dry_run: bool = False, run=subprocess.run, doc: str = "") -> dict:
     """검수 결정 카드(1=통과, 2=고칠 점)를 보고 대기열에 올림. 반환:
     {id(결정 번호), title, posted, skipped(건너뛴 이유, 없으면 ''), failed(실패 사유, 없으면 ''), manual(직접 올릴 명령)}.
     skipped 는 올릴 필요가 없는 경우(답 대기 카드 있음, dry-run), failed 는 올리지 못한 경우(허브·작업 공간 모름, 보고 도구 없음·거부).
@@ -424,7 +443,7 @@ def ask_review(epic: dict, hub_dir: str, note: str = "", dry_run: bool = False, 
     title = review_title(hub_dir, did, epic)
     hub, ws = feature_hub(epic), coordinator_ws(epic)
     report = os.environ.get(REPORT_ENV) or os.path.join(hub_dir, REPORT_NAME)
-    cmd = review_command(report, hub or "<허브 이름>", ws or "<작업 공간>", epic, title, note)
+    cmd = review_command(report, hub or "<허브 이름>", ws or "<작업 공간>", epic, title, note, doc)
     out = {"id": did, "title": title, "posted": False, "skipped": "", "failed": "", "manual": shlex.join(cmd)}
     if review_pending(hub_dir, did):
         out["skipped"] = f"검수 카드 {did} 가 이미 답을 기다리는 중이라 다시 올리지 않음"
@@ -446,6 +465,30 @@ def ask_review(epic: dict, hub_dir: str, note: str = "", dry_run: bool = False, 
             else:
                 out["failed"] = f"보고 도구 종료 {r.returncode}: {(r.stderr or r.stdout).strip()[:300]}"
     return out
+
+
+def send_done(epic: dict, hub_dir: str, doc: str, dry_run: bool = False, run=subprocess.run) -> str:
+    """작은 기능 완료 보고(kind done + 보고서 첨부)를 대기열에 올림. 검수 답은 모아 받기로 따로 받음. 반환: 실패 사유, 성공·dry-run 은 ''"""
+    hub, ws = feature_hub(epic), coordinator_ws(epic)
+    report = os.environ.get(REPORT_ENV) or os.path.join(hub_dir, REPORT_NAME)
+    if not doc:
+        return f"완료 보고서 없음 — 기능 카드에 '{DONE_NOTE} <보고서.html 경로>' 코멘트를 남긴 뒤 hub_report.py add --kind done --file 로 직접 보냄"
+    if not (hub and ws):
+        return "기능 카드에서 허브 이름·작업 공간을 얻지 못함"
+    if dry_run:
+        return ""
+    if not os.path.isfile(report):
+        return f"보고 도구 {report} 없음(경로는 {REPORT_ENV} 로 지정)"
+    name, room = feature_name(epic), TITLE_MAX - len(DONE_TAIL)
+    if len(name) > room:
+        name = name[:room - len(TITLE_CUT)].rstrip() + TITLE_CUT
+    cmd = ["python3", report, "add", "--hub", hub, "--task", REVIEW_TASK, "--kind", DONE_KIND, "--card", str(epic.get("id") or ""),
+           "--ws", ws, "--file", doc, "--text", name + DONE_TAIL + "\n검수는 모아 받기 카드로 받는다. 상세는 첨부 보고서."]
+    try:
+        r = run(cmd, capture_output=True, text=True, env=dict(os.environ, LRM_HUB_DIR=hub_dir), stdin=subprocess.DEVNULL, timeout=60)
+    except (OSError, subprocess.SubprocessError) as e:
+        return f"보고 도구 실행 실패: {e}"
+    return "" if r.returncode == 0 else f"보고 도구 종료 {r.returncode}: {(r.stderr or r.stdout).strip()[:300]}"
 
 
 def batch_did(comments) -> str:
