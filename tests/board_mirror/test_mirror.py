@@ -138,25 +138,49 @@ class MirrorTest(unittest.TestCase):
         self.run_mirror()
         self.assertIn("정해지지 않은 단계 · 할 일: 없음", self.queue()[0]["text"])
 
-    def test_jargon_and_empty_value_records_stay_on_card(self):
+    def test_jargon_wrapped_and_machine_records_counted(self):
         self.run_mirror()
         for text in ["local-gate 13/13(--no-unity)", "bd unclaim --force 로 해제",
                      "draft PR 생성 (head )", "원격 통합 브랜치 = . 확인", "board-done 통과"]:
             self.add(text)
         self.run_mirror()
-        self.assertEqual([], self.queue())
-        self.add("자판기 셔터 색 수정 완료")
+        text = self.queue()[0]["text"]
+        self.assertIn("`local-gate`", text)
+        self.assertIn("`board-done` 통과", text)
+        self.assertNotIn("unclaim", text)
+        self.assertNotIn("(head )", text)
+        self.assertIn("외 3건은 작업판 카드 기록에", text)
+
+    def test_block_record_never_dropped(self):
         self.run_mirror()
-        self.assertIn("자판기 셔터 색 수정 완료", self.queue()[0]["text"])
+        self.add("막힘: heartbeat 끊김, board-done 실패")
+        self.add("[block] unclaim 뒤 = . 남음")
+        self.run_mirror()
+        text = self.queue()[0]["text"]
+        self.assertIn("막힘: `heartbeat` 끊김, `board-done` 실패", text)
+        self.assertIn("[block] `unclaim`", text)
+
+    def test_backtick_record_allowed(self):
+        self.run_mirror()
+        self.add("다시 돌리려면 `board-run --once` 실행")
+        self.run_mirror()
+        self.assertIn("`board-run --once` 실행", self.queue()[0]["text"])
+
+    def test_tool_name_in_card_title_wrapped(self):
+        self.run_mirror()
+        self.root["title"] = "board-done 정리"
+        self.add("관련 시험 통과")
+        self.run_mirror()
+        self.assertTrue(self.queue()[0]["text"].startswith("`board-done 정리` — 지금"))
 
     def test_plain_words_and_evidence_lines(self):
         self.run_mirror()
         self.add("evidence:compile=/tmp/a.log")
         self.run_mirror()
-        self.assertEqual([], self.queue())
+        self.assertIn("`evidence:compile=/tmp/a.log`", self.queue()[0]["text"])
         self.add("워커가 EditMode 시험 12건 통과")
         self.run_mirror()
-        self.assertIn("작업자가 에디터 시험 12건 통과", self.queue()[0]["text"])
+        self.assertIn("작업자가 에디터 시험 12건 통과", self.queue()[-1]["text"])
 
     def test_rules_come_from_shared_plain_words_table(self):
         table = self.home / "plain.tsv"
@@ -168,7 +192,7 @@ class MirrorTest(unittest.TestCase):
         self.run_mirror()
         text = self.queue()[0]["text"]
         self.assertIn("문 색 수정", text)
-        self.assertNotIn("자판기", text)
+        self.assertIn("`자판기` 점검", text)
 
     def test_url_numbers_kept(self):
         self.run_mirror()

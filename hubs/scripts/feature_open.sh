@@ -192,7 +192,7 @@ fi
 
 if [ "$DRY" = 0 ] && [ -n "$EPIC" ]; then
   python3 "$CFG_HUB_REPORT" add --hub "$HUB_SLUG" --task 없음 --kind info --card "$EPIC" \
-    --text "기능 시작: $NAME (${TICKET:+$TICKET, }통합 브랜치 $BRANCH)" >/dev/null 2>&1 || echo "⚠️ 기능 스레드 시작 예약 실패 — hub_report.py add --hub $HUB_SLUG --card $EPIC 로 직접 기록" >&2
+    --text "기능 시작: \`${NAME//\`/}\` (${TICKET:+$TICKET, }통합 브랜치 \`$BRANCH\`)" >/dev/null 2>&1 || echo "⚠️ 기능 스레드 시작 예약 실패 — hub_report.py add --hub $HUB_SLUG --card $EPIC 로 직접 기록" >&2
 fi
 
 if [ "$JSON" = 1 ]; then

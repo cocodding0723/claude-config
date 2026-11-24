@@ -587,7 +587,7 @@ class Runner:
 
     def report(self, when: str) -> str:
         verb = {"split": "분할", "merge": "병합"}[self.pl.kind]
-        text = f"{'' if self.apply else '(시험) '}허브 {verb} {when}: {self.pl.parent} ↔ {self.pl.child} ({self.did})"
+        text = f"{'' if self.apply else '(시험) '}허브 {verb} {when}: `{self.pl.parent}` ↔ `{self.pl.child}` ({self.did})"  # 허브 이름에 도구 이름이 들어가도 감싸서 보냄
         hub_report(["--kind", "info", "--text", text] + [x for f in self.files for x in ("--file", f)], dry=not self.apply)
         return text
 
