@@ -31,11 +31,11 @@ CFG_OUTPUT_ROOT_RE='^[^/]+\.(html|md|png|jpe?g|gif|mp4|txt|log)$'       # 작업
 # 게임 소스 폴더 아래는 허용 목록과 겹쳐도 항상 보존(새 에셋·코드일 수 있음)
 CFG_SOURCE_DIR_RE='^(Assets|Packages|ProjectSettings)/'
 # 다시 만들어지는 gitignore 캐시 후보(폴더는 끝에 /). 폴더 이름만으로 캐시라고 단정하지 않음: 아래 CFG_CACHE_GENERATED_RE 밖 파일이 안에 있으면 보존
-# Flutter 생성물(android/.gradle·android/app/build·build·ios/Flutter/ephemeral·ios/Pods 와 매번 다시 쓰는 설정 3종)·Unity BurstCache 는 폴더째 접어 펼치지 않음(속도)
-CFG_CACHE_RE='^(Library|Temp|obj|Logs|UserSettings|\.vs|\.idea|node_modules)/$|(^|/)(\.dart_tool|node_modules|__pycache__)/$|^[^/]+\.(csproj|sln)$|^\.flutter-plugins(-dependencies)?$|^\.claude/settings\.local\.json$|^\.DS_Store$|^Library/BurstCache/$|^(android/\.gradle|android/app/build|android/build|build|ios/Flutter/ephemeral|ios/Pods|ios/\.symlinks)/$|^android/local\.properties$|^ios/Flutter/(Generated\.xcconfig|flutter_export_environment\.sh)$'
+# Flutter 생성물(android/.gradle·android/app/build·android/app/.cxx(CMake)·build·ios/Flutter/ephemeral·ios/Pods 와 매번 다시 쓰는 설정 4종)·Unity BurstCache 는 폴더째 접어 펼치지 않음(속도)
+CFG_CACHE_RE='^(Library|Temp|obj|Logs|UserSettings|\.vs|\.idea|node_modules)/$|(^|/)(\.dart_tool|node_modules|__pycache__)/$|^[^/]+\.(csproj|sln)$|^\.flutter-plugins(-dependencies)?$|^\.claude/settings\.local\.json$|^\.DS_Store$|^Library/BurstCache/$|^(android/\.gradle|android/app/build|android/app/\.cxx|android/build|build|ios/Flutter/ephemeral|ios/Pods|ios/\.symlinks)/$|^android/local\.properties$|^ios/Flutter/(Generated\.xcconfig|flutter_export_environment\.sh|Flutter\.podspec)$'
 # 캐시 폴더 안에서 "지워도 되는 것" 목록(도구가 다시 만드는 하위 경로). 캐시 폴더 안의 파일은 이 목록에 든 것만 버리고,
 # 목록 밖은 확장자와 상관없이 전부 미확인으로 보존함(.kt·.mp4 같은 목록에 없는 파일도 보존)
-CFG_CACHE_GENERATED_RE='^(Library/(PackageManager|PackageCache|Artifacts|Bee|ScriptAssemblies|ShaderCache|StateCache|BuildCache|PlayerDataCache|APIUpdater|Search|SourceAssetDB|BuildProfiles|BurstCache)/|android/\.gradle/|android/app/build/|android/build/|build/|ios/Flutter/ephemeral/|ios/Pods/|ios/\.symlinks/|android/local\.properties$|ios/Flutter/(Generated\.xcconfig|flutter_export_environment\.sh)$|(.*/)?node_modules/|(.*/)?__pycache__/|(.*/)?\.dart_tool/|Temp/|Logs/|\.vs/|obj/(Debug|Release)/)|^Library/([^/.]+|[^/]+\.(asset|json|meta|txt|log))$|^obj/(project\.assets\.json|[^/]+\.nuget\.[^/]+)$'
+CFG_CACHE_GENERATED_RE='^(Library/(PackageManager|PackageCache|Artifacts|Bee|ScriptAssemblies|ShaderCache|StateCache|BuildCache|PlayerDataCache|APIUpdater|Search|SourceAssetDB|BuildProfiles|BurstCache)/|android/\.gradle/|android/app/build/|android/app/\.cxx/|android/build/|build/|ios/Flutter/ephemeral/|ios/Pods/|ios/\.symlinks/|android/local\.properties$|ios/Flutter/(Generated\.xcconfig|flutter_export_environment\.sh|Flutter\.podspec)$|(.*/)?node_modules/|(.*/)?__pycache__/|(.*/)?\.dart_tool/|Temp/|Logs/|\.vs/|obj/(Debug|Release)/)|^Library/([^/.]+|[^/]+\.(asset|json|meta|txt|log))$|^obj/(project\.assets\.json|[^/]+\.nuget\.[^/]+)$'
 CFG_INBOX="${WS_GC_INBOX:-$HOME/.config/lrm-hubs/hub-inbox}"  # 허브별 보관 색인(<허브 slug>.tsv). 허브 폴더 coord-<slug>-hub 에서 slug 를 뗌
 CFG_KEEP_CODE_LOG_MAX=5                                  # 보존 근거로 로그·JSON 에 남길 경로 수
 CFG_RM_DIRTY_RE='modified or untracked|contain(s|ing) submodules|uncommitted|dirty'  # orca rm 거부 문구 중 미커밋 변경 계열만 force 허용(잠금·사용 중 등은 제외)
@@ -75,6 +75,7 @@ usage() {
   3 마지막 활동(Orca 활동 시각·마지막 커밋 중 늦은 것)이 --days 일 이상 전. 로컬 브랜치가 남는 곳은 WS_GC_FRESH_GRACE_MIN(기본 60)분만 지나면 됨
   4 서브모듈 안에 미커밋·미push 가 없음
 PR 닫힘 즉시 정리(위 2·3 대신): 로컬 브랜치가 남고, 그 브랜치 PR 이 전부 MERGED·CLOSED 이고, HEAD 가 그 PR 마지막 커밋에 포함되면
+  (PR 마지막 커밋이 로컬에 없으면 gh api compare 로 확인)
   활동 일수를 기다리지 않음(마지막 활동 후 WS_GC_PR_DONE_GRACE_MIN 분만 둠). 미커밋이 있어도 전부 보관 뒤 삭제:
   <archive>/<폴더>-<YYYYMMDD-HHMM>/ 에 tracked.patch(git diff HEAD, 스테이징 포함)·staged.patch·status.txt·meta.txt·list.txt,
   files/ 아래 미추적·캐시 아닌 gitignore 파일(경로 유지). 파일 수·바이트·내용 대조가 맞아야 지우고(--force), 보관 뒤 바뀌면 안 지움.
@@ -385,12 +386,21 @@ pr_lookup() {
   prs=$(cd "$1" && gh pr list --head "$2" --state all --json number,state,headRefOid --limit 30 2>/dev/null) && echo "$prs" | jq -e 'type == "array"' >/dev/null 2>&1 || return 1
   PR_LABEL=$(echo "$prs" | jq -r 'map("#\(.number) \(.state)") | join(",")')
 }
+# HEAD 가 커밋 oid 에 포함되면 0. oid 가 로컬에 없으면(PR 에 원격에서 커밋이 더해짐: Update branch·다른 곳 push) fetch 없이 GitHub 비교로 확인.
+# 비교 API 의 status 는 oid 가 HEAD 를 품으면 ahead·identical, PR 뒤 로컬 커밋이 있으면 diverged·behind. HEAD 가 원격에 없으면 404 → 1(보존)
+head_in_commit() {
+  local p="$1" oid="$2" head st
+  if git -C "$p" cat-file -e "$oid^{commit}" 2>/dev/null; then git -C "$p" merge-base --is-ancestor HEAD "$oid" 2>/dev/null; return; fi
+  head=$(git -C "$p" rev-parse HEAD 2>/dev/null) || return 1
+  st=$(cd "$p" && gh api "repos/{owner}/{repo}/compare/$head...$oid" --jq .status 2>/dev/null) || return 1
+  [ "$st" = ahead ] || [ "$st" = identical ]
+}
 # PR 이 하나 이상이고 전부 OPEN 이 아니며, HEAD 가 병합·닫힌 PR 의 마지막 커밋에 포함되면 0. PR 뒤에 쌓은 커밋이 있으면 1(새 작업일 수 있어 기존 규칙)
 pr_done_check() {
   local p="$1" oid
   echo "$prs" | jq -e 'length > 0 and all(.[]; .state != "OPEN")' >/dev/null 2>&1 || return 1
   while IFS= read -r oid; do
-    [ -n "$oid" ] && git -C "$p" cat-file -e "$oid^{commit}" 2>/dev/null && git -C "$p" merge-base --is-ancestor HEAD "$oid" 2>/dev/null && return 0
+    [ -n "$oid" ] && head_in_commit "$p" "$oid" && return 0
   done < <(echo "$prs" | jq -r '.[] | select(.state == "MERGED" or .state == "CLOSED") | .headRefOid // empty')
   return 1
 }

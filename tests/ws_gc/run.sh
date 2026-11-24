@@ -461,13 +461,15 @@ for n in fl_gen fl_kt fl_ign_kt; do
   echo g > "$W/$n/android/.gradle/8.12/a.bin"; echo a > "$W/$n/android/app/build/outputs/a.apk"; echo b > "$W/$n/build/app/x.txt"
   echo e > "$W/$n/ios/Flutter/ephemeral/e.txt"; echo p > "$W/$n/ios/Pods/P/p.h"; echo l > "$W/$n/android/local.properties"
   echo x > "$W/$n/ios/Flutter/Generated.xcconfig"; echo s > "$W/$n/ios/Flutter/flutter_export_environment.sh"; echo z > "$W/$n/Library/BurstCache/b.bin"
-  for x in android/.gradle/ android/app/build/ /build/ ios/Flutter/ephemeral/ ios/Pods/ android/local.properties ios/Flutter/Generated.xcconfig ios/Flutter/flutter_export_environment.sh; do excl "$n" "$x"; done
+  mkdir -p "$W/$n/android/app/.cxx/debug/abc/arm64-v8a/.cmake"; echo c > "$W/$n/android/app/.cxx/debug/abc/arm64-v8a/CMakeCache.txt"; echo j > "$W/$n/android/app/.cxx/debug/abc/arm64-v8a/.cmake/reply.json"
+  echo pod > "$W/$n/ios/Flutter/Flutter.podspec"
+  for x in android/.gradle/ android/app/build/ android/app/.cxx/ /build/ ios/Flutter/ephemeral/ ios/Pods/ android/local.properties ios/Flutter/Generated.xcconfig ios/Flutter/flutter_export_environment.sh ios/Flutter/Flutter.podspec; do excl "$n" "$x"; done
 done
 mkdir -p "$W/fl_kt/android/app/src/main/kotlin" "$W/fl_ign_kt/android/app/src/main/kotlin"
 echo 'class Only' > "$W/fl_kt/android/app/src/main/kotlin/Only.kt"
 echo 'class Gen' > "$W/fl_ign_kt/android/app/src/main/kotlin/Gen.kt"; excl fl_ign_kt 'Gen.kt'
 regen
-gc --only fl_gen; chk "[F] Flutter·BurstCache 생성물만: 후보(미확인 0)" 'has "CANDIDATE repoA/fl_gen " && ! has "SKIP dirty repoA/fl_gen"' "$(grep fl_gen "$ARC/ws_gc.log" | tail -2)"
+gc --only fl_gen; chk "[F] Flutter(.cxx·Flutter.podspec 포함)·BurstCache 생성물만: 후보(미확인 0)" 'has "CANDIDATE repoA/fl_gen " && ! has "SKIP dirty repoA/fl_gen"' "$(grep fl_gen "$ARC/ws_gc.log" | tail -2)"
 gc --only fl_kt; chk "[F] android 아래 소스 .kt(미추적): 보존" 'has "SKIP dirty repoA/fl_kt" && has "미확인 미추적 android/app/src/main/kotlin/Only.kt"' "$(grep fl_kt "$ARC/ws_gc.log" | tail -2)"
 gc --only fl_ign_kt; chk "[F] android 아래 소스 .kt(gitignore): 보존" 'has "SKIP dirty repoA/fl_ign_kt" && has "미확인 무시파일 android/app/src/main/kotlin/Gen.kt"' "$(grep fl_ign_kt "$ARC/ws_gc.log" | tail -2)"
 FAKE_RM_CHECK_DIRTY=1 gc --only fl_kt --apply; chk "[F] 보존한 .kt 가 그대로 남음" '[ -f "$W/fl_kt/android/app/src/main/kotlin/Only.kt" ] && [ "$(rm_calls)" = 0 ]'
@@ -530,6 +532,12 @@ mkpd pd_sub feat/pd_sub 20
 mkpd pd_big feat/pd_big 20;       prh feat/pd_big 98 MERGED pd_big; dirty_all pd_big
 mkpd pd_late feat/pd_late 20;     prh feat/pd_late 99 MERGED pd_late; dirty_all pd_late
 mkpd pd_tar feat/pd_tar 20;       prh feat/pd_tar 100 MERGED pd_tar; dirty_all pd_tar
+# PR 마지막 커밋이 로컬에 없음(원격에서 Update branch 로 병합 커밋이 더해짐): GitHub 비교 결과로 판정
+mkdir -p "$FAKE/compare"
+prr() { pr "$1" "[{\"number\":$2,\"state\":\"MERGED\",\"headRefOid\":\"$3\"}]"; }
+mkpd pd_rem feat/pd_rem 20;       prr feat/pd_rem 102 1111111111111111111111111111111111111111; echo ahead > "$FAKE/compare/1111111111111111111111111111111111111111"
+mkpd pd_rem_div feat/pd_rem_div 20; prr feat/pd_rem_div 103 2222222222222222222222222222222222222222; echo diverged > "$FAKE/compare/2222222222222222222222222222222222222222"
+mkpd pd_rem_404 feat/pd_rem_404 20; prr feat/pd_rem_404 104 3333333333333333333333333333333333333333
 mk dev_pd dev; perl -pi -e 's#^(\Q'"$W/dev_pd"'\E\t[^\t]*\t)\d+#${1}'"$((NOW_MS - 20 * 60000))"'#' "$SB/reg.tsv"; prh dev 101 MERGED dev_pd
 regen
 jq -R -s '{ok:true,result:{terminals:(split("\n")|map(select(length>0)|split("\t")|{handle:.[0],worktreePath:.[1],connected:true,orphaned:false}))}}' "$FAKE/terminals.tsv" > "$FAKE/terminals.json"
@@ -544,6 +552,9 @@ chk "[PD] 마지막 활동 10분 안이면 기존 규칙(유예)" '! has "CANDID
 chk "[PD] 터미널이 붙은 곳은 PR 이 닫혀도 보존(live)" 'has "SKIP live repoA/pd_live"'
 chk "[PD] PR 없는 곳은 기존 규칙(미커밋이면 보존)" '! has "CANDIDATE repoA/pd_nopr " && has "SKIP idle repoA/pd_nopr"' "$(pdlog pd_nopr)"
 chk "[PD] 서브모듈 안 변경은 보존(submodule)" 'has "SKIP submodule repoA/pd_sub — PR 닫힘"' "$(pdlog pd_sub)"
+chk "[PD] PR 마지막 커밋이 로컬에 없어도 GitHub 비교가 ahead 면 후보" 'has "CANDIDATE repoA/pd_rem pr_done PR #102 MERGED"' "$(pdlog pd_rem)"
+chk "[PD] GitHub 비교가 diverged(PR 뒤 로컬 커밋)면 기존 규칙" '! has "CANDIDATE repoA/pd_rem_div " && has "SKIP idle repoA/pd_rem_div"' "$(pdlog pd_rem_div)"
+chk "[PD] GitHub 비교 실패(404 등)면 기존 규칙" '! has "CANDIDATE repoA/pd_rem_404 " && has "SKIP idle repoA/pd_rem_404"' "$(pdlog pd_rem_404)"
 gc --only dev_pd; chk "[PD] 보호 브랜치는 병합 PR 이 있어도 보존" 'has "SKIP protected repoA/dev_pd"'
 chk "[PD] dry-run: 폴더·보관 폴더 그대로" '[ -e "$W/pd_dirty" ] && [ -z "$(ls -d "$ARC"/pd_* 2>/dev/null)" ] && [ "$(rm_calls)" = 0 ]'
 WS_GC_PR_DONE_MAX_MB=0 gc --only pd_big --apply
