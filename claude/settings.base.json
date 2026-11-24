@@ -105,6 +105,7 @@
     "OPENVIKING_RECALL_COMPRESS": "off"
   },
   "model": "opus",
+  "autoContinueAtUsageLimit": true,
   "hooks": {
     "PreToolUse": [
       {
