@@ -198,6 +198,13 @@ t = d["--text"].split("\n")
 assert t[0] == "우편함 검수" and t[1].startswith("배경: ") and "확인할 것: 툴팁 위치를 고침" in t, t
 PY
 expect "ask-review: 답 기다리는 카드가 있으면 올리지 않음(종료 0)" 0 "$BIN" --epic "$re_" lead --ask-review
+# 수정 카드 모아 올리기: 지난 검수 카드 뒤 '수정 완료:' 코멘트가 있으면 그 뒤에 만든 다른 모델 검수 1건을 요구하고 고친 것을 한 장에
+sleep 1; bd comments add "$re_" "수정 완료: $re_.9 툴팁 글자 잘림" >/dev/null
+expect "ask-review: 수정 뒤 검수 증거가 낡으면 거부(7)" 7 "$BIN" --epic "$re_" lead --ask-review --dry-run
+grep -q '오래됨' "$SB/out" && grep -q '조치' "$SB/out" && ok "ask-review: 낡은 검수 증거 거부에 원인·조치" || ko "낡은 검수 거부 문구" "$(cat "$SB/out")"
+sleep 1; cp "$SB/ev/rv.json" "$SB/ev/rv5.json"; ev "$re_" "review=$SB/ev/rv5.json"
+expect "ask-review: 새 검수 증거가 있으면 모아 올림" 0 "$BIN" --epic "$re_" lead --ask-review --dry-run
+grep -q '고친 것: .*툴팁 글자 잘림' "$SB/out" && ok "ask-review: 고친 것이 검수 카드 본문에 모임" || ko "고친 것 모음" "$(cat "$SB/out")"
 grep -q '이미 답을 기다리는' "$SB/out" && [ "$(calls)" = $((n0 + 1)) ] && ok "ask-review: 대기열 카드가 있으면 건너뜀" || ko "중복 카드 방지" "$(cat "$SB/out") calls=$(calls)"
 # 고칠 점 답을 받은 뒤 다시 올림: 보낸 카드 기록과 사용자 답이 있어야 '답 기다리는 카드' 가 아님. 제목은 앞 카드 그대로
 printf '{"decision_id":"%s","ts":"9.1","at":"%s","form_kind":"decide","options":{"1":"통과","2":"고칠 점 있음"}}\n' "$RR" "$(( $(date +%s) + 60 ))" >> "$SB/hub/slack-sent.jsonl"

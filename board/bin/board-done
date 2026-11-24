@@ -43,6 +43,8 @@ epic 이 닫히면 label stage:review(사용자 검수 대기)를 붙임. 기능
   다시 올리기: board-done --epic <id> <이름> --ask-review [--review-note "<한 줄>"] [--dry-run]
               검수 단계(stage:review)인 기능에만. 고칠 점 답을 받아 고친 뒤 다시 검수를 요청할 때 씀. 앞 카드와 제목이 같아 번호 재사용 검사에 걸리지 않음.
               답을 기다리는 카드가 이미 있으면 올리지 않음(종료 0). 올리지 못하면 종료 9
+              지난 검수 카드 뒤 닫힌 수정 카드(kind:fix)가 있으면 '고친 것:' 으로 모아 한 장에 싣고, 그 뒤에 만든 다른 모델 검수
+              증거(evidence:review) 1건을 요구함(없으면 6, 낡았거나 불합격이면 7). 수정 카드마다 따로 검수하지 않음
   반영 끝:    board-done --epic <id> <이름> --shipped "<PR 번호·병합 커밋>" → stage:ship 을 떼고, label feature:<slug> 가 있으면
               BOARD_FEATURE_CLOSE(기본 ~/.config/lrm-hubs/feature_close.sh) --slug <slug> --yes 를 분리 실행해 기능 코디네이터를 정리함(BOARD_FEATURE_CLOSE=off 로 끔)
 같은 종류가 여럿이면 마지막 줄(notes 다음 코멘트 순)만 봄. '<종류>=' 를 생략하면 파일 이름으로 추정함. 모든 파일은 존재·비어 있지 않음·카드 claim 이후 수정이어야 함.
@@ -63,6 +65,7 @@ epic 이 닫히면 label stage:review(사용자 검수 대기)를 붙임. 기능
   5 작업자 불일치  6 증거 누락  7 증거 내용 불합격  8 bd close 실패  9 검수 카드 올리기 실패(--ask-review 만)
 """
 
+FIX_DONE = "수정 완료:"  # kind:fix 카드를 닫을 때 기능 카드에 남기는 머리. --ask-review 가 모음
 EXIT_OK, EXIT_USAGE, EXIT_ENV, EXIT_STATE, EXIT_ACTOR, EXIT_MISSING, EXIT_INVALID, EXIT_CLOSE, EXIT_CARD = 0, 2, 3, 4, 5, 6, 7, 8, 9
 
 CAPTURE = ("screenshot", "recording")  # 화면 증거. --no-capture 가 생략하는 것
@@ -501,6 +504,36 @@ def gate(card, actor, epic, warnings, no_capture=None):
     return kind, checks, owner
 
 
+def fixes_since(card, hub):
+    """지난 검수 카드 이후 닫힌 수정 카드 코멘트 → [(시각, 내용)]. 검수 카드를 올린 적 없으면 전부"""
+    last = bf.last_card(hub, bf.review_id(card["id"]))
+    since = float(last["at"]) if last and isinstance(last.get("at"), (int, float)) else 0.0
+    out = []
+    for c in bd_json("comments", card["id"]) or []:
+        text = (c.get("text") or "").strip()
+        try:
+            at = parse_time(c.get("created_at") or "")
+        except ValueError:
+            continue
+        if text.startswith(FIX_DONE) and at > since:
+            out.append((at, text[len(FIX_DONE):].strip()))
+    return out
+
+
+def fix_review_gap(card, fixes):
+    """수정 묶음을 올리기 전 다른 모델 검수 1회(11-24: 수정마다 재검수하던 순환을 검수 카드당 1회로). 문제 없으면 None"""
+    paths = collect_evidence(card).get("review") or []
+    if not paths:
+        return EXIT_MISSING, "수정 카드를 모아 올리기 전 다른 모델 검수 증거(evidence:review)가 없음"
+    path = paths[-1][0]
+    if not os.path.isfile(path):
+        return EXIT_MISSING, f"검수 증거 {path} 없음"
+    if os.path.getmtime(path) < max(t for t, _ in fixes):
+        return EXIT_INVALID, f"검수 증거 {path} 가 마지막 수정 카드보다 오래됨 — 수정 뒤 상태를 검수하지 않음"
+    why = check_review(path)
+    return (EXIT_INVALID, why) if why else None
+
+
 def hub_dir():
     return os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
 
@@ -598,7 +631,16 @@ def main():
             if "stage:review" not in (card.get("labels") or []):
                 raise Fail(EXIT_STATE, f"{a.card_id} 는 검수 대기(stage:review)가 아님 — 검수 카드는 검수 단계의 기능에만 올림",
                            "board-done --epic 으로 먼저 닫아 검수 단계로 넘김(그때 카드가 자동으로 올라감). 검수를 통과한 기능은 반영 단계라 다시 올리지 않음")
-            res = bf.ask_review(card, hub_dir(), a.review_note or "", dry_run=a.dry_run)
+            fixes = fixes_since(card, hub_dir())
+            note = a.review_note or ""
+            if fixes:
+                gap = fix_review_gap(card, fixes)
+                if gap:
+                    raise Fail(gap[0], gap[1], f"수정이 반영된 브랜치 끝을 구현과 다른 모델로 한 번 검수하고 bd comments add {a.card_id} 'evidence:review=<판정 json>' 뒤 다시 실행")
+                done = "고친 것: " + "; ".join(x for _, x in fixes)
+                note = f"{note} · {done}" if note else done
+                out["fixes"] = [x for _, x in fixes]
+            res = bf.ask_review(card, hub_dir(), note, dry_run=a.dry_run)
             out.update(review_card={k: res[k] for k in ("id", "title", "posted", "skipped", "failed")}, ok=not res["failed"], closed=False,
                        exit=EXIT_CARD if res["failed"] else EXIT_OK)
             if res["failed"]:
@@ -644,7 +686,7 @@ def main():
         out.update(ok=True, closed=not a.dry_run, exit=EXIT_OK)
         if owner and not a.dry_run:
             # 검수 카드를 다시 올릴 때 이 코멘트로 고친 것을 모아 보임. 기능 단계는 그대로 둠
-            bd("comments", "add", owner["id"], f"수정 완료: {a.card_id} {card.get('title') or ''}".rstrip(), actor=a.actor)
+            bd("comments", "add", owner["id"], f"{FIX_DONE} {a.card_id} {card.get('title') or ''}".rstrip(), actor=a.actor)
             out["epic_comment"] = owner["id"]
             # bd create --parent 가 상위 label 을 복사함. 남겨 두면 다른 도구가 기능으로 오인할 수 있어 닫을 때 뗌
             for m in bf.stray_marks(card):
