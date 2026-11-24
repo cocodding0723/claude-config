@@ -112,7 +112,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/git-guard.sh",
+            "command": "~/.claude/hooks/night-ask.sh ~/.claude/hooks/git-guard.sh",
             "timeout": 10,
             "statusMessage": "git-guard 검사 중"
           },
@@ -130,7 +130,7 @@
           },
           {
             "type": "command",
-            "command": "~/.claude/hooks/pr-draft-guard.sh",
+            "command": "~/.claude/hooks/night-ask.sh ~/.claude/hooks/pr-draft-guard.sh",
             "timeout": 10,
             "statusMessage": "pr-draft-guard 검사 중"
           },
@@ -153,7 +153,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/jira-approval-guard.sh",
+            "command": "~/.claude/hooks/night-ask.sh ~/.claude/hooks/jira-approval-guard.sh",
             "timeout": 10,
             "statusMessage": "jira-approval-guard 검사 중"
           }
@@ -164,7 +164,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/plan-approval-write-guard.sh",
+            "command": "~/.claude/hooks/night-ask.sh ~/.claude/hooks/plan-approval-write-guard.sh",
             "timeout": 10,
             "statusMessage": "plan-approval-write-guard 검사 중"
           }
@@ -197,7 +197,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -I ~/.claude/hooks/lib/main_work_guard.py",
+            "command": "~/.claude/hooks/night-ask.sh python3 -I ~/.claude/hooks/lib/main_work_guard.py",
             "timeout": 10,
             "statusMessage": "main-work-guard 검사 중"
           }

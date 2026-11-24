@@ -14,6 +14,7 @@ claude/hooks/main-send-guard.sh	.claude/hooks/main-send-guard.sh	link
 claude/hooks/notify.sh	.claude/hooks/notify.sh	link
 claude/hooks/ai-state.sh	.claude/hooks/ai-state.sh	link
 claude/hooks/post-edit.sh	.claude/hooks/post-edit.sh	link
+claude/hooks/night-ask.sh	.claude/hooks/night-ask.sh	link
 claude/hooks/prompt-context.sh	.claude/hooks/prompt-context.sh	link
 claude/hooks/scoped-test.sh	.claude/hooks/scoped-test.sh	link
 claude/hooks/slack-format-guard.sh	.claude/hooks/slack-format-guard.sh	link
@@ -282,3 +283,5 @@ hubs/docs/doc-archive.md	.config/lrm-hubs/docs/doc-archive.md	link
 hubs/scripts/lib/closed_hubs.sh	.config/lrm-hubs/lib/closed_hubs.sh	link
 hubs/scripts/pr_index.py	.config/lrm-hubs/pr_index.py	link
 hubs/scripts/review_batch_run.sh	.config/lrm-hubs/review_batch_run.sh	link
+hubs/scripts/night_inbox_report.py	.config/lrm-hubs/night_inbox_report.py	link
+hubs/launchd/ai.lrm.nightinbox.plist	.config/lrm-hubs/ai.lrm.nightinbox.plist	copy

@@ -54,6 +54,10 @@ CFG_MERGED_LIVE="${WS_GC_MERGED_LIVE:-1}"                 # 1: PR 이 전부 병
 CFG_MERGED_LIVE_IDLE_MIN="${WS_GC_MERGED_LIVE_IDLE_MIN:-30}"  # 창이 붙은 곳은 마지막 활동 후 이 분이 지나야 대상(쓰고 있는 창 보호)
 CFG_MARK_MIN="${WS_GC_MARK_MIN:-25}"                       # 수거 방식: 표시한 뒤 이 분이 지난 회차에 치움(주기 30분이면 한 회차 뒤)
 CFG_MARKS="${WS_GC_MARKS:-$CFG_ARCHIVE/ws_gc.marks}"       # 표시 기록(경로<TAB>표시 시각). 표시 뒤 활동이 생기면 지움
+CFG_MERGE_BASES="${WS_GC_MERGE_BASES:-main origin/main master origin/master}"  # PR 없이 로컬 병합했는지 볼 기준 브랜치(앞에서부터)
+# Orca 밖 수동 작업 공간(git worktree)이 모이는 폴더. 바로 아래 폴더만 봄. 로컬 병합·미커밋 0·창 없음일 때만 git worktree remove(--force 안 씀)
+CFG_PLAIN_ROOTS="${WS_GC_PLAIN_ROOTS:-$HOME/orca/claude-config-wt}"
+CFG_PLAIN_IDLE_MIN="${WS_GC_PLAIN_IDLE_MIN:-60}"          # 마지막 커밋·파일 변경 후 이 분이 지나야 대상
 # ───────────────────────────────────────────────────────────────────────────────────────────
 
 usage() {
@@ -404,6 +408,19 @@ pr_done_check() {
   done < <(echo "$prs" | jq -r '.[] | select(.state == "MERGED" or .state == "CLOSED") | .headRefOid // empty')
   return 1
 }
+# 로컬 병합 판정 → 0 이면 LOCAL_MERGED_INTO. HEAD 를 둘째 부모로 둔 병합 커밋이 기준 브랜치에 있을 때만.
+# 단순 조상 판정은 막 만든 빈 브랜치(HEAD = main)도 병합으로 오인해 쓰지 않음(--no-ff 병합 전제)
+local_merged() {
+  local p="$1" head b
+  head=$(git -C "$p" rev-parse -q --verify HEAD 2>/dev/null) || return 1
+  for b in $CFG_MERGE_BASES; do
+    git -C "$p" rev-parse -q --verify "$b^{commit}" >/dev/null 2>&1 || continue
+    if git -C "$p" log --merges --format='%P' "$head..$b" 2>/dev/null | awk '{ for (i = 2; i <= NF; i++) print $i }' | grep -Fxq -- "$head"; then
+      LOCAL_MERGED_INTO="$b"; return 0
+    fi
+  done
+  return 1
+}
 # 보관 목록: 미추적(부산물 포함)·캐시가 아닌 gitignore 파일. 추적 변경은 patch 로 따로 남김. classify_changes 뒤에 부름
 build_full_list() {
   awk -F'\t' '$1 ~ /^[NOUGI]$/ { print $2 }' "$TMP/chg.tsv" | LC_ALL=C sort -u | awk 'last != "" && index($0, last) == 1 { next } /\/$/ { last = $0 } { print }' > "$TMP/all.txt"
@@ -509,6 +526,12 @@ evaluate() {
   if [ "$keep_br" = 1 ] && pr_lookup "$p" "$br"; then
     PRS_OK=1
     if pr_done_check "$p" && [ $(( (NOW - last) / 60 )) -ge "$CFG_PR_DONE_GRACE_MIN" ]; then
+      if [ "$LIVE_TERM" = 1 ]; then sweep_ready "$p" $(( (NOW - last) / 60 )) || return 1; fi
+      PR_DONE=1; evaluate_pr_done "$p" "$br"; return $?
+    fi
+    # PR 없이 로컬에서 main 에 병합한 브랜치도 PR 병합과 같게 처리. PR 이 하나라도 있으면 위 PR 규칙만 따름
+    if echo "$prs" | jq -e 'length == 0' >/dev/null 2>&1 && local_merged "$p" && [ $(( (NOW - last) / 60 )) -ge "$CFG_PR_DONE_GRACE_MIN" ]; then
+      PR_LABEL="로컬병합($LOCAL_MERGED_INTO)"
       if [ "$LIVE_TERM" = 1 ]; then sweep_ready "$p" $(( (NOW - last) / 60 )) || return 1; fi
       PR_DONE=1; evaluate_pr_done "$p" "$br"; return $?
     fi
@@ -806,6 +829,41 @@ while IFS=$'\t' read -r p last_ms kids parent; do
   process_place
   place_unlock
 done < "$TMP/rows.tsv"
+
+# ── Orca 밖 수동 작업 공간 ─────────────────────────────────────────────────────────────────
+# Orca 가 모르는 곳이라 창·워커 정보가 없음 → 조건을 좁힘: 로컬 병합·미커밋 0(미추적 포함)·프로세스 cwd 없음·유휴. 브랜치는 유지
+plain_skip() { echo "$1" >> "$TMP/skips"; log "SKIP $1 $name${2:+ — $2}"; item skip "$1" "${2:-}"; }
+sweep_plain() {
+  local d="$1" br last_c
+  name="plain:${d#"$HOME"/}" p="$d"
+  [ -f "$d/.git" ] || return 0                                        # 메인 체크아웃(.git 폴더)·비저장소는 대상 아님
+  grep -Fxq -- "$d" "$TMP/registered" && return 0                     # Orca 등록 곳은 위 본 경로가 맡음
+  case "$PWD/" in "$d"/*) plain_skip current; return 0 ;; esac
+  br=$(git -C "$d" symbolic-ref -q --short HEAD 2>/dev/null) || { plain_skip unmerged "detached HEAD"; return 0; }
+  protected_branch "$br" && { plain_skip protected "$br"; return 0; }
+  local_merged "$d" || { plain_skip unmerged "$br 이 ${CFG_MERGE_BASES// /·} 어디에도 병합 안 됨"; return 0; }
+  [ -z "$(git -C "$d" status --porcelain 2>/dev/null)" ] || { plain_skip dirty "미커밋·미추적 있음"; return 0; }
+  last_c=$(git -C "$d" log -1 --format=%ct 2>/dev/null || echo 0)
+  if [ $(( (NOW - last_c) / 60 )) -lt "$CFG_PLAIN_IDLE_MIN" ] || [ -n "$(find "$d" -path "$d/.git" -prune -o -type f -mmin -"$CFG_PLAIN_IDLE_MIN" -print -quit 2>/dev/null)" ]; then
+    plain_skip idle "${CFG_PLAIN_IDLE_MIN}분 안에 활동"; return 0
+  fi
+  lsof -a -d cwd -Fn 2>/dev/null | grep -Eq "^n$(printf '%s' "$d" | sed 's/[][\.*^$+?(){}|]/\\&/g')(/|\$)" && { plain_skip live "이 폴더에서 도는 프로세스 있음"; return 0; }
+  N_CAND=$((N_CAND + 1))
+  if [ "$APPLY" = 0 ]; then log "CANDIDATE $name 로컬병합($LOCAL_MERGED_INTO) branch=$br"; item candidate local_merged "$br"; return 0; fi
+  if git -C "$d" worktree remove -- "$d" 2>>"$CFG_LOG"; then
+    N_DEL=$((N_DEL + 1)); log "DELETE $name 로컬병합($LOCAL_MERGED_INTO) branch=$br (브랜치는 유지)"; item deleted local_merged "$br"
+  else
+    echo rm_fail >> "$TMP/skips"; N_FAIL=$((N_FAIL + 1)); echo "$name" >> "$TMP/failed.txt"
+    log "SKIP rm_fail $name — git worktree remove 거부"; item failed rm_fail "git worktree remove 거부"
+  fi
+}
+[ -n "$ONLYPATH$PARENT" ] || for r in $CFG_PLAIN_ROOTS; do
+  for d in "$r"/*/; do
+    d="${d%/}"; [ -d "$d" ] || continue
+    [ -z "$ONLY" ] || case "$d" in *"$ONLY"*) ;; *) continue ;; esac
+    sweep_plain "$d"
+  done
+done
 
 # ── 요약 ──────────────────────────────────────────────────────────────────────────────────
 label() { case "$1" in
