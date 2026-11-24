@@ -445,4 +445,35 @@ f5=$(fx_card "프리팹 수정" "$fx_epic" vis); claim "$f5" wf; fx_ev "$f5" vis
 expect "fix: 화면 파일이 바뀌면 --no-capture 거부(7)" 7 "$BIN" "$f5" wf --no-capture "간단함" --dry-run
 expect "일반 카드에 --no-capture 는 2" 2 "$BIN" "$u2" wn --no-capture "x" --dry-run
 
+# 작은 기능 빠른 길: review·recording 없이 닫고 반영 단계 + review:batch. 검수는 --review-batch 로 한 장에 모음
+labs() { bd show "$1" --json | python3 -c 'import json,sys;d=json.load(sys.stdin);d=d[0] if isinstance(d,list) else d;print(",".join(sorted(d.get("labels") or [])))'; }
+sm_epic() { bd create "$1" -t epic --labels "feature:$2,size:$3,$BL" -d "- 기능 코디네이터 허브: $SB/coord-feat-$2-hub" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'; }
+s1=$(sm_epic "[LRM-1] 버튼 색" sa small); s2=$(sm_epic "글자 크기" sb small); nn=$(sm_epic "보통 기능" sc normal)
+sleep 1; printf 'png' > "$SB/ev/sm.png"; for x in "$s1" "$s2" "$nn"; do ev "$x" "screenshot=$SB/ev/sm.png"; done
+expect "normal: 검수·녹화 없으면 거부(6)" 6 "$BIN" --epic "$nn" lead
+grep -q 'evidence:review' "$SB/out" && grep -q 'evidence:recording' "$SB/out" && ok "normal: review·recording 을 여전히 요구" || ko "normal 요구 증거" "$(cat "$SB/out")"
+n0=$(calls)
+expect "small: review·recording 없이 닫힘" 0 "$BIN" --epic "$s1" lead
+expect "small: 두 번째 기능도 닫힘" 0 "$BIN" --epic "$s2" lead
+L=$(labs "$s1")
+case ",$L," in *,review:batch,*stage:ship,*) ok "small: 닫으면 stage:ship + review:batch";; *) ko "small 표시" "$L";; esac
+case ",$L," in *,stage:review,*) ko "small: 검수 단계로 감" "$L";; *) ok "small: 검수 단계로 가지 않음";; esac
+[ "$(calls)" = "$n0" ] && ok "small: 검수 카드를 올리지 않음" || ko "small: 보고 도구 호출됨" "$(calls)"
+expect "review-batch --dry-run" 0 "$BIN" --review-batch --dry-run
+[ "$(calls)" = "$n0" ] && case ",$(labs "$s1")," in *,review:batch,*) true;; *) false;; esac && ok "review-batch --dry-run: 올리지도 표시를 바꾸지도 않음" || ko "dry-run 이 씀" "$(calls) $(labs "$s1")"
+expect "--review-batch 와 --epic 을 함께 쓰면 2" 2 "$BIN" --review-batch --epic
+expect "review-batch: 한 장으로 올림" 0 "$BIN" --review-batch lead
+[ "$(calls)" = $((n0 + 1)) ] && ok "review-batch: 보고 도구 1회" || ko "review-batch 호출 수" "$(calls)"
+python3 - "$SB/hub/calls.jsonl" "$s1" "$s2" <<'PY2' && ok "review-batch: 본문에 기능 이름 목록, 결정 카드" || ko "review-batch 인자" "$(tail -1 "$SB/hub/calls.jsonl")"
+import json, sys
+d = json.loads(open(sys.argv[1]).read().splitlines()[-1])
+t = d["--text"]
+assert d["--kind"] == "decide" and d["--decision-id"].startswith("D-BTCH"), d
+assert "버튼 색" in t and "글자 크기" in t and sys.argv[2] in t and sys.argv[3] in t and "보통 기능" not in t, t
+assert t.startswith("작은 기능 2건"), t
+PY2
+for x in "$s1" "$s2"; do L=$(labs "$x"); case ",$L," in *,review:batch,*) ko "review-batch: 표시가 남음" "$L";; *,review:batched,*) ok "review-batch: $x 표시 바뀜";; *) ko "review-batch: batched 없음" "$L";; esac; done
+expect "review-batch: 모을 기능이 없으면 0" 0 "$BIN" --review-batch
+[ "$(calls)" = $((n0 + 1)) ] && grep -q '모을 기능 없음' "$SB/out" && ok "review-batch: 빈 묶음은 올리지 않음" || ko "빈 묶음" "$(cat "$SB/out")"
+
 echo "통과 $PASS, 실패 $FAIL"; [ "$FAIL" = 0 ]

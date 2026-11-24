@@ -2,7 +2,7 @@
 board-claim(집기)과 board-stage(단계 옮기기)가 같이 씀. 규칙을 글로만 두면 건너뛰므로 집기 도구가 막음.
 
 흐름: 0 접수 → 1 이해 → 2 설계(계획 승인) → 3 구현 → 4 검증 → 5 검수 → 6 반영.
-크기: 작음은 설계를 건너뛰고(0 → 3) 보통·큼은 계획 승인 뒤에만 구현 카드를 집음.
+크기: 작음은 설계를 건너뛰고(0 → 3) 보통·큼은 계획 승인 뒤에만 구현 카드를 집음. 작음은 다른 모델 검수·녹화 없이 반영으로 가고, 사용자 검수는 반영 뒤 모아 받음(board-done --review-batch).
 적용 대상: 기능 카드(epic)에 label flow:v1 이 있는 기능만. 옛 방식으로 떠 있는 기능은 막지 않음.
 
 계획 승인 = 그 기능의 계획 승인 카드(결정 번호 plan_id(기능 카드 id), 1번 선택지가 '승인')에 사용자가 Slack·문서 사이트에서 1번이나 추천대로를 고른 것,
@@ -52,6 +52,15 @@ REVIEW_RECOMMEND, REVIEW_REVERSIBLE = "1", "쉬움"
 REVIEW_BACKGROUND = "구현·검증이 끝나 사용자 검수만 남았다. 결과 상세는 작업 스레드의 완료 보고에 있다."
 REVIEW_TERMS = "없음"
 REVIEW_NOTE_HEAD = "확인할 것"
+# 작은 기능 빠른 길: 다른 모델 검수·녹화 없이 닫고 반영 단계로 감. 사용자 검수는 반영 뒤 하루치를 한 장으로 모아 받음
+SMALL_SKIP = ("review", "recording")  # 작은 기능이 board-done --epic 에서 요구받지 않는 증거
+BATCH_LABEL, BATCHED_LABEL = "review:batch", "review:batched"  # 모아 받기 대기 / 모아 올림 끝
+BATCH_HEAD = "D-BTCH"            # 모아 받기 결정 번호 머리글자. 몸통 길이는 PLAN 과 같아 ID_BODY_MAX 공용
+BATCH_TITLE = "작은 기능 {n}건 모아 검수"
+BATCH_OPTIONS = (f"1={PASS_WORD} => 모두 그대로 둔다,"
+                 "2=고칠 점 => 답글로 기능 이름과 고칠 점을 적으면 수정 카드로 처리한다")
+BATCH_BACKGROUND = "작은 기능은 다른 모델 검수·녹화 없이 반영했다. 하루치를 모아 한 번에 확인받는다."
+BATCH_LIST_HEAD = "기능"
 LABEL_PREFIX = re.compile(r"^\s*\[[^\]]*\]\s*")  # 카드 제목 앞 '[LRM-782]' 같은 티켓 머리표
 SENT_TITLE_HEAD = re.compile(r"^\s*:[^\s:]+:\s*")  # 보낸 카드 기록 제목 앞 슬랙 이모지 코드
 # 코디네이터 창에 직접 친 승인·건너뛰기: 글이 이 말로 시작할 때만("승인", "계획 승인한다", "스킵하고 진행", "전부 추천", "ㅇㅇ 추천대로 가자").
@@ -241,6 +250,21 @@ def size_of(epic: "dict | None") -> str:
     return v if v in SIZES else ""
 
 
+def size_reason(epic: "dict | None") -> str:
+    """크기를 정한 근거. 확장 지점: 크기 자동 판정 도구(board_size)를 나중에 여기 연결함. 지금은 늘 ''"""
+    return ""
+
+
+def skip_evidence(epic: "dict | None") -> tuple:
+    """board-done --epic 이 이 기능에서 요구하지 않는 증거 종류"""
+    return SMALL_SKIP if size_of(epic) == SMALL else ()
+
+
+def batch_id(day: str, ids) -> str:
+    """날짜 + 기능 id 목록 → 모아 받기 결정 번호. 같은 날 다른 묶음과 겹치지 않게 id 목록까지 넣음"""
+    return decision_id(BATCH_HEAD, f"{day}-{','.join(ids)}")
+
+
 def decision_id(head: str, card_id: str) -> str:
     """머리글자 + 기능 카드 id → 결정 번호. 길어서 자르면 다른 기능과 겹칠 수 있어 앞 6자 + id 지문 6자로 만듦"""
     body = re.sub(r"[^A-Za-z0-9]", "", card_id or "").upper()
@@ -336,6 +360,11 @@ def feature_hub(epic: "dict | None") -> str:
     return HUB_PREFIX + slug if slug else ""
 
 
+def feature_name(epic: "dict | None") -> str:
+    """카드 제목에서 티켓 머리표를 뗀 기능 이름. 비면 id"""
+    return LABEL_PREFIX.sub("", str((epic or {}).get("title") or "")).strip() or str((epic or {}).get("id") or "")
+
+
 def review_title(hub_dir: str, did: str, epic: "dict | None") -> str:
     """검수 카드 제목(본문 첫 줄). 그 번호로 앞서 올린 카드가 있으면 그 제목 그대로: 보고 도구가 같은 번호의 제목이 달라지면 거부함.
     앞 카드가 없으면 '<기능 이름> 검수'를 TITLE_MAX 안으로 맞춤"""
@@ -348,7 +377,7 @@ def review_title(hub_dir: str, did: str, epic: "dict | None") -> str:
         first = SENT_TITLE_HEAD.sub("", str(r.get("title") or "")).strip()
         if r.get("decision_id") == did and r.get("form_kind") == "decide" and first:
             return first
-    name = LABEL_PREFIX.sub("", str((epic or {}).get("title") or "")).strip() or str((epic or {}).get("id") or "")
+    name = feature_name(epic)
     room = TITLE_MAX - len(TITLE_TAIL)
     if len(name) > room:
         name = name[:room - len(TITLE_CUT)].rstrip() + TITLE_CUT
@@ -399,6 +428,43 @@ def ask_review(epic: dict, hub_dir: str, note: str = "", dry_run: bool = False, 
         out["skipped"] = f"검수 카드 {did} 가 이미 답을 기다리는 중이라 다시 올리지 않음"
     elif not (hub and ws):
         out["failed"] = "기능 카드에서 " + ("허브 이름(label feature:<slug>)" if not hub else "작업 공간(설명의 '기능 코디네이터 허브:' 줄)") + "을 얻지 못함"
+    elif dry_run:
+        out["skipped"] = "dry-run: 아래 명령으로 올릴 것"
+    elif not os.path.isfile(report):
+        out["failed"] = f"보고 도구 {report} 없음(경로는 {REPORT_ENV} 로 지정)"
+    else:
+        env = dict(os.environ, LRM_HUB_DIR=hub_dir)
+        try:
+            r = run(cmd, capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL, timeout=60)
+        except (OSError, subprocess.SubprocessError) as e:
+            out["failed"] = f"보고 도구 실행 실패: {e}"
+        else:
+            if r.returncode == 0:
+                out["posted"] = True
+            else:
+                out["failed"] = f"보고 도구 종료 {r.returncode}: {(r.stderr or r.stdout).strip()[:300]}"
+    return out
+
+
+def batch_command(report: str, hub: str, ws: str, epics: list, did: str) -> list:
+    """모아 받기 카드 명령. 본문 = 제목 / 배경 / 용어 / 기능 이름 목록"""
+    names = [f"- {feature_name(e)} ({e.get('id')})" for e in epics]
+    lines = [BATCH_TITLE.format(n=len(epics)), f"배경: {BATCH_BACKGROUND}", f"용어: {REVIEW_TERMS}", f"{BATCH_LIST_HEAD}:", *names]
+    return ["python3", report, "add", "--hub", hub, "--task", REVIEW_TASK, "--kind", "decide", "--card", str(epics[0].get("id") or ""),
+            "--ws", ws, "--no-doc", "--text", "\n".join(lines), "--options", BATCH_OPTIONS, "--recommend", REVIEW_RECOMMEND,
+            "--decision-id", did, "--reversible", REVIEW_REVERSIBLE]
+
+
+def ask_review_batch(epics: list, hub_dir: str, day: str, dry_run: bool = False, run=subprocess.run) -> dict:
+    """review:batch 기능들을 검수 결정 카드 한 장으로 올림. 반환 키는 ask_review 와 같음.
+    허브·작업 공간은 둘 다 얻을 수 있는 첫 기능 것을 씀(한 장이라 한 곳에만 올림)"""
+    did = batch_id(day, [str(e.get("id") or "") for e in epics])
+    hub, ws = next(((feature_hub(e), coordinator_ws(e)) for e in epics if feature_hub(e) and coordinator_ws(e)), ("", ""))
+    report = os.environ.get(REPORT_ENV) or os.path.join(hub_dir, REPORT_NAME)
+    cmd = batch_command(report, hub or "<허브 이름>", ws or "<작업 공간>", epics, did)
+    out = {"id": did, "title": BATCH_TITLE.format(n=len(epics)), "posted": False, "skipped": "", "failed": "", "manual": shlex.join(cmd)}
+    if not (hub and ws):
+        out["failed"] = "모은 기능 어디에서도 허브 이름(label feature:<slug>)과 작업 공간(설명의 '기능 코디네이터 허브:' 줄)을 함께 얻지 못함"
     elif dry_run:
         out["skipped"] = "dry-run: 아래 명령으로 올릴 것"
     elif not os.path.isfile(report):
