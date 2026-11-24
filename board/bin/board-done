@@ -51,6 +51,7 @@ epic 이 닫히면 label stage:review(사용자 검수 대기)를 붙임. 기능
               증거(evidence:review) 1건을 요구함(없으면 6, 낡았거나 불합격이면 7). 수정 카드마다 따로 검수하지 않음
   작은 기능:  size:small 기능은 evidence:review·evidence:recording 을 요구하지 않음(시험·캡처 증거는 그대로). 닫으면 검수 카드를 올리지 않고
               stage:ship(반영)과 review:batch 를 붙임. 사용자 검수는 반영 뒤 하루치를 모아 받음
+              도구가 base:...통합 브랜치 끝의 실제 바뀐 파일로 크기를 다시 판정해, 작음이 아니거나 위험 영역·base: 없음이면 생략하지 않음
   모아 받기:  board-done --review-batch [--dry-run] [--json]
               review:batch 가 붙은 기능 전부를 검수 결정 카드 한 장(본문에 기능 이름 목록)으로 올리고, 각 기능의 review:batch 를 떼고
               review:batched 를 붙임. 모을 기능이 없으면 종료 0. 올리지 못하면 종료 9(표시는 그대로)
@@ -400,18 +401,41 @@ def check_review(path):
 
 def size_rules():
     if "size_rules" not in GATE:
-        GATE["size_rules"] = board_size.load_rules()
+        try:
+            GATE["size_rules"] = board_size.load_rules()
+        except (OSError, ValueError) as e:
+            raise Fail(EXIT_ENV, f"작업 크기 규칙(board/size_rules.tsv)을 못 읽음 — {e}",
+                       "board/size_rules.tsv 의 줄을 '종류<TAB>값' 형식·아는 종류·숫자 값으로 고친 뒤 다시 실행")
     return GATE["size_rules"]
 
 
-def risk_changes(card, repo, head, owner=None):
-    """기준 브랜치와 견줘 바뀐 파일 중 위험 영역 패턴(size_rules.tsv risk_path)에 걸린 것. 견줄 수 없으면 []"""
+def changed_files(card, repo, head, owner=None):
+    """기준 브랜치(label base:)와 견줘 바뀐 파일. 견줄 수 없으면 None.
+    --no-renames: 이름 바꾸기로 위험 경로를 옮겨도 옛 이름·새 이름 둘 다 잡게 함"""
     base = bs.label(card, "base") or (bs.label(owner, "base") if owner else "")
     if not base or not git(repo, "rev-parse", "--verify", "-q", base + "^{commit}"):
-        return []
-    names = (git(repo, "diff", "--name-only", f"{base}...{head}") or "").splitlines()
+        return None
+    r = subprocess.run(["git", "-C", repo, "diff", "--name-only", "--no-renames", f"{base}...{head}"], capture_output=True, text=True)
+    return r.stdout.split("\n") if r.returncode == 0 else None
+
+
+def risk_changes(card, repo, head, owner=None):
+    """바뀐 파일 중 위험 영역 패턴(size_rules.tsv risk_path)에 걸린 것. 견줄 수 없으면 []"""
     pats = size_rules().risk_path
-    return [n for n in names if any(fnmatch.fnmatchcase(n.lower(), p) for p in pats)]
+    return [n for n in changed_files(card, repo, head, owner) or [] if any(fnmatch.fnmatchcase(n.lower(), p) for p in pats)]
+
+
+def small_refusal(card, repo, head):
+    """size:small 생략을 거부할 이유. None 이면 생략 허용.
+    표시만 믿으면 결제·저장 파일을 바꿔도 검수 없이 반영으로 가서 실제 바뀐 파일로 다시 판정함"""
+    names = changed_files(card, repo, head)
+    if names is None:
+        return ["기준 브랜치(label base:)가 없거나 통합 브랜치와 견줄 수 없음"]
+    names = [n for n in names if n]
+    size, reasons = board_size.judge(names, size_rules())
+    if GATE["risk"]:
+        reasons = reasons + [f"위험 영역 파일: {', '.join(GATE['risk'][:3])}"]
+    return reasons if size != board_size.SMALL or GATE["risk"] else None
 
 
 def check_prefab_diff(path):
@@ -514,8 +538,14 @@ def gate(card, actor, epic, warnings, no_capture=None):
     since = max(parse_time(card.get("started_at") or card["created_at"]), head_time)
     found = collect_evidence(card)
     needs = REQUIRED[base_kind(repo, head)] + REQUIRED[kind] if kind == "fix" else list(REQUIRED[kind])
-    if epic:
-        needs = [n for n in needs if n not in bf.skip_evidence(card)]
+    GATE["small_ok"], GATE["small_why"] = False, []
+    if epic and bf.skip_evidence(card):
+        why = small_refusal(card, repo, head)
+        if why:
+            GATE["small_why"] = why
+        else:
+            GATE["small_ok"] = True
+            needs = [n for n in needs if n not in bf.skip_evidence(card)]
     if "compile" in needs:
         log = gate_compile(card, repo, head, warnings)
         if log:
@@ -539,7 +569,11 @@ def gate(card, actor, epic, warnings, no_capture=None):
         # 같은 종류는 마지막 줄만 봄. 틀린 증거를 지우지 않고 새 줄로 바로잡게 함
         paths = found.get(need, [])[-1:]
         if not paths:
-            checks.append({"kind": need, "ok": False, "code": EXIT_MISSING, "cause": f"evidence:{need} 줄 없음", "fix": FIX[need]})
+            cause, fix = f"evidence:{need} 줄 없음", FIX[need]
+            if need in bf.SMALL_SKIP and GATE.get("small_why"):
+                cause += f"(size:small 생략 거부 — 실제 바뀐 파일 판정: {'; '.join(GATE['small_why'])})"
+                fix = "다른 모델 검수와 녹화를 붙이거나, 실제로 작은 변경이면 범위를 줄임. " + fix
+            checks.append({"kind": need, "ok": False, "code": EXIT_MISSING, "cause": cause, "fix": fix})
             continue
         for p, sha in paths:
             err = check_commit(sha, head, branch, p)
@@ -847,7 +881,8 @@ def main():
                 r = bd("label", "remove", a.card_id, m, actor=a.actor)
                 if r.returncode != 0:
                     print(f"경고: {a.card_id} 의 {m} 를 떼지 못함. 조치: bd label remove {a.card_id} {m}", file=sys.stderr)
-        if a.epic and not a.dry_run and bf.size_of(card) == bf.SMALL:
+        # 다시 판정에서 작음이 확인된 기능만 반영으로 바로 넘김. 아니면 보통 검수 길
+        if a.epic and not a.dry_run and GATE.get("small_ok"):
             # 작은 기능: 검수 카드를 하나씩 올리지 않고 반영으로 넘김. 검수는 --review-batch 로 하루치를 모아 받음
             bd("label", "add", a.card_id, "stage:ship", actor=a.actor)
             bd("label", "add", a.card_id, bf.BATCH_LABEL, actor=a.actor)

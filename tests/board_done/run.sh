@@ -447,9 +447,33 @@ expect "일반 카드에 --no-capture 는 2" 2 "$BIN" "$u2" wn --no-capture "x" 
 
 # 작은 기능 빠른 길: review·recording 없이 닫고 반영 단계 + review:batch. 검수는 --review-batch 로 한 장에 모음
 labs() { bd show "$1" --json | python3 -c 'import json,sys;d=json.load(sys.stdin);d=d[0] if isinstance(d,list) else d;print(",".join(sorted(d.get("labels") or [])))'; }
-sm_epic() { bd create "$1" -t epic --labels "feature:$2,size:$3,$BL" -d "- 기능 코디네이터 허브: $SB/coord-feat-$2-hub" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'; }
-s1=$(sm_epic "[LRM-1] 버튼 색" sa small); s2=$(sm_epic "글자 크기" sb small); nn=$(sm_epic "보통 기능" sc normal)
-sleep 1; printf 'png' > "$SB/ev/sm.png"; for x in "$s1" "$s2" "$nn"; do ev "$x" "screenshot=$SB/ev/sm.png"; done
+sm_epic() { bd create "$1" -t epic --labels "feature:$2,size:$3,${4:-$BL}" -d "- 기능 코디네이터 허브: $SB/coord-feat-$2-hub" --json | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])'; }
+# smbr <브랜치> <파일...>: main 에서 딴 브랜치에 파일을 커밋하고 끝 해시 출력. 작은 기능 다시 판정이 실제 diff 를 봄
+smbr() { local b=$1; shift; gitc checkout -q -b "$b" main; for f in "$@"; do mkdir -p "$GR/$(dirname "$f")"; echo "$b" > "$GR/$f"; done; gitc add -A; gitc commit -q -m "$b"; git -C "$GR" rev-parse HEAD; gitc checkout -q main; }
+evb() { bd comments add "$1" "evidence:$2 commit=$3" >/dev/null; }
+H1=$(smbr sm-a Scripts/Ui/Button.cs); H2=$(smbr sm-b Scripts/Ui/Font.cs Scripts/Ui/FontView.cs)
+s1=$(sm_epic "[LRM-1] 버튼 색" sa small "branch:sm-a,repo:$GR,base:main"); s2=$(sm_epic "글자 크기" sb small "branch:sm-b,repo:$GR,base:main"); nn=$(sm_epic "보통 기능" sc normal)
+sleep 1; printf 'png' > "$SB/ev/sm.png"; evb "$s1" "screenshot=$SB/ev/sm.png" "$H1"; evb "$s2" "screenshot=$SB/ev/sm.png" "$H2"; ev "$nn" "screenshot=$SB/ev/sm.png"
+
+# 작은 기능 다시 판정: size:small 표시만으로는 생략하지 않음. 실제 바뀐 파일이 작음이 아니면 review·recording 을 다시 요구
+many_files() { local i; for i in $(seq 1 12); do echo "Scripts/Shop/F$i.cs"; done; }
+H3=$(smbr sm-many $(many_files)); H4=$(smbr sm-risk Assets/Save/x.cs)
+gitc checkout -q -b sm-mv main; mkdir -p "$GR/Assets/Save"; echo s > "$GR/Assets/Save/Slot.cs"; gitc add -A; gitc commit -q -m s0; RB=$(git -C "$GR" rev-parse HEAD)
+mkdir -p "$GR/Scripts"; gitc mv Assets/Save/Slot.cs Scripts/Slot.cs; gitc commit -q -m mv; H5=$(git -C "$GR" rev-parse HEAD); gitc checkout -q main
+r1=$(sm_epic "결제 30개" ra small "branch:sm-many,repo:$GR,base:main"); r2=$(sm_epic "저장 1개" rb small "branch:sm-risk,repo:$GR,base:main")
+r3=$(sm_epic "기준 없음" rc small "branch:sm-a,repo:$GR"); r4=$(sm_epic "이름 바꾸기" rd small "branch:sm-mv,repo:$GR,base:$RB")
+sleep 1; evb "$r1" "screenshot=$SB/ev/sm.png" "$H3"; evb "$r2" "screenshot=$SB/ev/sm.png" "$H4"; evb "$r3" "screenshot=$SB/ev/sm.png" "$H1"; evb "$r4" "screenshot=$SB/ev/sm.png" "$H5"
+expect "small 다시 판정: 파일이 많으면 거부(6)" 6 "$BIN" --epic "$r1" lead --dry-run
+grep -q 'evidence:review' "$SB/out" && grep -q 'size:small 생략 거부' "$SB/out" && grep -q '파일 12개' "$SB/out" && grep -q '범위를 줄임' "$SB/out" && ok "small 다시 판정: 문구에 판정 이유·조치" || ko "많은 파일 문구" "$(cat "$SB/out")"
+expect "small 다시 판정: 위험 경로 1개면 거부(6)" 6 "$BIN" --epic "$r2" lead --dry-run
+grep -q '위험 영역' "$SB/out" && grep -q 'evidence:recording' "$SB/out" && ok "small 다시 판정: 위험 영역 이유" || ko "위험 경로 문구" "$(cat "$SB/out")"
+expect "small 다시 판정: base: 없으면 거부(6)" 6 "$BIN" --epic "$r3" lead --dry-run
+grep -q 'base:' "$SB/out" && ok "small 다시 판정: 기준 없음 이유" || ko "기준 없음 문구" "$(cat "$SB/out")"
+expect "small 다시 판정: 이름 바꾸기로 위험 경로를 옮겨도 거부(6)" 6 "$BIN" --epic "$r4" lead --dry-run
+grep -q 'assets/save\|Assets/Save' "$SB/out" && ok "small 다시 판정: 옛 이름(위험 경로)을 잡음" || ko "이름 바꾸기 문구" "$(cat "$SB/out")"
+BB="$SB/board-broken"; cp -R "$REPO/board" "$BB"; printf 'small_max_files\tx\n' >> "$BB/size_rules.tsv"
+expect "size_rules.tsv 깨짐: Fail(3)" 3 "$BB/bin/board-done" --epic "$s1" lead --dry-run
+grep -q 'size_rules.tsv' "$SB/out" && grep -q '조치:' "$SB/out" && ok "size_rules.tsv 깨짐: 원인·조치" || ko "규칙 깨짐 문구" "$(cat "$SB/out")"
 expect "normal: 검수·녹화 없으면 거부(6)" 6 "$BIN" --epic "$nn" lead
 grep -q 'evidence:review' "$SB/out" && grep -q 'evidence:recording' "$SB/out" && ok "normal: review·recording 을 여전히 요구" || ko "normal 요구 증거" "$(cat "$SB/out")"
 n0=$(calls)
