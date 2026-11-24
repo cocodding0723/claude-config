@@ -31,7 +31,7 @@
 완료·반영:
 - 병합은 이 허브({{BRANCH}} 체크아웃)에서 board-merge <카드> <작업자>. 실패는 작업자에게 돌린다. git merge 직접 실행 금지.
 - dev 반영 전 board-merge-check --epic {{EPIC}} {{BRANCH}} --base {{BASE}} 확인 뒤 사용자 직접 승인.
-- 모든 카드가 닫히면 epic에 "기능 완료"와 결과 HTML 경로를 코멘트로 남기고 board-done --epic을 실행한다. 검수 통과만으로 종료하지 않는다. 반영 뒤 --shipped가 feature_close.sh를 분리 실행해 정리한다.
+- 모든 카드가 닫히면 doc-kit 결과 보고서(HTML)를 쓰고 epic에 "기능 완료 <보고서 절대 경로>" 코멘트를 남긴 뒤 board-done --epic을 실행한다. 완료 검사가 이 보고서를 검수 카드(작은 기능은 완료 보고)에 첨부해 Slack으로 보낸다. 검수 통과만으로 종료하지 않는다. 반영 뒤 --shipped가 feature_close.sh를 분리 실행해 정리한다.
 
 보고·수신: 카드 기록만 남기면 전송기가 옮김, 결정 카드·문서 첨부만 hub_report. 결정에는 --card {{EPIC}} --ws "$PWD" 를 붙여 답을 이 세션으로 받는다.
 기능·작업 공간 스레드 답은 메인을 거치지 않고 epic 코멘트·hub-inbox/feat-{{SLUG}}.jsonl로 온다. 'Slack 답 도착: bd show {{EPIC}}' 알림과 단계마다 main_inbox.py read --since-offset --box feat-{{SLUG}} 로 읽는다(첨부는 저장 경로).
