@@ -476,6 +476,29 @@ for x in "$s1" "$s2"; do L=$(labs "$x"); case ",$L," in *,review:batch,*) ko "re
 expect "review-batch: 모을 기능이 없으면 0" 0 "$BIN" --review-batch
 [ "$(calls)" = $((n0 + 1)) ] && grep -q '모을 기능 없음' "$SB/out" && ok "review-batch: 빈 묶음은 올리지 않음" || ko "빈 묶음" "$(cat "$SB/out")"
 
+# 모아 받기 답 처리: 통과 → 표시 떼고 코멘트, 고칠 점 → stage:review, 답 없음·터미널 대필 → 그대로, --dry-run → 쓰지 않음
+bnote() { bd comments "$1" --json | python3 -c 'import json,sys;t=[c.get("text","") for c in json.load(sys.stdin) or [] if c.get("text","").startswith("모아 받기 카드:")];print(t[-1].split()[-1] if t else "")'; }
+cmts() { bd comments "$1" --json | python3 -c 'import json,sys;print("\n".join(c.get("text","") for c in json.load(sys.stdin) or []))'; }
+BD1=$(bnote "$s1"); BD2=$(bnote "$s2")
+[ -n "$BD1" ] && [ "$BD1" = "$BD2" ] && ok "review-batch: 기능 카드에 모아 받기 번호 코멘트" || ko "모아 받기 번호 코멘트" "$BD1/$BD2"
+s3=$(sm_epic "아이콘 여백" sd small); s4=$(sm_epic "탭 순서" se small)
+for x in "$s3" "$s4"; do bd label add "$x" review:batched >/dev/null; bd label add "$x" stage:ship >/dev/null; done
+bd comments add "$s3" "모아 받기 카드: D-BTCHX3" >/dev/null; bd comments add "$s4" "모아 받기 카드: D-BTCHX4" >/dev/null
+sent "$BD1" 7.1 "통과"; reply "$BD1" 7.1 terminal 1          # s1·s2: 터미널 대필만
+sent D-BTCHX3 7.3 "통과"; reply D-BTCHX3 7.3 slack 1         # s3: 통과
+sent D-BTCHX4 7.4 "통과"; reply D-BTCHX4 7.4 slack 2         # s4: 고칠 점 + 스레드 답글
+printf '{"type":"thread_reply","decision_id":"D-BTCHX4","parent_ts":"7.4","action":"custom","text":"탭 순서가 반대"}\n' >> "$SB/hub/slack-inbox.jsonl"
+expect "batch-answers --dry-run" 0 "$BIN" --review-batch-answers --dry-run --json
+case ",$(labs "$s3"),$(labs "$s4")," in *,stage:review,*) ko "dry-run 이 씀" "$(labs "$s4")";; *,review:batched,*review:batched,*) ok "batch-answers --dry-run: 표시를 바꾸지 않음";; *) ko "dry-run 이 씀" "$(labs "$s3")";; esac
+python3 -c 'import json,sys;d={a["id"]:a["verdict"] for a in json.load(open(sys.argv[1]))["answers"]};assert d[sys.argv[2]]=="pass" and d[sys.argv[3]]=="fix" and d[sys.argv[4]] is None,d' "$SB/out" "$s3" "$s4" "$s1" && ok "batch-answers --dry-run: 판정 json" || ko "dry-run json" "$(cat "$SB/out")"
+expect "batch-answers" 0 "$BIN" --review-batch-answers lead
+L=$(labs "$s3"); case ",$L," in *,review:batched,*) ko "통과: 표시가 남음" "$L";; *,stage:ship,*) ok "통과: review:batched 뗌, stage:ship 유지";; *) ko "통과 표시" "$L";; esac
+cmts "$s3" | grep -q "user-ok: 모아 받기 D-BTCHX3 통과" && ok "통과: user-ok 코멘트" || ko "통과 코멘트" "$(cmts "$s3")"
+L=$(labs "$s4"); case ",$L," in *,review:batched,*|*,stage:ship,*) ko "고칠 점: 표시가 남음" "$L";; *,stage:review,*) ok "고칠 점: stage:review 다시 붙음";; *) ko "고칠 점 표시" "$L";; esac
+cmts "$s4" | grep -q "탭 순서가 반대" && grep -q "kind:fix" "$SB/out" && ok "고칠 점: 답글 코멘트·수정 카드 안내" || ko "고칠 점 코멘트" "$(cmts "$s4"; cat "$SB/out")"
+for x in "$s1" "$s2"; do case ",$(labs "$x")," in *,review:batched,*) ok "답 없음·터미널 대필: $x 그대로";; *) ko "터미널 대필을 셈" "$(labs "$x")";; esac; done
+expect "--review-batch 와 --review-batch-answers 를 함께 쓰면 2" 2 "$BIN" --review-batch --review-batch-answers
+
 # 검수 판정 json 의 위험 영역 상위 모델·1차 모델 기록(함수 단위)
 python3 -B "$REPO/tests/board_done/test_review_meta.py" >"$SB/out" 2>&1 && ok "검수 판정: 위험 영역 상위 모델·1차 모델 기록" || ko "검수 판정 함수 시험" "$(tail -5 "$SB/out")"
 

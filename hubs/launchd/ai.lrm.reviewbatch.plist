@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.lrm.reviewbatch</string>
+  <!-- 답 처리를 먼저: 지난 묶음의 답을 반영한 뒤 오늘치를 모아 올림. 앞 명령이 실패해도 모아 올리기는 돎 -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <string>__HOME__/orca/board/bin/board-done --review-batch-answers auto; __HOME__/orca/board/bin/board-done --review-batch auto</string>
+  </array>
+  <!-- 실행 시각은 여기 한 곳. 기본 매일 18:00 -->
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
+  <key>RunAtLoad</key><false/>
+  <!-- launchd 기본 PATH 에 bd(brew)가 없음. python3 는 install.sh 가 3.10 이상으로 검증한 경로 -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>LRM_PYTHON3</key><string>__PYTHON3__</string>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>__HOME__/.config/lrm-hubs/review-batch.launchd.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.config/lrm-hubs/review-batch.launchd.log</string>
+</dict>
+</plist>

@@ -54,6 +54,11 @@ epic 이 닫히면 label stage:review(사용자 검수 대기)를 붙임. 기능
   모아 받기:  board-done --review-batch [--dry-run] [--json]
               review:batch 가 붙은 기능 전부를 검수 결정 카드 한 장(본문에 기능 이름 목록)으로 올리고, 각 기능의 review:batch 를 떼고
               review:batched 를 붙임. 모을 기능이 없으면 종료 0. 올리지 못하면 종료 9(표시는 그대로)
+  모은 답:    board-done --review-batch-answers [--dry-run] [--json]
+              review:batched 기능마다 실린 모아 받기 카드의 사용자 답(Slack 버튼·카드 스레드 답. 터미널 대필은 안 셈)을 봄.
+              1번 통과 → review:batched 를 떼고 'user-ok: 모아 받기 <번호> 통과' 코멘트. stage:ship 은 그대로(병합 기록은 --shipped)
+              2번 고칠 점·답글 → stage:review 를 다시 붙이고 stage:ship·review:batched 를 뗌(답글 원문은 코멘트). 고칠 점은 kind:fix 카드 → --ask-review
+              답이 없으면 그대로. 매일 18:00 launchd(ai.lrm.reviewbatch)가 이것과 --review-batch 를 차례로 돎
   반영 끝:    board-done --epic <id> <이름> --shipped "<PR 번호·병합 커밋>" → stage:ship 을 떼고, label feature:<slug> 가 있으면
               BOARD_FEATURE_CLOSE(기본 ~/.config/lrm-hubs/feature_close.sh) --slug <slug> --yes 를 분리 실행해 기능 코디네이터를 정리함(BOARD_FEATURE_CLOSE=off 로 끔)
 같은 종류가 여럿이면 마지막 줄(notes 다음 코멘트 순)만 봄. '<종류>=' 를 생략하면 파일 이름으로 추정함. 모든 파일은 존재·비어 있지 않음·카드 claim 이후 수정이어야 함.
@@ -603,12 +608,53 @@ def review_batch(a, out):
         raise Fail(EXIT_CARD, f"모아 받기 카드를 올리지 못함 — {res['failed']}", f"직접 올리기: {res['manual']}")
     if not a.dry_run:
         for e in epics:
+            bd("comments", "add", e["id"], f"{bf.BATCH_NOTE} {res['id']}", actor=a.actor)  # 답 처리가 이 번호로 카드를 찾음
             bd("label", "add", e["id"], bf.BATCHED_LABEL, actor=a.actor)  # 새 표시 먼저: 중간에 실패해도 두 번 올리지 않음
             bd("label", "remove", e["id"], bf.BATCH_LABEL, actor=a.actor)
     out.update(ok=True, closed=False, exit=EXIT_OK)
     print(json.dumps(out, ensure_ascii=False) if a.json else ("[dry-run] " if a.dry_run else "")
           + f"모아 받기 카드 {res['id']} ({len(epics)}건: {', '.join(out['features'])}): {res['skipped'] or '올림'}"
           + (f"\n{res['manual']}" if a.dry_run else ""))
+    sys.exit(EXIT_OK)
+
+
+def review_batch_answers(a, out):
+    """review:batched 기능에 모아 받기 카드 답을 반영. 통과는 표시만 떼고, 고칠 점은 검수 단계로 되돌려 기존 수정 카드 흐름에 태움"""
+    rows = bd_json("list", "--all", "--label", bf.BATCHED_LABEL, "--limit", "0") or []
+    done = []
+    for r in rows:
+        fid = r.get("id")
+        if not fid:
+            continue
+        did = bf.batch_did([c.get("text") or "" for c in bd_json("comments", fid) or []])
+        verdict, text = bf.batch_verdict(hub_dir(), did) if did else ("", "")
+        done.append({"id": fid, "decision_id": did or None, "verdict": verdict or None})
+        if not verdict or a.dry_run:
+            continue
+        if verdict == "pass":
+            bd("comments", "add", fid, f"user-ok: 모아 받기 {did} 통과", actor=a.actor)
+        else:
+            if text:
+                bd("comments", "add", fid, f"고칠 점(모아 받기 {did}): {text}", actor=a.actor)
+            bd("label", "add", fid, "stage:review", actor=a.actor)  # 새 표시 먼저: 중간에 실패해도 답 처리 대상에서 빠지지 않음
+            # 단계가 둘이면 뒤 단계(ship)로 읽혀 --ask-review 가 막힘. 통과(--user-ok)가 stage:ship 을 다시 붙임
+            bd("label", "remove", fid, "stage:ship", actor=a.actor)
+        bd("label", "remove", fid, bf.BATCHED_LABEL, actor=a.actor)
+    out.update(ok=True, closed=False, exit=EXIT_OK, answers=done)
+    if a.json:
+        print(json.dumps(out, ensure_ascii=False))
+        sys.exit(EXIT_OK)
+    pre = "[dry-run] " if a.dry_run else ""
+    for d in done:
+        if d["verdict"] == "pass":
+            print(f"{pre}{d['id']}: 모아 받기 {d['decision_id']} 통과 — review:batched 뗌")
+        elif d["verdict"] == "fix":
+            print(f"{pre}{d['id']}: 모아 받기 {d['decision_id']} 고칠 점 — stage:review 다시 붙임\n"
+                  f"  할 일: 고칠 점을 kind:fix 카드(bd create --parent {d['id']} --labels kind:fix,...)로 만들어 닫은 뒤 board-done --epic {d['id']} <이름> --ask-review")
+        else:
+            print(f"{d['id']}: 답 없음 — 그대로" if d["decision_id"] else f"{d['id']}: 모아 받기 번호 기록 없음 — 그대로")
+    if not done:
+        print(f"처리할 기능 없음({bf.BATCHED_LABEL} 0건)")
     sys.exit(EXIT_OK)
 
 
@@ -645,13 +691,17 @@ def main():
     ap.add_argument("--review-note", default=None, metavar="한 줄", help="--ask-review: 카드 본문에 '확인할 것:' 한 줄로 덧붙임(예: 무엇을 고쳤는지)")
     ap.add_argument("--shipped", default=None, metavar="근거", help="--epic: 반영이 끝난 근거(PR 번호·병합 커밋). stage:ship 을 떼고 기능 코디네이터를 정리함")
     ap.add_argument("--review-batch", action="store_true", help="review:batch 가 붙은 작은 기능을 검수 카드 한 장으로 모아 올림")
+    ap.add_argument("--review-batch-answers", action="store_true", help="review:batched 기능에 모아 받기 카드의 사용자 답(통과·고칠 점)을 반영")
     ap.add_argument("--json", action="store_true", help="결과를 JSON 한 개로 stdout 에 출력")
     try:
         a = ap.parse_args()
     except SystemExit as e:
         sys.exit(EXIT_OK if e.code == 0 else EXIT_USAGE)
 
-    if a.review_batch:
+    if a.review_batch and a.review_batch_answers:
+        print("거부: --review-batch 와 --review-batch-answers 는 따로 씀\n조치: board-done --review-batch-answers; board-done --review-batch", file=sys.stderr)
+        sys.exit(EXIT_USAGE)
+    if a.review_batch or a.review_batch_answers:
         if a.epic or a.user_ok is not None or a.user_ok_typed or a.ask_review or a.shipped is not None or a.actor:
             print("거부: --review-batch 는 --dry-run·--json 과만 씀(작업자 이름 하나는 받음)\n조치: board-done --review-batch [<작업자>] [--dry-run]", file=sys.stderr)
             sys.exit(EXIT_USAGE)
@@ -667,6 +717,8 @@ def main():
         if not os.path.isdir(board):
             raise Fail(EXIT_ENV, f"작업판 폴더 {board} 없음", "BOARD_DIR=<작업판 경로> board-done <id> <작업자>")
         os.chdir(board)
+        if a.review_batch_answers:
+            review_batch_answers(a, out)
         if a.review_batch:
             review_batch(a, out)
         card = load_card(a.card_id)
