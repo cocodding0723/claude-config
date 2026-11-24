@@ -9,6 +9,7 @@ import sys
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "lib"))
+import board_flow as bf  # noqa: E402
 import board_scope as bs  # noqa: E402
 
 DEFAULT_BOARD = "~/orca/board"
@@ -24,7 +25,10 @@ EPILOG = f"""\
 그중 우선순위 높은(숫자 작은) 카드부터 담고, 이미 담은 카드나 작업판 전체 진행 중(in_progress) 카드와
 file: 범위가 겹치면 '기다림'으로 뺌. 겹침 판정은 board-claim 과 같음(lib/board_scope.py).
 file: 표시가 없는 카드는 '표시 필요'로 빼고 붙일 명령을 안내함.
-브랜치 제안: 기능 카드 label branch:<이름> 뒤에 -<카드 id 끝 번호>. 기준은 --base 또는 기능 카드 label base:, 없으면 {DEFAULT_BASE}.
+board-claim 이 거부할 카드(계획 승인 전 등, lib/board_flow.py claim_block)는 '집기 막힘'으로 빼고 이유를 한 줄로 보임.
+브랜치 제안: 기능 카드 label branch:<통합 브랜치> 뒤에 -<영문 조각 이름>(역할 글·게임 저장소 Branch Convention).
+작업 공간 기준은 --base 또는 통합 브랜치(branch:), 없으면 {DEFAULT_BASE}. 앞서 병합된 카드를 보려면 통합 브랜치에서 따야 함.
+환경 LRM_HUB_DIR(기본 ~/.config/lrm-hubs): 계획 승인 기록 위치(board-claim 과 같음).
 
 종료 코드: 0 정상(빈 묶음 포함) · 2 사용법·카드 없음·epic 아님 · 4 환경(bd 실패)
 예:
@@ -88,10 +92,6 @@ def locs(card, repo):
     return [bs.locate(p, r) for p in bs.labels(card, "file")]
 
 
-def suffix(card_id):
-    return card_id.rsplit(".", 1)[-1].rsplit("-", 1)[-1]
-
-
 def pick(cands, busy, repo):
     """우선순위순 욕심 선택. busy = [(카드 id, loc)] 진행 중 범위"""
     ready, waiting, needs = [], [], []
@@ -114,10 +114,10 @@ def main():
     ap = argparse.ArgumentParser(prog="board-ready", description="기능 카드 아래 동시에 시작할 수 있는 카드 묶음 출력(읽기 전용).",
                                  epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("epic", help="기능 카드(epic) id")
-    ap.add_argument("--json", action="store_true", help='{"ready":[…],"waiting":[…],"needs_files":[…]} 출력')
+    ap.add_argument("--json", action="store_true", help='{"ready":[…],"waiting":[…],"needs_files":[…],"blocked":[…]} 출력')
     ap.add_argument("--repo", default="", help="file: 상대 경로의 기준 저장소(카드 label repo: 가 우선)")
     ap.add_argument("--hub", default=HUB_HOLDER, help="안내 명령에 넣을 허브 경로")
-    ap.add_argument("--base", default="", help="안내 명령에 넣을 기준 브랜치")
+    ap.add_argument("--base", default="", help="안내 명령에 넣을 기준 브랜치(기본: 통합 브랜치 branch:)")
     ap.add_argument("--actor", default=ACTOR_HOLDER, help="안내 명령에 넣을 작업자 이름")
     try:
         a = ap.parse_args()
@@ -136,15 +136,22 @@ def main():
         die(f"거부: {a.epic} 는 기능 카드(epic)가 아님({epic.get('issue_type')}). 조치: 상위 기능 카드 id 로 다시 실행", EXIT_USAGE)
 
     cands = [c for c in descendants(a.epic) if c.get("status") == "open" and deps_done(c)]
+    # board-claim 과 같은 조건. 여기서 안 거르면 승인 전 카드가 '시작 가능'으로 나와 집기에서 거부됨
+    hub = os.environ.get("LRM_HUB_DIR") or os.path.expanduser("~/.config/lrm-hubs")
+    approved = bf.approval(hub, epic)
+    blocked = [(c, bf.claim_block(c, epic, approved)) for c in cands]
+    blocked = [(c, why) for c, why in blocked if why]
+    cands = [c for c in cands if c["id"] not in {b["id"] for b, _ in blocked}]
     busy = [(o["id"], loc) for o in bd_json("list", "--status", "in_progress", "--limit", "0")
             for loc in locs(o, a.repo)]
     ready, waiting, needs = pick(cands, busy, a.repo)
 
     branch = bs.label(epic, "branch") or "<브랜치>"
-    base = a.base or bs.label(epic, "base") or DEFAULT_BASE
+    # base: 는 기능의 기준(origin/dev 등). 거기서 따면 통합 브랜치에 먼저 병합된 카드가 안 보임
+    base = a.base or bs.label(epic, "branch") or DEFAULT_BASE
 
     def item(c):
-        br = f"{branch}-{suffix(c['id'])}"
+        br = f"{branch}-<영문 조각 이름>"
         return {"id": c["id"], "title": c.get("title", ""), "priority": c.get("priority"),
                 "files": bs.labels(c, "file"), "branch": br,
                 "commands": [f"{WS_SCRIPT} --hub {a.hub} --branch {br} --base {base} --card {c['id']}",
@@ -152,12 +159,13 @@ def main():
 
     out = {"ready": [item(c) for c in ready],
            "waiting": [{"id": c["id"], "title": c.get("title", ""), "blocked_by": hits} for c, hits in waiting],
-           "needs_files": [{"id": c["id"], "title": c.get("title", ""), "command": f"bd label add {c['id']} file:<경로>"} for c in needs]}
+           "needs_files": [{"id": c["id"], "title": c.get("title", ""), "command": f"bd label add {c['id']} file:<경로>"} for c in needs],
+           "blocked": [{"id": c["id"], "title": c.get("title", ""), "why": why} for c, why in blocked]}
     if a.json:
         print(json.dumps(out, ensure_ascii=False, indent=2))
         return
 
-    print(f"기능 {a.epic} {epic.get('title', '')}: 시작 가능 {len(ready)} · 기다림 {len(waiting)} · 표시 필요 {len(needs)}")
+    print(f"기능 {a.epic} {epic.get('title', '')}: 시작 가능 {len(ready)} · 기다림 {len(waiting)} · 표시 필요 {len(needs)} · 집기 막힘 {len(blocked)}")
     for r in out["ready"]:
         print(f"\n시작 가능: {r['id']} {r['title']}")
         for cmd in r["commands"]:
@@ -166,6 +174,9 @@ def main():
         print(f"\n기다림: {w['id']} {w['title']} — 겹침 {', '.join(w['blocked_by'])}")
     for n in out["needs_files"]:
         print(f"\n표시 필요: {n['id']} {n['title']}\n  {n['command']}")
+    if blocked:  # 이유는 기능 단위라 대개 같음. 한 줄로 묶음
+        why = blocked[0][1].split(" — ")[0]
+        print(f"\n집기 막힘: {', '.join(c['id'] for c, _ in blocked)} — {why}")
 
 
 if __name__ == "__main__":

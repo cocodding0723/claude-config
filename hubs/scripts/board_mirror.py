@@ -16,6 +16,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import hub_report as report
 from board_sweep import read_table
 from feature_board import BdReader
+# 단계 판정은 작업판과 같은 규칙(가장 뒤 단계). 설치본은 링크라 resolve 로 저장소 board/lib 를 찾음
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "board/lib"))
+import board_flow
 
 
 def _CODE_STRIP(text):
@@ -150,7 +153,9 @@ class Mirror:
     def status(self, root):
         """기능 현황 한 줄: 지금 단계·진행 중 카드·사용자 할 일. 기록 원문 없이도 무엇을 하는지 알게 함"""
         names, todo = self.pairs("stage_names"), self.pairs("stage_todo")
-        stage = next((x for x in root.get("labels", []) if x in names), "")
+        # label 이 가나다순으로 와서 build·ship 이 함께 있으면 첫 것이 build 가 됨
+        cur = board_flow.current(root)
+        stage = cur.label if cur else ""
         tree = self.descendants(root, self.cards) if self.cards else [root]
         doing = [c for c in tree if c["id"] != root["id"] and c.get("status") == "in_progress"]
         cut = int(self.cfg["title_chars"])
