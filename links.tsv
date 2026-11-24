@@ -276,3 +276,8 @@ board/lib/board_evidence.py	orca/board/lib/board_evidence.py	link
 hubs/jira_free_transitions.tsv	.config/lrm-hubs/jira_free_transitions.tsv	link
 hubs/scripts/hook_stats.py	.config/lrm-hubs/hook_stats.py	link
 hubs/launchd/ai.lrm.hookstats.plist	Library/LaunchAgents/ai.lrm.hookstats.plist	copy
+hubs/feature_projects.tsv	.config/lrm-hubs/feature_projects.tsv	link
+hubs/scripts/doc_archive.py	.config/lrm-hubs/doc_archive.py	link
+hubs/docs/doc-archive.md	.config/lrm-hubs/docs/doc-archive.md	link
+hubs/scripts/lib/closed_hubs.sh	.config/lrm-hubs/lib/closed_hubs.sh	link
+hubs/scripts/pr_index.py	.config/lrm-hubs/pr_index.py	link
