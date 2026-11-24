@@ -28,8 +28,8 @@ stage_unknown	정해지지 않은
 doing_titles_max	3
 title_chars	30
 # 사용자에게 뜻이 안 닿는 내부 기록 줄(빈 값 포함). 걸리면 그 기록은 Slack 에 보내지 않고 카드에만 남김
-jargon_pattern	(?:local-gate|unclaim|heartbeat|board-(?:claim|done|merge|stage|run)|\bbd (?:update|close|label)|--[a-z][\w-]+|\(head \)|=\s*\.(?:\s|$)|\[said:\])
+jargon_pattern	(?:local-gate|unclaim|heartbeat|board-(?:claim|done|merge|stage|run)|\bbd (?:update|close|label)|--[a-z][\w-]+|\(head \)|=\s*\.(?:\s|$)|\[said:\]|evidence:|\bctx_|\bterm_)
 overflow_keep	5
 overflow_format	외 {count}건은 작업판 카드 기록에
-# 보내기 전 쉬운 말 바꾸기: 정규식=>바꿀 말, ' ;; ' 로 구분
-rewrite_rules	지시 처리 #(\d+):\s*(\S+)\s*—=>요청 \1 \2: ;; ^지시 #(\d+)=>요청 \1
+# 보내기 전 쉬운 말 바꾸기(11-24 보고 1457건 집계: 워커 35·EditMode 62건. 허브·코디네이터는 사용자가 쓰는 말이라 유지): 정규식=>바꿀 말, ' ;; ' 로 구분
+rewrite_rules	지시 처리 #(\d+):\s*(\S+)\s*—=>요청 \1 \2: ;; ^지시 #(\d+)=>요청 \1 ;; 워커=>작업자 ;; EditMode 시험=>에디터 시험 ;; EditMode=>에디터 시험

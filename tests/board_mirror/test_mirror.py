@@ -149,6 +149,15 @@ class MirrorTest(unittest.TestCase):
         self.run_mirror()
         self.assertIn("자판기 셔터 색 수정 완료", self.queue()[0]["text"])
 
+    def test_plain_words_and_evidence_lines(self):
+        self.run_mirror()
+        self.add("evidence:compile=/tmp/a.log")
+        self.run_mirror()
+        self.assertEqual([], self.queue())
+        self.add("워커가 EditMode 시험 12건 통과")
+        self.run_mirror()
+        self.assertIn("작업자가 에디터 시험 12건 통과", self.queue()[0]["text"])
+
     def test_url_numbers_kept(self):
         self.run_mirror()
         self.add("CI 취소 https://github.com/o/r/actions/runs/45309007393 확인")
