@@ -17,6 +17,7 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 export WS_GC_INBOX="$SB/inbox"   # 허브 색인이 실제 ~/.config 로 새지 않게 격리
 export LRM_CLOSED_HUBS="$SB/closed_hubs.txt"
 export WS_GC_HUB_REOPEN_GRACE_MIN=10
+export WS_GC_PLAIN_ROOTS="$SB/plain"   # 실제 ~/orca/claude-config-wt 를 보지 않게 격리
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 FAKE="$SB/fake" ROOT="$SB/ws" ARC="$SB/archive" O="$SB/origin" BIN="$SB/bin" W="$ROOT/repoA"
 mkdir -p "$FAKE/pr" "$ROOT" "$ARC" "$O" "$BIN" "$W"
@@ -612,6 +613,37 @@ FAKE_TERM_CLOSE_FAIL=1 gc --only ml_fail --apply
 chk "[ML] 창 닫기가 실패하면 지우지 않음(term_close_fail)" '[ -e "$W/ml_fail" ] && has "SKIP term_close_fail repoA/ml_fail" && [ "$(rm_calls)" = 0 ]' "$(pdlog ml_fail)"
 WS_GC_MERGED_LIVE=0 gc --only ml_fail --apply
 chk "[ML] 끄면(WS_GC_MERGED_LIVE=0) 창이 붙은 곳은 예전처럼 보존" '[ -e "$W/ml_fail" ] && has "SKIP live repoA/ml_fail" && ! grep -q "^terminal close" "$FAKE/orca.calls"' "$(pdlog ml_fail)"
+
+# ---- LM. PR 없이 로컬에서 main 에 병합한 브랜치 ------------------------------------------------
+lmerge() { git -C "$W/$1" checkout -q main && GIT_AUTHOR_DATE=$OLD GIT_COMMITTER_DATE=$OLD git -C "$W/$1" merge -q --no-ff -m "merge $2" "$2" && git -C "$W/$1" checkout -q "$2"; }
+mkpd lm_done feat/lm_done 40;  lmerge lm_done feat/lm_done; dirty_all lm_done
+mkpd lm_term feat/lm_term 40;  lmerge lm_term feat/lm_term; term lm_term
+mkpd lm_unm feat/lm_unm 40;    dirty_all lm_unm; term lm_unm                       # 병합 안 됨
+mkpd lm_after feat/lm_after 40; lmerge lm_after feat/lm_after; echo more > "$W/lm_after/m.txt"; git -C "$W/lm_after" add -A; oldc lm_after after; dirty_all lm_after  # 병합 뒤 새 커밋
+mkpd lm_ff feat/lm_ff 40; git -C "$W/lm_ff" checkout -q main; git -C "$W/lm_ff" merge -q --ff-only feat/lm_ff; git -C "$W/lm_ff" checkout -q feat/lm_ff; dirty_all lm_ff  # 빨리 감기(빈 브랜치와 구분 불가)
+regen_live
+gc --only lm_ --apply
+chk "[LM] 로컬 병합(--no-ff)된 곳은 PR 없어도 미커밋 보관 뒤 삭제" '[ ! -e "$W/lm_done" ] && has "DELETE repoA/lm_done pr_done PR 로컬병합(main)" && [ -f "$(ls -d "$ARC"/lm_done-* | head -1)/files/src/Foo.cs" ]' "$(pdlog lm_done)"
+chk "[LM] 창이 붙은 로컬 병합은 표시만(다음 회차 정리)" '[ -e "$W/lm_term" ] && has "SKIP live_marked repoA/lm_term — PR 로컬병합(main)"' "$(pdlog lm_term)"
+chk "[LM] 병합 안 된 곳은 창이 붙어 있으면 보존" '[ -e "$W/lm_unm" ] && has "SKIP live repoA/lm_unm"' "$(pdlog lm_unm)"
+chk "[LM] 병합 뒤 새 커밋·빨리 감기 병합은 로컬 병합으로 안 침(미커밋 보존)" '[ -e "$W/lm_after" ] && [ -e "$W/lm_ff" ] && ! has "repoA/lm_after pr_done" && ! has "repoA/lm_ff pr_done"' "$(pdlog lm_after; pdlog lm_ff)"
+
+# ---- PL. Orca 밖 수동 작업 공간(git worktree) ------------------------------------------------
+mkdir -p "$SB/plain"
+plwt() { # 이름 [merge] [recent]
+  git -C "$SEED" worktree add -q -b "feat/$1" "$SB/plain/$1" main; echo "$1" > "$SB/plain/$1/p.txt"; git -C "$SB/plain/$1" add -A
+  if [ "${3:-}" = recent ]; then git -C "$SB/plain/$1" commit -q -m "$1"; else GIT_AUTHOR_DATE=$OLD GIT_COMMITTER_DATE=$OLD git -C "$SB/plain/$1" commit -q -m "$1"; touch -t 202601010000 "$SB/plain/$1/p.txt"; fi
+  [ "${2:-}" = merge ] && GIT_AUTHOR_DATE=$OLD GIT_COMMITTER_DATE=$OLD git -C "$SEED" merge -q --no-ff -m "merge $1" "feat/$1"
+  find "$SB/plain/$1" -path "$SB/plain/$1/.git" -prune -o -exec touch -h -t 202601010000 {} + 2>/dev/null
+}
+plwt pl_done merge; plwt pl_dirty merge; plwt pl_unm; plwt pl_recent merge recent
+echo wip > "$SB/plain/pl_dirty/wip.txt"; touch -t 202601010000 "$SB/plain/pl_dirty/wip.txt"
+gc --only pl_
+chk "[PL] dry-run: 후보만 기록하고 지우지 않음" '[ -d "$SB/plain/pl_done" ] && has "CANDIDATE plain:"' "$(grep pl_ "$ARC/ws_gc.log" | tail -4)"
+gc --only pl_ --apply
+chk "[PL] 로컬 병합·깨끗·유휴: git worktree remove, 브랜치 유지" '[ ! -e "$SB/plain/pl_done" ] && git -C "$SEED" show-ref -q refs/heads/feat/pl_done && has "DELETE plain:.*pl_done 로컬병합(main)"' "$(grep pl_ "$ARC/ws_gc.log" | tail -4)"
+chk "[PL] 미추적 있음·미병합·최근 커밋은 보존" '[ -e "$SB/plain/pl_dirty" ] && [ -e "$SB/plain/pl_unm" ] && [ -e "$SB/plain/pl_recent" ] && has "SKIP dirty plain:.*pl_dirty" && has "SKIP unmerged plain:.*pl_unm" && has "SKIP idle plain:.*pl_recent"' "$(grep pl_ "$ARC/ws_gc.log" | tail -6)"
+chk "[PL] 메인 체크아웃(.git 폴더)은 대상 아님" '[ -d "$SEED" ]'
 
 for n in live children detached protected big corrupt changed refused; do
   mk "coord-gc-$n" "feat/gc-$n" local recent
