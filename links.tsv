@@ -284,4 +284,4 @@ hubs/scripts/lib/closed_hubs.sh	.config/lrm-hubs/lib/closed_hubs.sh	link
 hubs/scripts/pr_index.py	.config/lrm-hubs/pr_index.py	link
 hubs/scripts/review_batch_run.sh	.config/lrm-hubs/review_batch_run.sh	link
 hubs/scripts/night_inbox_report.py	.config/lrm-hubs/night_inbox_report.py	link
-hubs/launchd/ai.lrm.nightinbox.plist	.config/lrm-hubs/ai.lrm.nightinbox.plist	copy
+hubs/launchd/ai.lrm.nightinbox.plist	Library/LaunchAgents/ai.lrm.nightinbox.plist	copy
