@@ -16,12 +16,14 @@ EPILOG = """\
   이름은 영문·한글·번호 모두 받음. 5·6 은 손으로 옮기지 않음(완료 검사 board-done --epic 과 사용자 검수 답이 옮김).
 새 흐름 기능(label flow:v1)의 조건:
   접수를 떠나려면 기능 카드 설명에 '- 목표: …' 와 '- 확인 방법: …' 줄이 있고 크기(--size)가 정해져 있어야 함.
+  큰 기능이 설계 이상으로 가려면 이해 확인 카드(D-UNDR…)에 사용자가 Slack 에서 1번 '확인'을 눌렀거나 이해를 건너뛰게 했어야 함.
+    답이 없으면 거부하고, 답을 기다리는 카드가 없을 때만 이해 확인 카드를 한 장 올림(다시 실행해도 1장).
   구현·검증으로 가려면 크기가 작음이거나, 계획 승인 카드에 사용자가 Slack 에서 승인으로 답했거나, 사용자가 계획을 건너뛰게 했어야 함(board-skip).
   되돌아가기(예: 검증 → 구현, 구현 → 설계)는 같은 조건으로 언제나 됨.
 검수 결정 번호(review_id): 검수 카드는 이 번호로, 1번 선택지를 '통과'로 올림. 완료 검사의 --user-ok 가 이 카드에 사용자가 1번을 누른 기록을 찾음.
 옛 방식 기능(flow:v1 없음)은 단계 표시만 하고 막지 않음.
 
-종료 코드: 0 옮김(또는 조회) · 2 사용법·카드 없음·기능 카드 아님·접수 칸이나 크기 없음·손으로 못 옮기는 단계 · 4 환경(bd 실패) · 15 계획 승인 전
+종료 코드: 0 옮김(또는 조회) · 2 사용법·카드 없음·기능 카드 아님·접수 칸이나 크기 없음·손으로 못 옮기는 단계 · 4 환경(bd 실패) · 15 계획 승인 전 · 16 이해 확인 전(큰 기능)
 예:
   board-stage lrm-spn                         지금 단계·크기·계획 승인 여부
   board-stage lrm-spn understand feat-mail --size normal --note "기획 대조 시작"
@@ -93,13 +95,14 @@ def main():
         die(f"거부: 카드 {a.card} 없음. 조치: bd list -t epic 으로 id 확인", 2)
     if epic.get("issue_type") != "epic":
         die(f"거부: {a.card} 는 기능 카드(epic)가 아님. 조치: 단계는 기능 카드에 적음 — 상위 카드 id 로 다시 실행", 2)
-    did, rid = bf.plan_id(epic["id"]), bf.review_id(epic["id"])
+    did, rid, uid = bf.plan_id(epic["id"]), bf.review_id(epic["id"]), bf.understand_id(epic["id"])
     approved = bf.approval(hub, epic)
 
     if a.stage is None:
         st, size = bf.current(epic), bf.size_of(epic)
         out = {"card": epic["id"], "stage": st.key if st else "", "size": size, "flow": bf.FLOW_LABEL in bf.labels(epic),
                "plan_id": did, "plan_approved": approved(did), "review_id": rid, "review_passed": bf.review_passed(hub, rid),
+               "understand_id": uid, "understand_confirmed": bf.understood(hub, uid),
                "intake_gaps": bf.intake_gaps(epic.get("description") or ""),
                "skips": list(bf.skips(epic))}
         if a.json:
@@ -107,6 +110,7 @@ def main():
         else:
             where = f"{bf.order(st)} {st.name}" if st else "정해지지 않음"
             print(f"단계: {where}\n크기: {bf.SIZES.get(size, '정해지지 않음')}\n계획 승인: {'됨' if out['plan_approved'] else '안 됨'} ({did})\n"
+                  f"이해 확인: {'됨' if out['understand_confirmed'] else '안 됨'} ({uid}, 큰 기능만 검사)\n"
                   f"검수 통과: {'됨' if out['review_passed'] else '안 됨'} ({rid}, 1번 선택지 '{bf.PASS_WORD}')")
             if out["intake_gaps"]:
                 print(f"비어 있는 접수 칸: {', '.join(out['intake_gaps'])}")
@@ -135,6 +139,12 @@ def main():
     why = bf.stage_block(planned, a.stage, lambda d: True)   # 계획 승인과 무관한 이유부터
     if why:
         die(f"거부: {why}", 2)
+    why = bf.understand_block(planned, a.stage, hub)
+    if why:
+        card = bf.ask_understand(planned, hub)
+        done = ("이해 확인 카드를 올림" if card["posted"] else card["skipped"] or
+                f"이해 확인 카드 올리기 실패: {card['failed']}. 직접 올림: {card['manual']}")
+        die(f"거부: {why}\n{done} ({card['id']})", 16)
     why = bf.stage_block(planned, a.stage, approved)
     if why:
         die(f"거부: {why}", 15)

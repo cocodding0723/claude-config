@@ -99,5 +99,37 @@ printf 'verify\t"승인" 답 확인\nverify\t"미완료 안내\n' > "$SB/tool/st
 expect "안내 표 따옴표 조회 성공(0)" 0 "$COPY" "$S"
 grep -qx -- '- "승인" 답 확인' "$SB/out" && grep -qx -- '- "미완료 안내' "$SB/out" && ok "닫힌·열린 따옴표 원문 보존" || ko "따옴표" "$(cat "$SB/out")"
 
+# 큰 기능 이해 확인: 답 없으면 16 + 카드 1장(가짜 보고 도구는 실제처럼 같은 본문 중복 무시), 다시 쳐도 1장, 2번 답 뒤 새 차수 1장, 1번 답 뒤 통과
+printf '%s\n' 'import json, os, sys, time' 'a = sys.argv[1:]' \
+  'rec = {"decision_id": a[a.index("--decision-id") + 1], "kind": "decide", "text": a[a.index("--text") + 1], "at": time.time()}' \
+  'p = os.path.join(os.environ["LRM_HUB_DIR"], "hub-reports.jsonl")' \
+  'old = [json.loads(l) for l in open(p)] if os.path.exists(p) else []' \
+  'if any(o["text"] == rec["text"] for o in old): print("중복 무시: 같은 내용이 이미 기록됨"); sys.exit(0)' \
+  'open(p, "a").write(json.dumps(rec, ensure_ascii=False) + "\n")' > "$SB/fake-report"
+export LRM_HUB_REPORT="$SB/fake-report"
+L=$(bd create "[LRM-3] 큰 기능" -t epic --labels "feature:big,flow:v1" -d $'- 목표: 큰 것\n- 확인 방법: 시험\n- 기능 코디네이터 허브: /w/coord-feat-big-hub' --json | jq -r .id)
+UND=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import board_flow; print(board_flow.understand_id(sys.argv[2]))' "$LIB" "$L")
+cards() { grep -c "\"$UND\"" "$LRM_HUB_DIR/hub-reports.jsonl" 2>/dev/null || echo 0; }
+expect "큰 기능도 이해로는 그냥 넘어감" 0 "$BIN" "$L" understand co --size large
+expect "이해 확인 답 없으면 설계로 못 넘어감(16)" 16 "$BIN" "$L" design co
+grep -q "$UND" "$SB/out" && [ "$(cards)" = 1 ] && ok "이해 확인 카드 기록 1건" || ko "카드 1건" "$(cards) $(cat "$SB/out")"
+expect "다시 실행해도 16" 16 "$BIN" "$L" design co
+[ "$(cards)" = 1 ] && ok "재실행해도 카드 기록 1건" || ko "재발행" "$(cards)"
+expect "구현 직행도 16" 16 "$BIN" "$L" build co
+printf '{"decision_id":"%s","ts":"7.1","form_kind":"decide","at":%s,"options":{"1":"확인 => 설계","2":"다시 설명"}}\n' "$UND" "$(( $(date +%s) + 1 ))" >> "$LRM_HUB_DIR/slack-sent.jsonl"
+printf '{"type":"button","decision_id":"%s","parent_ts":"7.1","action":"pick","pick":2,"source":"slack"}\n' "$UND" >> "$LRM_HUB_DIR/slack-inbox.jsonl"
+expect "2번 답 뒤 다시 실행하면 16" 16 "$BIN" "$L" design co
+[ "$(cards)" = 2 ] && grep -q "2번째 이해 확인 요청" "$LRM_HUB_DIR/hub-reports.jsonl" && grep -q "이해 확인 카드를 올림" "$SB/out" && ok "2번 답 뒤 새 차수 카드 1건" || ko "재발행" "$(cards) $(cat "$SB/out")"
+printf '{"decision_id":"%s","ts":"8.1","form_kind":"decide","at":%s,"options":{"1":"확인 => 설계","2":"다시 설명"}}\n' "$UND" "$(date +%s)" >> "$LRM_HUB_DIR/slack-sent.jsonl"
+printf '{"type":"button","decision_id":"%s","parent_ts":"8.1","action":"pick","pick":1,"source":"slack"}\n' "$UND" >> "$LRM_HUB_DIR/slack-inbox.jsonl"
+expect "1번 답 뒤 설계로 넘어감" 0 "$BIN" "$L" design co
+[ "$(cards)" = 2 ] && ok "통과 때 카드 추가 없음" || ko "통과 재발행" "$(cards)"
+"$BIN" "$L" --json > "$SB/out" 2>&1
+jq -e --arg u "$UND" '.understand_id == $u and .understand_confirmed == true' "$SB/out" >/dev/null && ok "조회 JSON 에 이해 확인 번호·답" || ko "조회 JSON" "$(cat "$SB/out")"
+printf '{"decision_id":"%s","ts":"9.1","form_kind":"decide","at":%s,"options":{"1":"확인 => 설계","2":"다시 설명"}}\n' "$UND" "$(( $(date +%s) + 2 ))" >> "$LRM_HUB_DIR/slack-sent.jsonl"
+expect "설계 이상 진행 중 기능은 답이 없어져도 이동 허용" 0 "$BIN" "$L" design co
+[ "$(cards)" = 2 ] && ok "면제 때 카드 추가 없음" || ko "면제 재발행" "$(cards)"
+unset LRM_HUB_REPORT
+
 printf '통과 %d · 실패 %d\n' "$PASS" "$FAIL"
 [ "$FAIL" = 0 ]
