@@ -11,7 +11,9 @@ CFG_BOARD="${LRM_BOARD:-$HOME/orca/board}"
 CFG_CREATE_HUB="${LRM_CREATE_HUB:-$HERE/../../skills/orca-hub-create/scripts/create_hub.sh}"
 CFG_ROLE_TMPL="${LRM_FEATURE_ROLE:-$HERE/../roles/role-feature.txt}"
 CFG_ROLE_OUT="${LRM_ROLES_DIR:-$HOME/.config/lrm-hubs/roles}"   # restart_hub.sh 가 role-<이름>.txt 로 읽는 곳
-CFG_MODEL="claude-opus-5-5"
+# 기능 코디네이터는 대기·배정·보고가 대부분이라 Sonnet·medium(11-24 사용자 승인, 토큰 절약 규칙 11-06). 설계·결정은 Opus 작업자
+CFG_MODEL="${LRM_FEATURE_MODEL:-claude-sonnet-5-5}"
+CFG_EFFORT="${LRM_FEATURE_EFFORT:-medium}"
 CFG_SPRINT_FILE="${LRM_SPRINT_FILE:-$HOME/.config/lrm-hubs/sprint-start}"   # 이 스프린트의 시작일 한 줄(YYYYMMDD). 스프린트가 바뀔 때 한 번 고침
 CFG_HUB_REPORT="${LRM_HUB_REPORT:-$HERE/hub_report.py}"   # 기능 Slack 스레드 시작 보고를 예약하는 CLI
 
@@ -171,7 +173,7 @@ render_role() { # 템플릿 → 역할 파일
       -e "s|{{EPIC}}|$EPIC|g" -e "s|{{SLUG}}|$SLUG|g" "$CFG_ROLE_TMPL"
   [ -n "$TICKET" ] || printf '\n티켓 없는 기능(프로젝트 %s): Jira 발급·상태 전환·댓글 단계와 계획서의 Jira 칸은 건너뛴다. 브랜치 규칙은 이 저장소(%s)의 CLAUDE.md 를 따르고, 작업자 브랜치는 위 규칙대로 {{BRANCH}}-<조각 이름> 으로 만든다.\n' "$P_KEY" "$CFG_REPO" | sed "s|{{BRANCH}}|$BRANCH|g"
 }
-HUB_ARGS=(--slug "$HUB_SLUG" --name "$NAME 기능" --role-file "$ROLE_OUT" --model "$CFG_MODEL" --base "$BASE_REF" --branch "$BRANCH")
+HUB_ARGS=(--slug "$HUB_SLUG" --name "$NAME 기능" --role-file "$ROLE_OUT" --model "$CFG_MODEL" --effort "$CFG_EFFORT" --base "$BASE_REF" --branch "$BRANCH")
 
 if [ "$DRY" = 1 ]; then
   PLAN=$(REPO="$CFG_REPO" WS_ROOT="$CFG_WS_ROOT" bash "$CFG_CREATE_HUB" "${HUB_ARGS[@]}" --dry-run 2>&1) || die "create_hub.sh --dry-run 실패: $PLAN" 1
