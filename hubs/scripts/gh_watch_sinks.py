@@ -27,14 +27,18 @@ def board_text(ev):
 
 
 def cards_for(cards, branch):
-    """label branch:<브랜치> 또는 본문의 'branch: <브랜치>'·'브랜치: <브랜치>' 가 정확히 맞는 카드"""
+    """label branch:<브랜치> 또는 본문의 'branch: <브랜치>'·'브랜치: <브랜치>' 가 정확히 맞는 카드. 상위가 함께 맞은 하위 카드는 제외"""
     pat = re.compile(r"(?:branch|브랜치)\s*[:：]\s*`?%s`?(?![\w./-])" % re.escape(branch), re.I)
     out = []
     for c in cards:
         text = "\n".join(str(c.get(k) or "") for k in ("description", "notes", "design"))
         if "branch:" + branch in (c.get("labels") or []) or pat.search(text):
             out.append(c["id"])
-    return out
+    # 하위 카드는 상위 branch 표시를 복사해 가짐. 상위가 맞으면 하위는 빼서 이벤트 1건 = Slack 1건
+    # (11-24 사용자: 병합 1건에 하위 카드 수만큼 정보 글이 옴)
+    hit = set(out)
+    parent = {c["id"]: c.get("parent") for c in cards}
+    return [cid for cid in out if parent.get(cid) not in hit]
 
 
 def to_board(events, log):

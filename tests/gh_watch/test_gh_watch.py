@@ -369,5 +369,14 @@ ok(len(lines("bd-comments.log")) == n_bc and len(open(out_file).read().splitline
 os.unlink(os.path.join(e.hub, "gh-watch-actions.json"))
 e.close()
 
+sys.path.insert(0, os.path.dirname(SCRIPT))
+import gh_watch_sinks as sinks
+fam = [{"id": "ep", "labels": ["branch:feat/x"]},
+       {"id": "ep.1", "parent": "ep", "labels": ["branch:feat/x", "branch:feat/x-impl"]},
+       {"id": "ep.2", "parent": "ep", "labels": ["branch:feat/x"]},
+       {"id": "solo", "parent": "other", "labels": ["branch:feat/x"]}]
+ok(sinks.cards_for(fam, "feat/x") == ["ep", "solo"], "상위가 맞으면 branch 복사한 하위 카드 제외", sinks.cards_for(fam, "feat/x"))
+ok(sinks.cards_for(fam, "feat/x-impl") == ["ep.1"], "하위 고유 브랜치는 하위 카드로", sinks.cards_for(fam, "feat/x-impl"))
+
 print("\n결과: 통과 %d, 실패 %d" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)
