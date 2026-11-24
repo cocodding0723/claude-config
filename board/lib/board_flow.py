@@ -60,8 +60,9 @@ BATCH_HEAD = "D-BTCH"            # 모아 받기 결정 번호 머리글자. 몸
 BATCH_TITLE = "작은 기능 {n}건 모아 검수"
 BATCH_OPTIONS = (f"1={PASS_WORD} => 모두 그대로 둔다,"
                  "2=고칠 점 => 답글로 기능 이름과 고칠 점을 적으면 수정 카드로 처리한다")
-BATCH_BACKGROUND = "작은 기능은 다른 모델 검수·녹화 없이 반영했다. 하루치를 모아 한 번에 확인받는다."
+BATCH_BACKGROUND = "작은 기능은 다른 모델 검수·녹화 없이 반영 단계로 넘겼다. 하루치를 모아 한 번에 확인받는다."
 BATCH_LIST_HEAD = "기능"
+BATCH_MAX = 4  # 카드 한 장에 싣는 기능 수. 결정 카드 본문 8줄 상한 - 머리 4줄(제목·배경·용어·목록 머리)
 LABEL_PREFIX = re.compile(r"^\s*\[[^\]]*\]\s*")  # 카드 제목 앞 '[LRM-782]' 같은 티켓 머리표
 SENT_TITLE_HEAD = re.compile(r"^\s*:[^\s:]+:\s*")  # 보낸 카드 기록 제목 앞 슬랙 이모지 코드
 # 코디네이터 창에 직접 친 승인·건너뛰기: 글이 이 말로 시작할 때만("승인", "계획 승인한다", "스킵하고 진행", "전부 추천", "ㅇㅇ 추천대로 가자").
@@ -474,7 +475,8 @@ def batch_verdict(hub_dir: str, did: str) -> tuple:
 
 def batch_command(report: str, hub: str, ws: str, epics: list, did: str) -> list:
     """모아 받기 카드 명령. 본문 = 제목 / 배경 / 용어 / 기능 이름 목록"""
-    names = [f"- {feature_name(e)} ({e.get('id')})" for e in epics]
+    # 이름은 백틱: 기능 이름에 도구 이름이 들어 있어도 쉬운 말 검사가 묶음 전체를 거부하지 않게
+    names = [f"- `{feature_name(e)}` ({e.get('id')})" for e in epics]
     lines = [BATCH_TITLE.format(n=len(epics)), f"배경: {BATCH_BACKGROUND}", f"용어: {REVIEW_TERMS}", f"{BATCH_LIST_HEAD}:", *names]
     return ["python3", report, "add", "--hub", hub, "--task", REVIEW_TASK, "--kind", "decide", "--card", str(epics[0].get("id") or ""),
             "--ws", ws, "--no-doc", "--text", "\n".join(lines), "--options", BATCH_OPTIONS, "--recommend", REVIEW_RECOMMEND,

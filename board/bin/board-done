@@ -116,6 +116,14 @@ def bd(*args, actor=None):
     return subprocess.run(["bd", *args], capture_output=True, text=True, env=env, stdin=subprocess.DEVNULL)
 
 
+def bd_must(*args, actor=None):
+    """실패하면 멈추는 bd 쓰기. 표시를 반쯤 바꾼 채 넘어가면 기능이 모아 받기 목록에서 사라짐"""
+    r = bd(*args, actor=actor)
+    if r.returncode != 0:
+        raise Fail(EXIT_STATE, f"bd {' '.join(args[:3])} 실패: {(r.stderr or r.stdout).strip()[:200]}", "작업판 잠금이 풀린 뒤 같은 명령을 다시 실행(이미 바뀐 표시는 건너뜀)")
+    return r
+
+
 def bd_json(*args):
     r = bd(*args, "--json")
     if r.returncode != 0:
@@ -602,44 +610,64 @@ def review_batch(a, out):
         out.update(ok=True, closed=False, exit=EXIT_OK, review_card=None)
         print(json.dumps(out, ensure_ascii=False) if a.json else f"모을 기능 없음({bf.BATCH_LABEL} 0건)")
         sys.exit(EXIT_OK)
-    res = bf.ask_review_batch(epics, hub_dir(), datetime.now().strftime("%Y%m%d"), dry_run=a.dry_run)
-    out["review_card"] = {k: res[k] for k in ("id", "title", "posted", "skipped", "failed")}
-    if res["failed"]:
-        raise Fail(EXIT_CARD, f"모아 받기 카드를 올리지 못함 — {res['failed']}", f"직접 올리기: {res['manual']}")
-    if not a.dry_run:
-        for e in epics:
-            bd("comments", "add", e["id"], f"{bf.BATCH_NOTE} {res['id']}", actor=a.actor)  # 답 처리가 이 번호로 카드를 찾음
-            bd("label", "add", e["id"], bf.BATCHED_LABEL, actor=a.actor)  # 새 표시 먼저: 중간에 실패해도 두 번 올리지 않음
-            bd("label", "remove", e["id"], bf.BATCH_LABEL, actor=a.actor)
+    groups = [epics[i:i + bf.BATCH_MAX] for i in range(0, len(epics), bf.BATCH_MAX)]
+    day, cards, failed = datetime.now().strftime("%Y%m%d"), [], []
+    for g in groups:
+        res = bf.ask_review_batch(g, hub_dir(), day, dry_run=a.dry_run)
+        cards.append({k: res[k] for k in ("id", "title", "posted", "skipped", "failed")} | {"features": [e["id"] for e in g]})
+        if res["failed"]:
+            failed.append(f"{res['id']}: {res['failed']} (직접 올리기: {res['manual']})")
+            continue  # 올린 묶음만 표시를 바꿈. 못 올린 묶음은 다음 회차에 다시 모음
+        if a.dry_run:
+            print(res["manual"]) if not a.json else None
+            continue
+        for e in g:
+            bd_must("comments", "add", e["id"], f"{bf.BATCH_NOTE} {res['id']}", actor=a.actor)  # 답 처리가 이 번호로 카드를 찾음
+            bd_must("label", "add", e["id"], bf.BATCHED_LABEL, actor=a.actor)  # 새 표시 먼저: 중간에 실패해도 두 번 올리지 않음
+            bd_must("label", "remove", e["id"], bf.BATCH_LABEL, actor=a.actor)
+    out["review_card"] = cards[0] if len(cards) == 1 else None
+    out["review_cards"] = cards
+    if failed:
+        raise Fail(EXIT_CARD, f"모아 받기 카드 {len(failed)}/{len(cards)}장 올리지 못함 — " + " / ".join(failed), "원인을 고친 뒤 board-done --review-batch auto 다시 실행")
     out.update(ok=True, closed=False, exit=EXIT_OK)
-    print(json.dumps(out, ensure_ascii=False) if a.json else ("[dry-run] " if a.dry_run else "")
-          + f"모아 받기 카드 {res['id']} ({len(epics)}건: {', '.join(out['features'])}): {res['skipped'] or '올림'}"
-          + (f"\n{res['manual']}" if a.dry_run else ""))
+    print(json.dumps(out, ensure_ascii=False) if a.json else "\n".join(
+        ("[dry-run] " if a.dry_run else "") + f"모아 받기 카드 {c['id']} ({len(c['features'])}건: {', '.join(c['features'])}): {c['skipped'] or '올림'}"
+        for c in cards))
     sys.exit(EXIT_OK)
 
 
 def review_batch_answers(a, out):
     """review:batched 기능에 모아 받기 카드 답을 반영. 통과는 표시만 떼고, 고칠 점은 검수 단계로 되돌려 기존 수정 카드 흐름에 태움"""
     rows = bd_json("list", "--all", "--label", bf.BATCHED_LABEL, "--limit", "0") or []
-    done = []
+    done, batch_mates, notes = [], {}, {}
+    for r in rows:  # 같은 카드에 실린 기능 묶음: 답글이 특정 기능만 짚었는지 가르려고
+        if r.get("id"):
+            notes[r["id"]] = bf.batch_did([c.get("text") or "" for c in bd_json("comments", r["id"]) or []])
+            batch_mates.setdefault(notes[r["id"]], []).append(r["id"])
     for r in rows:
         fid = r.get("id")
         if not fid:
             continue
-        did = bf.batch_did([c.get("text") or "" for c in bd_json("comments", fid) or []])
+        did = notes.get(fid, "")
         verdict, text = bf.batch_verdict(hub_dir(), did) if did else ("", "")
         done.append({"id": fid, "decision_id": did or None, "verdict": verdict or None})
         if not verdict or a.dry_run:
             continue
+        named = [x for x in batch_mates.get(did, []) if x in text] if verdict == "fix" else []
+        if verdict == "fix" and named and fid not in named:
+            verdict = "pass"  # 답글이 다른 기능만 짚음: 짚지 않은 기능은 통과로 봄
+            done[-1]["verdict"] = verdict
         if verdict == "pass":
-            bd("comments", "add", fid, f"user-ok: 모아 받기 {did} 통과", actor=a.actor)
+            bd_must("comments", "add", fid, f"user-ok: 모아 받기 {did} 통과", actor=a.actor)
         else:
             if text:
-                bd("comments", "add", fid, f"고칠 점(모아 받기 {did}): {text}", actor=a.actor)
-            bd("label", "add", fid, "stage:review", actor=a.actor)  # 새 표시 먼저: 중간에 실패해도 답 처리 대상에서 빠지지 않음
+                bd_must("comments", "add", fid, f"고칠 점(모아 받기 {did}): {text}", actor=a.actor)
+            bd_must("label", "add", fid, "stage:review", actor=a.actor)  # 새 표시 먼저: 중간에 실패해도 답 처리 대상에서 빠지지 않음
+            # review:v1: 없으면 --user-ok 가 Slack 답 대조를 건너뛰어 코디네이터가 스스로 통과시킬 수 있음
+            bd_must("label", "add", fid, bf.REVIEW_LABEL, actor=a.actor)
             # 단계가 둘이면 뒤 단계(ship)로 읽혀 --ask-review 가 막힘. 통과(--user-ok)가 stage:ship 을 다시 붙임
-            bd("label", "remove", fid, "stage:ship", actor=a.actor)
-        bd("label", "remove", fid, bf.BATCHED_LABEL, actor=a.actor)
+            bd_must("label", "remove", fid, "stage:ship", actor=a.actor)
+        bd_must("label", "remove", fid, bf.BATCHED_LABEL, actor=a.actor)
     out.update(ok=True, closed=False, exit=EXIT_OK, answers=done)
     if a.json:
         print(json.dumps(out, ensure_ascii=False))

@@ -46,8 +46,8 @@ class SmallPath(unittest.TestCase):
         self.assertEqual(len(fake.calls), 1)
         cmd = fake.calls[0]
         text = cmd[cmd.index("--text") + 1]
-        self.assertIn("기능a (a)", text)
-        self.assertIn("기능b (b)", text)
+        self.assertIn("`기능a` (a)", text)
+        self.assertIn("`기능b` (b)", text)
         self.assertTrue(cmd[cmd.index("--decision-id") + 1].startswith(bf.BATCH_HEAD))
 
     def test_batch_id_differs_by_members(self):

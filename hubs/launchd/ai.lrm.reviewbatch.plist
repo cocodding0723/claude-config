@@ -3,12 +3,12 @@
 <plist version="1.0">
 <dict>
   <key>Label</key><string>ai.lrm.reviewbatch</string>
-  <!-- 답 처리를 먼저: 지난 묶음의 답을 반영한 뒤 오늘치를 모아 올림. 앞 명령이 실패해도 모아 올리기는 돎 -->
+  <!-- 답 처리 → 모아 올리기, 실패·고칠 점 경고 보고는 review_batch_run.sh 가 함 -->
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
     <string>-c</string>
-    <string>__HOME__/orca/board/bin/board-done --review-batch-answers auto; __HOME__/orca/board/bin/board-done --review-batch auto</string>
+    <string>__HOME__/.config/lrm-hubs/review_batch_run.sh</string>
   </array>
   <!-- 실행 시각은 여기 한 곳. 기본 매일 18:00 -->
   <key>StartCalendarInterval</key>

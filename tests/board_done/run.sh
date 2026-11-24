@@ -471,6 +471,7 @@ t = d["--text"]
 assert d["--kind"] == "decide" and d["--decision-id"].startswith("D-BTCH"), d
 assert "버튼 색" in t and "글자 크기" in t and sys.argv[2] in t and sys.argv[3] in t and "보통 기능" not in t, t
 assert t.startswith("작은 기능 2건"), t
+assert "`버튼 색`" in t, "기능 이름 백틱 없음: " + t
 PY2
 for x in "$s1" "$s2"; do L=$(labs "$x"); case ",$L," in *,review:batch,*) ko "review-batch: 표시가 남음" "$L";; *,review:batched,*) ok "review-batch: $x 표시 바뀜";; *) ko "review-batch: batched 없음" "$L";; esac; done
 expect "review-batch: 모을 기능이 없으면 0" 0 "$BIN" --review-batch
@@ -495,9 +496,16 @@ expect "batch-answers" 0 "$BIN" --review-batch-answers lead
 L=$(labs "$s3"); case ",$L," in *,review:batched,*) ko "통과: 표시가 남음" "$L";; *,stage:ship,*) ok "통과: review:batched 뗌, stage:ship 유지";; *) ko "통과 표시" "$L";; esac
 cmts "$s3" | grep -q "user-ok: 모아 받기 D-BTCHX3 통과" && ok "통과: user-ok 코멘트" || ko "통과 코멘트" "$(cmts "$s3")"
 L=$(labs "$s4"); case ",$L," in *,review:batched,*|*,stage:ship,*) ko "고칠 점: 표시가 남음" "$L";; *,stage:review,*) ok "고칠 점: stage:review 다시 붙음";; *) ko "고칠 점 표시" "$L";; esac
+case ",$L," in *,review:v1,*) ok "고칠 점: review:v1 붙음(스스로 통과 차단)";; *) ko "고칠 점: review:v1 없음" "$L";; esac
 cmts "$s4" | grep -q "탭 순서가 반대" && grep -q "kind:fix" "$SB/out" && ok "고칠 점: 답글 코멘트·수정 카드 안내" || ko "고칠 점 코멘트" "$(cmts "$s4"; cat "$SB/out")"
 for x in "$s1" "$s2"; do case ",$(labs "$x")," in *,review:batched,*) ok "답 없음·터미널 대필: $x 그대로";; *) ko "터미널 대필을 셈" "$(labs "$x")";; esac; done
 expect "--review-batch 와 --review-batch-answers 를 함께 쓰면 2" 2 "$BIN" --review-batch --review-batch-answers
+
+# 모아 받기 5건 이상 → 4건씩 나눠 여러 장(결정 카드 8줄 상한)
+n5=$(calls); m=""; for i in 1 2 3 4 5; do x=$(sm_epic "묶음 기능 $i" "m$i" small); bd label add "$x" review:batch >/dev/null; m="$m $x"; done
+expect "review-batch: 5건은 2장" 0 "$BIN" --review-batch lead
+[ "$(calls)" = $((n5 + 2)) ] && ok "review-batch: 5건 → 카드 2장" || ko "나눠 올리기" "$(calls) vs $n5"
+for x in $m; do case ",$(labs "$x")," in *,review:batched,*) :;; *) ko "나눠 올린 뒤 표시" "$x $(labs "$x")";; esac; done
 
 # 검수 판정 json 의 위험 영역 상위 모델·1차 모델 기록(함수 단위)
 python3 -B "$REPO/tests/board_done/test_review_meta.py" >"$SB/out" 2>&1 && ok "검수 판정: 위험 영역 상위 모델·1차 모델 기록" || ko "검수 판정 함수 시험" "$(tail -5 "$SB/out")"
