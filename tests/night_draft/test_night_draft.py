@@ -11,6 +11,8 @@ from unittest import mock
 
 REPO = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(REPO, "hubs", "scripts"))
+# card_actions 가 가져올 때 저장 경로를 정함. 실제 ~/.config/lrm-hubs 에 잠금 파일을 만들지 않게 먼저 임시 폴더로
+os.environ["LRM_HUB_DIR"] = tempfile.mkdtemp(prefix="night-draft-")
 import answer_store  # noqa: E402
 import night_draft as nd  # noqa: E402
 import task_ledger as tl  # noqa: E402
@@ -37,6 +39,11 @@ class Base(unittest.TestCase):
         self.env = mock.patch.dict(os.environ, {"LRM_HUB_DIR": d, "LRM_TASKS": self.tasks, "LRM_REPORT_OUTBOX": self.outbox,
                                                 "LRM_HUBS_TABLE": os.path.join(d, "hubs.tsv"), "LRM_NIGHT_NOW": str(DAY1)})
         self.env.start()
+        ca = sys.modules.get("card_actions")
+        if ca:
+            p = mock.patch.object(ca, "STORE", os.path.join(d, "card-actions.json"))
+            p.start()
+            self.addCleanup(p.stop)
 
     def tearDown(self):
         self.env.stop()
@@ -73,7 +80,7 @@ class Base(unittest.TestCase):
     def answer(self, did, pick, ts="1793000000.000100"):
         """카드가 나간 것으로 보내진 카드 기록을 쓰고, 버튼 답을 첫 답으로 기록"""
         with open(os.path.join(self.d, "slack-sent.jsonl"), "a", encoding="utf-8") as f:
-            f.write(json.dumps({"form_kind": "decide", "ts": ts, "options": "x", "decision_id": did}) + "\n")
+            f.write(json.dumps({"form_kind": "decide", "ts": ts, "options": {"1": "승인", "2": "보류"}, "decision_id": did}) + "\n")
         answer_store.AnswerStore(self.d).claim(answer_store.Answer(did, ts, "D1", "야간 진행 승인", "라벨", answer_store.SLACK, {"action": "pick", "pick": pick}))
 
 
@@ -198,7 +205,7 @@ class HarvestTest(Base):
         self.run_draft("--send")
         did = self.outbox_rows()[0]["decision_id"]
         with open(os.path.join(self.d, "slack-sent.jsonl"), "w", encoding="utf-8") as f:
-            f.write(json.dumps({"form_kind": "decide", "ts": "1.1", "options": "x", "decision_id": did}) + "\n")
+            f.write(json.dumps({"form_kind": "decide", "ts": "1.1", "options": {"1": "승인", "2": "보류"}, "decision_id": did}) + "\n")
         answer_store.AnswerStore(self.d).claim(answer_store.Answer(did, "1.1", "D1", "t", "그냥 해", answer_store.SLACK, {"action": "custom", "text": "그냥 해"}))
         self.run_draft("--send", now=DAY2)
         self.assertFalse(tl.night_approved(self.row(rid)))
