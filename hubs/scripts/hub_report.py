@@ -315,10 +315,74 @@ def line_gaps_split(text: str, kind: str) -> tuple:
             board_cards.gap_message([g for g in gaps if g[2] == "warn"], text))
 
 
+_CODE_RE = re.compile(r"```.*?```|`[^`\n]*`", re.S)  # 인라인 코드 = 사용자가 따라 칠 명령일 수 있어 거부 검사 제외
+
+
+def plain_words_path() -> str:
+    """설치 위치에선 hub_report.py 가 복사본, 표는 같은 폴더 링크. 저장소에선 hubs/ 아래"""
+    here = os.path.dirname(os.path.realpath(__file__))
+    for cand in (os.environ.get("LRM_PLAIN_WORDS"), os.path.join(here, "plain_words.tsv"),
+                 os.path.join(os.path.dirname(here), "plain_words.tsv")):
+        if cand and os.path.exists(cand):
+            return cand
+    raise ReportError("쉬운 말 표(plain_words.tsv) 없음 — install.sh 실행 또는 LRM_PLAIN_WORDS 지정", EXIT_IO)
+
+
+def plain_words(path: str = "") -> tuple:
+    """(바꾸기 [(정규식, 바꿀 말)], 거부 [(정규식, 예시)])"""
+    rewrite, reject = [], []
+    with open(path or plain_words_path(), encoding="utf-8") as f:
+        for line in f:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 3 or parts[0].lstrip().startswith("#"):
+                continue
+            (rewrite if parts[0] == "rewrite" else reject if parts[0] == "reject" else []).append((re.compile(parts[1], re.M), parts[2]))
+    return rewrite, reject
+
+
+def plain_rewrite(text: str, rules=None) -> str:
+    """백틱 코드 밖에만 적용. 명령 안 낱말을 바꾸면 따라 친 명령이 깨짐"""
+    rules = rules if rules is not None else plain_words()[0]
+    parts = re.split(r"(`[^`\n]*`)", text)
+    for i in range(0, len(parts), 2):
+        for pat, to in rules:
+            parts[i] = pat.sub(to, parts[i])
+    return "".join(parts)
+
+
+def plain_hits(text: str, rules=None, code_ok: bool = True) -> list:
+    """거부 패턴에 걸린 (낱말, 예시). code_ok 면 백틱 코드 안은 제외"""
+    body = _CODE_RE.sub(" ", text) if code_ok else text
+    return [(m[0].strip(), to) for pat, to in (rules if rules is not None else plain_words()[1]) if (m := pat.search(body))]
+
+
+def plain_filter(lines: list, strict: bool) -> "tuple[list, int]":
+    """바꾸기 적용 뒤 거부 검사. strict 면 ReportError, 아니면 걸린 줄만 뺌. '참고:' 줄은 내부 번호를 두는 자리라 제외"""
+    rewrite, reject = plain_words()
+    out, dropped, fence = [], 0, False
+    for line in lines:
+        if fence or line.startswith("```"):  # 여러 줄 코드 블록은 그대로 둠
+            if line.count("```") % 2:
+                fence = not fence
+            out.append(line)
+            continue
+        line = plain_rewrite(line, rewrite)
+        hits = [] if line.startswith(REF_PREFIX) else plain_hits(line, reject)
+        if hits and strict:
+            shown = ", ".join(f"'{w}' → {to}" for w, to in hits[:3])
+            raise ReportError(f"본문에 내부 용어({shown}) — 사용자가 뜻을 모름. 쉬운 말로 바꾸거나 따라 칠 명령이면 백틱(`)으로 감쌈")
+        if hits:
+            dropped += 1
+        else:
+            out.append(line)
+    return out, dropped
+
+
 def make_report(hub, task, kind, text, files, options=None, recommend=None, decision_id=None, reversible=None,
-                thread=None, no_doc=False, card=None, ws=None, broadcast=False, top=False) -> dict:
+                thread=None, no_doc=False, card=None, ws=None, broadcast=False, top=False, strict=True) -> dict:
     """입력 검증 → 보고 dict(id·at 제외). 잘못되면 ReportError.
-    비밀 검사는 모든 입력 필드(hub·task·kind 포함)에 가장 먼저 함. 형식 오류 메시지가 입력을 되비추기 전에 걸러야 비밀이 출력·로그로 새지 않음"""
+    비밀 검사는 모든 입력 필드(hub·task·kind 포함)에 가장 먼저 함. 형식 오류 메시지가 입력을 되비추기 전에 걸러야 비밀이 출력·로그로 새지 않음.
+    strict=False 는 자동 감시기(함수 호출) 용. 내부 용어 줄을 거부 대신 빼고 수를 plain_dropped 에 남김. 사람이 고칠 수 없는 경로라 보고 자체를 잃지 않게 함"""
     if has_secret(*[str(v) for v in (hub, task, kind, text, options, recommend, decision_id, reversible, thread, card, ws, *(files or [])) if v]):
         raise ReportError("비밀 값(토큰·키·비밀번호)으로 보이는 내용 포함 — 기록 안 함. 값을 빼고 다시 기록")
     if not hub_status.SLUG_RE.match(hub or ""):
@@ -330,6 +394,9 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
     lines = [ln.strip() for ln in (text or "").strip().splitlines() if ln.strip()]
     if not lines:
         raise ReportError("--text 비어 있음 — 보고 내용을 3줄 이내로 지정")
+    lines, dropped = plain_filter(lines, strict)
+    if not lines:
+        raise ReportError("본문 전부 내부 용어 줄 — 쉬운 말로 다시 씀")
     max_lines, max_chars = (decide_card.MAX_LINES, decide_card.MAX_CHARS) if kind == "decide" else (MAX_LINES, MAX_CHARS)
     if len(lines) > max_lines or len("\n".join(lines)) > max_chars:
         raise ReportError(f"--text 가 {len(lines)}줄·{len(' '.join(lines))}자 — {max_lines}줄·{max_chars}자 이내로 줄이고 상세는 --file 증거로")
@@ -345,6 +412,8 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
         raise ReportError(why)
     extra = [options, recommend, decision_id, reversible]
     rep = {"hub": hub, "task": task, "kind": kind, "text": "\n".join(lines), "files": files}
+    if dropped:
+        rep["plain_dropped"] = dropped
     if kind == "decide":
         if not (options and recommend and decision_id):
             raise ReportError("decide 는 --options '1=문구,2=문구' --recommend N --decision-id D-xxxx 필요 — 버튼 결정 카드 양식")

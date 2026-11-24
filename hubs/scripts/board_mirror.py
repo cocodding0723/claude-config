@@ -25,6 +25,7 @@ class BudgetExpired(Exception):
 class Mirror:
     def __init__(self, policy, dry=False, card=None):
         self.cfg = read_table(policy)
+        self.rewrite_rules, self.reject_rules = report.plain_words()
         self.dry, self.card = dry, card
         self.cards = []
         self.home = Path(os.environ.get("LRM_HUB_DIR") or "~/.config/lrm-hubs").expanduser()
@@ -98,15 +99,11 @@ class Mirror:
             selected |= added
 
     def rewrite(self, text):
-        for rule in self.cfg.get("rewrite_rules", "").split(" ;; "):
-            if "=>" in rule:
-                pat, to = rule.split("=>", 1)
-                text = re.sub(pat, to, text, flags=re.M)
-        return text
+        return report.plain_rewrite(text, self.rewrite_rules)
 
     def clean(self, row):
         text = row.get("text", "").strip()
-        if not text or re.search(self.cfg["skip_pattern"], text) or re.search(self.cfg["jargon_pattern"], text):
+        if not text or re.search(self.cfg["skip_pattern"], text) or report.plain_hits(text, self.reject_rules, code_ok=False):
             return "", []
         refs = re.findall(self.cfg["ref_pattern"], re.sub(r"https?://\S+", "", text))
         chars = len(text)
@@ -183,7 +180,7 @@ class Mirror:
         if len(body) > report.MAX_CHARS:
             raise ValueError("현황 글이 상한 초과 — board_mirror.tsv 의 long_chars·title_chars 를 줄임")
         rep = report.make_report(self.hub(root), report.NO_TASK, "info", body, files,
-                                 card=root["id"])
+                                 card=root["id"], strict=False)  # 자동 감시기: 사람이 고칠 수 없어 거부 대신 줄 빼기
         rep.update(mirror_ids=ids, mirror_card=card["id"])
         if not validate:
             print(json.dumps(rep, ensure_ascii=False))
