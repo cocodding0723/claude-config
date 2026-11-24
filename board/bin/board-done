@@ -48,6 +48,10 @@ epic 이 닫히면 label stage:review(사용자 검수 대기)를 붙임. 기능
 같은 종류가 여럿이면 마지막 줄(notes 다음 코멘트 순)만 봄. '<종류>=' 를 생략하면 파일 이름으로 추정함. 모든 파일은 존재·비어 있지 않음·카드 claim 이후 수정이어야 함.
 
 카드 종류: label kind:mockup → 시안 카드, kind:tool → 도구 카드(test 증거), kind:task → 일반 카드. label 이 없으면 브랜치 끝에 ProjectSettings/ProjectVersion.txt 가 있을 때 일반 카드, 없으면 도구 카드.
+  kind:fix → 수정 카드. 사용자 검수에서 나온 고칠 점을 처리함. 상위 기능 카드가 검수 단계(stage:review)일 때만 닫힘(아니면 종료 2).
+     증거: 일반·도구 카드와 같은 시험 증거 + evidence:screenshot(화면 파일 변경이 없으면 --no-capture "<이유>"). 다른 모델 검수(evidence:review)는 요구하지 않음.
+     닫으면 기능 카드에 "수정 완료: <id> <제목>" 코멘트를 남김. 검수 카드는 올리지 않고 기능 단계도 바꾸지 않음(다시 올리기는 --ask-review).
+  하위 카드에 기능 표시(stage:*·size:*·flow:v1·review:v1)가 있으면 기능 판정에서 무시하고, 경고와 뗄 명령을 냄(bd create --parent 가 상위 label 을 복사함). kind:fix 카드는 닫을 때 뗌.
 
 예:
   board-done bd-12 ui-worker
@@ -69,6 +73,7 @@ SAID_LABEL = "said:v1"  # 지시 장부를 완료 검사가 보는 기능(featur
 
 REQUIRED = {
     "task": ["compile", "editmode"],
+    "fix": ["screenshot"],  # 시험 증거는 저장소에 따라 task·tool 것을 더함. 다른 모델 검수는 검수 카드를 다시 올리기 전 기능에서 1회
     "tool": ["test"],
     "mockup": ["compile", "editmode", "mapping", "prefab-diff"],
     "epic": ["screenshot", "recording", "review"],
@@ -147,10 +152,28 @@ def branch_head(card):
 def card_kind(labs, repo, head):
     """카드 종류. label kind:mockup·tool·task 가 있으면 그대로, 없으면 브랜치 끝이 Unity 프로젝트인지로 가림.
     11-21·23 설정 저장소 카드 2장이 kind:tool 없이 만들어져 Unity 컴파일·EditMode 증거를 요구받았고, 코디네이터가 거부를 본 뒤 label 을 손으로 붙였음"""
-    for k in ("mockup", "tool", "task"):
+    for k in ("fix", "mockup", "tool", "task"):
         if f"kind:{k}" in labs:
             return k
+    return base_kind(repo, head)
+
+
+def base_kind(repo, head):
     return "task" if git(repo, "ls-tree", "--name-only", head, UNITY_MARK) else "tool"
+
+
+def fix_epic(card):
+    """수정 카드의 상위 기능 카드. 기능이 검수 단계일 때만 받음. 검수 밖 수정은 일반 카드 흐름을 타야 함"""
+    pid = card.get("parent")
+    epic = (bd_json("show", pid) or [None]) if pid else [None]
+    epic = epic[0] if isinstance(epic, list) else epic
+    if not epic:
+        raise Fail(EXIT_USAGE, f"{card['id']} 는 kind:fix 인데 상위 기능 카드가 없음",
+                   f"bd update {card['id']} --parent <기능 카드 id> 뒤 다시 실행. 기능에 속하지 않은 일이면 kind:fix 를 떼고 kind:task·kind:tool 로 바꿈")
+    if "stage:review" not in bf.feature_labels(epic):
+        raise Fail(EXIT_USAGE, f"{card['id']} 는 kind:fix 인데 기능 {epic['id']} 가 검수 단계(stage:review)가 아님",
+                   f"검수 전 수정은 kind:fix 를 떼고 일반 카드로 닫음(bd label remove {card['id']} kind:fix). 검수 뒤 고칠 점이면 기능을 먼저 board-done --epic 으로 검수 단계에 올림")
+    return epic
 
 
 def unrecorded_merges(epic, kids):
@@ -377,9 +400,10 @@ FIX = {
 }
 
 
-def visual_changes(card, repo, head):
-    """기준 브랜치(label base:)와 견줘 바뀐 화면 파일 목록. 기준을 모르거나 견줄 수 없으면 None"""
-    base = bs.label(card, "base")
+def visual_changes(card, repo, head, owner=None):
+    """기준 브랜치(label base:)와 견줘 바뀐 화면 파일 목록. 기준을 모르거나 견줄 수 없으면 None.
+    수정 카드에 base: 가 없으면 기능 카드(owner)의 기준으로 견줌"""
+    base = bs.label(card, "base") or (bs.label(owner, "base") if owner else "")
     if not base or not git(repo, "rev-parse", "--verify", "-q", base + "^{commit}"):
         return None
     names = git(repo, "diff", "--name-only", f"{base}...{head}")
@@ -422,21 +446,30 @@ def gate(card, actor, epic, warnings, no_capture=None):
                        "직접 git merge 한 카드 브랜치를 board-merge <카드> <작업자> 로 다시 실행(범위·증거 검사 뒤 기록됨)")
         kind = "epic"
 
+    marks = bf.stray_marks(card)
+    if marks:
+        warnings.append(f"{card['id']} 는 하위 카드인데 기능 표시 {', '.join(marks)} 가 붙어 있음(기능 판정에서는 무시함). 떼기: "
+                        + " && ".join(f"bd label remove {card['id']} {m}" for m in marks))
     repo, branch, head, head_time = branch_head(card)
+    owner = None
     if not epic:
         kind = card_kind(card.get("labels") or [], repo, head)
+        if kind == "fix":
+            owner = fix_epic(card)
+        elif no_capture is not None:
+            raise Fail(EXIT_USAGE, "--no-capture 는 --epic 이나 kind:fix 카드에만 씀", "--no-capture 를 빼고 다시 실행")
     GATE["repo"] = repo
     tree = git(repo, "rev-parse", head + "^{tree}")
     since = max(parse_time(card.get("started_at") or card["created_at"]), head_time)
     found = collect_evidence(card)
-    if "compile" in REQUIRED[kind]:
+    needs = REQUIRED[base_kind(repo, head)] + REQUIRED[kind] if kind == "fix" else list(REQUIRED[kind])
+    if "compile" in needs:
         log = gate_compile(card, repo, head, warnings)
         if log:
             found.setdefault("compile", []).append((log, head))
     checks = []
-    needs = list(REQUIRED[kind])
-    if epic and no_capture is not None:
-        changed = visual_changes(card, repo, head)
+    if (epic or owner) and no_capture is not None:
+        changed = visual_changes(card, repo, head, owner)
         if changed is None:
             raise Fail(EXIT_MISSING, f"--no-capture 를 줬지만 기준 브랜치(label base:)를 몰라 화면 파일이 바뀌었는지 볼 수 없음",
                        f"bd label add {card['id']} base:<기준 브랜치> 뒤 다시 실행하거나, 캡처·녹화를 찍어 증거를 닮")
@@ -465,7 +498,7 @@ def gate(card, actor, epic, warnings, no_capture=None):
             if not err and need in CONTENT:
                 err = CONTENT[need](p, tree)
             checks.append({"kind": need, "path": p, "ok": not err, **({"code": code, "cause": err, "fix": FIX[need]} if err else {})})
-    return kind, checks
+    return kind, checks, owner
 
 
 def hub_dir():
@@ -510,7 +543,7 @@ def main():
     ap.add_argument("actor", help="카드를 집은 작업자 이름(BD_ACTOR 로 씀)")
     ap.add_argument("--epic", action="store_true", help="기능 묶음(epic) 완료. 하위 카드 전부 닫힘 + 화면 촬영·녹화 요구")
     ap.add_argument("--dry-run", action="store_true", help="검사만 하고 닫지 않음")
-    ap.add_argument("--no-capture", default=None, metavar="이유", help="--epic: 화면에 보이는 변화가 없어 캡처·녹화를 생략. 화면 파일이 바뀌었으면 거부")
+    ap.add_argument("--no-capture", default=None, metavar="이유", help="--epic·kind:fix: 화면에 보이는 변화가 없어 캡처·녹화를 생략. 화면 파일이 바뀌었으면 거부")
     ap.add_argument("--user-ok", default=None, metavar="원문", help="--epic: 사용자 검수 통과 원문. stage:review 를 떼고 stage:ship 을 붙이며 원문을 남김")
     ap.add_argument("--user-ok-typed", action="store_true", help="--epic: 사용자가 코디네이터 창에 직접 친 '통과'(완료 검사 뒤에 친 글)를 읽어 검수 통과로 기록. 그런 글이 없으면 종료 4")
     ap.add_argument("--ask-review", action="store_true", help="--epic: 검수 단계(stage:review) 기능의 검수 결정 카드를 다시 올림(고칠 점을 고친 뒤). 답 기다리는 카드가 있으면 올리지 않음")
@@ -591,9 +624,9 @@ def main():
             print(json.dumps(out, ensure_ascii=False) if a.json else f"이미 닫힘: {a.card_id}")
             sys.exit(EXIT_OK)
         warnings = []
-        if a.no_capture is not None and (not a.epic or not a.no_capture.strip()):
-            raise Fail(EXIT_USAGE, "--no-capture 는 --epic 과 이유가 필요", 'board-done --epic <id> <이름> --no-capture "<화면에 보이는 변화가 없는 이유>"')
-        kind, checks = gate(card, a.actor, a.epic, warnings, a.no_capture)
+        if a.no_capture is not None and not a.no_capture.strip():
+            raise Fail(EXIT_USAGE, "--no-capture 는 이유가 필요", 'board-done [--epic] <id> <이름> --no-capture "<화면에 보이는 변화가 없는 이유>"')
+        kind, checks, owner = gate(card, a.actor, a.epic, warnings, a.no_capture)
         out.update(kind=kind, checks=checks, warnings=warnings)
         for w in warnings if not a.json else []:
             print(f"경고: {w}", file=sys.stderr)
@@ -603,12 +636,21 @@ def main():
             raise Fail(code, "; ".join(c["cause"] for c in bad), " / ".join(dict.fromkeys(c["fix"] for c in bad)))
         if not a.dry_run:
             reason = "board-done: " + ", ".join(f"{c['kind']}={c['path']}" for c in checks)
-            if a.epic and a.no_capture is not None:
+            if a.no_capture is not None:
                 bd("comments", "add", a.card_id, f"no-capture: {a.no_capture.strip()} (기준 브랜치와 견줘 화면 파일 변경 0개)", actor=a.actor)
             r = bd("close", a.card_id, "--reason", reason, "--json", actor=a.actor)
             if r.returncode != 0 or "cannot close" in (r.stdout + r.stderr):
                 raise Fail(EXIT_CLOSE, f"bd close 실패: {(r.stderr or r.stdout).strip()[:300]}", "메시지 원인 해소 뒤 다시 실행")
         out.update(ok=True, closed=not a.dry_run, exit=EXIT_OK)
+        if owner and not a.dry_run:
+            # 검수 카드를 다시 올릴 때 이 코멘트로 고친 것을 모아 보임. 기능 단계는 그대로 둠
+            bd("comments", "add", owner["id"], f"수정 완료: {a.card_id} {card.get('title') or ''}".rstrip(), actor=a.actor)
+            out["epic_comment"] = owner["id"]
+            # bd create --parent 가 상위 label 을 복사함. 남겨 두면 다른 도구가 기능으로 오인할 수 있어 닫을 때 뗌
+            for m in bf.stray_marks(card):
+                r = bd("label", "remove", a.card_id, m, actor=a.actor)
+                if r.returncode != 0:
+                    print(f"경고: {a.card_id} 의 {m} 를 떼지 못함. 조치: bd label remove {a.card_id} {m}", file=sys.stderr)
         if a.epic and not a.dry_run:
             # 사용자 최종 검수 대기로 표시. 코디네이터는 남겨 검수 답을 받게 함(11-19: 여기서 정리하면 통과·수정 답이 메인 확인 카드로 떨어짐)
             bd("label", "add", a.card_id, "stage:review", actor=a.actor)

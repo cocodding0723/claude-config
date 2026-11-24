@@ -24,6 +24,7 @@ import board_said
 
 FLOW_LABEL = "flow:v1"
 SIZE_HEAD = "size:"
+STAGE_HEAD = "stage:"
 SMALL, NORMAL, LARGE = "small", "normal", "large"
 SIZES = {SMALL: "작음", NORMAL: "보통", LARGE: "큼"}
 PLAN_HEAD = "D-PLAN"
@@ -82,7 +83,7 @@ class Stage:
 
     @property
     def label(self) -> str:
-        return "stage:" + self.key
+        return STAGE_HEAD + self.key
 
 
 # 순서가 곧 단계 번호. review 는 기존 label stage:review(사용자 검수 대기, 상한 검사가 셈)와 같은 이름
@@ -123,7 +124,7 @@ def stage_block(epic: dict, target: str, approved) -> str:
         return f"모르는 단계 '{target}' — {' · '.join(f'{i} {x.name}({x.key})' for i, x in enumerate(STAGES))} 중 하나"
     if st.key in HAND_OFF:
         return f"{st.name} 단계는 손으로 옮기지 않음 — 완료 검사 board-done --epic {epic.get('id')} <이름> 이 검수로 옮기고, 사용자 검수 답(--user-ok)이 그다음으로 옮김"
-    if FLOW_LABEL not in labels(epic) or st.key == STAGES[0].key:
+    if FLOW_LABEL not in feature_labels(epic) or st.key == STAGES[0].key:
         return ""
     gaps = intake_gaps(epic.get("description") or "")
     if gaps:
@@ -140,15 +141,33 @@ def labels(card: "dict | None") -> list:
     return list((card or {}).get("labels") or [])
 
 
+def is_feature(card: "dict | None") -> bool:
+    """기능 카드(epic)인가. 상위 카드가 있거나 epic 이 아닌 카드는 기능 표시가 붙어 있어도 기능으로 보지 않음"""
+    card = card or {}
+    return not card.get("parent") and card.get("issue_type") in (None, "epic")
+
+
+def feature_labels(card: "dict | None") -> list:
+    """기능 판정에 쓰는 label. 하위 카드에 복사된 단계·크기 표시로 재검수 순환이 생겨(lrm-7cai.4~.9) 기능 카드 것만 셈"""
+    return labels(card) if is_feature(card) else []
+
+
+def stray_marks(card: "dict | None") -> list:
+    """하위 카드에 잘못 붙은 기능 표시(단계·크기·흐름·검수 대조)"""
+    if is_feature(card):
+        return []
+    return [x for x in labels(card) if x.startswith((STAGE_HEAD, SIZE_HEAD)) or x in (FLOW_LABEL, REVIEW_LABEL)]
+
+
 def current(epic: "dict | None") -> "Stage | None":
     """카드에 적힌 단계(없으면 None). 여러 개가 붙어 있으면 가장 뒤 단계"""
-    have = [s for s in STAGES if s.label in labels(epic)]
+    have = [s for s in STAGES if s.label in feature_labels(epic)]
     return have[-1] if have else None
 
 
 def skips(epic: "dict | None") -> tuple:
     """이 기능에서 사용자가 건너뛰기로 한 항목들(SKIP_ITEMS 순서)"""
-    have = {x[len(SKIP_HEAD):] for x in labels(epic) if x.startswith(SKIP_HEAD)}
+    have = {x[len(SKIP_HEAD):] for x in feature_labels(epic) if x.startswith(SKIP_HEAD)}
     return tuple(k for k in SKIP_ITEMS if k in have)
 
 
@@ -218,7 +237,7 @@ def is_control(text: str) -> bool:
 
 def size_of(epic: "dict | None") -> str:
     """기능 카드의 크기(small|normal|large). 안 정했거나 모르는 값이면 ''"""
-    v = next((x[len(SIZE_HEAD):] for x in labels(epic) if x.startswith(SIZE_HEAD)), "")
+    v = next((x[len(SIZE_HEAD):] for x in feature_labels(epic) if x.startswith(SIZE_HEAD)), "")
     return v if v in SIZES else ""
 
 
@@ -442,7 +461,7 @@ def by_user(rec: dict) -> bool:
 
 def claim_block(card: dict, epic: "dict | None", approved) -> str:
     """이 카드를 지금 집으면 안 되는 이유(원인 — 조치). 집어도 되면 ''. approved(결정 번호) -> bool 는 계획 승인 조회"""
-    if epic is None or FLOW_LABEL not in labels(epic):
+    if epic is None or FLOW_LABEL not in feature_labels(epic):
         return ""
     if card.get("id") == epic.get("id") or card.get("issue_type") == "epic" or card.get("status") == "in_progress":
         return ""

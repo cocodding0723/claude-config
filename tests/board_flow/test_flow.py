@@ -121,8 +121,27 @@ REVIEW_CASES = [
     ("보낸 기록 없음", [], [answer(REVIEW)], False),
 ]
 
+# 하위 카드에 복사된 기능 표시는 기능 판정에서 무시함. (설명, 카드, 단계 key 또는 None, 크기, 잘못 붙은 표시)
+COPIED = ["stage:review", "size:normal", "flow:v1", "review:v1", "kind:fix"]
+FEATURE_MARK_CASES = [
+    ("기능 카드의 표시는 그대로", epic("stage:review"), "review", "normal", []),
+    ("하위 카드의 복사된 표시는 무시", card(labels=COPIED), None, "", COPIED[:4]),
+    ("상위 없는 일반 카드도 기능이 아님", card(parent=None, labels=["stage:build", "size:small"]), None, "", ["stage:build", "size:small"]),
+    ("표시 없는 하위 카드는 경고 없음", card(labels=["kind:fix"]), None, "", []),
+]
+
 
 class FlowTest(unittest.TestCase):
+    def test_child_cards_with_copied_marks_are_not_features(self):
+        for name, c, st, size, stray in FEATURE_MARK_CASES:
+            with self.subTest(name):
+                self.assertEqual(getattr(bf.current(c), "key", None), st)
+                self.assertEqual(bf.size_of(c), size)
+                self.assertEqual(bf.stray_marks(c), stray)
+
+    def test_copied_flow_mark_on_parent_like_child_does_not_block_claims(self):
+        self.assertEqual(bf.claim_block(card(), card(labels=COPIED), lambda did: False), "")
+
     def test_which_stage_moves_are_blocked(self):
         for name, e, target, approved, want in STAGE_CASES:
             with self.subTest(name):
