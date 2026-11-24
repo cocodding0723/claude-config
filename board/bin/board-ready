@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""기능 카드 아래에서 지금 동시에 시작할 수 있는 카드 묶음 고르기.
+의존이 끝난 열린 카드 중 고칠 파일(label file:)이 서로·진행 중 카드와 안 겹치는 것만 담음. 읽기 전용."""
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(HERE, "..", "lib"))
+import board_scope as bs  # noqa: E402
+
+DEFAULT_BOARD = "~/orca/board"
+WS_SCRIPT = os.path.normpath(os.path.join(HERE, "..", "..", "skills", "orca-hub-create", "scripts", "create_worker_ws.sh"))
+DEFAULT_BASE = "main"
+HUB_HOLDER, ACTOR_HOLDER = "<허브>", "<작업자>"
+PARENT_DEP = "parent-child"
+EXIT_USAGE, EXIT_BD = 2, 4
+DEFAULT_PRIORITY = 9   # priority 없는 카드는 맨 뒤
+
+EPILOG = f"""\
+고르는 기준: 기능 카드의 하위·손자 카드 중 상태 open 이고, 의존 카드(부모-자식 관계 제외)가 모두 closed 인 카드.
+그중 우선순위 높은(숫자 작은) 카드부터 담고, 이미 담은 카드나 작업판 전체 진행 중(in_progress) 카드와
+file: 범위가 겹치면 '기다림'으로 뺌. 겹침 판정은 board-claim 과 같음(lib/board_scope.py).
+file: 표시가 없는 카드는 '표시 필요'로 빼고 붙일 명령을 안내함.
+브랜치 제안: 기능 카드 label branch:<이름> 뒤에 -<카드 id 끝 번호>. 기준은 --base 또는 기능 카드 label base:, 없으면 {DEFAULT_BASE}.
+
+종료 코드: 0 정상(빈 묶음 포함) · 2 사용법·카드 없음·epic 아님 · 4 환경(bd 실패)
+예:
+  board-ready lrm-12
+  board-ready lrm-12 --json
+  board-ready lrm-12 --hub ~/orca/workspaces/lrm-hub --actor ui-worker
+환경: BOARD_DIR(기본 {DEFAULT_BOARD})
+"""
+
+
+def die(msg, code):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def bd(*args):
+    return subprocess.run(["bd", *args, "--json"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+
+
+def bd_json(*args):
+    r = bd(*args)
+    if r.returncode != 0:
+        die(f"실패: bd {' '.join(args)}: {r.stderr.strip()[:200]}. 조치: BOARD_DIR·bd 설치 확인", EXIT_BD)
+    try:
+        return json.loads(r.stdout or "[]")
+    except json.JSONDecodeError:
+        die(f"실패: bd {' '.join(args)} 출력이 JSON 아님. 조치: bd 버전 확인", EXIT_BD)
+
+
+def show(card_id):
+    r = bd("show", card_id)
+    if r.returncode != 0:
+        if "not found" in (r.stderr + r.stdout).lower():
+            die(f"거부: 카드 {card_id} 없음. 조치: bd list -t epic 으로 id 확인", EXIT_USAGE)
+        die(f"실패: bd show {card_id}: {r.stderr.strip()[:200]}. 조치: BOARD_DIR·bd 설치 확인", EXIT_BD)
+    d = json.loads(r.stdout or "[]")
+    return d[0] if isinstance(d, list) and d else d
+
+
+def descendants(epic_id):
+    """하위·손자 카드 전부(너비 우선). 순환 방지로 본 id 는 건너뜀"""
+    out, seen, queue = [], {epic_id}, [epic_id]
+    while queue:
+        for kid in bd_json("children", queue.pop(0)) or []:
+            if kid["id"] not in seen:
+                seen.add(kid["id"])
+                out.append(kid)
+                queue.append(kid["id"])
+    return out
+
+
+def deps_done(card):
+    """부모-자식 관계를 뺀 의존 카드가 모두 closed. children 출력엔 의존 상태가 없어 show 로 다시 읽음"""
+    full = show(card["id"])
+    return all(d.get("status") == "closed" for d in full.get("dependencies") or []
+               if d.get("dependency_type") != PARENT_DEP)
+
+
+def locs(card, repo):
+    r = os.path.expanduser(bs.label(card, "repo") or repo)
+    return [bs.locate(p, r) for p in bs.labels(card, "file")]
+
+
+def suffix(card_id):
+    return card_id.rsplit(".", 1)[-1].rsplit("-", 1)[-1]
+
+
+def pick(cands, busy, repo):
+    """우선순위순 욕심 선택. busy = [(카드 id, loc)] 진행 중 범위"""
+    ready, waiting, needs = [], [], []
+    taken = list(busy)
+    for c in sorted(cands, key=lambda c: (c.get("priority", DEFAULT_PRIORITY), c["id"])):
+        mine = locs(c, repo)
+        if not mine:
+            needs.append(c)
+            continue
+        hits = sorted({oid for oid, op in taken if any(bs.loc_overlap(m, op) for m in mine)})
+        if hits:
+            waiting.append((c, hits))
+        else:
+            ready.append(c)
+            taken += [(c["id"], m) for m in mine]
+    return ready, waiting, needs
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="board-ready", description="기능 카드 아래 동시에 시작할 수 있는 카드 묶음 출력(읽기 전용).",
+                                 epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("epic", help="기능 카드(epic) id")
+    ap.add_argument("--json", action="store_true", help='{"ready":[…],"waiting":[…],"needs_files":[…]} 출력')
+    ap.add_argument("--repo", default="", help="file: 상대 경로의 기준 저장소(카드 label repo: 가 우선)")
+    ap.add_argument("--hub", default=HUB_HOLDER, help="안내 명령에 넣을 허브 경로")
+    ap.add_argument("--base", default="", help="안내 명령에 넣을 기준 브랜치")
+    ap.add_argument("--actor", default=ACTOR_HOLDER, help="안내 명령에 넣을 작업자 이름")
+    try:
+        a = ap.parse_args()
+    except SystemExit as e:
+        sys.exit(0 if e.code == 0 else EXIT_USAGE)
+
+    board = os.path.expanduser(os.environ.get("BOARD_DIR", DEFAULT_BOARD))
+    if not os.path.isdir(board):
+        die(f"실패: 작업판 폴더 {board} 없음. 조치: BOARD_DIR=<경로> board-ready …", EXIT_BD)
+    os.chdir(board)
+
+    epic = show(a.epic)
+    if not epic:
+        die(f"거부: 카드 {a.epic} 없음. 조치: bd list -t epic 으로 id 확인", EXIT_USAGE)
+    if epic.get("issue_type") != "epic":
+        die(f"거부: {a.epic} 는 기능 카드(epic)가 아님({epic.get('issue_type')}). 조치: 상위 기능 카드 id 로 다시 실행", EXIT_USAGE)
+
+    cands = [c for c in descendants(a.epic) if c.get("status") == "open" and deps_done(c)]
+    busy = [(o["id"], loc) for o in bd_json("list", "--status", "in_progress", "--limit", "0")
+            for loc in locs(o, a.repo)]
+    ready, waiting, needs = pick(cands, busy, a.repo)
+
+    branch = bs.label(epic, "branch") or "<브랜치>"
+    base = a.base or bs.label(epic, "base") or DEFAULT_BASE
+
+    def item(c):
+        br = f"{branch}-{suffix(c['id'])}"
+        return {"id": c["id"], "title": c.get("title", ""), "priority": c.get("priority"),
+                "files": bs.labels(c, "file"), "branch": br,
+                "commands": [f"{WS_SCRIPT} --hub {a.hub} --branch {br} --base {base} --card {c['id']}",
+                             f"board-claim {c['id']} {a.actor}"]}
+
+    out = {"ready": [item(c) for c in ready],
+           "waiting": [{"id": c["id"], "title": c.get("title", ""), "blocked_by": hits} for c, hits in waiting],
+           "needs_files": [{"id": c["id"], "title": c.get("title", ""), "command": f"bd label add {c['id']} file:<경로>"} for c in needs]}
+    if a.json:
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return
+
+    print(f"기능 {a.epic} {epic.get('title', '')}: 시작 가능 {len(ready)} · 기다림 {len(waiting)} · 표시 필요 {len(needs)}")
+    for r in out["ready"]:
+        print(f"\n시작 가능: {r['id']} {r['title']}")
+        for cmd in r["commands"]:
+            print(f"  {cmd}")
+    for w in out["waiting"]:
+        print(f"\n기다림: {w['id']} {w['title']} — 겹침 {', '.join(w['blocked_by'])}")
+    for n in out["needs_files"]:
+        print(f"\n표시 필요: {n['id']} {n['title']}\n  {n['command']}")
+
+
+if __name__ == "__main__":
+    main()
