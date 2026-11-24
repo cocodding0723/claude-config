@@ -886,6 +886,10 @@ def main():
             # 작은 기능: 검수 카드를 하나씩 올리지 않고 반영으로 넘김. 검수는 --review-batch 로 하루치를 모아 받음
             bd("label", "add", a.card_id, "stage:ship", actor=a.actor)
             bd("label", "add", a.card_id, bf.BATCH_LABEL, actor=a.actor)
+            # 옛 단계(build·verify)가 남으면 ship 과 겹쳐 현황 줄·단계 조회가 흔들림. 새 표시를 먼저 붙인 뒤 뗌
+            for s in bf.STAGES:
+                if s.label != "stage:ship" and s.label in bf.labels(card):
+                    bd("label", "remove", a.card_id, s.label, actor=a.actor)
             out["feature_close"] = "보류: 반영(--shipped) 뒤에 정리"
             out["next"] = (f"작은 기능이라 반영 단계로 넘김. 병합 승인을 받은 뒤 board-done --epic {a.card_id} {a.actor} --shipped \"<PR·병합 커밋>\". "
                            f"검수는 board-done --review-batch 로 모아 받음")

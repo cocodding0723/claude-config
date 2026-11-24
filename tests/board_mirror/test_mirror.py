@@ -132,6 +132,13 @@ class MirrorTest(unittest.TestCase):
         head = self.queue()[0]["text"].splitlines()[0]
         self.assertEqual("시험 기능 — 지금 검수 단계 · 진행 중 1장(셔터 색 맞춤) · 할 일: 검수 카드에 통과·고칠 점 답", head)
 
+    def test_status_picks_latest_stage(self):
+        self.run_mirror()
+        self.root["labels"] += ["stage:build", "stage:ship"]
+        self.add("관련 시험 통과")
+        self.run_mirror()
+        self.assertIn("지금 반영 단계", self.queue()[0]["text"])
+
     def test_status_without_stage_says_none(self):
         self.run_mirror()
         self.add("관련 시험 통과")

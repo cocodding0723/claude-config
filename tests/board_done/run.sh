@@ -452,7 +452,7 @@ sm_epic() { bd create "$1" -t epic --labels "feature:$2,size:$3,${4:-$BL}" -d "-
 smbr() { local b=$1; shift; gitc checkout -q -b "$b" main; for f in "$@"; do mkdir -p "$GR/$(dirname "$f")"; echo "$b" > "$GR/$f"; done; gitc add -A; gitc commit -q -m "$b"; git -C "$GR" rev-parse HEAD; gitc checkout -q main; }
 evb() { bd comments add "$1" "evidence:$2 commit=$3" >/dev/null; }
 H1=$(smbr sm-a Scripts/Ui/Button.cs); H2=$(smbr sm-b Scripts/Ui/Font.cs Scripts/Ui/FontView.cs)
-s1=$(sm_epic "[LRM-1] 버튼 색" sa small "branch:sm-a,repo:$GR,base:main"); s2=$(sm_epic "글자 크기" sb small "branch:sm-b,repo:$GR,base:main"); nn=$(sm_epic "보통 기능" sc normal)
+s1=$(sm_epic "[LRM-1] 버튼 색" sa small "branch:sm-a,repo:$GR,base:main,stage:build"); s2=$(sm_epic "글자 크기" sb small "branch:sm-b,repo:$GR,base:main"); nn=$(sm_epic "보통 기능" sc normal)
 sleep 1; printf 'png' > "$SB/ev/sm.png"; evb "$s1" "screenshot=$SB/ev/sm.png" "$H1"; evb "$s2" "screenshot=$SB/ev/sm.png" "$H2"; ev "$nn" "screenshot=$SB/ev/sm.png"
 
 # 작은 기능 다시 판정: size:small 표시만으로는 생략하지 않음. 실제 바뀐 파일이 작음이 아니면 review·recording 을 다시 요구
@@ -482,6 +482,7 @@ expect "small: 두 번째 기능도 닫힘" 0 "$BIN" --epic "$s2" lead
 L=$(labs "$s1")
 case ",$L," in *,review:batch,*stage:ship,*) ok "small: 닫으면 stage:ship + review:batch";; *) ko "small 표시" "$L";; esac
 case ",$L," in *,stage:review,*) ko "small: 검수 단계로 감" "$L";; *) ok "small: 검수 단계로 가지 않음";; esac
+case ",$L," in *,stage:build,*|*,stage:verify,*) ko "small: 옛 단계 남음" "$L";; *) ok "small: 옛 단계 뗌";; esac
 [ "$(calls)" = "$n0" ] && ok "small: 검수 카드를 올리지 않음" || ko "small: 보고 도구 호출됨" "$(calls)"
 expect "review-batch --dry-run" 0 "$BIN" --review-batch --dry-run
 [ "$(calls)" = "$n0" ] && case ",$(labs "$s1")," in *,review:batch,*) true;; *) false;; esac && ok "review-batch --dry-run: 올리지도 표시를 바꾸지도 않음" || ko "dry-run 이 씀" "$(calls) $(labs "$s1")"
