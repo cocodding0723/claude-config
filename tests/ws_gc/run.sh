@@ -461,13 +461,15 @@ for n in fl_gen fl_kt fl_ign_kt; do
   echo g > "$W/$n/android/.gradle/8.12/a.bin"; echo a > "$W/$n/android/app/build/outputs/a.apk"; echo b > "$W/$n/build/app/x.txt"
   echo e > "$W/$n/ios/Flutter/ephemeral/e.txt"; echo p > "$W/$n/ios/Pods/P/p.h"; echo l > "$W/$n/android/local.properties"
   echo x > "$W/$n/ios/Flutter/Generated.xcconfig"; echo s > "$W/$n/ios/Flutter/flutter_export_environment.sh"; echo z > "$W/$n/Library/BurstCache/b.bin"
-  for x in android/.gradle/ android/app/build/ /build/ ios/Flutter/ephemeral/ ios/Pods/ android/local.properties ios/Flutter/Generated.xcconfig ios/Flutter/flutter_export_environment.sh; do excl "$n" "$x"; done
+  mkdir -p "$W/$n/android/app/.cxx/debug/abc/arm64-v8a/.cmake"; echo c > "$W/$n/android/app/.cxx/debug/abc/arm64-v8a/CMakeCache.txt"; echo j > "$W/$n/android/app/.cxx/debug/abc/arm64-v8a/.cmake/reply.json"
+  echo pod > "$W/$n/ios/Flutter/Flutter.podspec"
+  for x in android/.gradle/ android/app/build/ android/app/.cxx/ /build/ ios/Flutter/ephemeral/ ios/Pods/ android/local.properties ios/Flutter/Generated.xcconfig ios/Flutter/flutter_export_environment.sh ios/Flutter/Flutter.podspec; do excl "$n" "$x"; done
 done
 mkdir -p "$W/fl_kt/android/app/src/main/kotlin" "$W/fl_ign_kt/android/app/src/main/kotlin"
 echo 'class Only' > "$W/fl_kt/android/app/src/main/kotlin/Only.kt"
 echo 'class Gen' > "$W/fl_ign_kt/android/app/src/main/kotlin/Gen.kt"; excl fl_ign_kt 'Gen.kt'
 regen
-gc --only fl_gen; chk "[F] Flutter·BurstCache 생성물만: 후보(미확인 0)" 'has "CANDIDATE repoA/fl_gen " && ! has "SKIP dirty repoA/fl_gen"' "$(grep fl_gen "$ARC/ws_gc.log" | tail -2)"
+gc --only fl_gen; chk "[F] Flutter(.cxx·Flutter.podspec 포함)·BurstCache 생성물만: 후보(미확인 0)" 'has "CANDIDATE repoA/fl_gen " && ! has "SKIP dirty repoA/fl_gen"' "$(grep fl_gen "$ARC/ws_gc.log" | tail -2)"
 gc --only fl_kt; chk "[F] android 아래 소스 .kt(미추적): 보존" 'has "SKIP dirty repoA/fl_kt" && has "미확인 미추적 android/app/src/main/kotlin/Only.kt"' "$(grep fl_kt "$ARC/ws_gc.log" | tail -2)"
 gc --only fl_ign_kt; chk "[F] android 아래 소스 .kt(gitignore): 보존" 'has "SKIP dirty repoA/fl_ign_kt" && has "미확인 무시파일 android/app/src/main/kotlin/Gen.kt"' "$(grep fl_ign_kt "$ARC/ws_gc.log" | tail -2)"
 FAKE_RM_CHECK_DIRTY=1 gc --only fl_kt --apply; chk "[F] 보존한 .kt 가 그대로 남음" '[ -f "$W/fl_kt/android/app/src/main/kotlin/Only.kt" ] && [ "$(rm_calls)" = 0 ]'
