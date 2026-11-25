@@ -8,6 +8,7 @@
 import hashlib
 import json
 import os
+import pwd
 import re
 import subprocess
 import sys
@@ -65,6 +66,10 @@ MAIN_ENV = os.environ.get("LRM_MAIN_ENV") or os.path.join(DIR, "main.env")  # �
 HANDLE_LOG = 13                                       # 로그에 남기는 핸들 앞 글자 수
 SPEC = mt.Spec.from_env()                             # 메인 판정 기준(메인 체크아웃 LRM_PUSH_MAIN·claude·제목 보조 조건 LRM_PUSH_PANE). 판정·재탐색은 main_terminal 이 맡음
 ORCA = os.environ.get("LRM_PUSH_ORCA") or mt.find_orca()
+# 임시 허브 폴더(시험)인데 진짜 Orca 로 이어지면 보내지 않음. 핸들이 없으면 제목으로 실제 메인을 다시 찾아 시험 데이터가 사용자 답처럼 전달됨(11-25).
+# HOME 을 바꾼 시험도 걸리게 실제 홈은 계정 정보에서 읽음
+REAL_DIR = os.path.join(pwd.getpwuid(os.getuid()).pw_dir, ".config", "lrm-hubs")
+SANDBOX_LEAK = os.path.realpath(DIR) != os.path.realpath(REAL_DIR) and "/Orca.app/" in os.path.realpath(ORCA)
 NOTIFY = os.environ.get("LRM_PUSH_NOTIFY") or os.path.join(SELF_DIR, "slack_notify.sh")
 ALERT = os.path.join(DIR, ".slack-push-alert.json")  # '메인 연결 끊김' 알림을 보낸 사유 목록. 연결이 확인되면 지움
 # 메인 핸들이 없거나 다른 터미널을 가리키는 사유. 사람이 main.env 를 고쳐야 풀리므로 알림 대상(화면 상태·조회 실패는 제외)
@@ -1103,6 +1108,9 @@ def note_off():
 
 def kick():
     """보낼 것이 있고 워커가 없을 때만 분리된 워커를 띄우고 바로 반환. 폴러·소켓 수신기의 출력 파이프를 잡지 않게 모든 표준 입출력을 닫음"""
+    if SANDBOX_LEAK:
+        log("off", reason="sandbox_dir")
+        return
     if not ENABLED:
         note_off()
         return
@@ -1121,6 +1129,9 @@ def main(argv):
         return 2
     if argv[0] == "--kick":
         kick()
+        return 0
+    if SANDBOX_LEAK:
+        log("off", reason="sandbox_dir")
         return 0
     if not ENABLED:
         note_off()
