@@ -141,6 +141,22 @@ build_merge() {
   jq -s -f "$REPO/merge/merge.jq" "$TMP/base.json" "$TMP/keep.json" > "$out" || die "설정 병합 실패: $src"
 }
 
+# Codex 훅 병합 결과를 $2 에 생성. Orca·GitKraken 등 다른 도구의 항목은 그대로 둠
+build_codex() {
+  local src="$1" out="$2" cur="$HOME/$3"
+  render_base "$src" > "$TMP/codex-base.json" || die "Codex 훅 기본값 JSON 오류: $src"
+  if [ -f "$cur" ]; then
+    jq -e 'type == "object"' "$cur" >/dev/null 2>&1 || die "현재 Codex 훅이 비었거나 JSON 이 아님: $cur, 파일을 고친 뒤 다시 실행"
+    cat "$cur" > "$TMP/codex-cur.json"
+  else
+    echo '{}' > "$TMP/codex-cur.json"
+  fi
+  jq -s -f "$REPO/merge/codex-hooks.jq" "$TMP/codex-base.json" "$TMP/codex-cur.json" > "$out" || die "Codex 훅 병합 실패: $src"
+}
+
+# Orca 도 이 파일을 다시 쓰므로 들여쓰기·키 순서 차이는 같은 것으로 봄
+same_json() { [ -f "$2" ] && [ ! -L "$2" ] && [ "$(jq -S . "$1")" = "$(jq -S . "$2" 2>/dev/null)" ]; }
+
 hook_count() { jq '[.hooks[]?[]] | length' "$1"; }
 
 do_link() {
@@ -168,6 +184,20 @@ do_merge() {
   prepare_target "$dst"
   cp "$out" "$t"
   log "MERGE  $dst (훅 $(hook_count "$out")개)"
+}
+
+do_codex() {
+  local src="$1" dst="$2" t="$HOME/$2" out="$TMP/codex-merged.json"
+  build_codex "$REPO/$src" "$out" "$dst"
+  if same_json "$out" "$t"; then
+    N_SKIP=$((N_SKIP + 1)); say "SKIP   $dst (병합 결과 동일, 훅 $(hook_count "$out")개)"; return
+  fi
+  N_MERGE=$((N_MERGE + 1))
+  if [ "$DRY" = 1 ]; then log "[dry-run] MERGE  $dst (훅 $(hook_count "$out")개)"; return; fi
+  prepare_target "$dst"
+  (umask 077; cat "$out" > "$t")
+  log "MERGE  $dst (훅 $(hook_count "$out")개)"
+  log "       Codex 에서 /hooks 를 열어 바뀐 훅을 신뢰해야 함. 그 전에는 바뀐 훅이 건너뛰어짐"
 }
 
 # launchd 처럼 PATH 가 짧은 곳에서 쓸 python3 절대 경로. 설치하는 셸의 python3 기준
@@ -269,7 +299,7 @@ validate() {
   local bad=0 src dst mode
   command -v jq >/dev/null || die "jq 가 필요함: brew install jq"
   while IFS=$'\t' read -r src dst mode; do
-    case "$mode" in link|merge|copy|render) ;; *) log "목록 오류: mode '$mode' ($src)" >&2; bad=1; continue ;; esac
+    case "$mode" in link|merge|codex|copy|render) ;; *) log "목록 오류: mode '$mode' ($src)" >&2; bad=1; continue ;; esac
     case "$dst" in /*|*..*) log "목록 오류: dst 는 HOME 기준 상대경로여야 함 ($dst)" >&2; bad=1 ;; esac
     [ -e "$REPO/$src" ] || { log "목록 오류: 원본 없음 $src" >&2; bad=1; }
   done < <(entries)
@@ -373,6 +403,7 @@ do_install() {
     case "$mode" in
       link) do_link "$src" "$dst" ;;
       merge) do_merge "$src" "$dst" ;;
+      codex) do_codex "$src" "$dst" ;;
       copy) do_copy "$src" "$dst" ;;
       render) do_render "$src" "$dst" ;;
     esac
@@ -406,6 +437,20 @@ next_steps() {
   log "  의존성 점검: ./install.sh --doctor"
 }
 
+# Orca 계정 프로필의 훅이 저장소 기본값보다 낡았는지 안내. 프로필 파일은 Orca 소유라 고치지 않고 실패로도 세지 않음
+profile_notice() {
+  local f id n
+  render_base "$REPO/claude/settings.base.json" > "$TMP/profile-base.json"
+  for f in "$HOME/Library/Application Support/orca/claude-profiles"/*/home/settings.json; do
+    [ -f "$f" ] || continue
+    id=$(basename "$(dirname "$(dirname "$f")")" | cut -c1-8)
+    n=$(jq -n --slurpfile b "$TMP/profile-base.json" --slurpfile p "$f" \
+      'def rows: [.hooks // {} | to_entries[] | .key as $e | .value[] | (.matcher // "") as $m | .hooks[] | [$e, $m, .command]];
+       ($b[0] | rows) - ($p[0] | rows) | length' 2>/dev/null) || { log "PROFILE  $id 설정 읽기 실패: $f"; continue; }
+    [ "$n" = 0 ] || log "PROFILE  $id 훅 ${n}개가 저장소와 다름(안내). 그 프로필을 쓸 때 /hooks 로 확인"
+  done
+}
+
 # 점검 전용. 문제 수를 종료 코드로 반환
 do_check() {
   validate
@@ -421,6 +466,9 @@ do_check() {
       merge)
         build_merge "$REPO/$src" "$TMP/merged.json" "$dst"
         same_file "$TMP/merged.json" "$t" || { log "DRIFT  $dst (병합 결과와 다름)"; bad=$((bad + 1)); } ;;
+      codex)
+        build_codex "$REPO/$src" "$TMP/codex-merged.json" "$dst"
+        same_json "$TMP/codex-merged.json" "$t" || { log "DRIFT  $dst (병합 결과와 다름)"; bad=$((bad + 1)); } ;;
       copy)
         subst_file "$REPO/$src" "$TMP/copied"
         same_file "$TMP/copied" "$t" || { log "DRIFT  $dst (복사본과 다름)"; bad=$((bad + 1)); } ;;
@@ -433,6 +481,7 @@ do_check() {
     cur=$(git config --global --get "$key" || true)
     [ "$cur" = "$val" ] || { log "DRIFT  git config $key (현재 '${cur:-없음}', 기대 '$val')"; bad=$((bad + 1)); }
   done < <(grep -v '^#' "$GITCFG" | grep -v '^[[:space:]]*$')
+  profile_notice
   if [ "$bad" = 0 ]; then log "점검 통과: 문제 없음"; else log "점검 실패: $bad 건"; return 1; fi
 }
 

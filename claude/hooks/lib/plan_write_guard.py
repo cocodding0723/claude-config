@@ -34,6 +34,9 @@ INTERP = {"python", "python3", "node", "ruby", "perl", "php"}
 # 셸·파이썬이 시작할 때 읽어 실행하는 파일을 가리키는 환경 변수. 신뢰 스크립트 앞에 붙이면 그 파일이 먼저 실행되므로 스크립트로 검사
 STARTUP_VARS = {"BASH_ENV", "ENV", "PYTHONSTARTUP"}
 WRAPPERS = {"sudo", "env", "exec", "command", "nohup", "time", "nice", "xargs", "builtin", "caffeinate"}
+# find -exec 로 돌려도 파일을 못 바꾸는 명령. 다른 프로그램 실행·파일 쓰기 옵션이 있는 것(sed·awk·rg·sort·diff)은 제외
+FIND_READERS = {"basename", "cat", "dirname", "echo", "grep", "head", "ls", "md5", "readlink", "realpath", "shasum", "stat", "tail", "test", "wc", "["}
+FIND_END = "\x01"  # find 의 \; 자리. 명령 구분자 ; 와 구별
 CODE_WRITE = re.compile(r"open\([^)]*['\"][wax+]|write_text|write_bytes|\.write\(|shutil\.|os\.(rename|replace|remove|unlink|makedirs|mkdir)|"
                         r"json\.dump\(|writeFile|appendFile|\bFile\.write|>\s*\S|\b(cp|mv|rm|tee|touch)\b")
 REASON_PLAN = ("계획 승인 기록은 메인 코디네이터만 씀 — 사용자 컨펌 원문을 메인에 전달하면 메인이 "
@@ -167,7 +170,8 @@ def split_segments(cmd):
         if m and "<<<" not in line:
             end = (m.group(3), m.group(1) == "-")
             bodies.append([])
-    lex = shlex.shlex("\n".join(out), posix=True, punctuation_chars=";&|<>()")
+    text = re.sub(r"(?<=\s)\\;(?=\s|$)", FIND_END, "\n".join(out))
+    lex = shlex.shlex(text, posix=True, punctuation_chars=";&|<>()")
     lex.whitespace_split = True
     lex.commenters = ""
     try:
@@ -176,7 +180,11 @@ def split_segments(cmd):
         return None, ["\n".join(b) for b in bodies]
     segs, cur = [], []
     for t in toks:
-        if t in (";", "&&", "||", "|", "&", "(", ")", "|&", ";;"):
+        # find 가 아니면 구분자로 봄: eval echo \; rm 처럼 뒤쪽이 실제 명령이 되는 경우를 놓치지 않기 위함
+        if t == FIND_END and cur and cur[0] == "find":
+            cur.append(t)
+            continue
+        if t in (FIND_END, ";", "&&", "||", "|", "&", "(", ")", "|&", ";;"):
             if cur:
                 segs.append(cur)
             cur = []
@@ -286,9 +294,10 @@ def segment(seg, ctx, bodies, depth):
                 dest(args[j + 1], ctx)
             elif a.startswith("--output="):
                 dest(a.split("=", 1)[1], ctx)
-    elif prog == "find" and any(a in ("-delete", "-exec", "-execdir") for a in args):
+    elif prog == "find" and any(a in ("-delete", "-exec", "-execdir") for a in args) and not find_reads(args):
         for a in plain:
-            dest(a, ctx, destructive=True)
+            if a != FIND_END:
+                dest(a, ctx, destructive=True)
     elif prog == "git":
         return
     elif prog in SHELLS or prog == "eval":
@@ -313,6 +322,26 @@ def segment(seg, ctx, bodies, depth):
                 ctx.hits.append(("code", "heredoc 코드"))
         elif plain:
             script(plain[0], ctx)
+
+
+def find_reads(args):
+    """모든 -exec 가 읽기 명령이고 지우기·쓰기 동작이 없으면 True. 끝(\\; 또는 {} +)을 못 찾으면 False"""
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("-delete", "-ok", "-okdir", "-fls") or a.startswith("-fprint"):
+            return False
+        if a in ("-exec", "-execdir"):
+            end = next((j for j in range(i + 1, len(args)) if args[j] == FIND_END or (args[j] == "+" and args[j - 1] == "{}")), None)
+            if end is None or end == i + 1:
+                return False
+            cmd = args[i + 1:end]
+            # 긴 옵션은 구현마다 쓰기·실행 기능이 있어(ugrep --filter 등) 증명하지 않음
+            if cmd[0] not in FIND_READERS or any(x.startswith("--") for x in cmd[1:]):
+                return False
+            i = end
+        i += 1
+    return True
 
 
 def startup(key, value, ctx):

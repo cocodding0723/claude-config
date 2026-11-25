@@ -32,7 +32,7 @@ while read -r lref lsha rref rsha; do
   fi
   branch=${rref#refs/heads/}; base=
   for c in "$remote/$branch" origin/dev; do git rev-parse -q --verify "refs/remotes/$c" >/dev/null && { base=$c; break; }; done
-  [ -n "$base" ] || die "환경 오류: 기준 브랜치($remote/$branch·origin/dev) 없음" "조치: git fetch origin dev"
+  [ -n "$base" ] || die "환경 오류: 기준 브랜치($remote/${branch}·origin/dev) 없음" "조치: git fetch origin dev"
   record="$LG_STORE/$lsha.${base//\//__}.json"
   if [ -f "$record" ]; then echo "local-gate: $short 통과 기록 있음(기준 $base) — 다시 돌리지 않음" >&2; continue; fi
   [ "$(git rev-parse HEAD)" = "$lsha" ] || die "거부: $short 는 체크아웃된 커밋이 아님(체크아웃 안 된 ref·--all·여러 브랜치 push 포함)" "조치: 그 브랜치를 체크아웃해 한 브랜치씩 'git push $remote HEAD:<브랜치>' 형식으로 push"

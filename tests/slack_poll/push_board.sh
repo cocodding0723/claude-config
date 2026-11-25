@@ -68,6 +68,11 @@ grep -qF "작업판 꺼짐" "$H/hub-inbox/main.jsonl" && grep -q "new=0 dup=0 fa
 # main-route 를 지우면 옛 경로(터미널 전송) 그대로
 rm "$H/main-route"
 jq -nc --argjson r "$(date +%s)" '{type:"note",ts:"1000.000010",text:"터미널로",channel:"Dfake",received_at:$r}' >> "$H/slack-inbox.jsonl"
+# 임시 허브 폴더 + 설치된 앱 모양의 orca: 시험 데이터가 실제 메인으로 새지 않게 아무것도 하지 않음(11-25). 제어군은 바로 아래(같은 대기분이 가짜 orca 로는 전달됨)
+mkdir -p "$SB/Orca.app/bin" "$SB/home"; cp "$HERE/fake_orca.sh" "$SB/Orca.app/bin/orca"
+for a in --kick --run; do HOME="$SB/home" LRM_PUSH_ORCA="$SB/Orca.app/bin/orca" bash "$PUSH" "$a"; done; sleep 0.5
+[ ! -s "$FO/sends.log" ] && [ "$(cat "$H/.main-read-lines" | tr -d ' \n')" = 4 ] && [ "$(grep -c 'off reason=sandbox_dir' "$H/slack-push.log")" = 2 ] \
+  && ok "임시 허브 폴더에서 설치된 Orca 로는 전달하지 않음" || ko "시험 데이터 누출 차단" "$(tail -3 "$H/slack-push.log")"
 bash "$PUSH" --run
 [ -s "$FO/sends.log" ] && ok "main-route 없으면 옛 경로(메인 터미널 전송) 그대로" || ko "옛 경로" "$(tail -3 "$H/slack-push.log")"
 
