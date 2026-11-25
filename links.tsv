@@ -23,6 +23,7 @@ claude/hooks/slack-format-guard.sh	.claude/hooks/slack-format-guard.sh	link
 claude/hooks/session-end.sh	.claude/hooks/session-end.sh	link
 claude/hooks/session-start.sh	.claude/hooks/session-start.sh	link
 claude/hooks/lib	.claude/hooks/lib	link
+codex/hooks/claude-compat.py	.codex/hooks/claude-compat.py	link
 skills/blast-radius	.claude/skills/blast-radius	link
 skills/catch-up	.claude/skills/catch-up	link
 skills/cli-for-agents	.claude/skills/cli-for-agents	link
