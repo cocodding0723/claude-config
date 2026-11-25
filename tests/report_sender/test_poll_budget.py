@@ -27,6 +27,9 @@ class PollBudgetTest(unittest.TestCase):
         shutil.copy(os.path.join(SCRIPTS, "lib", "py.sh"), os.path.join(scripts, "lib"))  # slack_poll.sh 가 source 함
         with open(os.path.join(scripts, "report_sender.py"), "w") as f:
             f.write("import os,sys\nopen(os.environ['LRM_HUB_DIR']+'/budget','a').write(os.environ.get('LRM_REPORT_BUDGET_S','none')+'\\n')\n")
+        for name in ("report_sender", "board_mirror"):
+            with open(os.path.join(scripts, name + ".py"), "a") as f:
+                f.write(f"import os\nopen(os.environ['LRM_HUB_DIR']+'/order','a').write('{name}\\n')\n")
         with open(os.path.join(bindir, "curl"), "w") as f:
             f.write('#!/bin/sh\necho \'{"ok":false,"error":"fake"}\'\n')
         os.chmod(os.path.join(bindir, "curl"), 0o755)
@@ -51,6 +54,11 @@ class PollBudgetTest(unittest.TestCase):
         self.assertEqual(len(got), 1)
         self.assertLessEqual(float(got[0]), 30)  # 40초 고정이 아니라 남은 예산 이하
         self.assertGreaterEqual(float(got[0]), 1)
+
+    def test_sender_runs_before_board_mirror(self):
+        self.poll(total=30)
+        with open(os.path.join(self.dir.name, "poll", "hub", "order"), encoding="utf-8") as f:
+            self.assertEqual(f.read().split(), ["report_sender", "board_mirror"])
 
     def test_external_api_base_is_refused_before_any_request(self):
         with self.assertRaises(AssertionError):

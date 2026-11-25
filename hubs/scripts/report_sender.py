@@ -888,14 +888,18 @@ def parent_of(card: str) -> str:
 FEATURE_HUB = "feat-"  # feature_open.sh 가 만드는 기능 코디네이터 허브 이름 머리
 
 
-def feature_thread(conf: Conf, rep: dict) -> "tuple[str, str]":
-    """기능 코디네이터 허브의 보고가 모일 기능 epic 과 그 스레드 ts. 기능 허브가 아니거나 스레드가 아직 없으면 ("", "")"""
+def feature_thread(conf: Conf, rep: dict, st: dict) -> "tuple[str, str]":
+    """기능 코디네이터 허브의 보고가 모일 기능 epic 과 그 스레드 ts. 기능 허브가 아니거나 스레드가 아직 없으면 ("", "").
+    카드에 아직 안 붙은 스레드는 전송기 상태(topics)에서 찾음"""
     hub = rep.get("hub") or ""
     if not hub.startswith(FEATURE_HUB):
         return "", ""
     rows = bd_json(conf, "list", "-t", "epic", "-l", f"feature:{hub[len(FEATURE_HUB):]}", "--all", "--limit", "0") or []
     for row in rows:
         ts = next((lb.split(":", 1)[1] for lb in row.get("labels") or [] if lb.startswith("slack-thread:")), "")
+        topic = st["topics"].get(f"card:{row.get('id')}", {})
+        if not ts and topic.get("attached") is False:
+            ts = topic.get("ts", "")
         if ts:
             return row.get("id") or "", ts
     return "", ""
@@ -920,7 +924,7 @@ def open_topic(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
     key = topic_key(rep)
     card = rep.get("card")
     # 기능 허브 보고는 카드·티켓·허브 주제를 새로 열지 않고 기능 스레드 하나로 모음(11-19 스레드 흩어짐 지적)
-    epic, ts = feature_thread(conf, rep)
+    epic, ts = feature_thread(conf, rep, st)
     if ts and key != f"card:{epic}":
         st["topics"][key] = {"ts": ts, "channel": st["topics"].get(f"card:{epic}", {}).get("channel", ""), "shared": epic}
         save_state(conf.state, st)
@@ -944,24 +948,40 @@ def open_topic(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
     if card:
         st["topics"][key].update(card=card, ws=rep.get("ws") or "", attached=False)
     save_state(conf.state, st)
-    if card:
+    if card and rep.get("ws"):  # 작업 공간 스레드 수 상한이 카드 라벨을 세므로 미루지 않음. 나머지 카드는 전송 뒤 retry_attach
         card_attach(conf, st["topics"][key])
         save_state(conf.state, st)
 
 
-def retry_attach(conf: Conf, st: dict) -> None:
-    """붙이기에 실패했던 카드 스레드를 회차마다 다시 시도(보고를 더 안 올려도 카드가 스레드를 갖게)"""
-    changed = False
-    for t in st["topics"].values():
-        if t.get("card") and t.get("attached") is False:
-            card_attach(conf, t)
-            changed = True
-    if changed:
+def retry_attach(conf: Conf, st: dict, deadline: float) -> None:
+    """안 붙은 카드 스레드를 전송 뒤에 붙임(bd 가 느려도 보고를 막지 않게).
+    예산이 끝났어도 1건은 시도해 밀린 연결이 계속 굶지 않게 하고, 시도한 것은 뒤로 돌려 한 카드의 실패가 나머지를 막지 않게 함"""
+    waiting = [t for t in st["topics"].values() if t.get("card") and t.get("attached") is False]
+    waiting.sort(key=lambda t: t.get("attach_at", 0))
+    for i, t in enumerate(waiting):
+        if i and time.monotonic() >= deadline:
+            break
+        t["attach_at"] = int(time.time())
+        card_attach(conf, t)
         save_state(conf.state, st)
 
 
-def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
-    """보고 1건 전송. 단계(topic·body·line)마다 상태를 저장하고, 끝나면 결과 요약을 돌려줌. 실패는 NotifyError"""
+def card_waiting(rep: dict, st: dict) -> bool:
+    """이번 회차에 올릴 수 있는데 아직 안 올린 결정 카드인가"""
+    rs = st["reports"].get(rep["id"], {})
+    return rep["kind"] == "decide" and "body_ts" not in rs and rs.get("next_at", 0) <= time.time()
+
+
+def decisions_first(todo: list, st: dict) -> list:
+    """안 올린 결정 카드가 있는 주제의 보고를 앞으로(안정 정렬). 같은 주제의 앞 글은 결정과 함께 당겨 스레드 안 순서를 지킴"""
+    last = {topic_key(r): i for i, r in enumerate(todo) if card_waiting(r, st)}
+    order = sorted(range(len(todo)), key=lambda i: i > last.get(topic_key(todo[i]), -1))
+    return [todo[i] for i in order]
+
+
+def deliver(conf: Conf, rep: dict, st: dict, deadline: float, defer_files: bool = False) -> dict:
+    """보고 1건 전송. 단계(topic·body·line)마다 상태를 저장하고, 끝나면 결과 요약을 돌려줌. 실패는 NotifyError.
+    defer_files: 본문만 올리고 첨부는 다음 회차로(보고당 1번만)"""
     rs = st["reports"].setdefault(rep["id"], {})
     rs.setdefault("task", rep["task"])  # 진행 목록이 작업별 첨부 메시지를 찾는 데 씀
     decide = rep["kind"] == "decide"
@@ -981,7 +1001,7 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
         save_state(conf.state, st)
         return {"topic_ts": rep["thread"], "body_ts": rs["body_ts"], "line_ts": "", "pinned": True}
     # 카드를 준 결정은 그 작업 스레드 안에. 기능 코디네이터의 결정은 카드 지정이 없어도 기능 스레드 안에(승인과 작업 이력을 한 스레드로). 그 밖의 결정은 맨 위 글
-    threaded = not decide or bool(rep.get("card")) or bool(feature_thread(conf, rep)[1])
+    threaded = not decide or bool(rep.get("card")) or bool(feature_thread(conf, rep, st)[1])
     if decide and rep.get("top"):
         threaded = False  # 사용자가 새 메시지로 올리라고 한 결정: 스레드를 열지도 찾지도 않음
     if threaded and key not in st["topics"]:
@@ -1002,6 +1022,10 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
             rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind] + thread_args(topic["ts"]) + broadcast_args(rep) + attached_args(rep) + [body_text(rep, shared, asks)], deadline)
             close_asks(conf, topic["ts"], asks)
         save_state(conf.state, st)
+    if defer_files and rep["files"] and not rs.get("files_deferred"):
+        rs["files_deferred"] = True  # 한 번만 미룸. 뒤 카드가 오래 못 나가도 첨부가 계속 밀리지 않음
+        save_state(conf.state, st)
+        raise NotifyError("기다리는 결정 카드를 먼저 올림", counts=False)
     send_files(conf, rep, rs, st, topic["ts"] if threaded else rs["body_ts"], deadline)
     if "line_ts" not in rs:
         parent = read_json_file(conf.sync_state).get("ts", "")
@@ -1232,10 +1256,11 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float, boards=False) -> d
                 warn_pending(conf, r, st, deadline)
     if not dry:
         gc_staged(conf)
-        retry_attach(conf, st)
     todo = [r for r in reports if not st["reports"].get(r["id"], {}).get("sent") and r["id"] not in st["bad"]]
     out["pending"] = len(todo)
     if not todo:
+        if not dry:
+            retry_attach(conf, st, deadline)
         if boards:
             out["lines"].extend(refresh_boards(conf, st, deadline, dry))
         return out
@@ -1247,7 +1272,8 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float, boards=False) -> d
         return out
     blocked = set()  # 앞 보고가 실패한 주제는 순서가 바뀌지 않게 이번 회차에 건너뜀
     tried = 0
-    for rep in todo:
+    ordered = decisions_first(todo, st)
+    for pos, rep in enumerate(ordered):
         key = topic_key(rep)
         if key in blocked:
             continue  # 건너뛴 보고는 시도 건수에 세지 않음(막힌 주제가 다른 주제를 굶기지 않게)
@@ -1279,7 +1305,8 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float, boards=False) -> d
             log(conf, line)
             continue
         try:
-            res = deliver(conf, rep, st, deadline)
+            defer = rep["kind"] == "decide" and any(topic_key(r) != key and card_waiting(r, st) for r in ordered[pos + 1:])  # 첨부(PDF·미리보기)가 뒤 카드의 예산을 다 쓰지 않게
+            res = deliver(conf, rep, st, deadline, defer)
             drop_staged(conf, rep)
         except NotifyError as err:
             if not err.counts:
@@ -1307,6 +1334,7 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float, boards=False) -> d
         out["lines"].append(line)
         log(conf, line)
     out["status"] = "partial" if out["failed"] else "done"
+    retry_attach(conf, st, deadline)
     if boards:
         out["lines"].extend(refresh_boards(conf, st, deadline))
     return out
