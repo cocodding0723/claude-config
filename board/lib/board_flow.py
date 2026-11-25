@@ -87,6 +87,9 @@ SENT_TITLE_HEAD = re.compile(r"^\s*:[^\s:]+:\s*")  # 보낸 카드 기록 제목
 # 앞의 맞장구("ㅇㅇ"·"네")는 허용. 11-19~20 실제 입력에서 "전부 추천"·"추천대로"가 승인으로 안 읽혀 Slack 카드를 다시 기다렸음
 YES_HEAD = r"(?:(?:ㅇㅇ|ㅇㅋ|응|네|넵|예|오케이|ok|okay)[\s,.!~]*)?"
 TYPED_OK = re.compile(r"^\s*" + YES_HEAD + r"(?:계획\s*)?(?:승인|스킵|skip|건너뛰|전부\s*추천|추천\s*대로)", re.I)
+# 계획 카드를 아직 안 올렸을 때 계획 승인으로 세는 말. '승인'·'추천대로'는 다른 질문의 답일 수 있어 빼고, 준비를 건너뛰라는 말만 셈
+# (11-25: 큰 기능이 이해 단계 질문에 친 '추천대로 ㄱㄱ'만으로 계획 없이 승인됨으로 나옴)
+TYPED_SKIP = re.compile(r"^\s*" + YES_HEAD + r"(?:계획\s*)?(?:스킵|skip|건너뛰)", re.I)
 # 검수 통과로 친 글: "통과", "검수 통과", "통과, PR 올려", "LGTM"
 REVIEW_OK = re.compile(r"^\s*" + YES_HEAD + r"(?:검수\s*)?(?:통과|lgtm)", re.I)
 # 첫 문장에 이 말이 있으면 승인·통과가 아님: "승인 전에 하나만", "통과 못 시킴", "승인?", "통과는 보류"
@@ -239,12 +242,12 @@ def says(pattern, text: str) -> bool:
     return bool(pattern.match(text)) and not TYPED_NO.search(FIRST_SENTENCE.match(text.strip()).group(0))
 
 
-def typed_plan_ok(text: str) -> bool:
+def typed_plan_ok(text: str, pattern=TYPED_OK) -> bool:
     """창에 친 글이 계획 승인인가. 항목을 붙인 건너뛰기('스킵 이해')는 그 항목만 건너뛰고 계획 승인으로 세지 않음"""
     items = typed_skips(text)
     if items:
         return "plan" in items
-    return says(TYPED_OK, text) and not refused_skips(text)
+    return says(pattern, text) and not refused_skips(text)
 
 
 def typed_review_ok(text: str) -> bool:
@@ -381,6 +384,14 @@ def last_card(hub_dir: str, did: str) -> "dict | None":
     """그 결정 번호로 가장 최근에 올린 결정 카드 기록"""
     return next((s for s in reversed(read_jsonl(os.path.join(hub_dir, SENT_NAME)))
                  if s.get("decision_id") == did and s.get("form_kind") == "decide" and isinstance(s.get("options"), dict)), None)
+
+
+def queued_at(hub_dir: str, did: str) -> "float | None":
+    """그 결정 번호로 접수했지만 아직 Slack 에 없을 수 있는 보고 중 가장 최근 것의 접수 시각. 전송이 밀리는 동안 창에 친 승인을 놓치지 않으려고 봄"""
+    outbox = os.environ.get("LRM_REPORT_OUTBOX") or os.path.join(hub_dir, OUTBOX_NAME)
+    ats = [float(r["at"]) for r in read_jsonl(outbox)
+           if r.get("decision_id") == did and isinstance(r.get("at"), (int, float)) and not isinstance(r.get("at"), bool)]
+    return max(ats, default=None)
 
 
 def last_answer(hub_dir: str, did: str, card: dict) -> "dict | None":
@@ -604,7 +615,8 @@ def ask_review_batch(epics: list, hub_dir: str, day: str, dry_run: bool = False,
 
 def typed_approval(hub_dir: str, did: str, epic: "dict | None", typed=board_said.typed) -> bool:
     """사용자가 그 기능 코디네이터 창에 승인·건너뛰기를 직접 쳤는가(11-19: Slack 버튼을 기다리지 않고 진행하는 길).
-    가장 최근 계획 카드를 올린 뒤에 친 글만 봄(카드를 다시 올리면 그 전 승인은 새 계획의 승인이 아님). 카드가 없으면 기능을 연 뒤의 글.
+    가장 최근 계획 카드를 올린 뒤에 친 글만 봄(카드를 다시 올리면 그 전 승인은 새 계획의 승인이 아님).
+    카드가 아직 Slack 에 없으면 전송 대기 중인 계획 보고를 접수한 뒤의 글, 그것도 없으면 기능을 연 뒤의 건너뛰기 글만.
     그 카드에 Slack 으로 수정 요청을 했으면 그 뒤에 친 글만 봄(나중 답이 기준)"""
     ws = coordinator_ws(epic)
     if not ws:
@@ -617,7 +629,11 @@ def typed_approval(hub_dir: str, did: str, epic: "dict | None", typed=board_said
         ans = last_answer(hub_dir, did, card)
         if ans is not None and isinstance(ans.get("received_at"), (int, float)):
             since = max(since, float(ans["received_at"]))
-    return any(typed_plan_ok(text) for _, text in typed(ws, since))
+        return any(typed_plan_ok(text) for _, text in typed(ws, since))
+    queued = queued_at(hub_dir, did)
+    if queued is not None:
+        return any(typed_plan_ok(text) for _, text in typed(ws, max(since, queued)))
+    return any(typed_plan_ok(text, TYPED_SKIP) for _, text in typed(ws, since))
 
 
 def typed_review(epic: "dict | None", typed=board_said.typed) -> str:

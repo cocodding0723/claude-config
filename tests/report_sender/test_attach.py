@@ -59,6 +59,9 @@ class AttachTest(unittest.TestCase):
     def uploads(self):  # 미리보기 PNG 는 임시 폴더라 호출 뒤 사라지므로 파일 존재 대신 가짜 스크립트의 업로드 표시를 씀
         return [r["args"] for r in self.records() if r["upload"]]
 
+    def names(self):  # 올린 파일 이름(호출 순서대로 펼침)
+        return [os.path.basename(f) for x in self.records() if x["upload"] for f in x["files"]]
+
     def lines(self):
         return [c[-1] for c in self.calls() if c[-1].startswith("첨부 실패")]
 
@@ -72,24 +75,38 @@ class AttachTest(unittest.TestCase):
         with open(self.conf.log, encoding="utf-8") as f:
             return f.read()
 
-    def test_general_report_attaches_files_to_topic_thread_with_html_preview(self):
-        rep = self.report(files=[self.png, self.html])
+    def test_general_report_groups_files_in_topic_thread(self):
+        rep = self.report(files=[self.png, self.make("c.pdf", "pdf")])
         res = report_sender.run(self.conf)
         self.assertEqual((res["status"], res["sent"], res["failed"]), ("done", 1, 0))
-        calls = self.calls()
+        calls, ups = self.calls(), self.uploads()
         self.assertIn("progress", calls[0])  # 주제 시작 → 본문 → 파일 → 진행 줄 순서
         self.assertNotIn("참고:", calls[1][-1])  # 경로 텍스트 대신 첨부
-        ups = self.uploads()
-        names = [os.path.basename(u[-1]) for u in ups]
-        self.assertEqual(names, ["a.png", "b.html"])  # PDF·미리보기는 report_derived.py 가 따로 올림(test_derived.py)
-        for u in ups:
-            self.assertEqual(u[u.index("--thread") + 1], TOPIC_TS)  # 본문과 같은 주제 스레드
+        self.assertEqual((len(ups), self.names()), (1, ["a.png", "c.pdf"]))  # 메시지 하나
+        self.assertEqual(ups[0][ups[0].index("--thread") + 1], TOPIC_TS)
         self.assertEqual(calls.index(ups[0]), 2)
-        self.assertIn("--quote", calls[4])  # 파일 다음이 진행 줄(원본 링크는 알림 스크립트가 정식 주소로)
-        self.assertNotIn("slack.com/archives", " ".join(calls[4]))
-        rs = self.state()["reports"][rep["id"]]
-        self.assertEqual((set(rs["att_done"]), rs["derived"]), ({self.png, self.html}, {"target": TOPIC_TS}))
-        self.assertTrue(all(v.startswith("F") for v in rs["att_done"].values()))  # 업로드 완료 file_id 저장
+        self.assertIn("--quote", calls[3])  # 파일 다음이 진행 줄
+        self.assertEqual(sorted(self.state()["reports"][rep["id"]]["att_done"].values()), ["Ffake1", "Ffake2"])
+
+    def test_html_report_hands_all_files_to_derived_job(self):
+        rep = self.report(files=[self.png, self.html])
+        self.assertEqual(report_sender.run(self.conf)["sent"], 1)
+        self.assertEqual(self.uploads(), [])  # 원본도 묶음으로 나감(test_derived.py)
+        self.assertEqual(self.state()["reports"][rep["id"]]["derived"], {"target": TOPIC_TS, "bundle": True})
+
+    def test_unreadable_html_does_not_hold_other_files(self):
+        self.report(files=[self.p("none.html"), self.png])
+        report_sender.run(self.conf)
+        self.assertEqual((self.names(), self.lines()), (["a.png"], ["첨부 실패: none.html — 파일 없음"]))
+
+    def test_group_permanent_error_falls_back_to_single_files(self):
+        self.report(files=[self.png, self.make("c.png", "png")])
+        self.set_fake("fail.up.n", 2)  # 묶음 + 첫 파일
+        self.set_fake("fail.up.rc", 2)
+        self.set_fake("fail.up.msg", "파일 형식 거부")
+        self.assertEqual(report_sender.run(self.conf)["sent"], 1)
+        self.assertEqual([len(x["files"]) for x in self.records() if x["upload"]], [2, 1, 1])
+        self.assertEqual(self.lines(), ["첨부 실패: a.png — 파일 형식 거부"])
 
     def test_decide_card_first_then_files_in_card_thread(self):
         self.report(text="알림 시각 정하기\n배경: 시험용 배경 설명 문장입니다\n용어: 없음", kind="decide", files=[self.png], options="1=9시 => 일찍 도착,2=10시 => 늦게 도착", recommend="1", decision_id="D-0101")
@@ -129,11 +146,11 @@ class AttachTest(unittest.TestCase):
         self.assertTrue(self.lines()[0].startswith("첨부 실패: a.png — 크기 초과"))
 
     def test_transient_upload_failure_retries_without_reposting_body_or_done_files(self):
-        rep = self.report(files=[self.png, self.html])
-        self.set_fake("fail.up.n", 2)  # a.png 업로드 2번 실패
+        rep = self.report(files=[self.png, self.make("c.png", "png")])
+        self.set_fake("fail.up.n", 2)  # 묶음 2번 실패 → 3번째는 하나씩
         res = report_sender.run(self.conf)
         self.assertEqual((res["status"], res["sent"], res["failed"]), ("partial", 0, 1))
-        self.assertIn("첨부 실패: a.png", res["lines"][0])
+        self.assertIn("첨부 실패: 2개", res["lines"][0])
         self.assertFalse(self.state()["reports"][rep["id"]].get("sent"))
         bodies = [c for c in self.calls() if "--kind" in c and c[c.index("--kind") + 1] == "done"]
         self.assertEqual(len(bodies), 1)
@@ -144,6 +161,7 @@ class AttachTest(unittest.TestCase):
         bodies = [c for c in self.calls() if "--kind" in c and c[c.index("--kind") + 1] == "done"]
         self.assertEqual(len(bodies), 1)  # 본문 재전송 없음
         self.assertEqual(len(self.state()["reports"][rep["id"]]["att_done"]), 2)
+        self.assertEqual([len(x["files"]) for x in self.records() if x["upload"]], [2, 2, 1, 1])
         self.assertEqual(self.lines(), [])  # 일시 실패는 스레드 줄 없이 재시도
 
     def test_script_permanent_rc_posts_one_line_and_continues(self):
@@ -209,7 +227,7 @@ class AttachTest(unittest.TestCase):
         self.set_fake("fail.n", 0)
         first = report_sender.run(self.conf)
         self.assertEqual(first["sent"], 1)
-        self.assertEqual(len(self.uploads()), 2)
+        self.assertEqual((len(self.uploads()), len(self.names())), (1, 2))
 
     def test_outbox_record_with_more_than_five_files_is_isolated(self):
         files = [self.make(f"f{i}.png", "x") for i in range(6)]

@@ -127,6 +127,20 @@ class TypedApprovalTest(unittest.TestCase):
         self.assertTrue(self.ok([(10, "스킵하고 바로 구현해")]))
         self.assertFalse(self.ok([(-200, "스킵")]), "기능을 열기 전에 친 글")
 
+    def test_without_any_plan_card_other_approval_words_do_not_count(self):
+        # 11-25: 이해 단계 질문에 친 '추천대로 ㄱㄱ'가 계획 없이 계획 승인으로 세어짐
+        for text in ("추천대로 ㄱㄱ", "전부 추천", "승인", "ㅇㅇ 추천대로 가자"):
+            with self.subTest(text):
+                self.assertFalse(self.ok([(10, text)]))
+        self.assertTrue(self.ok([(10, "스킵 계획")]))
+        self.assertTrue(self.ok([(10, "급함")]))
+
+    def test_plan_report_waiting_to_be_sent_accepts_typed_approval_after_it(self):
+        with open(os.path.join(self.hub, bf.OUTBOX_NAME), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"decision_id": self.DID, "at": self.CARD_AT, "kind": "decide"}) + "\n")
+        self.assertTrue(self.ok([(10, "승인")]))
+        self.assertFalse(self.ok([(-10, "승인")]), "보고를 접수하기 전에 친 글")
+
     def test_later_change_request_on_slack_overrides_an_earlier_typed_approval(self):
         self.post()
         with open(os.path.join(self.hub, bf.INBOX_NAME), "a", encoding="utf-8") as f:

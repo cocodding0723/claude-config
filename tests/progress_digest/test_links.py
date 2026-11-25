@@ -64,6 +64,14 @@ class Collect(unittest.TestCase):
         self.assertEqual(refs.for_hub("ui")["ts"], "3.3")
         self.assertIsNone(refs.for_task("F9"))  # 링크 없음
 
+    def test_bundled_attachment_ref_comes_from_derived_state(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = write_state(d, reports={"r1": {"task": "F3", "sent": 5, "att_done": {}}})
+            with open(os.path.join(d, "report-derived.state.json"), "w") as f:
+                json.dump({"r1": {"done": {"a.html": "Fbundle"}}}, f)
+            refs = pc.ReportRefs(path)
+        self.assertEqual(refs.for_task("F3"), {"kind": "file", "file": "Fbundle"})
+
     def test_unreadable_state_gives_no_refs(self):
         self.assertIsNone(pc.ReportRefs("/없는/상태.json").for_task("F1"))
 
