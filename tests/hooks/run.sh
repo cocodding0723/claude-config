@@ -943,6 +943,15 @@ ss() { # <source> <cwd> [환경...]
   local src=$1 cwd=$2; shift 2
   printf '%s' "$(jq -cn --arg s "$src" --arg d "$cwd" '{source:$s,cwd:$d}')" | env "$@" HOME="$SB/home" CLAUDE_HOOKS_STATE="$SB/cstate" PATH="$CB:$PATH" BOARD_BIN="$CB" BOARD_DIR="$SB/cboard" bash "$H/session-start.sh" 2>/dev/null | jq -r '.hookSpecificOutput.additionalContext // empty'
 }
+# bash 3.2 는 한글 환경에서 $변수 바로 뒤 한글을 변수 이름으로 읽어 값이 사라지고 글자가 깨짐
+for w in old1 old2; do git -C "$SB/cws/coord-other-hub" worktree add -q -b "feat/$w" "$SB/cws/$w" 2>/dev/null; done
+out=$(ss startup "$SB/cws/coord-other-hub" LANG=ko_KR.UTF-8 LC_ALL=ko_KR.UTF-8)
+echo "$out" | grep -q '총 3개 중' && echo "$out" | grep -q 'main에 merge됨' && ok "session-start: 한글 환경에서 개수·브랜치 표시" || ko "session-start 한글" "$out"
+for w in old1 old2; do git -C "$SB/cws/coord-other-hub" worktree remove "$SB/cws/$w"; done
+bad=$(LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^ -~[:space:]]' "$H"/*.sh "$H"/lib/*.sh | grep -v '^[^:]*:[0-9]*:[[:space:]]*#')
+[ -z "$bad" ] && ok "훅: \$변수 바로 뒤 한글 없음" || ko "훅 \$변수 뒤 한글" "$bad"
+out=$(jq -cn --arg s "pe" '{session_id:$s,tool_input:{file_path:"/x/a.py"}}' | HOME="$SB/home" CLAUDE_HOOKS_STATE="$SB/cstate" bash "$H/post-edit.sh" | jq -r '.hookSpecificOutput.additionalContext')
+echo "$out" | grep -q '커밋은 승인 없이' && ! echo "$out" | grep -q '승인 전 git commit 금지' && ok "post-edit: 커밋 안내가 현재 규칙과 일치" || ko "post-edit 안내" "$out"
 out=$(ss compact "$SB/cws/coord-feat-x-hub" X=1)
 echo "$out" | grep -q 'lrm-fake1' && echo "$out" | grep -q '단계: 3 구현' && [ "$(echo "$out" | wc -l)" -le 20 ] && ok "compact+기능 허브: 카드 id·단계, 20줄 이내" || ko "기능 허브 재주입" "$out"
 echo "$out" | grep -q '처리 안 된 지시: 없음' && ok "지시 없음 표시" || ko "지시 없음" "$out"
