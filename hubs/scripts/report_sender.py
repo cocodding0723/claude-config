@@ -99,6 +99,8 @@ CARD_GAP_FIX = "카드 설명에 '무엇:'·'왜:' 줄 추가(bd update {card} -
 WHY_GAP_FIX = "카드 설명에 '왜:' 줄 추가(bd update {card} -d ...). 보고는 이미 '이유 미기재' 표시로 나갔고, 추가하면 스레드 첫 메시지가 고쳐짐"
 BD_FALLBACK = "/opt/homebrew/bin/bd"  # launchd 의 짧은 PATH 에서 bd 를 못 찾을 때
 BD_TIMEOUT_S = 10
+BD_ROUND_S = 12  # 회차당 전송 전 bd 조회 시간 합. 넘으면 내보내기 파일로 읽어 전송할 시간을 남김
+BD_MIN_S = 1  # 남은 시간이 이보다 짧으면 bd 를 부르지 않음
 UNREADABLE = "백그라운드에서 읽을 수 없는 폴더 — 다시 보고"
 WS_THREAD_MAX = 10  # 기능 하나가 동시에 여는 작업 공간 스레드 상한. 넘으면 새 작업 공간 보고는 기능 스레드 답글로 감(환경 LRM_WS_THREAD_MAX)
 
@@ -122,6 +124,7 @@ class Conf:
     hold_max_s: float = HOLD_MAX_S
     bd: str = ""
     board: str = ""
+    bd_left: float = BD_ROUND_S
     cards: dict = field(default_factory=dict)  # 한 Conf(회차) 안의 카드 조회 캐시
 
     def __post_init__(self) -> None:
@@ -335,13 +338,41 @@ def is_card_topic(rep: dict) -> bool:
 
 
 def bd_json(conf: Conf, *args: str) -> "list | None":
-    """작업판 bd 조회 → JSON 목록. 실패·시간 초과·JSON 아님은 None(stderr 경고 줄은 무시)"""
+    """작업판 bd 조회 → JSON 목록. 실패·JSON 아님은 None(stderr 경고 줄은 무시).
+    시간 초과·회차 조회 시간 소진은 bd 내보내기 파일로 대신 읽음(몇십 초 늦을 수 있음). 파일도 없으면 None"""
+    if conf.bd_left < BD_MIN_S:
+        return exported_rows(conf, args)
+    start = time.monotonic()
     try:
-        p = subprocess.run([conf.bd, "-C", conf.board, *args, "--json"], capture_output=True, text=True, timeout=BD_TIMEOUT_S)
+        p = subprocess.run([conf.bd, "-C", conf.board, *args, "--json"], capture_output=True, text=True, timeout=min(BD_TIMEOUT_S, conf.bd_left))
         d = json.loads(p.stdout) if p.returncode == 0 else None
-    except (OSError, subprocess.TimeoutExpired, ValueError):
+    except subprocess.TimeoutExpired:
+        conf.bd_left = 0  # 한 번 초과한 회차는 작업판이 느린 상태라 더 기다리지 않음
+        return exported_rows(conf, args)
+    except (OSError, ValueError):
         return None
+    finally:
+        conf.bd_left -= time.monotonic() - start
     return d if isinstance(d, list) else None
+
+
+def exported_rows(conf: Conf, args: tuple) -> "list | None":
+    """bd_json 이 쓰는 조회(show <id> · list --parent <id> · list -l <label>)를 내보내기 파일(.beads/issues.jsonl)로 흉내.
+    모르는 조회·파일 없음·깨진 줄은 None"""
+    opt = lambda name: args[args.index(name) + 1] if name in args else ""  # noqa: E731
+    card, parent, label = args[1] if args[0] == "show" else "", opt("--parent"), opt("-l")
+    if not (card or parent or label):
+        return None
+    try:
+        with open(os.path.join(conf.board, ".beads", "issues.jsonl"), encoding="utf-8") as f:
+            rows = [r for r in map(json.loads, f) if r.get("_type", "issue") == "issue"]
+    except (OSError, ValueError):
+        return None
+    if card:
+        return [r for r in rows if r.get("id") == card] or None
+    if parent:
+        return [r for r in rows if any(d.get("type") == "parent-child" and d.get("depends_on_id") == parent for d in r.get("dependencies") or [])]
+    return [r for r in rows if label in (r.get("labels") or []) and r.get("issue_type") == (opt("-t") or r.get("issue_type"))]
 
 
 def first_sentence(line: str) -> str:
