@@ -93,7 +93,7 @@ rm -f ~/.config/lrm-hubs/scrum.state.json ~/.config/lrm-hubs/scrum.lock    # 상
 
 초안 claude 는 사용자 설정(`settings.json` 의 허용 목록·훅)과 기존 MCP 서버를 읽지 않는다(`--setting-sources ""`, `--strict-mcp-config`). 스크럼 전용 MCP 설정은 Atlassian 하나뿐이고, 읽기 도구만 허용한다. 인증은 키체인에 저장된 같은 이름(`atlassian`)·URL 항목을 쓴다.
 
-claude 는 `USER` 로 키체인 로그인 항목을 찾는다. 래퍼가 `USER`·`LOGNAME` 이 비어 있으면 채워 두므로 launchd 의 짧은 환경에서도 로그인이 풀리지 않는다. plist 는 `HOME`·`PATH`(claude·gh·python3 위치 포함)를 명시한다.
+claude 는 `USER` 로 키체인 로그인 항목을 찾는다. 래퍼가 `USER`·`LOGNAME` 이 비어 있으면 채워 두므로 launchd 의 짧은 환경에서도 로그인이 풀리지 않는다. 로그인은 Orca 에서 선택한 claude 프로필(`claude-profiles/selected-host` 가 가리키는 폴더)을 실행 때마다 읽어 쓴다. 프로필을 바꾸면 그 프로필의 Atlassian 인증도 필요하다. `CLAUDE_CONFIG_DIR` 을 직접 지정하면 그 값이 우선이고, 선택 파일이 없으면 기본 설정(`~/.claude`)을 쓴다. plist 는 `HOME`·`PATH`(claude·gh·python3 위치 포함)를 명시한다.
 
 ## 5. 진행 상세·첨부·팀 공유 사항
 
