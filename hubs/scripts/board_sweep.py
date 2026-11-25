@@ -2,6 +2,8 @@
 """작업판(bd) 주기 정리기. launchd(ai.lrm.boardsweep)가 30분마다 board_sweep.sh 로 호출.
 
 규칙(순서·값은 board_sweep.tsv 한 곳, 코드에 숫자·라벨 이름 없음):
+  merge_note 최근 병합 PR 과 작업판을 대조해 gh-watch 가 놓친 병합 코멘트를 채움(같은 브랜치 카드, 닫힌 카드 포함).
+             gh-watch 재시도와 겹치지 않게 병합 뒤 merge_note_min_hours 가 지난 것만 봄. 확인한 짝(PR·카드)은 상태 파일에 남겨 다시 묻지 않음
   pr_done    결정·할 일 카드가 가리키는 PR(라벨 pr:N, 제목·본문 #N)이 전부 병합·닫힘이고, 전부 카드를 만든 뒤에 끝났으면 근거 댓글 + 닫기.
              카드를 만들 때 이미 끝난 PR 은 '참고로 적은 번호'로 보고 닫지 않음
   slack_answered  결정 카드 자신의 결정 번호(라벨 slack:·decision:<번호>, 제목, 본문 '결정 번호:' 줄 — 본문 인용 번호는 무시)에
@@ -34,6 +36,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import gh_watch_sinks as sinks
 from pr_index import PrIndex
 
 EXIT_OK, EXIT_CONFIG, EXIT_BD, EXIT_LOCKED = 0, 2, 3, 4
@@ -44,7 +47,9 @@ REQUIRED = ("rules", "kinds", "kind_prefix", "pr_repo", "pr_label_prefix", "pr_s
             "ws_root", "ws_label_prefix", "branch_label_prefix", "ws_gone_hours",
             "log_path", "lock_path", "feature_merged_hours", "feature_close_script", "merged_into",
             "feature_label_prefix", "feature_merged_stages", "feature_merged_marker", "feature_hub_name",
-            "feature_merged_retry_hours", "feature_merged_max_tries", "feature_worktree_limit", "feature_terminal_limit", "feature_hub_reopen_grace_min")
+            "feature_merged_retry_hours", "feature_merged_max_tries", "feature_worktree_limit", "feature_terminal_limit", "feature_hub_reopen_grace_min",
+            "merge_note_hours", "merge_note_min_hours", "merge_note_limit", "merge_note_state",
+            "alert_after", "alert_state", "alert_hub")
 
 EPILOG = """예:
   board_sweep.sh --dry-run        바뀔 동작만 기록(mode=dry)
@@ -89,10 +94,10 @@ def load_config():
     missing = [k for k in REQUIRED if k not in cfg]
     if missing:
         raise ConfigError(f"규칙 표에 없는 키: {', '.join(missing)}. 조치: hubs/board_sweep.tsv 와 맞춤")
-    for k in ("pr_min_digits", "gh_calls_max", "gh_timeout_sec", "bd_timeout_sec", "feature_merged_max_tries", "feature_worktree_limit", "feature_terminal_limit"):
+    for k in ("pr_min_digits", "gh_calls_max", "gh_timeout_sec", "bd_timeout_sec", "feature_merged_max_tries", "feature_worktree_limit", "feature_terminal_limit", "merge_note_limit", "alert_after"):
         if not cfg[k].isdigit():
             raise ConfigError(f"규칙 표 {k} 가 정수가 아님: '{cfg[k]}'")
-    for k in ("stale_hours", "orphan_hours", "ws_gone_hours", "feature_merged_hours", "feature_merged_retry_hours", "feature_hub_reopen_grace_min"):
+    for k in ("stale_hours", "orphan_hours", "ws_gone_hours", "feature_merged_hours", "feature_merged_retry_hours", "feature_hub_reopen_grace_min", "merge_note_hours", "merge_note_min_hours"):
         try:
             float(cfg[k])
         except ValueError:
@@ -144,6 +149,7 @@ class Sweeper:
         self.gh_bin = os.environ.get("BOARD_GH", "gh")
         self.gh_calls = 0
         self.gh_capped = False
+        self.failures = []  # 이번 회차가 제 일을 못 한 원인(연속 실패 알림용)
         self.pr_cache = {}
         self.handled = set()  # 이번 실행에서 닫았거나 되돌린 카드. 뒤 규칙이 다시 건드리지 않음
         self.counts = {"close": 0, "label": 0, "candidate": 0, "reopen": 0, "blocked": 0, "error": 0}
@@ -261,6 +267,79 @@ class Sweeper:
         self.bd_write("label", "add", cid, self.cfg["candidate_label"])
 
     # ---------- 규칙 ----------
+
+    def merged_prs(self):
+        """최근 병합 PR 목록. 조회 실패면 None"""
+        if self.gh_calls >= int(self.cfg["gh_calls_max"]):
+            return []
+        self.gh_calls += 1
+        since = (self.now - dt.timedelta(hours=float(self.cfg["merge_note_hours"]))).astimezone(dt.timezone.utc)
+        rc, out, err = self.run([self.gh_bin, "pr", "list", "--repo", self.cfg["pr_repo"], "--state", "merged",
+                                 "--search", since.strftime("merged:>=%Y-%m-%dT%H:%M:%SZ"), "--limit", self.cfg["merge_note_limit"],
+                                 "--json", "number,headRefName,mergedAt,mergedBy,url"], int(self.cfg["gh_timeout_sec"]))
+        try:
+            rows = json.loads(out) if rc == 0 else None
+        except json.JSONDecodeError:
+            rows = None
+        if not isinstance(rows, list):
+            self.count("error")
+            self.failures.append("GitHub 병합 목록 조회 실패")
+            self.log("merge_note", "-", "gh-error", (err or out).strip().replace("\n", " ")[:160] or f"종료 {rc}")
+            return None
+        return rows
+
+    def rule_merge_note(self, cards):
+        rows = self.merged_prs()
+        if rows is None:
+            return
+        path = os.path.expanduser(self.cfg["merge_note_state"])
+        try:
+            with open(path, encoding="utf-8") as f:
+                known = set(json.load(f))
+        except (OSError, ValueError, TypeError):
+            known = set()
+        oldest = self.now - dt.timedelta(hours=float(self.cfg["merge_note_min_hours"]))
+        seen, usable = set(), [c for c in self.all_cards if not self.excluded(c)]
+        for pr in rows:
+            merged = parse_time(pr.get("mergedAt"))
+            branch = pr.get("headRefName")
+            if merged is None or not branch or merged > oldest:
+                continue
+            ev = {"kind": "pr_merged", "result": "merged", "pr": pr["number"], "branch": branch,
+                  "by": (pr.get("mergedBy") or {}).get("login"), "url": pr.get("url")}
+            for cid in sinks.cards_for(usable, branch):
+                key = f"{pr['number']}:{cid}"
+                if key not in known and not self.note_merge(cid, ev):
+                    continue
+                seen.add(key)
+        if not self.dry:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path + ".tmp", "w", encoding="utf-8") as f:
+                json.dump(sorted(seen), f)
+            os.replace(path + ".tmp", path)
+
+    def note_merge(self, cid, ev):
+        """병합 코멘트가 없으면 채움. 확인 또는 기록이 끝났으면 True"""
+        rc, out, err = self.bd("comments", cid, "--json")
+        try:
+            comments = json.loads(out or "[]") if rc == 0 else None
+        except json.JSONDecodeError:
+            comments = None
+        if comments is None:
+            self.count("error")
+            self.failures.append("작업판 병합 기록 실패")
+            self.log("merge_note", cid, "bd-error", f"PR #{ev['pr']} 코멘트 조회 실패 {err.strip()[:100]}")
+            return False
+        if sinks.already_noted(comments, ev):
+            return True
+        rc, _, err = self.comment(cid, sinks.board_text(ev))
+        if rc != 0:
+            self.count("error")
+            self.failures.append("작업판 병합 기록 실패")
+            self.log("merge_note", cid, "bd-error", f"PR #{ev['pr']} 코멘트 실패 {err.strip()[:100]}")
+            return False
+        self.log("merge_note", cid, "note", f"PR #{ev['pr']} 병합 기록을 채움")
+        return True
 
     def rule_pr_done(self, cards):
         kinds = set(as_list(self.cfg["kinds"]))
@@ -698,7 +777,7 @@ class Sweeper:
             self.count("close")
             self.log("feature_merged", card["id"], "feature-close", f"{slug}: {reason}")
 
-    RULES = {"ws_gone": rule_ws_gone, "pr_done": rule_pr_done, "slack_answered": rule_slack_answered, "expired": rule_expired, "stale": rule_stale,
+    RULES = {"merge_note": rule_merge_note, "ws_gone": rule_ws_gone, "pr_done": rule_pr_done, "slack_answered": rule_slack_answered, "expired": rule_expired, "stale": rule_stale,
              "duplicate": rule_duplicate, "orphan": rule_orphan, "feature_merged": rule_feature_merged}
 
     def sweep(self):
@@ -719,6 +798,47 @@ class Sweeper:
         # 동작이 없는 회차도 한 줄 남김. 주기 실행이 살아 있는지 기록만 보고 판단
         self.log("run", "-", "summary", " ".join(f"{k}={v}" for k, v in summary.items() if k != "mode"))
         return summary
+
+
+class Health:
+    """연속 실패 횟수를 파일에 남기고, 기준에 닿으면 Slack 보고 1건을 예약. 같은 연속 구간에서는 한 번만 알림"""
+
+    def __init__(self, cfg):
+        self.path = os.path.expanduser(cfg["alert_state"])
+        self.after = int(cfg["alert_after"])
+        self.hub = cfg["alert_hub"]
+        self.script = os.environ.get("LRM_HUB_REPORT") or os.path.join(os.path.dirname(os.path.realpath(__file__)), "hub_report.py")
+
+    def record(self, failures, log):
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                st = json.load(f)
+            streak, alerted = int(st["streak"]), bool(st["alerted"])
+        except (OSError, ValueError, KeyError, TypeError):
+            streak, alerted = 0, False
+        streak, alerted = (streak + 1, alerted) if failures else (0, False)
+        if streak >= self.after and not alerted:
+            alerted = self.send(streak, failures[0], log)  # 예약에 실패하면 다음 회차에 다시 시도
+        try:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+            with open(self.path + ".tmp", "w", encoding="utf-8") as f:
+                json.dump({"streak": streak, "alerted": alerted}, f)
+            os.replace(self.path + ".tmp", self.path)
+        except OSError as e:
+            log("health", "-", "state-failed", f"{e.strerror}: {self.path}")
+
+    def send(self, streak, cause, log):
+        text = (f"작업판 정리가 연속 {streak}번 실패했다\n"
+                f"배경: {cause}. 머지 기록과 카드 정리가 밀리고 있다.\n"
+                "할 일: GitHub 로그인과 컴퓨터 부하를 확인한다. 복구되면 빠진 기록은 자동으로 채워진다.")
+        try:
+            p = subprocess.run([sys.executable, self.script, "add", "--hub", self.hub, "--task", "없음", "--kind", "warn", "--auto", "--text", text],
+                               capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+            ok, why = p.returncode == 0, (p.stderr or p.stdout).strip()
+        except (OSError, subprocess.SubprocessError) as e:
+            ok, why = False, type(e).__name__
+        log("health", "-", "alert" if ok else "alert-failed", f"연속 실패 {streak}회: {cause}" if ok else why[:160])
+        return ok
 
 
 def main(argv=None):
@@ -745,12 +865,17 @@ def main(argv=None):
         print(f"다른 정리기 실행이 잠금 보유 — 건너뜀: {lock_path}", file=sys.stderr)
         return EXIT_LOCKED
     sweeper = Sweeper(cfg, args.dry_run)
+    health = Health(cfg)
     try:
         summary = sweeper.sweep()
     except RuntimeError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sweeper.log("-", "-", "bd-error", str(e)[:200])
+        if not args.dry_run:
+            health.record(["작업판 목록 조회 실패"], sweeper.log)
         return EXIT_BD
+    if not args.dry_run:
+        health.record(sweeper.failures, sweeper.log)
     if args.json:
         print(json.dumps(summary, ensure_ascii=False))
     else:
