@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS="${LRM_SCRIPT_DIR:-$ROOT/hubs/scripts}"
 PASS=0 FAIL=0
 STUB_PID=""
+export LRM_PUSH=off  # 폴러 끝의 메인 전달이 실제 orca 를 부르지 않게 함
 
 # 임시 허브 폴더 준비. 가짜 인증값 파일과 호출 기록용 즉답·대기 스텁을 넣음
 new_hub() {
