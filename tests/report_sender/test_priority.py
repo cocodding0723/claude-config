@@ -18,7 +18,7 @@ def rep(rid, kind="info", card="lrm-a"):
 
 class DecisionsFirstTest(unittest.TestCase):
     def order(self, *reps):
-        return [r["id"] for r in report_sender.decisions_first(list(reps))]
+        return [r["id"] for r in report_sender.decisions_first(list(reps), {"reports": {}})]
 
     def test_decision_jumps_other_topics_and_keeps_own_thread_order(self):
         got = self.order(rep("i1"), rep("b1", card="lrm-b"), rep("i2"), rep("b2", "decide", "lrm-b"), rep("b3", card="lrm-b"))
@@ -52,6 +52,30 @@ class AttachLaterTest(unittest.TestCase):
         self.assertEqual(res["sent"], 2)
         self.assertEqual(self.events, ["send"] * 4 + ["attach:lrm-a", "attach:lrm-b"])
         report_sender.load_state(self.conf.state)  # 새 상태 칸이 형식 검사에 걸리지 않음
+
+    def test_second_decision_card_goes_out_before_first_cards_files(self):
+        for n in ("1", "2"):
+            hub_report.add(self.conf.outbox, hub_report.make_report("h" + n, "없음", "decide", "결정 " + n + "\n배경: 시험 작업 중 고를 것이 생김\n용어: 없음", [os.path.abspath(__file__)], options="1=예 => 진행함,2=아니오 => 멈춤",
+                                                                    recommend="1", decision_id="D-000" + n), 1.0, False)
+
+        def notify(conf, args, deadline, upload=False):
+            self.events.append("file" if upload else "card" if "--decision-id" in args else "etc")
+            return f"1700000000.{len(self.events):06d}"
+        with mock.patch.object(report_sender, "run_notify", notify), mock.patch.object(report_sender, "bd_json", return_value=None):
+            report_sender.run(self.conf)
+            self.assertEqual([e for e in self.events if e != "etc"], ["card", "card", "file"])
+            report_sender.run(self.conf)  # 미룬 첨부는 다음 회차, 카드는 다시 올리지 않음
+        self.assertEqual([e for e in self.events if e != "etc"], ["card", "card", "file", "file"])
+
+    def test_same_thread_card_does_not_defer_files(self):
+        a, b = (dict(rep(i, "decide"), files=["x"]) for i in ("1", "2"))
+        seen = []
+        with mock.patch.object(report_sender, "deliver", lambda conf, r, st, dl, defer=False: seen.append(defer) or {"topic_ts": "", "body_ts": "", "line_ts": ""}), \
+                mock.patch.object(report_sender.hub_report, "read_outbox", return_value=[a, b]), \
+                mock.patch.object(report_sender, "check_consistency"), mock.patch.object(report_sender, "input_error", return_value=""), \
+                mock.patch.object(report_sender, "drop_staged"):
+            report_sender.run(self.conf)
+        self.assertEqual(seen, [False, False])
 
     def test_spent_budget_tries_one_and_rotates(self):
         st = {"topics": {k: {"ts": "1700000000.000001", "channel": "", "card": k, "attached": False} for k in ("a", "b")}, "reports": {}, "warned": {}, "bad": {}}

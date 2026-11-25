@@ -966,15 +966,22 @@ def retry_attach(conf: Conf, st: dict, deadline: float) -> None:
         save_state(conf.state, st)
 
 
-def decisions_first(todo: list) -> list:
-    """결정이 기다리는 주제의 보고를 앞으로(안정 정렬). 같은 주제의 앞 글은 결정과 함께 당겨 스레드 안 순서를 지킴"""
-    last = {topic_key(r): i for i, r in enumerate(todo) if r["kind"] == "decide"}
+def card_waiting(rep: dict, st: dict) -> bool:
+    """이번 회차에 올릴 수 있는데 아직 안 올린 결정 카드인가"""
+    rs = st["reports"].get(rep["id"], {})
+    return rep["kind"] == "decide" and "body_ts" not in rs and rs.get("next_at", 0) <= time.time()
+
+
+def decisions_first(todo: list, st: dict) -> list:
+    """안 올린 결정 카드가 있는 주제의 보고를 앞으로(안정 정렬). 같은 주제의 앞 글은 결정과 함께 당겨 스레드 안 순서를 지킴"""
+    last = {topic_key(r): i for i, r in enumerate(todo) if card_waiting(r, st)}
     order = sorted(range(len(todo)), key=lambda i: i > last.get(topic_key(todo[i]), -1))
     return [todo[i] for i in order]
 
 
-def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
-    """보고 1건 전송. 단계(topic·body·line)마다 상태를 저장하고, 끝나면 결과 요약을 돌려줌. 실패는 NotifyError"""
+def deliver(conf: Conf, rep: dict, st: dict, deadline: float, defer_files: bool = False) -> dict:
+    """보고 1건 전송. 단계(topic·body·line)마다 상태를 저장하고, 끝나면 결과 요약을 돌려줌. 실패는 NotifyError.
+    defer_files: 본문만 올리고 첨부는 다음 회차로(보고당 1번만)"""
     rs = st["reports"].setdefault(rep["id"], {})
     rs.setdefault("task", rep["task"])  # 진행 목록이 작업별 첨부 메시지를 찾는 데 씀
     decide = rep["kind"] == "decide"
@@ -1015,6 +1022,10 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
             rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind] + thread_args(topic["ts"]) + broadcast_args(rep) + attached_args(rep) + [body_text(rep, shared, asks)], deadline)
             close_asks(conf, topic["ts"], asks)
         save_state(conf.state, st)
+    if defer_files and rep["files"] and not rs.get("files_deferred"):
+        rs["files_deferred"] = True  # 한 번만 미룸. 뒤 카드가 오래 못 나가도 첨부가 계속 밀리지 않음
+        save_state(conf.state, st)
+        raise NotifyError("기다리는 결정 카드를 먼저 올림", counts=False)
     send_files(conf, rep, rs, st, topic["ts"] if threaded else rs["body_ts"], deadline)
     if "line_ts" not in rs:
         parent = read_json_file(conf.sync_state).get("ts", "")
@@ -1261,7 +1272,8 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float, boards=False) -> d
         return out
     blocked = set()  # 앞 보고가 실패한 주제는 순서가 바뀌지 않게 이번 회차에 건너뜀
     tried = 0
-    for rep in decisions_first(todo):
+    ordered = decisions_first(todo, st)
+    for pos, rep in enumerate(ordered):
         key = topic_key(rep)
         if key in blocked:
             continue  # 건너뛴 보고는 시도 건수에 세지 않음(막힌 주제가 다른 주제를 굶기지 않게)
@@ -1293,7 +1305,8 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float, boards=False) -> d
             log(conf, line)
             continue
         try:
-            res = deliver(conf, rep, st, deadline)
+            defer = rep["kind"] == "decide" and any(topic_key(r) != key and card_waiting(r, st) for r in ordered[pos + 1:])  # 첨부(PDF·미리보기)가 뒤 카드의 예산을 다 쓰지 않게
+            res = deliver(conf, rep, st, deadline, defer)
             drop_staged(conf, rep)
         except NotifyError as err:
             if not err.counts:
