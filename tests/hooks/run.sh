@@ -501,6 +501,19 @@ wexp "plan-write: 메인이어도 slack-inbox.jsonl Write 거부" '{"tool_name":
 wexp "plan-write: slack-inbox.jsonl Bash 추가 쓰기 거부" '{"tool_name":"Bash","tool_input":{"command":"echo {} >> ~/.config/lrm-hubs/slack-inbox.jsonl"}}' deny main
 wexp "plan-write: slack-inbox.jsonl 읽기는 통과" '{"tool_name":"Bash","tool_input":{"command":"tail -5 ~/.config/lrm-hubs/slack-inbox.jsonl"}}'
 wexp "plan-write: 깨진 입력은 통과" '{깨진'
+# find -exec: 읽기 명령만 통과. 세션 기록 폴더의 상위(~/.claude)를 대상으로 함
+mkdir -p "$SB/home/.claude/projects/p"
+fexp() { wexp "$1" "$(jq -cn --arg c "$2" --arg d "$SB" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}')" "${3:-pass}"; }
+fexp "plan-write: find -exec 읽기(test) 통과" 'find ~/.claude -type l ! -exec test -e {} \; -print | head "$X"'
+fexp "plan-write: find -exec 읽기(grep +) 통과" 'find ~/.claude/projects -name "*.jsonl" -exec grep -l a {} + ; echo "$X"'
+fexp "plan-write: find -exec rm 거부" 'find ~/.claude -exec rm {} \; ; echo "$X"' deny
+fexp "plan-write: 읽기 뒤 -delete 거부" 'find ~/.claude -exec cat {} \; -delete ; echo "$X"' deny
+fexp "plan-write: 읽기 뒤 두 번째 -exec rm 거부" 'find ~/.claude -exec cat {} \; -exec rm {} \; ; echo "$X"' deny
+fexp "plan-write: 따옴표 끝표시 뒤 -delete 거부" "find ~/.claude -exec cat {} ';' -delete ; echo \"\$X\"" deny
+fexp "plan-write: find -exec sh 거부" 'find ~/.claude -exec sh -c "x" {} \; ; echo "$X"' deny
+fexp "plan-write: 경로로 준 cat 은 읽기로 안 봄" 'find ~/.claude -exec /tmp/cat {} \; ; echo "$X"' deny
+fexp "plan-write: 긴 옵션은 읽기로 안 봄" 'find ~/.claude -exec grep --filter=x a {} \; ; echo "$X"' deny
+fexp "plan-write: eval 의 \; 뒤 명령도 검사" 'eval echo \; rm -rf ~/.claude/projects ; echo "$X"' deny
 # 메인 판별: ORCA_ROLE 없이도 메인 체크아웃에서 시작한 세션(세션 기록 폴더 이름)이면 메인
 MK=$(printf '%s' "$SB/mainrepo" | sed 's/[^A-Za-z0-9]/-/g')
 mw() { jq -cn --arg f "$WP" --arg t "$1" '{tool_name:"Write",tool_input:{file_path:$f},transcript_path:$t}'; }
