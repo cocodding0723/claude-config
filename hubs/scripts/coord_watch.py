@@ -78,6 +78,11 @@ class Seen:
 
 
 # ── 판정 (부수효과 없음) ──
+def same_pause(rec: dict, seen: Seen) -> bool:
+    """마지막 깨움 뒤 새 입력이 없었나. 입력 시각끼리 견주지 않음: 기록 끝부분만 읽어 옛 입력이 창 밖으로 밀리면 값이 바뀜"""
+    return seen.said <= rec.get("at", 0)
+
+
 def judge(e: dict, seen: Seen, waiting: bool, worker: bool, rec: dict, limits: Limits, now: float) -> tuple:
     """(할 일, 이유). 할 일: wake | warn | skip"""
     labels = e.get("labels") or []
@@ -96,7 +101,7 @@ def judge(e: dict, seen: Seen, waiting: bool, worker: bool, rec: dict, limits: L
         return "skip", "사용자 답 대기"
     if worker:
         return "skip", "작업자 진행 중"
-    same = rec.get("said") == seen.said  # 깨움 뒤 새 입력이 없으면 같은 쉼
+    same = same_pause(rec, seen)
     n = rec.get("wakes", 0) if same else 0
     if n >= limits.wake_max:
         return ("skip", "이미 경고함") if rec.get("warned") else ("warn", f"{n}번 깨웠지만 멈춤")
@@ -260,7 +265,7 @@ def _check(limits: Limits, dry: bool, now: float) -> tuple:
         if terms and len(terms) > 1:
             rows[-1].update(act="warn", why="창이 여럿")
             # 깨움을 다 쓴 것으로 적어 같은 쉼에는 다시 알리지 않음
-            rec = {"said": seen.said, "wakes": limits.wake_max, "at": now, "warned": warn(e, ws, WARN_DUP.format(n=len(terms), mins=mins))}
+            rec = {"wakes": limits.wake_max, "at": now, "warned": warn(e, ws, WARN_DUP.format(n=len(terms), mins=mins))}
         elif act == "warn":
             rec["warned"] = warn(e, ws, WARN_STUCK.format(n=rec.get("wakes", 0), mins=mins))
         else:
@@ -269,8 +274,7 @@ def _check(limits: Limits, dry: bool, now: float) -> tuple:
             sent += 1
             if res[0] not in (card_actions.SENT, card_actions.UNKNOWN):  # 막힘·창 없음은 횟수에 넣지 않고 다음 회차에 다시
                 continue
-            same = rec.get("said") == seen.said
-            rec = {"said": seen.said, "wakes": (rec.get("wakes", 0) if same else 0) + 1, "at": now}
+            rec = {"wakes": (rec.get("wakes", 0) if same_pause(rec, seen) else 0) + 1, "at": now}
         st[e["id"]] = rec
         rw.save_state_at(STATE, st)
     return 0, {"status": "ok", "rows": rows}

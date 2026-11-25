@@ -24,8 +24,8 @@ def seen(mins=30, said=100, working=False):
     return cw.Seen(NOW - mins * 60, said, working)
 
 
-def rec(wakes=0, said=100, ago=30, **kw):
-    return {"said": said, "wakes": wakes, "at": NOW - ago * 60, **kw}
+def rec(wakes=0, ago=30, **kw):
+    return {"wakes": wakes, "at": NOW - ago * 60, **kw}
 
 
 class JudgeTest(unittest.TestCase):
@@ -47,7 +47,8 @@ class JudgeTest(unittest.TestCase):
         ("두 번 깨워도 멈추면 경고", epic(), seen(), False, False, rec(2), "warn"),
         ("경고는 한 번만", epic(), seen(), False, False, rec(2, warned=True), "skip"),
         ("경고 전송이 실패했으면 다시 시도", epic(), seen(), False, False, rec(2, warned=False), "warn"),
-        ("새 입력 뒤 다시 멈추면 처음부터 셈", epic(), seen(said=200), False, False, rec(2, warned=True), "wake"),
+        ("새 입력 뒤 다시 멈추면 처음부터 셈", epic(), seen(21, said=NOW - 22 * 60), False, False, rec(2, ago=60, warned=True), "wake"),
+        ("옛 입력이 읽는 범위 밖으로 밀려도 같은 쉼(11-25 첫 실행)", epic(), seen(said=0.0), False, False, rec(2, warned=True), "skip"),
     ]
 
     def test_cases(self):
