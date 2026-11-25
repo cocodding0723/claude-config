@@ -290,6 +290,7 @@ class Redeliver(Base):
     def ready(self, skip="", fail=False):
         r = self.ws_router(fail)
         r.block_of = lambda card, ws, ts: skip
+        r.box_of = lambda card, ws, ts: ""
         return r
 
     def skips(self, router, did="D-0001"):
@@ -368,21 +369,65 @@ class Redeliver(Base):
         with mock.patch.object(fr, "card_row", lambda _c: row):
             self.assertEqual(block("t-1", ws, "1.1"), "")
             self.assertIn("작업 공간 없음", block("t-1", ws + "-gone", "1.1"))
-            for name in ("feat-mail.jsonl", "feat-mail.jsonl.1"):
-                path = os.path.join("hub-inbox", name)
-                self.jsonl(path, [{"ref": "t-1 slack:1.1"}])
-                self.assertIn("이미 세션 상자", block("t-1", ws, "1.1"))
-                os.unlink(os.path.join(self.hub, path))
             row["status"] = "closed"
             self.assertEqual(block("t-1", ws, "1.1"), "작업 카드 끝남")
             row["labels"].append("stage:review")
             self.assertEqual(block("t-1", ws, "1.1"), "", "검수 단계는 코디네이터가 남아 있음")
+
+    def test_only_an_answer_line_the_session_has_read_blocks(self):
+        import feedback_route as fr
+        import main_inbox as mi
+        ws = os.path.join(self.tmp.name, "coord-feat-mail-hub")
+        os.makedirs(ws)
+        os.makedirs(os.path.join(self.hub, "hub-inbox"))
+        row = {"id": "t-1", "issue_type": "epic", "status": "open", "labels": ["feature:mail"]}
+        path, opath = mi.inbox_path(box="feat-mail"), mi.offset_path(box="feat-mail")
+        line = {"kind": "answer", "ref": "t-1 slack:1.1"}
+
+        def check(want):
+            self.assertEqual(self.route_mod.box_state("t-1", ws, "1.1"), want)
+            block = self.route_mod.session_block("t-1", ws, "1.1")
+            self.assertEqual(bool(block), want == "read", block)
+
+        with mock.patch.object(fr, "card_row", lambda _c: row):
+            self.jsonl("hub-inbox/feat-mail.jsonl", [dict(line, kind="question")])
+            mi.read_new(box="feat-mail")
+            check("")  # 질문은 읽었어도 답이 아님
+            self.jsonl("hub-inbox/feat-mail.jsonl", [line])
+            os.unlink(opath)
+            check("unread")  # 읽은 위치 없음
+            mi.read_new(box="feat-mail")
+            check("read")
+            mi.save_offset(opath, os.stat(path).st_ino, 0)
+            check("unread")
+            mi.save_offset(opath, os.stat(path).st_ino, 1 << 20)
+            check("unread")  # 잘린 파일
+            os.replace(path, path + ".1")
+            mi.save_offset(opath, os.stat(path + ".1").st_ino, 0)
+            check("unread")
+            self.jsonl("hub-inbox/feat-mail.jsonl", [{"kind": "other"}])
+            check("unread")  # 회전 뒤 옛 파일 잔여분을 아직 안 읽음
+            mi.read_new(box="feat-mail")
+            check("read")
+            mi.save_offset(opath, 1, 0)
+            check("unread")  # 두 파일 어느 쪽도 아닌 위치
+
+    def test_unread_answer_stays_a_target_with_a_note(self):
+        self.map_card_decision()
+        self.leak()
+        out = io.StringIO()
+        with mock.patch.object(self.route_mod, "session_block", lambda *_a: ""), \
+                mock.patch.object(self.route_mod, "box_state", lambda *_a: "unread"), contextlib.redirect_stdout(out):
+            self.assertEqual(self.route_mod.main(["redeliver", "--dry-run", "D-0001"]), 0)
+        self.assertIn("대상\tD-0001", out.getvalue())
+        self.assertIn("상자에 있으나 읽음 미확인", out.getvalue())
 
     def test_dry_run_sends_and_records_nothing(self):
         self.map_card_decision()
         self.leak()
         before, out = self.store.deliveries("D-0001", "1.1"), io.StringIO()
         with mock.patch.object(self.route_mod, "session_block", lambda *_a: ""), \
+                mock.patch.object(self.route_mod, "box_state", lambda *_a: ""), \
                 mock.patch.object(self.route_mod, "session_sender", side_effect=AssertionError("보내면 안 됨")) as send, \
                 contextlib.redirect_stdout(out):
             self.assertEqual(self.route_mod.main(["redeliver", "--dry-run", "D-0001", "D-0009"]), 0)
