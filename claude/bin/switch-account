@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""멈춘 세션을 다른 Orca Claude 계정으로 옮겨 다시 엶.
+
+사용:
+  switch-account --list                       계정별 최근 한도 기록
+  switch-account <계정> <세션ID> [--bg] [--dry-run]
+
+<계정>은 claude-profiles 폴더 이름 앞부분(--list 의 계정 칸). 대화 기록(<세션ID>.jsonl 과
+같은 이름 폴더)을 대상 계정의 같은 프로젝트 폴더로 복사한 뒤(Orca 는 projects 를
+공유 링크로 둬서 보통 복사 생략) 그 계정으로 claude --resume 실행.
+--bg 는 백그라운드 세션으로 띄움(claude --bg). 계정 전환 여부는 사람이 정함 — 자동 전환 없음.
+
+환경: LRM_CLAUDE_PROFILES(계정 폴더 상위), LRM_USAGE_LIMIT_LOG(한도 기록), LRM_CLAUDE_BIN
+종료 코드: 0 성공, 1 대상·기록 없음, 2 인자 오류
+"""
+import json
+import os
+import shutil
+import sys
+import time
+from pathlib import Path
+
+HOME = Path.home()
+PROFILES = Path(os.environ.get(
+    "LRM_CLAUDE_PROFILES", HOME / "Library/Application Support/orca/claude-profiles"))
+LOG = Path(os.environ.get(
+    "LRM_USAGE_LIMIT_LOG",
+    Path(os.environ.get("LRM_HUB_DIR", HOME / ".config/lrm-hubs")) / "usage-limit.jsonl"))
+CLAUDE = os.environ.get("LRM_CLAUDE_BIN", "claude")
+LIMIT_WINDOW_SEC = 5 * 3600  # 세션 한도 창. 이보다 오래된 기록은 리셋된 것으로 봄
+
+
+def fail(msg, code=1):
+    print(f"switch-account: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def accounts():
+    return sorted(p.parent for p in PROFILES.glob("*/home") if p.is_dir())
+
+
+def short(profile):
+    return profile.name[:8]
+
+
+def last_limits():
+    out = {}
+    if LOG.exists():
+        for line in LOG.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            out[rec.get("account", "")] = rec
+    return out
+
+
+def limited(rec):
+    try:
+        at = time.mktime(time.strptime(rec["at"], "%Y-%m-%dT%H:%M:%S"))
+    except (KeyError, ValueError):
+        return False
+    return time.time() - at < LIMIT_WINDOW_SEC
+
+
+def cmd_list():
+    limits = last_limits()
+    rows = sorted(accounts(), key=lambda p: limited(limits.get(short(p), {})))
+    current = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    print("계정\t상태\t최근 한도")
+    for p in rows:
+        rec = limits.get(short(p))
+        state = "한도 걸림" if rec and limited(rec) else "여유 추정"
+        seen = f"{rec['at']} (리셋 {rec.get('resets') or '미확인'})" if rec else "-"
+        mark = " ← 지금" if current == str(p / "home") else ""
+        print(f"{short(p)}\t{state}\t{seen}{mark}")
+
+
+def find_profile(prefix):
+    hits = [p for p in accounts() if p.name.startswith(prefix)]
+    if len(hits) != 1:
+        fail(f"계정 '{prefix}' 이 {len(hits)}개와 맞음 — switch-account --list 로 확인")
+    return hits[0]
+
+
+def find_transcript(session):
+    hits = sorted(PROFILES.glob(f"*/home/projects/*/{session}.jsonl"),
+                  key=lambda f: f.stat().st_mtime, reverse=True)
+    if not hits:
+        fail(f"세션 {session} 대화 기록 없음 — 세션 ID 확인")
+    return hits[0]
+
+
+def session_cwd(transcript):
+    with transcript.open(encoding="utf-8") as f:
+        for line in f:
+            try:
+                cwd = json.loads(line).get("cwd")
+            except ValueError:
+                continue
+            if cwd:
+                return cwd
+    return None
+
+
+def copy_history(src, target_home):
+    dst_dir = target_home / "projects" / src.parent.name
+    dst = dst_dir / src.name
+    if dst.resolve() == src.resolve():
+        return dst
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    side = src.with_suffix("")  # 하위 에이전트·도구 결과 폴더
+    if side.is_dir():
+        shutil.copytree(side, dst.with_suffix(""), dirs_exist_ok=True)
+    return dst
+
+
+def cmd_switch(prefix, session, bg, dry):
+    target = find_profile(prefix) / "home"
+    src = find_transcript(session)
+    cwd = session_cwd(src) or os.getcwd()
+    argv = [CLAUDE, *(["--bg"] if bg else []), "--resume", session]
+    if dry:
+        dst = target / "projects" / src.parent.name / src.name
+        same = dst.exists() and dst.resolve() == src.resolve()
+        print("복사: 불필요(계정끼리 projects 공유)" if same else f"복사: {src} → {dst.parent}")
+        print(f"실행: (cd {cwd}) CLAUDE_CONFIG_DIR={target} {' '.join(argv)}")
+        return
+    copy_history(src, target)
+    os.chdir(cwd)
+    os.environ["CLAUDE_CONFIG_DIR"] = str(target)
+    os.execvp(argv[0], argv)
+
+
+def main(args):
+    if not args or args[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        sys.exit(0 if args else 2)
+    if args[0] == "--list":
+        return cmd_list()
+    flags = {a for a in args if a.startswith("--")}
+    pos = [a for a in args if not a.startswith("--")]
+    if len(pos) != 2 or flags - {"--bg", "--dry-run"}:
+        fail("인자: switch-account <계정> <세션ID> [--bg] [--dry-run]", 2)
+    cmd_switch(pos[0], pos[1], "--bg" in flags, "--dry-run" in flags)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

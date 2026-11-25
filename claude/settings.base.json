@@ -105,6 +105,7 @@
     "OPENVIKING_RECALL_COMPRESS": "off"
   },
   "model": "opus",
+  "autoContinueAtUsageLimit": true,
   "hooks": {
     "PreToolUse": [
       {
@@ -276,6 +277,18 @@
             "type": "command",
             "command": "~/.claude/hooks/session-start.sh",
             "timeout": 20
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "matcher": "rate_limit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/usage-limit.sh",
+            "timeout": 10
           }
         ]
       }
