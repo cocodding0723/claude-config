@@ -10,7 +10,8 @@ FILE_TS_TRIES="${LRM_FILE_TS_TRIES:-5}" FILE_TS_WAIT="${LRM_FILE_TS_WAIT:-1}"
 CARD_ID_RE='^[a-z][a-z0-9]{1,15}-[a-z0-9]{1,12}(\.[0-9]{1,3})*$'  # 작업판 카드 id(예 lrm-q5o.2)
 usage() {
   cat <<'EOF'
-사용: slack_notify.sh [--tag 허브] [--title 제목] [--thread TS] [--kind 종류 [--choices N] [--emoji-set 종류]] [--card 카드id] [--no-check] "메시지" [파일경로]
+사용: slack_notify.sh [--tag 허브] [--title 제목] [--thread TS] [--kind 종류 [--choices N] [--emoji-set 종류]] [--card 카드id] [--no-check] "메시지" [파일경로 …]
+      파일을 여러 개 주면 메시지 하나에 묶어 올림. 출력은 'ok file_id=F1,F2'(준 순서). 하나라도 올리지 못하면 아무것도 게시하지 않음
       slack_notify.sh --kind decide --options '1=문구 => 고르면 달라지는 점,2=문구 => …' --recommend N --decision-id D-xxxx [--reversible 쉬움|보통|어려움] [--seq 3/9] $'제목\n배경: …\n용어: …'
       slack_notify.sh --kind todo --todo-id T-xxxx "할 일"
   --tag        관련 허브 태그(기록용)
@@ -146,11 +147,14 @@ if [ "$NO_DOC" = 1 ] && [ "$KIND" != decide ]; then die "--no-doc 는 --kind dec
 if [ "$KIND" = decide ] && [ "$NO_DOC" = 0 ] && [ $# -lt 2 ] && [ ${#ATTACHED[@]} -eq 0 ]; then
   die "decide 는 문서 첨부 필요 — 파일 경로를 마지막 인자로 주거나 --attached 로 알리고, 문서 없는 결정이면 --no-doc 를 명시(전송 안 함)"
 fi
-[ "$OPT_SET" = 0 ] || [ $# -lt 2 ] || [ -f "$2" ] || die "첨부 파일 없음: $2 — 경로 확인 뒤 다시 보내세요(카드도 보내지 않음)"
+FILES=("${@:2}")
+for a in ${FILES[@]+"${FILES[@]}"}; do
+  [ "$OPT_SET" = 0 ] && [ ${#FILES[@]} -lt 2 ] || [ -f "$a" ] || die "첨부 파일 없음: $a — 경로 확인 뒤 다시 보내세요(카드도 보내지 않음)"
+done
 # 본문·참고의 로컬 경로가 첨부와 짝이 맞는지, 첨부가 비밀 파일이 아닌지. 검사 도구가 없거나 실패해도 미전송(닫힌 쪽으로)
 HR="${LRM_HUB_REPORT:-$(dirname "$(readlink "$0" || echo "$0")")/hub_report.py}"
 [ -f "$HR" ] || die "경로·첨부 검사 도구 없음: hub_report.py — 알림 스크립트와 같은 폴더에 설치 필요"
-ATT=(); [ $# -lt 2 ] || ATT=(--attached "$2")
+ATT=(); for a in ${FILES[@]+"${FILES[@]}"}; do ATT+=(--attached "$a"); done
 for a in ${ATTACHED[@]+"${ATTACHED[@]}"}; do ATT+=(--attached "$a"); done
 if ! CHK="$(printf '%s' "$1" | "$PY" -I "$HR" check-text --kind "$KIND" --hub-dir "$HOME/.config/lrm-hubs" ${ATT[@]+"${ATT[@]}"} 2>&1)"; then die "${CHK#오류: }"; fi
 MENTIONS="$CHK"  # 결정 번호 언급 판정(link·warn 줄). 아래 전송 직전에 처리
@@ -766,11 +770,12 @@ if card: rec.update(json.loads(card))
 if kind=="file":
     rec["ts"]=os.environ.get("LRM_FILE_TS","")
     if not rec["ts"]: rec["ts_pending"]=True
-    rec["file_id"]=(d.get("files") or [{}])[0].get("id","")
-    rec["path"]=os.environ.get("LRM_FILE_PATH","")
-with open(sent,"a",encoding="utf-8") as f: f.write(json.dumps(rec,ensure_ascii=False)+"\n")
-print("ok file_id=" + rec["file_id"] if kind=="file" else "ok " + rec["ts"])
-' "$SENT" "$CH" "$TITLE" "$TAG" "$THREAD" "$1" "$KIND" "$NOCHECK" "${2-$CARD_JSON}"
+# 묶음이어도 파일마다 한 줄. 전송기의 응답 유실 복구가 경로로 찾음
+pairs=[a.split("=",1) for a in sys.argv[10:]]
+rows=[{**rec,"file_id":i,"path":p} for i,p in pairs] if kind=="file" else [rec]
+with open(sent,"a",encoding="utf-8") as f: f.write("".join(json.dumps(r,ensure_ascii=False)+"\n" for r in rows))
+print("ok file_id=" + ",".join(i for i,_ in pairs) if kind=="file" else "ok " + rec["ts"])
+' "$SENT" "$CH" "$TITLE" "$TAG" "$THREAD" "$1" "$KIND" "$NOCHECK" "${2-$CARD_JSON}" "${@:3}"
 }
 
 # 텍스트 게시. 번호 카드면 색 띠 안에 버튼 블록이 들어감
@@ -799,25 +804,33 @@ for kind in ("private","public"):
   done
   return 1
 }
-# 파일 업로드. 인자: 경로, 본문, 스레드 ts, 기록에 붙일 카드 필드(카드 본체가 따로 있으면 빈 값)
-upload_file() {
-  local F="$1" BODY="$2" TH="$3" REC="$4" R U ID N L DONE
-  export LRM_FILE_PATH="$F"; N=$(basename "$F"); L=$(stat -f %z "$F")
-  R=$(curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" --data-urlencode "filename=$N" -d "length=$L" $API/files.getUploadURLExternal)
-  U=$(echo "$R" | "$PY" -c 'import sys,json;print(json.load(sys.stdin)["upload_url"])'); ID=$(echo "$R" | "$PY" -c 'import sys,json;print(json.load(sys.stdin)["file_id"])')
-  curl -s -o /dev/null -F "file=@$F" "$U"
+# 파일 묶음 업로드. 인자: 본문, 스레드 ts, 기록에 붙일 카드 필드(카드 본체가 따로 있으면 빈 값), 경로 …
+# 전부 올린 뒤 완료 호출을 한 번만 해 메시지 하나로 게시함. 중간 실패는 완료 호출 전이라 채널에 남는 것이 없음
+upload_files() {
+  local BODY="$1" TH="$2" REC="$3" F R U ID N L DONE FIRST="" PAIRS=() ITEMS=()
+  shift 3
+  for F in "$@"; do
+    N=$(basename "$F"); L=$(stat -f %z "$F") || return 1
+    R=$(curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" --data-urlencode "filename=$N" -d "length=$L" $API/files.getUploadURLExternal) || return 1
+    U=$(echo "$R" | "$PY" -c 'import sys,json;print(json.load(sys.stdin)["upload_url"])') || return 1
+    ID=$(echo "$R" | "$PY" -c 'import sys,json;print(json.load(sys.stdin)["file_id"])') || return 1
+    curl -s -o /dev/null -F "file=@$F" "$U" || return 1
+    [ -n "$FIRST" ] || FIRST="$ID"
+    PAIRS+=("$ID=$F"); ITEMS+=("$ID=$N")
+  done
   DONE=$(curl -s -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H 'Content-Type: application/json' \
     -d "$("$PY" -c '
 import json,sys
-b={"files":[{"id":sys.argv[1],"title":sys.argv[2]}],"channel_id":sys.argv[3],"initial_comment":sys.argv[4]}
-if sys.argv[5]: b["thread_ts"]=sys.argv[5]
-print(json.dumps(b))' "$ID" "$N" "$CH" "$BODY" "$TH")" \
+items=[a.split("=",1) for a in sys.argv[4:]]
+b={"files":[{"id":i,"title":n} for i,n in items],"channel_id":sys.argv[1],"initial_comment":sys.argv[2]}
+if sys.argv[3]: b["thread_ts"]=sys.argv[3]
+print(json.dumps(b))' "$CH" "$BODY" "$TH" "${ITEMS[@]}")" \
     $API/files.completeUploadExternal) || DONE=""
   LRM_FILE_TS=""; export LRM_FILE_TS
   if printf '%s' "$DONE" | grep -q '"ok" *: *true'; then
-    LRM_FILE_TS="$(file_ts "$ID")" || echo "경고: 파일 메시지 ts 조회 실패 — 기록에 ts_pending 표시(스레드 답글을 카드에 못 붙일 수 있음)" >&2
+    LRM_FILE_TS="$(file_ts "$FIRST")" || echo "경고: 파일 메시지 ts 조회 실패 — 기록에 ts_pending 표시(스레드 답글을 카드에 못 붙일 수 있음)" >&2
   fi
-  printf '%s' "$DONE" | record file "$REC"
+  printf '%s' "$DONE" | record file "$REC" "${PAIRS[@]}"
 }
 
 # 기존 글 본문 교체. 같은 채널(DM)의 최상위 글만 대상. 기록은 새로 남기지 않음(ts 는 그대로)
@@ -838,10 +851,11 @@ elif [ $# -ge 2 ] && [ "$OPT_SET" = 1 ]; then
   OUT="$(post_text)" || { echo "$OUT"; exit 1; }
   echo "$OUT"
   case "$OUT" in "ok "?*) ;; *) exit 1 ;; esac
-  FOUT="$(upload_file "$2" "첨부: $(basename "$2")" "${THREAD:-${OUT#ok }}" "")" || true
+  LABEL="$(basename "$2")"; [ ${#FILES[@]} -lt 2 ] || LABEL="${#FILES[@]}개"
+  FOUT="$(upload_files "첨부: $LABEL" "${THREAD:-${OUT#ok }}" "" "${FILES[@]}")" || true
   case "$FOUT" in ok*) ;; *) echo "경고: 카드는 보냈지만 파일 첨부 실패(${FOUT:-응답 없음}) — 파일을 따로 보내세요" >&2 ;; esac
 elif [ $# -ge 2 ]; then
-  upload_file "$2" "$MSG" "$THREAD" "$CARD_JSON"
+  upload_files "$MSG" "$THREAD" "$CARD_JSON" "${FILES[@]}"
 else
   post_text
 fi

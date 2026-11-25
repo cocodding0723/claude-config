@@ -14,12 +14,19 @@ rd = lambda n: open(os.path.join(d, n)).read().strip() if os.path.exists(os.path
 if rd("sleep"):
     time.sleep(float(rd("sleep")))
 is_upload = len(sys.argv) > 2 and os.path.isfile(sys.argv[-1])
+up_files = []
+for a in reversed(sys.argv[1:]):  # 끝에 붙은 실제 파일들(묶음)
+    if not os.path.isfile(a):
+        break
+    up_files.insert(0, a)
 with open(os.path.join(d, "calls.jsonl"), "a", encoding="utf-8") as f:
-    f.write(json.dumps({"args": sys.argv[1:], "upload": is_upload, "slack_env": sum(k in SECRET_ENV for k in os.environ)}, ensure_ascii=False) + "\n")
+    f.write(json.dumps({"args": sys.argv[1:], "upload": is_upload, "files": up_files, "slack_env": sum(k in SECRET_ENV for k in os.environ)}, ensure_ascii=False) + "\n")
+
 def record_upload():  # 실제 알림 스크립트처럼 slack-sent.jsonl 에 파일 기록(kind=file)
     th = sys.argv[sys.argv.index("--thread") + 1] if "--thread" in sys.argv else ""
     with open(os.path.join(d, "sent.jsonl"), "a", encoding="utf-8") as f:
-        f.write(json.dumps({"at": int(time.time()), "channel": "D1", "ts": "", "thread_ts": th, "kind": "file", "path": sys.argv[-1], "file_id": "Ffake1"}) + "\n")
+        for i, path in enumerate(up_files, 1):
+            f.write(json.dumps({"at": int(time.time()), "channel": "D1", "ts": "", "thread_ts": th, "kind": "file", "path": path, "file_id": f"Ffake{i}"}) + "\n")
 
 
 if is_upload and rd("fail.up.lost"):  # Slack 에는 올라갔는데 응답이 유실된 경우
@@ -45,4 +52,4 @@ if not is_upload:
         f.write(json.dumps({"channel": "D1", "ts": ts}) + "\n")
 if is_upload:
     record_upload()
-print("ok file_id=Ffake1" if is_upload else f"ok {ts}")
+print("ok file_id=" + ",".join(f"Ffake{i}" for i in range(1, len(up_files) + 1)) if is_upload else f"ok {ts}")

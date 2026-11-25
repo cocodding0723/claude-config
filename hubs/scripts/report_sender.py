@@ -13,12 +13,12 @@ kind=decide 는 스레드 답글이 아니라 slack_notify.sh --kind decide --op
 동시 실행은 상태 파일 옆 .lock 비차단 flock 으로 1개. 다른 회차가 진행 중이면 busy 로 건너뜀.
 
 첨부: 보고의 files(--file)는 본문 뒤에 Slack 파일로 올림. 올리는 곳은 일반 보고 = 주제 스레드, 지정 스레드 보고 = 그 스레드,
-결정 카드 = 카드 스레드(카드를 먼저 올림. 파일 업로드 메시지에는 버튼을 달 수 없음). 파일마다 알림 스크립트를 1회 호출(업로드 방식은 거기에 있음).
+결정 카드 = 카드 스레드(카드를 먼저 올림. 파일 업로드 메시지에는 버튼을 달 수 없음). 파일 전부를 알림 스크립트 1회 호출로 메시지 하나에 묶음(업로드 방식은 거기에 있음).
 접수 때 복사본(staged)이 있으면 그걸 올리고, 보고가 끝나면(전송·중단) 복사본을 지움. 못 지운 것은 STAGE_KEEP_S 뒤 회차 시작에 정리함.
 복사본이 없는 옛 기록은 원본을 읽는데, launchd 에서는 macOS 개인정보 보호(TCC)가 ~/Documents 등 읽기를 막아 curl 이 종료 코드 26 으로 실패함.
 올리기 전에 직접 열어 보고 막히면 재시도 없이 'UNREADABLE' 한 줄만 스레드에 남김(다시 hub_report.py add 로 보고하면 접수 때 복사됨).
 없는 파일·폴더·크기 초과는 입력 문제라 재시도 없이 스레드에 '첨부 실패: 이유' 한 줄만 남기고 보고는 계속함. 네트워크 등 일시 실패는 보고 재시도 규칙(BACKOFF)을 따르고 올린 파일은 다시 올리지 않음.
-HTML 은 html_pdf.sh 로 PDF(Slack 에서 바로 열림), html_preview.sh 로 390폭 미리보기 PNG 를 만들어 이어서 올림. 못 만든 것은 생략하고 계속함.
+HTML 은 html_pdf.sh 로 PDF(Slack 에서 바로 열림), html_preview.sh 로 390폭 미리보기 PNG 를 만들어 같은 묶음에 넣음. 못 만든 것은 생략하고 계속함.
 본문에 로컬 경로만 있고 첨부가 없으면 로그에 경고(접수 경고와 같은 판정 hub_report.unattached_paths).
 
 환경: LRM_HUB_DIR 작업 폴더 · LRM_REPORT_OUTBOX outbox · LRM_REPORT_STATE 상태 파일 · LRM_REPORT_NOTIFY 전송 스크립트(기본 같은 폴더 slack_notify.sh) · LRM_REPORT_PREVIEW HTML 미리보기 스크립트(기본 같은 폴더 html_preview.sh) · LRM_REPORT_PDF HTML→PDF 스크립트(기본 같은 폴더 html_pdf.sh)
@@ -56,6 +56,7 @@ USER_FIX_LINES = ("slack-bot.env 없음 — 사용자 설정 필요",)
 NOTIFY_TIMEOUT_S = 30
 UPLOAD_TIMEOUT_S = 120  # 파일 업로드는 본문 전송보다 오래 걸릴 수 있음
 PREVIEW_TIMEOUT_S = 30
+GROUP_TRIES = 2  # 묶음 업로드 시도 상한. 그 뒤 회차는 하나씩 올림
 PREVIEW_SUFFIX = "#preview:"  # 미리보기 단계 키 = 원본 경로 + 이 접미사 + 원본 내용 해시(att_done). 임시 경로에 기대지 않아 회차가 바뀌어도 같은 키
 PDF_SUFFIX = "#pdf:"  # PDF 단계 키. 미리보기와 같은 규칙(원본 경로 + 접미사 + 내용 해시)
 HTML_EXTS = (".html", ".htm")
@@ -794,57 +795,105 @@ def uploaded_id(conf: Conf, src: str, target: str, since: int) -> str:
     return ""
 
 
-def send_files(conf: Conf, rep: dict, rs: dict, st: dict, target: str, deadline: float) -> None:
-    """첨부 파일을 target 스레드에 올림. 업로드 완료(file_id)를 att_done 에 바로 저장해 재시도 때 건너뜀(응답 유실은 sent 기록으로 복구).
-    입력 문제(파일 없음·크기 초과·민감 파일·알림 스크립트의 영구 오류)는 한 줄 알리고 넘어가고, 일시 실패는 NotifyError 로 올려 보고 재시도 규칙을 탐"""
-    if not isinstance(rs.get("att_done"), dict):
-        rs["att_done"] = {}
-    done = rs["att_done"]
-    since = rs.setdefault("att_start", int(time.time()))
+def drop_made(path: str) -> None:
+    """올렸거나 포기한 딸린 파일 정리. PDF 의 해시 폴더는 비었을 때만 지워짐"""
+    with contextlib.suppress(OSError):
+        os.unlink(path)
+    if path.endswith(".pdf"):
+        with contextlib.suppress(OSError):
+            os.rmdir(os.path.dirname(path))
+
+
+def prepare_files(conf: Conf, rep: dict, rs: dict, st: dict, deadline: float) -> list:
+    """아직 안 올린 첨부와 HTML 딸린 파일의 (단계 키, 올릴 경로, 표시 이름, 만든 파일인가) 목록.
+    만든 딸린 파일은 att_made 에 남겨 다음 회차가 다시 만들지 않음(만들다 시간이 다 되면 넘기고 이어서 만듦)"""
+    done, made_at = rs["att_done"], rs["att_made"]
+    items, seen = [], set()
     for path in rep["files"]:
-        name = os.path.basename(path) or path
-        jobs = [(path, name)]
-        origin = source_of(rep, path)
+        name, origin = os.path.basename(path) or path, source_of(rep, path)
         digest = content_hash(origin) if path.lower().endswith(HTML_EXTS) else ""
-        if digest:
-            jobs += [(path + suffix + digest, "") for suffix in DERIVED]
-        for key, label in jobs:
-            if key in done:
+        jobs = [(path, "")] + ([(path + s + digest, s) for s in DERIVED] if digest else [])
+        for key, suffix in jobs:
+            if key in done or key in seen:
                 continue
-            src = origin
-            made = next((s for s in DERIVED if key == path + s + digest), "") if digest else ""
-            if made:  # 딸린 파일은 업로드 직전에 만듦. 못 만들면 생략으로 기록
-                src = "" if deadline - time.monotonic() <= 0 else MAKERS[made](conf, origin, digest, deadline)
-                label = os.path.basename(src)
-                if not src and deadline - time.monotonic() <= 0:
+            seen.add(key)
+            src = made_at.get(key, "") if suffix else origin
+            if suffix and not os.path.isfile(src):
+                if deadline - time.monotonic() <= 0:
                     raise NotifyError("회차 시간 예산 초과", counts=False)  # 시간이 없어 못 만든 것은 생략으로 굳히지 않고 다음 회차로
+                src = MAKERS[suffix](conf, origin, digest, deadline)
+                if not src and deadline - time.monotonic() <= 0:
+                    raise NotifyError("회차 시간 예산 초과", counts=False)
                 if not src:
-                    log(conf, f"{rep['id']} {DERIVED[made][1]} 생략: {name}")
+                    log(conf, f"{rep['id']} {DERIVED[suffix][1]} 생략: {name}")
                     done[key] = ""
                     save_state(conf.state, st)
                     continue
-            if fid := uploaded_id(conf, src, target, since):
-                done[key] = fid
+                made_at[key] = src
                 save_state(conf.state, st)
-                continue
-            save_state(conf.state, st)  # 첫 시도 시각(att_start)을 업로드 전에 저장
-            why = hub_report.file_problem(src) or read_problem(src)
-            try:
-                if why:
-                    raise NotifyError(why, permanent=True)
-                done[key] = run_notify(conf, ["--tag", rep["hub"], "--thread", target] + attached_args(rep) + [f"첨부: {label}", src], deadline, upload=True) or "uploaded"
-            except NotifyError as err:
-                if not err.permanent:
-                    raise NotifyError(f"첨부 실패: {label} — {err}", counts=err.counts)
-                attach_failed(conf, rep, target, label, str(err), deadline)
-                done[key] = ""
-            if made:
-                with contextlib.suppress(OSError):
-                    os.unlink(src)  # 올렸거나 포기한 딸린 파일 정리
-                if made == PDF_SUFFIX:
-                    with contextlib.suppress(OSError):
-                        os.rmdir(os.path.dirname(src))  # 해시 폴더는 비었을 때만 지워짐
-            save_state(conf.state, st)
+            items.append((key, src, os.path.basename(src) if suffix else name, bool(suffix)))
+    return items
+
+
+def finish_file(conf: Conf, rs: dict, st: dict, item: tuple, fid: str) -> None:
+    key, src, _, made = item
+    rs["att_done"][key] = fid
+    rs["att_made"].pop(key, None)
+    if made:
+        drop_made(src)
+    save_state(conf.state, st)
+
+
+def upload_group(conf: Conf, rep: dict, rs: dict, st: dict, target: str, items: list, deadline: float) -> None:
+    """파일 여러 개를 메시지 하나로 올림. 영구 오류면 하나씩 다시 올려 문제 파일만 실패로 알림"""
+    label = items[0][2] if len(items) == 1 else f"{len(items)}개"
+    args = ["--tag", rep["hub"], "--thread", target] + attached_args(rep) + [f"첨부: {label}"] + [it[1] for it in items]
+    can_try = deadline - time.monotonic() > 0
+    if can_try and len(items) > 1:
+        rs["att_tries"] = rs.get("att_tries", 0) + 1  # 호출 전에 저장. 중간에 죽은 시도도 셈
+        save_state(conf.state, st)
+    try:
+        fids = run_notify(conf, args, deadline, upload=True).split(",")
+    except NotifyError as err:
+        if not err.permanent:
+            raise NotifyError(f"첨부 실패: {label} — {err}", counts=err.counts)
+        if len(items) > 1:
+            for it in items:
+                upload_group(conf, rep, rs, st, target, [it], deadline)
+            return
+        attach_failed(conf, rep, target, label, str(err), deadline)
+        finish_file(conf, rs, st, items[0], "")
+        return
+    fids += [""] * (len(items) - len(fids))
+    for it, fid in zip(items, fids):  # 묶음 전체를 올림으로 표시한 뒤 저장(일부만 남아 다시 올라가지 않게)
+        rs["att_done"][it[0]] = fid or "uploaded"
+    save_state(conf.state, st)
+    for it in items:
+        finish_file(conf, rs, st, it, rs["att_done"][it[0]])
+
+
+def send_files(conf: Conf, rep: dict, rs: dict, st: dict, target: str, deadline: float) -> None:
+    """첨부 파일을 target 스레드에 메시지 하나로 묶어 올림. 업로드 완료(file_id)를 att_done 에 저장해 재시도 때 건너뜀(응답 유실은 sent 기록으로 복구).
+    입력 문제(파일 없음·크기 초과·민감 파일)는 한 줄 알리고 나머지만 묶음. 일시 실패는 NotifyError 로 올려 보고 재시도 규칙을 탐.
+    묶음이 GROUP_TRIES 회 실패하면 하나씩 올림: 합친 크기가 회차 시간 예산을 넘거나 한 파일만 거부되는 경우에도 나머지는 가게 함"""
+    for name in ("att_done", "att_made"):
+        if not isinstance(rs.get(name), dict):
+            rs[name] = {}
+    since = rs.setdefault("att_start", int(time.time()))
+    save_state(conf.state, st)  # 첫 시도 시각(att_start)을 업로드 전에 저장
+    ready = []
+    for item in prepare_files(conf, rep, rs, st, deadline):
+        src, label = item[1], item[2]
+        if fid := uploaded_id(conf, src, target, since):
+            finish_file(conf, rs, st, item, fid)
+        elif why := hub_report.file_problem(src) or read_problem(src):
+            attach_failed(conf, rep, target, label, why, deadline)
+            finish_file(conf, rs, st, item, "")
+        else:
+            ready.append(item)
+    solo = rs.get("att_tries", 0) >= GROUP_TRIES
+    for group in ([[it] for it in ready] if solo else [ready] if ready else []):
+        upload_group(conf, rep, rs, st, target, group, deadline)
 
 
 def card_attach(conf: Conf, topic: dict) -> None:

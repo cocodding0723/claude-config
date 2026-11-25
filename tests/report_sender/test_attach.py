@@ -59,6 +59,9 @@ class AttachTest(unittest.TestCase):
     def uploads(self):  # 미리보기 PNG 는 임시 폴더라 호출 뒤 사라지므로 파일 존재 대신 가짜 스크립트의 업로드 표시를 씀
         return [r["args"] for r in self.records() if r["upload"]]
 
+    def names(self):  # 올린 파일 이름(호출 순서대로 펼침)
+        return [os.path.basename(f) for r in self.records() if r["upload"] for f in r["files"]]
+
     def lines(self):
         return [c[-1] for c in self.calls() if c[-1].startswith("첨부 실패")]
 
@@ -80,7 +83,8 @@ class AttachTest(unittest.TestCase):
         self.assertIn("progress", calls[0])  # 주제 시작 → 본문 → 파일 → 진행 줄 순서
         self.assertNotIn("참고:", calls[1][-1])  # 경로 텍스트 대신 첨부
         ups = self.uploads()
-        names = [os.path.basename(u[-1]) for u in ups]
+        names = self.names()
+        self.assertEqual(len(ups), 1)  # 파일 전부가 메시지 하나
         self.assertEqual((names[:3], names[3].endswith("-b-preview.png")), (["a.png", "b.html", "b.pdf"], True))  # HTML 다음에 PDF, 그다음 미리보기
         for u in ups:
             self.assertEqual(u[u.index("--thread") + 1], TOPIC_TS)  # 본문과 같은 주제 스레드
@@ -132,10 +136,10 @@ class AttachTest(unittest.TestCase):
 
     def test_transient_upload_failure_retries_without_reposting_body_or_done_files(self):
         rep = self.report(files=[self.png, self.html])
-        self.set_fake("fail.up.n", 2)  # a.png 업로드 2번 실패
+        self.set_fake("fail.up.n", 2)  # 묶음 2번 실패 → 3번째 회차는 하나씩
         res = report_sender.run(self.conf)
         self.assertEqual((res["status"], res["sent"], res["failed"]), ("partial", 0, 1))
-        self.assertIn("첨부 실패: a.png", res["lines"][0])
+        self.assertIn("첨부 실패: 4개", res["lines"][0])
         self.assertFalse(self.state()["reports"][rep["id"]].get("sent"))
         bodies = [c for c in self.calls() if "--kind" in c and c[c.index("--kind") + 1] == "done"]
         self.assertEqual(len(bodies), 1)
@@ -146,6 +150,8 @@ class AttachTest(unittest.TestCase):
         bodies = [c for c in self.calls() if "--kind" in c and c[c.index("--kind") + 1] == "done"]
         self.assertEqual(len(bodies), 1)  # 본문 재전송 없음
         self.assertEqual(len(self.state()["reports"][rep["id"]]["att_done"]), 4)  # 원본 2 + HTML 의 PDF·미리보기
+        sizes = [len(x["files"]) for x in self.records() if x["upload"]]
+        self.assertEqual(sizes, [4, 4, 1, 1, 1, 1])  # 묶음 2회 실패 뒤 개별 전환
         self.assertEqual(self.lines(), [])  # 일시 실패는 스레드 줄 없이 재시도
 
     def test_script_permanent_rc_posts_one_line_and_continues(self):
@@ -157,12 +163,30 @@ class AttachTest(unittest.TestCase):
         self.assertEqual((res["sent"], res["failed"]), (1, 0))
         self.assertEqual(self.lines(), ["첨부 실패: a.png — 파일 형식 거부"])
 
+    def test_group_permanent_error_falls_back_to_single_files(self):
+        """묶음이 영구 오류면 하나씩 올려 문제 파일만 실패로 알리고 나머지는 보냄"""
+        self.report(files=[self.png, self.make("c.png", "png")])
+        self.set_fake("fail.up.n", 2)  # 묶음 + 첫 파일
+        self.set_fake("fail.up.rc", 2)
+        self.set_fake("fail.up.msg", "파일 형식 거부")
+        self.assertEqual(report_sender.run(self.conf)["sent"], 1)
+        self.assertEqual([len(x["files"]) for x in self.records() if x["upload"]], [2, 1, 1])
+        self.assertEqual(self.lines(), ["첨부 실패: a.png — 파일 형식 거부"])
+
+    def test_lost_group_response_does_not_reupload_any_file(self):
+        rep = self.report(files=[self.png, self.html])
+        self.set_fake("fail.up.lost", 1)
+        self.assertEqual(report_sender.run(self.conf)["failed"], 1)
+        self.assertEqual(report_sender.run(self.conf)["sent"], 1)
+        self.assertEqual(len(self.uploads()), 1)
+        self.assertEqual(sorted(self.state()["reports"][rep["id"]]["att_done"].values()), ["Ffake1", "Ffake2", "Ffake3", "Ffake4"])
+
     def test_preview_failure_is_skipped_and_report_continues(self):
         os.environ["FAKE_PREVIEW_FAIL"] = "1"
         rep = self.report(files=[self.html])
         res = report_sender.run(self.conf)
         self.assertEqual((res["sent"], res["failed"]), (1, 0))
-        self.assertEqual([os.path.basename(u[-1]) for u in self.uploads()], ["b.html", "b.pdf"])
+        self.assertEqual(self.names(), ["b.html", "b.pdf"])
         self.assertIn("미리보기 생략", self.log_text())
         self.assertIn(self.html + "#preview:" + report_sender.content_hash(self.html), self.state()["reports"][rep["id"]]["att_done"])
 
@@ -170,14 +194,14 @@ class AttachTest(unittest.TestCase):
         self.conf.preview = self.p("no-such.sh")
         self.report(files=[self.html])
         self.assertEqual(report_sender.run(self.conf)["sent"], 1)
-        self.assertEqual(len(self.uploads()), 2)
+        self.assertEqual(len(self.names()), 2)
 
     def test_pdf_failure_is_skipped_and_report_continues(self):
         os.environ["FAKE_PDF_FAIL"] = "1"
         rep = self.report(files=[self.html])
         res = report_sender.run(self.conf)
         self.assertEqual((res["sent"], res["failed"]), (1, 0))
-        names = [os.path.basename(u[-1]) for u in self.uploads()]
+        names = self.names()
         self.assertEqual((names[0], len(names), names[1].endswith("-b-preview.png")), ("b.html", 2, True))  # PDF 만 빠지고 미리보기는 감
         self.assertIn("PDF 생략", self.log_text())
         self.assertEqual(self.state()["reports"][rep["id"]]["att_done"][self.html + "#pdf:" + report_sender.content_hash(self.html)], "")
@@ -195,7 +219,7 @@ class AttachTest(unittest.TestCase):
         self.conf.pdf = self.p("no-such.sh")
         self.report(files=[self.html])
         self.assertEqual(report_sender.run(self.conf)["sent"], 1)
-        self.assertEqual(len(self.uploads()), 2)
+        self.assertEqual(len(self.names()), 2)
 
     def test_pdf_retry_does_not_reupload_and_cleans_up(self):
         """PDF 업로드가 한 번 끊겨도 다음 회차에 HTML·PDF 를 한 번씩만 올리고, 만든 PDF 파일은 남기지 않음"""
@@ -204,7 +228,7 @@ class AttachTest(unittest.TestCase):
         orig = report_sender.run_notify
 
         def flaky(conf, args, deadline, upload=False):  # PDF 업로드 첫 시도만 일시 실패
-            if upload and args[-1].endswith(".pdf") and not calls["n"]:
+            if upload and any(a.endswith(".pdf") for a in args) and not calls["n"]:
                 calls["n"] += 1
                 raise report_sender.NotifyError("네트워크 끊김")
             return orig(conf, args, deadline, upload)
@@ -213,7 +237,7 @@ class AttachTest(unittest.TestCase):
         self.addCleanup(setattr, report_sender, "run_notify", orig)
         self.assertEqual(report_sender.run(self.conf)["failed"], 1)
         self.assertEqual(report_sender.run(self.conf)["sent"], 1)
-        names = [os.path.basename(u[-1]) for u in self.uploads()]
+        names = self.names()
         self.assertEqual((names.count("b.html"), names.count("b.pdf")), (1, 1))
         left = [f for _, _, fs in os.walk(self.p("report-previews")) for f in fs]
         self.assertEqual(left, [])  # 올린 뒤 딸린 파일 정리
@@ -272,7 +296,7 @@ class AttachTest(unittest.TestCase):
         self.set_fake("fail.n", 0)
         first = report_sender.run(self.conf)
         self.assertEqual(first["sent"], 1)
-        self.assertEqual(len(self.uploads()), 2)
+        self.assertEqual((len(self.uploads()), len(self.names())), (1, 2))
 
     def test_outbox_record_with_more_than_five_files_is_isolated(self):
         files = [self.make(f"f{i}.png", "x") for i in range(6)]
@@ -304,7 +328,7 @@ class AttachTest(unittest.TestCase):
         self.addCleanup(setattr, report_sender, "run_notify", orig)
         self.assertEqual(report_sender.run(self.conf)["failed"], 1)
         self.assertEqual(report_sender.run(self.conf)["sent"], 1)
-        names = [os.path.basename(u[-1]) for u in self.uploads()]
+        names = self.names()
         self.assertEqual(names.count("b.html"), 1)
         self.assertEqual(sum(n.endswith("-preview.png") for n in names), 1)
 
