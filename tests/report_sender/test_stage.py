@@ -92,7 +92,8 @@ class StageTest(unittest.TestCase):
         self.lock(html)
         report_sender.run(self.conf)
         report_derived.run(self.conf)
-        names = [os.path.basename(u[-1]) for u in self.uploads()]
+        with open(self.p("calls.jsonl"), encoding="utf-8") as f:
+            names = [os.path.basename(x) for c in map(json.loads, f) if c["upload"] for x in c["files"]]
         self.assertEqual(names[0], "페이지 하나.html")
         self.assertTrue(names[1].endswith("-preview.png"))  # 원본을 못 읽어도 미리보기까지 감
         self.assertNotIn(rep["id"], report_sender.load_state(self.conf.state)["bad"])

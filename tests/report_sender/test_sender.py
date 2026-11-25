@@ -56,9 +56,9 @@ class SenderTest(unittest.TestCase):
 
     def test_first_report_makes_topic_thread_and_one_progress_line(self):
         self.conf.preview = self.p("no-preview.sh")  # 미리보기는 test_attach 가 다룸
-        with open(self.p("a.html"), "w") as f:
-            f.write("<p>x</p>")
-        rep = self.report(files=[self.p("a.html")])
+        with open(self.p("a.png"), "w") as f:
+            f.write("x")
+        rep = self.report(files=[self.p("a.png")])
         res = report_sender.run(self.conf)
         self.assertEqual((res["status"], res["sent"], res["failed"]), ("done", 1, 0))
         topic, body, upload, line = self.calls()
@@ -67,7 +67,7 @@ class SenderTest(unittest.TestCase):
         self.assertEqual(body[body.index("--thread") + 1], "1700000000.000001")  # 본문은 주제 스레드 답글
         self.assertEqual(body[body.index("--kind") + 1], "done")
         self.assertNotIn("참고:", body[-1])  # 경로 텍스트 대신 파일 첨부
-        self.assertEqual((upload[upload.index("--thread") + 1], upload[-1]), ("1700000000.000001", self.p("a.html")))
+        self.assertEqual((upload[upload.index("--thread") + 1], upload[-1]), ("1700000000.000001", self.p("a.png")))
         self.assertEqual(line[line.index("--thread") + 1], PARENT)  # 진행 줄은 진행 스레드 부모의 답글
         self.assertEqual(line[line.index("--quote") + 1], "1700000000.000001")  # 원본 링크는 알림 스크립트가 chat.getPermalink 로 만듦
         self.assertNotIn("slack.com/archives", " ".join(line))  # 손수 만든 주소 없음

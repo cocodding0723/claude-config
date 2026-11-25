@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""보고에 첨부한 HTML 의 PDF·미리보기를 만들어 같은 스레드에 올림. 글 전송(report_sender.py)과 따로 도는 작업.
+"""HTML 이 있는 보고의 첨부를 PDF·미리보기와 함께 메시지 하나로 올림. 글 전송(report_sender.py)과 따로 도는 작업.
+
+변환이 한 번 실패하면 원본과 만든 것을 먼저 묶어 올리고, 못 만든 것만 나중에 이어 올림.
 
 글 전송 회차 끝에서 남은 시간으로 만들던 때는 바쁜 동안 한 건도 못 나갔음(11-25 10건 대기). 그래서 잠금·상태·시간 예산을 따로 둠.
 전송기가 보고 상태에 남긴 derived 표시(올릴 스레드)를 읽기만 하고, 진행 기록은 자기 상태 파일에만 씀(전송기 상태를 두 프로세스가 쓰지 않게).
@@ -96,49 +98,71 @@ def make(conf, suffix: str, origin: str, digest: str, name: str, deadline: float
     return out
 
 
-def jobs_of(rep: dict, rs: dict, done: dict) -> list:
-    """아직 안 올린 딸린 파일 (키, 종류, 원본 경로, 내용 해시, 이름). 원본 업로드가 실패한 HTML 은 제외"""
-    sent, jobs = rs.get("att_done") or {}, []
-    for path in rep["files"]:
-        if not path.lower().endswith(sender.HTML_EXTS) or not sent.get(path):
+def jobs_of(rep: dict, rs: dict, entry: dict) -> list:
+    """아직 안 올린 파일 (키, 종류, 원본 경로, 내용 해시, 이름). 종류가 빈 문자열이면 원본(전송기가 넘긴 묶음만). 원본이 실패한 HTML 의 딸린 파일은 제외"""
+    sent, done, jobs = rs.get("att_done") or {}, entry["done"], []
+    for path in dict.fromkeys(rep["files"]):
+        origin, name = sender.source_of(rep, path), os.path.basename(path) or path
+        first = done.get(path, sent.get(path))
+        if entry.get("bundle") and first is None:
+            jobs.append((path, "", origin, "", name))
+        elif not first:
             continue
-        origin = sender.source_of(rep, path)
-        if digest := sender.content_hash(origin):
-            jobs += [(path + s + digest, s, origin, digest, os.path.basename(path)) for s in sender.DERIVED if path + s + digest not in done]
+        if sender.is_html(path) and (digest := sender.content_hash(origin)):
+            jobs += [(path + s + digest, s, origin, digest, name) for s in sender.DERIVED if path + s + digest not in done]
     return jobs
 
 
-def send_one(conf, rep: dict, rs: dict, entry: dict, job: tuple, deadline: float) -> None:
-    """딸린 파일 1개. 올렸거나 생략이면 done 에 기록, 일시 실패는 MakeError·NotifyError"""
-    key, suffix, origin, digest, name = job
-    src = out_path(conf, suffix, name, digest)
-    target, since = entry["target"], rs.get("att_start", 0)
-    if fid := sender.uploaded_id(conf, src, target, since):  # 올린 뒤 기록 전에 죽은 경우
-        entry["done"][key] = fid
-        return
-    if not make(conf, suffix, origin, digest, name, deadline):
-        sender.log(conf, f"{rep['id']} {sender.DERIVED[suffix][1]} 생략: {name}")
-        entry["done"][key] = ""
-        return
-    try:
-        if bad := hub_report.file_problem(src) or sender.read_problem(src):
-            raise sender.NotifyError(bad, permanent=True)
-        entry["done"][key] = sender.upload_file(conf, rep, src, os.path.basename(src), target, deadline)
-    except sender.NotifyError as err:
-        if not err.permanent:
-            raise
-        sender.attach_failed(conf, rep, target, os.path.basename(src), str(err), deadline)
-        entry["done"][key] = ""
-    finally:
+def prepare(conf, rep: dict, rs: dict, entry: dict, save, deadline: float) -> "tuple[list, str, bool]":
+    """올릴 (키, 경로, 표시 이름) 목록 · 변환 실패 사유 · 끝까지 봤는가(예산이 모자라면 False). 만든 것은 made 에 남겨 다음 회차가 다시 만들지 않음"""
+    items, why, target, since = [], "", entry["target"], rs.get("att_start", 0)
+    made, bad = entry.setdefault("made", {}), set()
+    for key, suffix, origin, digest, name in jobs_of(rep, rs, entry):
+        src = out_path(conf, suffix, name, digest) if suffix else origin
+        if suffix and origin in bad:
+            continue
+        if fid := sender.uploaded_id(conf, src, target, since):  # 올린 뒤 기록 전에 죽은 경우
+            entry["done"][key] = fid
+        elif suffix and not (key in made and os.path.isfile(src)):
+            if deadline - time.monotonic() < MIN_LEFT_S:
+                return items, why, False
+            try:
+                if make(conf, suffix, origin, digest, name, deadline):
+                    made[key] = src
+                else:
+                    sender.log(conf, f"{rep['id']} {sender.DERIVED[suffix][1]} 생략: {name}")
+                    entry["done"][key] = ""
+            except MakeError as err:
+                if deadline - time.monotonic() <= 0:
+                    return items, why, False  # 예산이 끝나 끊긴 것은 실패로 세지 않음
+                why = str(err)
+                sender.log(conf, f"{rep['id']} {sender.DERIVED[suffix][1]} 보류 {entry['tries'] + 1}회째: {name} — {why}")
+        if key not in entry["done"] and (not suffix or key in made):
+            if problem := sender.input_problem(src):
+                sender.attach_failed(conf, rep, target, os.path.basename(src) if suffix else name, problem, deadline)
+                entry["done"][key] = ""
+                if not suffix:
+                    bad.add(origin)
+            else:
+                items.append((key, src, os.path.basename(src) if suffix else name))
+        save()
+    return items, why, True
+
+
+def drop_made(entry: dict) -> None:
+    """올렸거나 포기한 딸린 파일 정리"""
+    made = entry.get("made") or {}
+    for key in [k for k in made if k in entry["done"]]:
+        src = made.pop(key)
         with contextlib.suppress(OSError):
             os.unlink(src)
-        if suffix == sender.PDF_SUFFIX:
+        if src.endswith(".pdf"):
             with contextlib.suppress(OSError):
                 os.rmdir(os.path.dirname(src))  # 해시 폴더는 비었을 때만 지워짐
 
 
 def give_up(conf, rep: dict, entry: dict, jobs: list, why: str, deadline: float) -> None:
-    names = " · ".join(f"{j[4]} {sender.DERIVED[j[1]][1]}" for j in jobs)
+    names = " · ".join(f"{j[4]} {sender.DERIVED[j[1]][1] if j[1] else ''}".strip() for j in jobs)
     for j in jobs:
         entry["done"][j[0]] = ""
     sender.attach_failed(conf, rep, entry["target"], names, why, deadline)
@@ -151,44 +175,49 @@ def waiting(reports: list, st: dict, mine: dict) -> list:
         rs = st["reports"].get(rep["id"], {})
         mark = rs.get("derived")
         entry = mine.get(rep["id"])
-        if not rs.get("sent") or (entry is None and not isinstance(mark, dict)):
+        if entry is None and not isinstance(mark, dict):
+            continue
+        bundle = bool((mark or {}).get("bundle"))
+        if not rs.get("sent") and not bundle:  # 묶음은 본문이 나간 뒤에 넘어옴. 진행 줄이 실패해도 첨부는 보냄
             continue
         if entry is None:
-            old = {k: v for k, v in (rs.get("att_done") or {}).items() if any(s in k for s in sender.DERIVED)}
-            entry = mine[rep["id"]] = {"done": old, "tries": 0, "next_at": 0, "target": mark.get("target", "")}
+            old = {k: v for k, v in (rs.get("att_done") or {}).items() if bundle or any(s in k for s in sender.DERIVED)}
+            entry = mine[rep["id"]] = {"done": old, "tries": 0, "next_at": 0, "target": mark.get("target", ""), "bundle": bundle}
         if not entry.get("finished") and entry.get("next_at", 0) <= time.time():
             rows.append((rep, rs, entry))
     return sorted(rows, key=lambda r: r[2].get("tries", 0))
 
 
 def work(conf, rep: dict, rs: dict, entry: dict, save, deadline: float) -> bool:
-    """보고 1건. 하나가 실패해도 나머지는 올림. 예산이 모자라 멈췄으면 False"""
-    why = ""
-    for job in jobs_of(rep, rs, entry["done"]):
-        if deadline - time.monotonic() < MIN_LEFT_S:
-            break
-        try:
-            send_one(conf, rep, rs, entry, job, deadline)
-        except (MakeError, sender.NotifyError) as err:
-            if deadline - time.monotonic() <= 0:
-                break  # 예산이 끝나 끊긴 것은 실패로 세지 않음
-            why = str(err)
-            sender.log(conf, f"{rep['id']} {sender.DERIVED[job[1]][1]} 보류 {entry['tries'] + 1}회째: {job[4]} — {why}")
+    """보고 1건. 준비된 것을 메시지 하나로 올림. 예산이 모자라 멈췄으면 False"""
+    if deadline - time.monotonic() < MIN_LEFT_S:
+        return False
+    items, why, complete = prepare(conf, rep, rs, entry, save, deadline)
+    if not complete or (items and deadline - time.monotonic() < MIN_LEFT_S):
+        return False
+    try:
+        sender.upload_all(conf, rep, entry["target"], items, entry, entry["done"], save, deadline)
+    except sender.NotifyError as err:
+        if deadline - time.monotonic() <= 0:
+            return False
+        why = str(err)
+        sender.log(conf, f"{rep['id']} 첨부 보류 {entry['tries'] + 1}회째: {why}")
+    finally:
+        drop_made(entry)
         save()
-    else:
-        if why:
-            entry["tries"] += 1
-            entry["next_at"] = int(time.time() + DERIVED_BACKOFF_S * 2 ** (entry["tries"] - 1))
-            if entry["tries"] >= DERIVED_TRIES:
-                give_up(conf, rep, entry, jobs_of(rep, rs, entry["done"]), why, deadline)
-                why = ""
-        if not why:
-            entry["finished"] = int(time.time())
-        save()
-        if not why:
-            sender.drop_staged(conf, rep)
-        return True
-    return False
+    if why:
+        entry["tries"] += 1
+        entry["next_at"] = int(time.time() + DERIVED_BACKOFF_S * 2 ** (entry["tries"] - 1))
+        if entry["tries"] >= DERIVED_TRIES:
+            give_up(conf, rep, entry, jobs_of(rep, rs, entry), why, deadline)
+            drop_made(entry)
+            why = ""
+    if not why:
+        entry["finished"] = int(time.time())
+    save()
+    if not why:
+        sender.drop_staged(conf, rep)
+    return True
 
 
 def run(conf, budget_s: float = DEFAULT_BUDGET_S) -> dict:
@@ -235,16 +264,17 @@ def retry(conf, rid: str) -> str:
         rs = st["reports"].get(rid, {})
         if rep is None or not rs.get("sent"):
             return "전송된 보고 없음 — 보고 id 확인"
-        old = {**{k: v for k, v in rs["att_done"].items() if any(s in k for s in sender.DERIVED)}, **mine.get(rid, {}).get("done", {})}
+        was = mine.get(rid, {})
+        old = {**{k: v for k, v in rs["att_done"].items() if any(s in k for s in sender.DERIVED)}, **was.get("done", {})}
         missed = [k for k, v in old.items() if not v]
-        target = next((t for p in rep["files"] if (f := rs["att_done"].get(p)) and (t := thread_of(conf, f))), "")
+        target = was.get("target") or next((t for p in rep["files"] if (f := rs["att_done"].get(p)) and (t := thread_of(conf, f))), "")
         kept = {k: v for k, v in old.items() if v}
-        now = {j[0] for j in jobs_of(rep, rs, kept)}
+        now = {j[0] for j in jobs_of(rep, rs, {**was, "done": kept})}
         if not missed or not set(missed) <= now:
             return "다시 만들 것 없음 — 생략된 파일이 없거나 HTML 이 바뀜"
         if not target:
             return "스레드 기록 없음 — 새 보고로 첨부"
-        mine[rid] = {"done": kept, "tries": 0, "next_at": 0, "target": target}
+        mine[rid] = {**{k: was[k] for k in ("bundle",) if k in was}, "done": kept, "tries": 0, "next_at": 0, "target": target}
         sender.save_state(path, mine)
     return ""
 
