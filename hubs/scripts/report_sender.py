@@ -100,6 +100,7 @@ WHY_GAP_FIX = "카드 설명에 '왜:' 줄 추가(bd update {card} -d ...). 보�
 BD_FALLBACK = "/opt/homebrew/bin/bd"  # launchd 의 짧은 PATH 에서 bd 를 못 찾을 때
 BD_TIMEOUT_S = 10
 BD_ROUND_S = 12  # 회차당 전송 전 bd 조회 시간 합. 넘으면 내보내기 파일로 읽어 전송할 시간을 남김
+ATTACH_RESCUE_S = 300
 BD_MIN_S = 1  # 남은 시간이 이보다 짧으면 bd 를 부르지 않음
 UNREADABLE = "백그라운드에서 읽을 수 없는 폴더 — 다시 보고"
 WS_THREAD_MAX = 10  # 기능 하나가 동시에 여는 작업 공간 스레드 상한. 넘으면 새 작업 공간 보고는 기능 스레드 답글로 감(환경 LRM_WS_THREAD_MAX)
@@ -1077,11 +1078,11 @@ def open_topic(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
 
 def retry_attach(conf: Conf, st: dict, deadline: float) -> None:
     """안 붙은 카드 스레드를 전송 뒤에 붙임(bd 가 느려도 보고를 막지 않게).
-    예산이 끝났어도 1건은 시도해 밀린 연결이 계속 굶지 않게 하고, 시도한 것은 뒤로 돌려 한 카드의 실패가 나머지를 막지 않게 함"""
+    예산이 끝났어도 ATTACH_RESCUE_S 마다 1건은 시도해 밀린 연결이 계속 굶지 않게 하고(bd 가 느리면 1건이 2분도 걸려 전송 잠금을 쥠), 시도한 것은 뒤로 돌려 한 카드의 실패가 나머지를 막지 않게 함"""
     waiting = [t for t in st["topics"].values() if t.get("card") and t.get("attached") is False]
     waiting.sort(key=lambda t: t.get("attach_at", 0))
-    for i, t in enumerate(waiting):
-        if i and time.monotonic() >= deadline:
+    for t in waiting:
+        if time.monotonic() >= deadline and time.time() - max(w.get("attach_at", 0) for w in waiting) < ATTACH_RESCUE_S:
             break
         t["attach_at"] = int(time.time())
         card_attach(conf, t)
@@ -1095,10 +1096,15 @@ def card_waiting(rep: dict, st: dict) -> bool:
 
 
 def decisions_first(todo: list, st: dict) -> list:
-    """안 올린 결정 카드가 있는 주제의 보고를 앞으로(안정 정렬). 같은 주제의 앞 글은 결정과 함께 당겨 스레드 안 순서를 지킴"""
+    """안 올린 결정 카드가 있는 주제 → 카드는 올렸고 첨부가 남은 결정 → 나머지 순서(안정 정렬). 같은 주제의 앞 글은 결정과 함께 당겨 스레드 안 순서를 지킴"""
     last = {topic_key(r): i for i, r in enumerate(todo) if card_waiting(r, st)}
-    order = sorted(range(len(todo)), key=lambda i: i > last.get(topic_key(todo[i]), -1))
-    return [todo[i] for i in order]
+
+    def rank(i: int) -> int:
+        rep = todo[i]
+        if i <= last.get(topic_key(rep), -1):
+            return 0
+        return 1 if rep["kind"] == "decide" and "body_ts" in st["reports"].get(rep["id"], {}) else 2
+    return [todo[i] for i in sorted(range(len(todo)), key=rank)]
 
 
 def deliver(conf: Conf, rep: dict, st: dict, deadline: float, defer_files: bool = False) -> dict:
@@ -1401,8 +1407,8 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float, boards=False) -> d
         key = topic_key(rep)
         if key in blocked:
             continue  # 건너뛴 보고는 시도 건수에 세지 않음(막힌 주제가 다른 주제를 굶기지 않게)
-        if tried >= conf.max_per_run:
-            break
+        if tried >= conf.max_per_run or (tried and time.monotonic() >= deadline):
+            break  # 예산이 끝난 뒤에는 조회만 하고 못 보내므로 다음 보고를 시작하지 않음
         fails = st["reports"].setdefault(rep["id"], {})
         if fails.get("next_at", 0) > time.time():
             blocked.add(key)  # 대기 중. 같은 주제의 뒤 보고도 순서 유지를 위해 함께 대기
