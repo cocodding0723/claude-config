@@ -281,6 +281,15 @@ exp "pr-draft: cd 변수 뒤 실제 create(--draft 없음)는 거부 유지" $PD
 exp "pr-draft: cd 변수 뒤 create --draft 는 저장소 모르면 ask" $PD 'cd "$W" && gh pr create --draft -t x' "$PR" ask
 exp "pr-draft: cd 변수 뒤 ready 는 저장소 모르면 ask 유지" $PD 'cd "$W" && gh pr ready 12' "$PR" ask
 exp "pr-draft: cd 변수 뒤 ready -R 는 승인 기록 기준으로 판정" $PD 'cd "$W" && gh pr ready 12 -R Org/RepoB' "$PR" deny
+# 우회 형태: 병합·실행기·별칭·붙여 쓴 옵션
+for c in 'gh pr merge 12' 'gh -R Org/RepoA pr merge 12 --squash' 'gh api -X PUT repos/Org/RepoA/pulls/12/merge' 'gh api -XPUT repos/{owner}/{repo}/pulls/12/merge' \
+  "gh api graphql -f query='mutation{mergePullRequest(input:{})}'" 'timeout 5 gh pr ready 13' 'timeout 5 bash -c "gh pr ready 13"' 'echo 13 | xargs -n 1 gh pr merge' 'gh pr new -t x' \
+  'gh api repos/Org/RepoA/pulls/13 -XPATCH --field=draft=false' 'gh api repos/Org/RepoA/pulls/13 -X PATCH -Fdraft=false'; do
+  exp "pr-우회: $c 거부" $PD "$c" "$PR" deny
+done
+exp "pr-우회: 병합 여부 조회(GET)는 통과" $PD 'gh api repos/Org/RepoA/pulls/12/merge' "$PR"
+exp "pr-우회: 문구 속 gh pr merge 는 통과" $PD "echo 'gh pr merge 12'; gh pr view 12" "$PR"
+exp "pr-우회: timeout gh pr view 는 통과" $PD 'timeout 5 gh pr view 12' "$PR"
 # 새 PR 생성 승인(사용자 11-16): D-PR + sha1("저장소:브랜치") 앞 8자
 PRID=$(printf 'Org/RepoA:feat/x' | shasum | cut -c1-8); PRID="D-PR$PRID"
 exp "pr-create: 승인 기록 없으면 --draft 여도 거부" $PD 'gh pr create --draft -t t' "$PR" deny
