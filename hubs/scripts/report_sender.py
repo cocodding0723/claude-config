@@ -36,8 +36,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
+from typing import Callable
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import ask_open  # noqa: E402
@@ -97,6 +99,8 @@ BD_TIMEOUT_S = 10
 BD_ROUND_S = 12  # 회차당 전송 전 bd 조회 시간 합. 넘으면 내보내기 파일로 읽어 전송할 시간을 남김
 ATTACH_RESCUE_S = 300
 BD_MIN_S = 1  # 남은 시간이 이보다 짧으면 bd 를 부르지 않음
+STOP_TELL = "보고 거부 알림: {label} 보고 {id} 이 Slack 에 안 올라감. 원인: {why}. 조치: 고쳐서 hub_report.py add 로 다시 올림. 이 줄은 승인이 아님"
+TELL_S = 10  # 통보 1회가 회차를 붙잡는 상한
 UNREADABLE = "백그라운드에서 읽을 수 없는 폴더 — 다시 보고"
 WS_THREAD_MAX = 10  # 기능 하나가 동시에 여는 작업 공간 스레드 상한. 넘으면 새 작업 공간 보고는 기능 스레드 답글로 감(환경 LRM_WS_THREAD_MAX)
 
@@ -121,6 +125,7 @@ class Conf:
     bd: str = ""
     board: str = ""
     bd_left: float = BD_ROUND_S
+    tell: "Callable[[str, str], str] | None" = None  # (허브, 한 줄) → card_actions 전송 상태
     cards: dict = field(default_factory=dict)  # 한 Conf(회차) 안의 카드 조회 캐시
 
     def __post_init__(self) -> None:
@@ -1137,10 +1142,59 @@ def stop_report(conf: Conf, rep: dict, st: dict, why: str, permanent: bool, dead
     st["bad"][rep["id"]] = int(time.time())
     rs = st["reports"].setdefault(rep["id"], {})
     rs["error"], rs["stop_permanent"] = why, permanent  # 경고 재시도에도 같은 원인 분류를 쓰도록 저장
+    if permanent:
+        rs["tell"] = 0  # 코디네이터 통보 시도 횟수. 통보가 끝나면 지움
     save_state(conf.state, st)
     incident("report_stopped", ("입력 오류: " if permanent else f"{conf.fail_limit}회 연속 실패: ") + str(why),
              hub=rep.get("hub", ""), report=rep.get("id", ""))
     warn_pending(conf, rep, st, deadline)
+
+
+def tell_hub(hub: str, text: str) -> str:
+    """보고를 올린 허브의 코디네이터 창에 한 줄 전송. 입력 칸에 쓰던 글·확인 창이 있으면 보내지 않음(다음 회차 재시도)"""
+    import card_actions  # 함수 안 import: 통보할 거부가 있을 때만 터미널 전송 모듈을 읽음
+    return card_actions.deliver(hub, text, hold=card_actions.screen_hold_of)[0]
+
+
+def tell_within(tell: Callable, hub: str, text: str) -> str:
+    """TELL_S 안에 끝난 전송 상태. 넘으면 'late' — 창 조회 단계에서 느린 것일 수 있어 다음 회차에 재시도(드물게 같은 줄이 두 번 갈 수 있음)"""
+    got = ["late"]
+
+    def work():
+        try:
+            got[0] = tell(hub, text)
+        except Exception as err:  # noqa: BLE001 — 통보 실패가 보고 전송 회차를 막지 않게
+            got[0] = type(err).__name__
+    t = threading.Thread(target=work, daemon=True)
+    t.start()
+    t.join(TELL_S)
+    return got[0]
+
+
+def tell_stops(conf: Conf) -> None:
+    """영구 거부를 올린 코디네이터에게 통보. 회차당 1건, fail_limit 회까지. 시간 초과(unknown)는 이미 닿았을 수 있어 다시 안 보냄.
+    기본 outbox 가 아니면 tell 을 준 경우만 동작: 시험·복사 설치가 실제 창에 쓰지 않게"""
+    live = os.path.realpath(conf.outbox) == os.path.realpath(os.path.expanduser(f"~/.config/lrm-hubs/{hub_report.OUTBOX_NAME}"))
+    tell = conf.tell or (tell_hub if live else None)
+    if not tell:
+        return
+    try:
+        st = load_state(conf.state)
+        reports = hub_report.read_outbox(conf.outbox)
+    except (StateCorrupt, hub_report.ReportError):
+        return
+    rep = next((r for r in reports if "tell" in st["reports"].get(r["id"], {})), None)
+    if not rep:
+        return
+    rs = st["reports"][rep["id"]]
+    rs["tell"] += 1
+    save_state(conf.state, st)  # 전송 중 죽어도 횟수가 남아 무한 반복하지 않음
+    why = " ".join(safe_text(str(rs.get("error", ""))).split())
+    status = tell_within(tell, rep["hub"], STOP_TELL.format(id=rep["id"], label=hub_report.KINDS[rep["kind"]][1], why=why))
+    if status in ("sent", "unknown") or rs["tell"] >= conf.fail_limit:
+        del rs["tell"]
+        save_state(conf.state, st)
+    log(conf, f"거부 통보 {rep['id']} {rep['hub']}: {status}")
 
 
 def warn_pending(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
@@ -1196,7 +1250,9 @@ def run(conf: Conf, dry: bool = False, boards: bool = False) -> dict:
         if not got:
             out["status"] = "busy"
             return out
-        return _round(conf, out, False, deadline, boards)
+        out = _round(conf, out, False, deadline, boards)
+        tell_stops(conf)
+        return out
 
 
 def halt(conf: Conf, err: StateCorrupt, out: dict, dry: bool, deadline: float) -> dict:
