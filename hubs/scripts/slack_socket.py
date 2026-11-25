@@ -315,6 +315,15 @@ def env_secs(name: str, default: float, allow_zero: bool = False) -> float:
     return value if value > 0 or (allow_zero and value == 0) else default
 
 
+def env_count(name: str, default: int) -> int:
+    """환경 변수 횟수. 0 은 허용(기능 끔), 정수가 아니거나 음수면 기본값(inf·0.5 포함)"""
+    try:
+        value = int(os.environ.get(name, "").strip())
+    except ValueError:
+        return default
+    return value if value >= 0 else default
+
+
 # 옛 클라이언트 runner 종료 대기 상한. SDK IntervalRunner.shutdown() 의 join 은 상한이 없어, 수신 스레드가 새 세션에
 # 들어가는 순간과 겹치면 영구 대기하고 감시 루프가 멈춤(프로세스는 살아 있어 launchd 도 재시작 안 함)
 RETIRE_TIMEOUT_S = env_secs("LRM_SOCKET_RETIRE_TIMEOUT_S", 5.0)
@@ -329,7 +338,7 @@ class Timing:
     alive_s: float  # 생존 기록 주기
     debounce_s: float  # 연속 이벤트(메시지+반응)를 한 번의 수집으로 묶음
     retry_s: float  # 수집 잠금 중일 때 재시도 간격. 잠금 예산이 최대 270초라 짧게 재확인해야 댓글이 바로 들어감
-    retry_max: int  # 재시도 상한. 초과분은 launchd 주기 수집에 맡김(간격×횟수 = 총 대기 상한)
+    retry_max: int  # 재시도 상한. 0 이면 끔. 간격×횟수가 잠금 예산(270초)+여유 이상이어야 잠금이 오래 잡혀도(운영 관찰 87~126초) 끝까지 재확인. 초과분은 launchd 주기 수집에 맡김
 
     @classmethod
     def from_env(cls) -> "Timing":
@@ -340,7 +349,7 @@ class Timing:
             alive_s=env_secs("LRM_SOCKET_ALIVE_S", 600.0),
             debounce_s=env_secs("LRM_SOCKET_DEBOUNCE_S", 2.0),
             retry_s=env_secs("LRM_SOCKET_RETRY_S", 3.0),
-            retry_max=int(env_secs("LRM_SOCKET_RETRY_MAX", 20.0)),
+            retry_max=env_count("LRM_SOCKET_RETRY_MAX", 100),
         )
 
 
@@ -395,7 +404,7 @@ def is_locked(stdout: str) -> bool:
 
 
 class Trigger:
-    def __init__(self, debounce_s: float, retry_s: float = 3.0, retry_max: int = 20) -> None:
+    def __init__(self, debounce_s: float, retry_s: float, retry_max: int) -> None:
         self._debounce_s = debounce_s
         self._retry_s = retry_s
         self._retry_max = retry_max
@@ -416,7 +425,8 @@ class Trigger:
 
     def _run(self, reason: str, attempt: int = 0) -> None:
         with self._lock:
-            self._timer = None  # 실행 중 새 이벤트가 대기 타이머를 만들었는지 재시도 때 구분
+            if self._timer is threading.current_thread():  # 만료 직후 끼어든 새 이벤트의 타이머를 지우지 않음
+                self._timer = None  # 실행 중 새 이벤트가 대기 타이머를 만들었는지 재시도 때 구분
         try:
             out = subprocess.run(
                 ["/bin/bash", POLL, "--once", "--json"],

@@ -5,7 +5,7 @@ set -uo pipefail
 export PYTHONDONTWRITEBYTECODE=1
 
 HERE=$(cd "$(dirname "$0")" && pwd -P)
-SRC="$HERE/../../hubs/scripts/slack_socket.py"
+SRC_DIR="$HERE/../../hubs/scripts"  # 수신기가 같은 폴더의 공용 모듈을 import 하므로 폴더째 복사
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/cc-sockmut.XXXXXX")
 trap 'rm -rf "${WORK:?}"' EXIT
 MISSED=0
@@ -13,10 +13,10 @@ MISSED=0
 case_run() { # 번호 설명 perl 치환식
   local id="$1" desc="$2" expr="$3" out rc first
   if [ -n "${ONLY:-}" ] && [[ " $ONLY " != *" $id "* ]]; then return; fi
-  cp "$SRC" "$WORK/mut.py"
-  perl -0pi -e "$expr" "$WORK/mut.py"
-  if cmp -s "$SRC" "$WORK/mut.py"; then printf '| %s | %s | 정의 오류 | - |\n' "$id" "$desc"; MISSED=$((MISSED + 1)); return; fi
-  out=$(SOCK_SCRIPT="$WORK/mut.py" bash "$HERE/run.sh" 2>&1); rc=$?
+  rm -rf "$WORK/scripts"; cp -R "$SRC_DIR" "$WORK/scripts"
+  perl -0pi -e "$expr" "$WORK/scripts/slack_socket.py"
+  if cmp -s "$SRC_DIR/slack_socket.py" "$WORK/scripts/slack_socket.py"; then printf '| %s | %s | 정의 오류 | - |\n' "$id" "$desc"; MISSED=$((MISSED + 1)); return; fi
+  out=$(SOCK_SCRIPT="$WORK/scripts/slack_socket.py" bash "$HERE/run.sh" 2>&1); rc=$?
   first=$(echo "$out" | grep '^FAIL' | head -1 | sed 's/^FAIL  //' | cut -c1-70)
   if [ "$rc" != 0 ]; then printf '| %s | %s | 검출 | %s |\n' "$id" "$desc" "$first"
   else printf '| %s | %s | **미검출** | - |\n' "$id" "$desc"; MISSED=$((MISSED + 1)); fi
