@@ -118,14 +118,29 @@ class ReportRefs:
             if isinstance(t, dict) and isinstance(t.get("ts"), str) and t["ts"] and isinstance(t.get("channel"), str) and t["channel"]:
                 self.topics[key] = {"kind": "topic", "channel": t["channel"], "ts": t["ts"]}
         newest = {}  # 작업별로 첨부가 올라간 가장 최근 보고의 파일 ID
-        for r in (reports.values() if isinstance(reports, dict) else ()):
+        bundled = self.bundled(path)
+        for rid, r in (reports.items() if isinstance(reports, dict) else ()):
             if not isinstance(r, dict) or not isinstance(r.get("task"), str) or not isinstance(r.get("att_done"), dict):
                 continue
             sent = r.get("sent") if isinstance(r.get("sent"), (int, float)) else 0
-            ids = [v for v in r["att_done"].values() if isinstance(v, str) and v not in ("", "uploaded")]
+            ids = [v for v in [*r["att_done"].values(), *bundled(rid)] if isinstance(v, str) and v not in ("", "uploaded")]
             if ids and sent >= newest.get(r["task"], -1):
                 newest[r["task"]] = sent
                 self.files[r["task"]] = {"kind": "file", "file": ids[0]}
+
+    @staticmethod
+    def bundled(path):
+        """보고 id → HTML 묶음으로 올린 파일 ID. 묶음은 report_derived.py 가 자기 상태 파일에 기록함"""
+        try:
+            with open(os.path.join(os.path.dirname(os.path.abspath(path)), "report-derived.state.json"), encoding="utf-8") as f:
+                mine = json.load(f)
+        except (OSError, ValueError):
+            mine = {}
+
+        def ids(rid):
+            done = (mine.get(rid) or {}).get("done") if isinstance(mine, dict) and isinstance(mine.get(rid), dict) else None
+            return list(done.values()) if isinstance(done, dict) else []
+        return ids
 
     def for_task(self, task):
         """장부 작업 번호 → 첨부 메시지(있으면) 아니면 주제 스레드"""

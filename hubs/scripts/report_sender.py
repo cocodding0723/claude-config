@@ -13,12 +13,12 @@ kind=decide 는 스레드 답글이 아니라 slack_notify.sh --kind decide --op
 동시 실행은 상태 파일 옆 .lock 비차단 flock 으로 1개. 다른 회차가 진행 중이면 busy 로 건너뜀.
 
 첨부: 보고의 files(--file)는 본문 뒤에 Slack 파일로 올림. 올리는 곳은 일반 보고 = 주제 스레드, 지정 스레드 보고 = 그 스레드,
-결정 카드 = 카드 스레드(카드를 먼저 올림. 파일 업로드 메시지에는 버튼을 달 수 없음). 파일마다 알림 스크립트를 1회 호출(업로드 방식은 거기에 있음).
+결정 카드 = 카드 스레드(카드를 먼저 올림. 파일 업로드 메시지에는 버튼을 달 수 없음). 파일 전부를 알림 스크립트 1회 호출로 메시지 하나에 묶음(업로드 방식은 거기에 있음).
 접수 때 복사본(staged)이 있으면 그걸 올리고, 보고가 끝나면(전송·중단) 복사본을 지움. 못 지운 것은 STAGE_KEEP_S 뒤 회차 시작에 정리함.
 복사본이 없는 옛 기록은 원본을 읽는데, launchd 에서는 macOS 개인정보 보호(TCC)가 ~/Documents 등 읽기를 막아 curl 이 종료 코드 26 으로 실패함.
 올리기 전에 직접 열어 보고 막히면 재시도 없이 'UNREADABLE' 한 줄만 스레드에 남김(다시 hub_report.py add 로 보고하면 접수 때 복사됨).
 없는 파일·폴더·크기 초과는 입력 문제라 재시도 없이 스레드에 '첨부 실패: 이유' 한 줄만 남기고 보고는 계속함. 네트워크 등 일시 실패는 보고 재시도 규칙(BACKOFF)을 따르고 올린 파일은 다시 올리지 않음.
-HTML 의 PDF(html_pdf.sh)·390폭 미리보기(html_preview.sh)는 여기서 만들지 않고 derived 표시만 남김. report_derived.py 가 따로 돌며 만들어 올림.
+HTML 이 있는 보고는 첨부를 여기서 올리지 않고 derived 표시만 남김. report_derived.py 가 따로 돌며 PDF(html_pdf.sh)·390폭 미리보기(html_preview.sh)를 만들어 전부 메시지 하나로 올림.
 본문에 로컬 경로만 있고 첨부가 없으면 로그에 경고(접수 경고와 같은 판정 hub_report.unattached_paths).
 
 환경: LRM_HUB_DIR 작업 폴더 · LRM_REPORT_OUTBOX outbox · LRM_REPORT_STATE 상태 파일 · LRM_REPORT_NOTIFY 전송 스크립트(기본 같은 폴더 slack_notify.sh) · LRM_REPORT_PREVIEW HTML 미리보기 스크립트(기본 같은 폴더 html_preview.sh) · LRM_REPORT_PDF HTML→PDF 스크립트(기본 같은 폴더 html_pdf.sh)
@@ -54,6 +54,7 @@ PERMANENT_RC = 2  # 알림 스크립트 종료 코드: 설정·인자·양식 �
 # 종료 코드 2 지만 사용자가 파일을 만들면 풀리는 환경 문제 = 일시. stderr 전체가 이 줄과 같을 때만 인정(입력값이 섞인 메시지를 부분 일치로 분류하지 않음)
 USER_FIX_LINES = ("slack-bot.env 없음 — 사용자 설정 필요",)
 NOTIFY_TIMEOUT_S = 30
+GROUP_TRIES = 2  # 묶음 업로드 시도 상한. 그 뒤는 하나씩 올림
 UPLOAD_TIMEOUT_S = 120  # 파일 업로드는 본문 전송보다 오래 걸릴 수 있음
 PREVIEW_SUFFIX = "#preview:"  # 미리보기 단계 키 = 원본 경로 + 이 접미사 + 원본 내용 해시(att_done). 임시 경로에 기대지 않아 회차가 바뀌어도 같은 키
 PDF_SUFFIX = "#pdf:"  # PDF 단계 키. 미리보기와 같은 규칙(원본 경로 + 접미사 + 내용 해시)
@@ -791,40 +792,88 @@ def uploaded_id(conf: Conf, src: str, target: str, since: int) -> str:
 
 
 def send_files(conf: Conf, rep: dict, rs: dict, st: dict, target: str, deadline: float) -> None:
-    """첨부 파일을 target 스레드에 올림. 업로드 완료(file_id)를 att_done 에 바로 저장해 재시도 때 건너뜀(응답 유실은 sent 기록으로 복구).
-    입력 문제(파일 없음·크기 초과·민감 파일·알림 스크립트의 영구 오류)는 한 줄 알리고 넘어가고, 일시 실패는 NotifyError 로 올려 보고 재시도 규칙을 탐"""
+    """첨부 파일을 target 스레드에 메시지 하나로 묶어 올림. HTML 이 있으면 PDF·미리보기와 한 메시지가 되도록 전부 report_derived.py 에 넘김.
+    업로드 완료(file_id)를 att_done 에 저장해 재시도 때 건너뜀(응답 유실은 sent 기록으로 복구).
+    입력 문제(파일 없음·크기 초과·민감 파일)는 한 줄 알리고 나머지만 묶음. 일시 실패는 NotifyError 로 올려 보고 재시도 규칙을 탐"""
+    if (rs.get("derived") or {}).get("bundle"):
+        return
     if not isinstance(rs.get("att_done"), dict):
         rs["att_done"] = {}
     done = rs["att_done"]
     since = rs.setdefault("att_start", int(time.time()))
-    for path in rep["files"]:
+    if any(is_html(p) and p not in done and not input_problem(source_of(rep, p)) for p in rep["files"]):
+        rs["derived"] = {"target": target, "bundle": True}
+        save_state(conf.state, st)
+        return
+    save_state(conf.state, st)  # 첫 시도 시각(att_start)을 업로드 전에 저장
+    items = []
+    for path in dict.fromkeys(rep["files"]):
         if path in done:
             continue
-        name = os.path.basename(path) or path
-        src = source_of(rep, path)
+        src, name = source_of(rep, path), os.path.basename(path) or path
         if fid := uploaded_id(conf, src, target, since):
             done[path] = fid
-            save_state(conf.state, st)
-            continue
-        save_state(conf.state, st)  # 첫 시도 시각(att_start)을 업로드 전에 저장
-        why = hub_report.file_problem(src) or read_problem(src)
-        try:
-            if why:
-                raise NotifyError(why, permanent=True)
-            done[path] = upload_file(conf, rep, src, name, target, deadline)
-        except NotifyError as err:
-            if not err.permanent:
-                raise NotifyError(f"첨부 실패: {name} — {err}", counts=err.counts)
-            attach_failed(conf, rep, target, name, str(err), deadline)
+        elif why := input_problem(src):
+            attach_failed(conf, rep, target, name, why, deadline)
             done[path] = ""
+        else:
+            items.append((path, src, name))
         save_state(conf.state, st)
-    if any(p.lower().endswith(HTML_EXTS) and done.get(p) for p in rep["files"]):
-        rs.setdefault("derived", {"target": target})  # report_derived.py 가 읽는 표시
+    upload_all(conf, rep, target, items, rs, done, lambda: save_state(conf.state, st), deadline)
+    if any(is_html(p) and done.get(p) for p in rep["files"]):
+        rs.setdefault("derived", {"target": target})  # 분리 전 방식으로 이미 올라간 HTML. PDF·미리보기만 report_derived.py 가 올림
         save_state(conf.state, st)
 
 
-def upload_file(conf: Conf, rep: dict, src: str, label: str, target: str, deadline: float) -> str:
-    return run_notify(conf, ["--tag", rep["hub"], "--thread", target] + attached_args(rep) + [f"첨부: {label}", src], deadline, upload=True) or "uploaded"
+def is_html(path: str) -> bool:
+    return path.lower().endswith(HTML_EXTS)
+
+
+def input_problem(src: str) -> str:
+    return hub_report.file_problem(src) or read_problem(src)
+
+
+def upload_all(conf: Conf, rep: dict, target: str, items: list, rec: dict, done: dict, save, deadline: float) -> None:
+    """(단계 키, 경로, 표시 이름) 목록을 메시지 하나로 올림. 묶음 시도가 GROUP_TRIES 회를 넘으면 하나씩 올림:
+    합친 크기가 시간 예산을 넘거나 한 파일만 실패해도 나머지는 가게 함. 하나씩일 때의 일시 실패는 나머지를 올린 뒤 NotifyError"""
+    if not items:
+        return
+    if deadline - time.monotonic() <= 0:
+        raise NotifyError("회차 시간 예산 초과", counts=False)
+    solo = rec.get("att_tries", 0) >= GROUP_TRIES
+    if len(items) > 1 and not solo:
+        rec["att_tries"] = rec.get("att_tries", 0) + 1  # 호출 전에 저장. 중간에 죽은 시도도 셈
+        save()
+    failed = None
+    for group in ([[it] for it in items] if solo else [items]):
+        try:
+            upload_group(conf, rep, target, group, done, save, deadline)
+        except NotifyError as err:
+            failed = failed or err
+    if failed:
+        raise failed
+
+
+def upload_group(conf: Conf, rep: dict, target: str, items: list, done: dict, save, deadline: float) -> None:
+    """알림 스크립트 1회 호출. 영구 오류면 하나씩 다시 올려 문제 파일만 실패로 알림"""
+    label = items[0][2] if len(items) == 1 else f"{len(items)}개"
+    args = ["--tag", rep["hub"], "--thread", target] + attached_args(rep) + [f"첨부: {label}"] + [it[1] for it in items]
+    try:
+        fids = run_notify(conf, args, deadline, upload=True).split(",")
+    except NotifyError as err:
+        if not err.permanent:
+            raise NotifyError(f"첨부 실패: {label} — {err}", counts=err.counts)
+        if len(items) > 1:
+            for it in items:
+                upload_group(conf, rep, target, [it], done, save, deadline)
+            return
+        attach_failed(conf, rep, target, label, str(err), deadline)
+        fids, done[items[0][0]] = [], ""
+    else:
+        fids += [""] * (len(items) - len(fids))
+    for it, fid in zip(items, fids):
+        done[it[0]] = fid or "uploaded"
+    save()
 
 
 def card_attach(conf: Conf, topic: dict) -> None:
