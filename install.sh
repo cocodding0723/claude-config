@@ -200,6 +200,25 @@ do_codex() {
   log "       Codex 에서 /hooks 를 열어 바뀐 훅을 신뢰해야 함. 그 전에는 바뀐 훅이 건너뛰어짐"
 }
 
+# Codex 전역 규칙 = Claude 전역 규칙 + Codex 전용 부분. 따로 두면 한쪽만 고쳐져 규칙이 어긋남
+build_agents() {
+  { printf '<!-- install.sh 가 만듦: claude/CLAUDE.md + %s. 여기서 고치지 않음 -->\n' "${1#"$REPO"/}"
+    cat "$REPO/claude/CLAUDE.md"; printf '\n'; cat "$1"; } > "$2"
+}
+
+do_agents() {
+  local src="$1" dst="$2" t="$HOME/$2" out="$TMP/agents"
+  build_agents "$REPO/$src" "$out"
+  if same_file "$out" "$t"; then
+    N_SKIP=$((N_SKIP + 1)); say "SKIP   $dst (내용 동일)"; return
+  fi
+  N_COPY=$((N_COPY + 1))
+  if [ "$DRY" = 1 ]; then log "[dry-run] COPY   $dst"; return; fi
+  prepare_target "$dst"
+  cat "$out" > "$t"
+  log "COPY   $dst"
+}
+
 # launchd 처럼 PATH 가 짧은 곳에서 쓸 python3 절대 경로. 설치하는 셸의 python3 기준
 PYTHON3="${CLAUDE_CONFIG_PYTHON3:-$(command -v python3 || true)}"
 
@@ -299,7 +318,7 @@ validate() {
   local bad=0 src dst mode
   command -v jq >/dev/null || die "jq 가 필요함: brew install jq"
   while IFS=$'\t' read -r src dst mode; do
-    case "$mode" in link|merge|codex|copy|render) ;; *) log "목록 오류: mode '$mode' ($src)" >&2; bad=1; continue ;; esac
+    case "$mode" in link|merge|codex|agents|copy|render) ;; *) log "목록 오류: mode '$mode' ($src)" >&2; bad=1; continue ;; esac
     case "$dst" in /*|*..*) log "목록 오류: dst 는 HOME 기준 상대경로여야 함 ($dst)" >&2; bad=1 ;; esac
     [ -e "$REPO/$src" ] || { log "목록 오류: 원본 없음 $src" >&2; bad=1; }
   done < <(entries)
@@ -404,6 +423,7 @@ do_install() {
       link) do_link "$src" "$dst" ;;
       merge) do_merge "$src" "$dst" ;;
       codex) do_codex "$src" "$dst" ;;
+      agents) do_agents "$src" "$dst" ;;
       copy) do_copy "$src" "$dst" ;;
       render) do_render "$src" "$dst" ;;
     esac
@@ -469,6 +489,9 @@ do_check() {
       codex)
         build_codex "$REPO/$src" "$TMP/codex-merged.json" "$dst"
         same_json "$TMP/codex-merged.json" "$t" || { log "DRIFT  $dst (병합 결과와 다름)"; bad=$((bad + 1)); } ;;
+      agents)
+        build_agents "$REPO/$src" "$TMP/agents"
+        same_file "$TMP/agents" "$t" || { log "DRIFT  $dst (CLAUDE.md 와 어긋남)"; bad=$((bad + 1)); } ;;
       copy)
         subst_file "$REPO/$src" "$TMP/copied"
         same_file "$TMP/copied" "$t" || { log "DRIFT  $dst (복사본과 다름)"; bad=$((bad + 1)); } ;;

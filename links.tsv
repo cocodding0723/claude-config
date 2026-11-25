@@ -1,5 +1,5 @@
 # src	dst($HOME 기준)	mode
-# mode: link=링크, merge=설정 병합 복사, codex=Codex 훅 병합(다른 도구 항목 유지), copy=__HOME__ 치환 복사, render=값 파일(values.env)로 자리표시를 채워 복사
+# mode: link=링크, merge=설정 병합 복사, codex=Codex 훅 병합(다른 도구 항목 유지), agents=CLAUDE.md 뒤에 원본을 붙여 생성, copy=__HOME__ 치환 복사, render=값 파일(values.env)로 자리표시를 채워 복사
 claude/CLAUDE.md	.claude/CLAUDE.md	link
 claude/keybindings.json	.claude/keybindings.json	link
 claude/settings.base.json	.claude/settings.json	merge
@@ -25,6 +25,7 @@ claude/hooks/session-start.sh	.claude/hooks/session-start.sh	link
 claude/hooks/lib	.claude/hooks/lib	link
 codex/hooks/claude-compat.py	.codex/hooks/claude-compat.py	link
 codex/hooks.base.json	.codex/hooks.json	codex
+codex/AGENTS.tail.md	.codex/AGENTS.md	agents
 skills/blast-radius	.claude/skills/blast-radius	link
 skills/catch-up	.claude/skills/catch-up	link
 skills/cli-for-agents	.claude/skills/cli-for-agents	link
