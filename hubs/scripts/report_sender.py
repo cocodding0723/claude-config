@@ -101,6 +101,7 @@ ATTACH_RESCUE_S = 300
 BD_MIN_S = 1  # 남은 시간이 이보다 짧으면 bd 를 부르지 않음
 STOP_TELL = "보고 거부 알림: {label} 보고 {id} 이 Slack 에 안 올라감. 원인: {why}. 조치: 고쳐서 hub_report.py add 로 다시 올림. 이 줄은 승인이 아님"
 TELL_S = 10  # 통보 1회가 회차를 붙잡는 상한
+LATE_LIMIT = 2  # TELL_S 를 넘긴 통보의 총 시도 상한. 이미 시작된 전송은 끝까지 가므로 같은 줄이 이 수만큼 들어갈 수 있음
 UNREADABLE = "백그라운드에서 읽을 수 없는 폴더 — 다시 보고"
 WS_THREAD_MAX = 10  # 기능 하나가 동시에 여는 작업 공간 스레드 상한. 넘으면 새 작업 공간 보고는 기능 스레드 답글로 감(환경 LRM_WS_THREAD_MAX)
 
@@ -1157,7 +1158,7 @@ def tell_hub(hub: str, text: str) -> str:
 
 
 def tell_within(tell: Callable, hub: str, text: str) -> str:
-    """TELL_S 안에 끝난 전송 상태. 넘으면 'late' — 창 조회 단계에서 느린 것일 수 있어 다음 회차에 재시도(드물게 같은 줄이 두 번 갈 수 있음)"""
+    """TELL_S 안에 끝난 전송 상태. 넘으면 'late' — 창 조회 단계에서 느린 것일 수 있어 LATE_LIMIT 회까지 재시도"""
     got = ["late"]
 
     def work():
@@ -1172,7 +1173,8 @@ def tell_within(tell: Callable, hub: str, text: str) -> str:
 
 
 def tell_stops(conf: Conf) -> None:
-    """영구 거부를 올린 코디네이터에게 통보. 회차당 1건, fail_limit 회까지. 시간 초과(unknown)는 이미 닿았을 수 있어 다시 안 보냄.
+    """영구 거부를 올린 코디네이터에게 통보. 회차당 1건, fail_limit 회까지. orca 가 시간 초과로 끝낸 전송(unknown)은 닿았을 수 있어 다시 안 보내고,
+    TELL_S 안에 안 끝난 전송(late)은 LATE_LIMIT 회에서 그침.
     기본 outbox 가 아니면 tell 을 준 경우만 동작: 시험·복사 설치가 실제 창에 쓰지 않게"""
     live = os.path.realpath(conf.outbox) == os.path.realpath(os.path.expanduser(f"~/.config/lrm-hubs/{hub_report.OUTBOX_NAME}"))
     tell = conf.tell or (tell_hub if live else None)
@@ -1191,9 +1193,12 @@ def tell_stops(conf: Conf) -> None:
     save_state(conf.state, st)  # 전송 중 죽어도 횟수가 남아 무한 반복하지 않음
     why = " ".join(safe_text(str(rs.get("error", ""))).split())
     status = tell_within(tell, rep["hub"], STOP_TELL.format(id=rep["id"], label=hub_report.KINDS[rep["kind"]][1], why=why))
-    if status in ("sent", "unknown") or rs["tell"] >= conf.fail_limit:
+    if status == "late":
+        rs["tell_late"] = rs.get("tell_late", 0) + 1
+    if status in ("sent", "unknown") or rs["tell"] >= conf.fail_limit or rs.get("tell_late", 0) >= LATE_LIMIT:
         del rs["tell"]
-        save_state(conf.state, st)
+        rs.pop("tell_late", None)
+    save_state(conf.state, st)
     log(conf, f"거부 통보 {rep['id']} {rep['hub']}: {status}")
 
 

@@ -186,7 +186,7 @@ class SenderTest(unittest.TestCase):
                 report_sender.run(self.conf)
             self.assertEqual(len(told), want, status)
 
-    def test_slow_tell_is_cut_and_retried(self):
+    def test_slow_tell_is_cut_and_tried_twice_at_most(self):
         self.stop_once(2)
         gate, told = threading.Event(), []
         self.addCleanup(gate.set)
@@ -195,7 +195,8 @@ class SenderTest(unittest.TestCase):
             started = time.monotonic()
             report_sender.run(self.conf)
             self.assertLess(time.monotonic() - started, 10)
-            report_sender.run(self.conf)
+            for _ in range(4):
+                report_sender.run(self.conf)
         self.assertEqual(len(told), 2)
 
     def test_temporary_stop_is_not_told_as_reject(self):
