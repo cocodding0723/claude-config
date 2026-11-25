@@ -14,8 +14,9 @@ import re
 
 PROFILE_GLOB = "~/Library/Application Support/orca/claude-profiles/*/home"  # Orca 가 계정마다 두는 설정 폴더
 NOISE_HEADS = ("<", "[SYSTEM", "Caveat:", "This session is being continued", "[Request interrupted")
+COORD_WAKE_HEAD = "코디네이터 이어가기:"  # 멈춘 코디네이터 깨움 줄(hubs/scripts/coord_watch.py). 사용자 글이 아님
 NOISE_LINES = (re.compile(r"^You have \d+ orchestration messages?\b"),   # 작업자 메시지 도착 알림
-               re.compile(r"^Slack 답 도착:"))                             # 답 전달기의 입력창 알림(feedback_route.WAKE_TEXT)
+               re.compile(r"^Slack 답 도착:"), re.compile("^" + COORD_WAKE_HEAD))                             # 답 전달기의 입력창 알림(feedback_route.WAKE_TEXT)
 SAME_S = 120  # 같은 글이 이 초 안에 두 번 보이면 한 번으로 침(대기열에 들어갔다 다시 기록된 글)
 
 
