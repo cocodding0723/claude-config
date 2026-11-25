@@ -6,7 +6,9 @@ REMOTE="${REMOTE_ENV:-__REMOTE_ENV__}"
 NCPU=$(sysctl -n hw.ncpu)
 LOAD=$(sysctl -n vm.loadavg | awk '{print $2}')
 FREE=$(memory_pressure 2>/dev/null | awk -F': ' '/free percentage/{gsub("%","",$2);print $2}')
-UNITY=$(pgrep -f 'Unity.app/Contents/MacOS/Unity' | wc -l | tr -d ' ')
+# 실행 파일이 Unity 인 것만 셈. 명령줄에 Unity 경로를 인자로 든 래퍼(unity-run·셸)와 임포트 보조 프로세스는 제외
+UNITY=$(ps -Axo command= | awk '$1 ~ /Unity\.app\/Contents\/MacOS\/Unity$/ && !/AssetImportWorker/{n++} END{print n+0}')
+UNITY_MAX="${LRM_UNITY_SLOTS:-2}"   # unity_slot.sh 동시 실행 기본값과 같게 둠
 HEAVY="${1:-}"   # 'unity' 를 주면 Unity 작업
 # 허브당 동시 구현 워커 상한(11-16 개정). 워커는 대부분 모델 응답 대기라 CPU 부하 평균으로 막지 않음. 메모리 여유가 기준, 부하는 부하는 기준에서 뺌(OS 가 스케줄)
 CAP=$(awk -v l="$LOAD" -v n="$NCPU" -v f="${FREE:-50}" 'BEGIN{ if (f<10) print 0; else if (f<20) print 12; else print 25 }')
@@ -14,7 +16,7 @@ reason="load=$LOAD/$NCPU free=${FREE:-?}% unity=$UNITY 구현워커상한=$CAP"
 busy=0
 awk -v l="$LOAD" -v n="$NCPU" 'BEGIN{exit !(l>=4*n)}' && busy=1
 [ -n "${FREE:-}" ] && [ "$FREE" -lt 20 ] && busy=1
-[ "$HEAVY" = unity ] && [ "$UNITY" -ge 1 ] && busy=1
+[ "$HEAVY" = unity ] && [ "$UNITY" -ge "$UNITY_MAX" ] && busy=1
 if [ "$busy" = 1 ] && orca --environment "$REMOTE" status --json 2>/dev/null | grep -q '"reachable": true'; then
   echo "remote"; echo "$reason → 원격($REMOTE)" >&2
 else
