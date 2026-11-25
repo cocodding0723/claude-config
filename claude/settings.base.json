@@ -340,7 +340,7 @@
   "enabledPlugins": {
     "figma@claude-plugins-official": false,
     "gitkraken-hooks@gitkraken": true,
-    "openviking-memory@openviking": true,
+    "openviking-memory@openviking": false,
     "unity@claude-plugins-official": true,
     "exa@claude-plugins-official": true,
     "i-have-adhd@i-have-adhd": true
