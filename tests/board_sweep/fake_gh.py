@@ -8,6 +8,13 @@ with open(os.environ["FAKE_GH_LOG"], "a", encoding="utf-8") as f:
     f.write(" ".join(sys.argv[1:]) + "\n")
 a = sys.argv[1:]
 if a[:2] == ["pr", "list"]:
+    if "--head" not in a:  # 병합 목록(merge_note). 표의 "merged" 키
+        if os.environ.get("FAKE_GH_LIST_FAIL"):
+            print("HTTP 401 (시험)", file=sys.stderr)
+            sys.exit(1)
+        with open(os.environ["FAKE_GH_PRS"], encoding="utf-8") as f:
+            print(json.dumps(json.load(f).get("merged", [])))
+        sys.exit(0)
     head = a[a.index("--head") + 1]
     if head in os.environ.get("FAKE_GH_FAIL", "").split(","):
         print("HTTP 502 (시험)", file=sys.stderr)

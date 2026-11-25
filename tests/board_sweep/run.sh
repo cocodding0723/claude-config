@@ -23,8 +23,8 @@ reset() {  # reset <카드 JSON 배열> [PR 표 JSON] [로컬 덮어쓰기 표 �
   [ -n "$cm" ] || cm='{}'; [ -n "$prs" ] || prs='{}'
   printf '{"cards": %s, "comments": %s}' "$1" "$cm" > "$FAKE_BD_STATE"
   printf '%s' "$prs" > "$FAKE_GH_PRS"
-  printf 'log_path\t%s\nlock_path\t%s\n%s' "$SB/sweep.log" "$SB/sweep.lock" "${3:-}" > "$LRM_BOARD_SWEEP_LOCAL"
-  : > "$FAKE_BD_LOG"; : > "$FAKE_GH_LOG"; : > "$SB/sweep.log"
+  printf 'log_path\t%s\nlock_path\t%s\nmerge_note_state\t%s\n%s' "$SB/sweep.log" "$SB/sweep.lock" "$SB/note.json" "${3:-}" > "$LRM_BOARD_SWEEP_LOCAL"
+  rm -f "$SB/note.json"; : > "$FAKE_BD_LOG"; : > "$FAKE_GH_LOG"; : > "$SB/sweep.log"
 }
 card() {  # card <id> <status> <labels 쉼표> <created> [title] [description] [assignee] [comment_count] [issue_type]
   python3 -c 'import json,sys; a=sys.argv[1:]; print(json.dumps({"id":a[0],"status":a[1],"labels":[l for l in a[2].split(",") if l],
@@ -42,6 +42,29 @@ MERGED_LATE='{"state":"MERGED","mergedAt":"2026-11-17T01:00:00Z","closedAt":"202
 MERGED_EARLY='{"state":"MERGED","mergedAt":"2026-11-15T01:00:00Z","closedAt":"2026-11-15T01:00:00Z"}'
 CLOSED_LATE='{"state":"CLOSED","mergedAt":null,"closedAt":"2026-11-17T01:30:00Z"}'
 OPEN='{"state":"OPEN","mergedAt":null,"closedAt":null}'
+
+# ── merge_note ──
+mpr() { printf '{"number":%s,"headRefName":"%s","mergedAt":"%s","mergedBy":{"login":"me"},"url":"u"}' "$1" "$2" "$3"; }
+noted() { grep -c "\"comment\", \"$1\", \"\[gh-watch\] PR #$2 병합됨" "$FAKE_BD_LOG"; }
+COMMENTS='{"m2":[{"text":"[gh-watch] PR #202 병합됨(병합 me) · feat/b u"}]}'
+reset "[$(card m1 open branch:feat/a $OLD),$(card m2 open branch:feat/b $OLD),$(card m3 closed branch:feat/c $OLD),$(card m4 open branch:feat/d $OLD),$(card m5 open branch:feat/e,sweep:skip $OLD)]" \
+  "{\"merged\":[$(mpr 201 feat/a $NEW),$(mpr 202 feat/b $NEW),$(mpr 203 feat/c $NEW),$(mpr 204 feat/d 2026-11-17T02:50:00Z),$(mpr 205 feat/e $NEW)]}"
+COMMENTS=
+sweep --dry-run
+check "merge_note: dry-run 은 쓰지 않음" '[ "$(noted m1 201)" = 0 ] && [ ! -e "$SB/note.json" ] && grep -q "	dry	merge_note	m1	note" "$SB/sweep.log"'
+sweep
+check "merge_note: 빠진 병합 기록을 채움" '[ "$(noted m1 201)" = 1 ]'
+check "merge_note: 이미 있으면 다시 쓰지 않음" '[ "$(noted m2 202)" = 0 ]'
+check "merge_note: 닫힌 카드도 채움" '[ "$(noted m3 203)" = 1 ]'
+check "merge_note: 방금 병합된 것은 gh-watch 에 맡김" '[ "$(noted m4 204)" = 0 ]'
+check "merge_note: 제외 라벨 카드는 둠" '[ "$(noted m5 205)" = 0 ]'
+: > "$FAKE_BD_LOG"; sweep
+check "merge_note: 확인한 짝은 다시 조회하지 않음" '! grep -q "\"comments\", \"m[123]\"" "$FAKE_BD_LOG"' "$(cat "$FAKE_BD_LOG")"
+reset "[$(card m1 open branch:feat/a $OLD)]" "{\"merged\":[$(mpr 201 feat/a $NEW)]}"
+FAKE_BD_DOWN=comments sweep
+check "merge_note: 코멘트 조회 실패면 남겨 둠" '[ "$(noted m1 201)" = 0 ]'
+sweep
+check "merge_note: 다음 회차에 다시 채움" '[ "$(noted m1 201)" = 1 ]'
 
 # ── pr_done ──
 reset "[$(card a open kind:decision,pr:101 $OLD),$(card b open kind:user-todo $OLD 'PR #102 확인'),$(card c open kind:decision $OLD 'PR #101·#103 병합 승인'),
@@ -187,9 +210,9 @@ check "dry-run: 바뀔 동작을 mode=dry 로 기록(닫기·라벨·되돌림)"
 
 # ── gh 호출 상한·실패 격리 ──
 reset "[$(card p1 open kind:decision,pr:201 $OLD),$(card p2 open kind:decision,pr:202 $OLD),$(card p3 open kind:decision,pr:203 $OLD),$(card p4 open kind:decision,pr:204 $OLD)]" \
-  "{\"201\":$MERGED_LATE,\"202\":$MERGED_LATE,\"203\":$MERGED_LATE,\"204\":$MERGED_LATE}" "$(printf 'gh_calls_max\t2\n')"
+  "{\"201\":$MERGED_LATE,\"202\":$MERGED_LATE,\"203\":$MERGED_LATE,\"204\":$MERGED_LATE}" "$(printf 'gh_calls_max\t3\n')"
 sweep
-check "gh 호출 상한: 실행당 설정값까지만 호출" '[ "$(wc -l < "$FAKE_GH_LOG" | tr -d " ")" = 2 ]' "$(cat "$FAKE_GH_LOG")"
+check "gh 호출 상한: 실행당 설정값까지만 호출(병합 목록 1회 포함)" '[ "$(wc -l < "$FAKE_GH_LOG" | tr -d " ")" = 3 ]' "$(cat "$FAKE_GH_LOG")"
 check "gh 호출 상한: 기록 한 줄 남기고 남은 카드는 둠" '[ "$(grep -c gh-cap "$SB/sweep.log")" = 1 ] && [ "$(status_of p4)" = open ]'
 check "gh 호출 상한: 상한 안의 카드는 닫음" '[ "$(status_of p1)" = closed ] && [ "$(status_of p2)" = closed ]'
 check "gh 호출 상한 뒤에도 다른 규칙 실행(stale)" '[[ "$(labels_of p3)" == *stale* ]]'
