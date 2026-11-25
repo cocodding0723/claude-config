@@ -45,6 +45,7 @@
 - 메인 터미널 입력창에는 `orca terminal send` 로 보고하지 않는다. SendMessage(to: loverevolutionmaker-*) 또는 main_inbox.py 로 보낸다(훅이 막음, 11-16). 허브끼리·워커 전달은 그대로.
 
 ## PR 묶음·CI 처리 (11-11 사용자)
+- 큰 기능(커밋 3개 이상 또는 하루 이상)은 draft PR 을 일찍 열고 묶지 않는다(사용자 11-25, create-pr 「일찍 여는 draft PR」). 아래 묶음은 작은 작업에만 쓴다.
 - 작업은 draft PR(또는 로컬 브랜치)로 진행한다. 끝난 작업이 5개 모이면 묶음 PR 1개로 올린다: 브랜치 sprint-YYYYMMDD/bundle-<주제>, 제목에 포함 티켓 전부, 본문은 작업별 절. 5개 미만이라도 하루 끝·급한 수정은 그대로 묶어 올린다.
 - 묶음에 넣은 원래 draft PR 은 닫고 묶음 PR 링크를 댓글로 남긴다. 묶음 PR 을 ready 로 바꾸면 적대적 리뷰(Fable)가 1회 돈다. fixup 커밋으로는 다시 돌지 않는다.
 - 메인이 '[CI→메인] AI 리뷰 지적' 요약 파일을 배정하면 지적마다 고칠지 판단 → 고치면 수정 커밋 1개 + 일반 push, 해당 리뷰 코멘트에 답글(수정: 커밋 해시) → 고치지 않으면 근거를 답글로. 다 처리하면 메인에 '처리 N·반박 M·남음 K' 한 줄.
@@ -83,8 +84,8 @@
 - 사용자에게 가는 문서·이미지·영상은 hub_report.py --file 로 Slack 첨부한다. 본문·참고에 .html·.png·.jpg·.gif·.mp4·.pdf 로컬 경로가 있는데 같은 파일이 첨부로 오지 않으면 접수(hub_report.py)·전송(알림 스크립트) 모두 거부(종료 코드 2). decide 보고는 문서를 --file 로 첨부해야 하고, 문서 없는 결정만 --no-doc 로 명시한다. 비밀 파일(.env·키·인증서·~/.ssh)은 첨부 거부. 결정 카드를 다른 글에서 언급할 때는 알림 스크립트 --link-to <ts> 로 그 카드 링크를 본문 끝에 넣는다.
 
 ## 승인 경계 (11-13 사용자 D-CFGAPPLY '1. 전부 적용', 앞의 상충 문장보다 우선)
-- 승인 경계(사용자 11-13 D-CFGAPPLY, 앞의 상충 문장보다 우선): 무승인 = 작업 브랜치 push(일반)·열린 PR 갱신(본문·커밋 추가)·추천안이 있는 결정·개발 Firebase(loverevolutionmaker-dev) 쓰기·승인된 계획의 시트 쓰기(행 전체 단위·백업 먼저)·push 전 작업 브랜치 리베이스. 사용자 승인 = 새 PR 생성(draft 포함, 결정 카드 `D-PR<해시>`)·Jira 이슈 생성(`D-JIRA<요약 해시>`)·Jira 상태 변경(`D-JST<이슈 키>`)(사용자 11-16, 훅이 기록 검사)·draft 해제(ready), 아래 PR draft 규칙. 사용자 직접 = dev/main 병합, 라이브 Firebase(읽기 포함), 강제 push(--force·--force-with-lease), CI 변수·시크릿 삭제. 그 밖 금지 유지: 서브모듈 수정, 다른 사람 PR·브랜치 수정, 이 Mac Unity(QA 촬영은 화면 잠금 해제 때만). 무승인 일은 할 때마다 decisions.tsv 기록.
-- PR draft 규칙(사용자 11-13 D-PRDRAFT): 새 PR 은 항상 `--draft` 로 게시한다(없으면 훅 `pr-draft-guard` 가 거부). draft 해제(`gh pr ready`·`gh api` 로 draft=false)는 그 PR 에 대한 사용자 승인(결정 카드 `D-RDY<PR번호>` 의 1번 답 또는 문서 사이트 병합 승인) 뒤에만 한다. 훅이 승인 기록을 읽어 검사하며 기록이 없으면 거부, 판정 불가는 확인을 띄운다. 새 PR 생성도 사용자 승인 뒤에만 한다(11-16, D-PRDRAFT2 폐지). 정확한 결정 번호는 훅 거부 메시지에 나온다.
+- 승인 경계(사용자 11-13 D-CFGAPPLY, 앞의 상충 문장보다 우선): 무승인 = 작업 브랜치 push(일반)·열린 PR 갱신(본문·커밋 추가)·추천안이 있는 결정·개발 Firebase(loverevolutionmaker-dev) 쓰기·승인된 계획의 시트 쓰기(행 전체 단위·백업 먼저)·push 전 작업 브랜치 리베이스. 사용자 승인 = 훅이 무승인으로 허용하지 않는 draft PR 생성(결정 카드 `D-PR<해시>`)·Jira 이슈 생성(`D-JIRA<요약 해시>`)·Jira 상태 변경(`D-JST<이슈 키>`)(사용자 11-16, 훅이 기록 검사)·draft 해제(ready), 아래 PR draft 규칙. 사용자 직접 = dev/main 병합, 라이브 Firebase(읽기 포함), 강제 push(--force·--force-with-lease), CI 변수·시크릿 삭제. 그 밖 금지 유지: 서브모듈 수정, 다른 사람 PR·브랜치 수정, 이 Mac Unity(QA 촬영은 화면 잠금 해제 때만). 무승인 일은 할 때마다 decisions.tsv 기록.
+- PR draft 규칙(사용자 11-13 D-PRDRAFT): 새 PR 은 항상 `--draft` 로 게시한다(없으면 훅 `pr-draft-guard` 가 거부). draft 해제(`gh pr ready`·`gh api` 로 draft=false)는 그 PR 에 대한 사용자 승인(결정 카드 `D-RDY<PR번호>` 의 1번 답 또는 문서 사이트 병합 승인) 뒤에만 한다. 훅이 승인 기록을 읽어 검사하며 기록이 없으면 거부, 판정 불가는 확인을 띄운다. 새 draft PR 생성은 Orca 하위 작업 공간의 자기 작업 브랜치와 계획 승인된 기능의 통합 브랜치면 무승인이다(11-17·11-20). 그 밖은 사용자 승인이 필요하고 정확한 결정 번호는 훅 거부 메시지에 나온다.
 - 사용자 승인이 필요한 것은 허브 창에 텍스트로 묻지 말고 `hub_report.py decide` Slack 카드로 올린다(허브 창의 질문은 사용자가 보지 못한다).
 - 문서 사이트 병합 승인 = 그 PR(기록된 헤드 커밋)에 대한 사용자 승인 기록이다. 병합을 누가 실행하는지는 기존 규칙 그대로다(사용자 직접 병합 대상은 계속 사용자가 한다). `사용자 원문: PR … 병합 승인(헤드 …) … (출처: 문서 사이트)` 줄은 이 승인 기록일 뿐 권한을 넓히지 않으며, PR 헤드가 바뀌면 승인은 무효라 다시 승인받는다. 문서 사이트는 병합·push 를 실행하지 않는다.
 - 로컬 게이트(사용자 11-13 D-LOCALGATE): 게임 저장소 push 는 `Tools/ci/local-gate.sh` 통과가 필수다. pre-push 훅이 강제하고 통과 기록(`~/.config/lrm-hubs/local-gate/<커밋>.<기준>.json`, 같은 커밋도 기준 브랜치가 다르면 다시 검사)을 남긴다. `--no-verify`·`core.hooksPath` 변경·`hooks.localGate=off` 는 우회라 금지(훅이 거부). 통과 기록은 `create-pr/scripts/gate-lines.sh` 로 PR 검증 절에 붙인다.
