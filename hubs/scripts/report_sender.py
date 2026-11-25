@@ -72,6 +72,7 @@ PARENT_FORMAT = "1"
 BOARD_FORMAT = "2"
 BOARD_BUDGET_S = 15
 BOARD_SAVE_S = 0.05
+BOARD_BD_SHARE = 3  # bd 조회 1건은 예산의 1/3 까지. 내보내기 파일로 바꾼 뒤 본문 생성·전송할 시간을 남김
 BOARD_COST_WEIGHT = 0.75
 PARENT_TITLE_MAX = 38  # 양식 A 제목 40자 한도에서 이모지 여유
 PARENT_FIELD_MAX = 200
@@ -351,23 +352,32 @@ def bd_json(conf: Conf, *args: str) -> "list | None":
     return d if isinstance(d, list) else None
 
 
+def export_path(conf: Conf) -> str:
+    return os.path.join(conf.board, ".beads", "issues.jsonl")
+
+
 def exported_rows(conf: Conf, args: tuple) -> "list | None":
-    """bd_json 이 쓰는 조회(show <id> · list --parent <id> · list -l <label>)를 내보내기 파일(.beads/issues.jsonl)로 흉내.
-    모르는 조회·파일 없음·깨진 줄은 None"""
+    """bd_json·현황판이 쓰는 조회(show <id…> · list [--parent <id>] [-l <label> -t <종류>])를 내보내기 파일(.beads/issues.jsonl)로 흉내.
+    list 는 bd 처럼 --all 이 없으면 닫힌 카드 제외. 모르는 조회·파일 없음·깨진 줄은 None"""
     opt = lambda name: args[args.index(name) + 1] if name in args else ""  # noqa: E731
-    card, parent, label = args[1] if args[0] == "show" else "", opt("--parent"), opt("-l")
-    if not (card or parent or label):
+    if args[0] not in ("show", "list"):
         return None
     try:
-        with open(os.path.join(conf.board, ".beads", "issues.jsonl"), encoding="utf-8") as f:
+        with open(export_path(conf), encoding="utf-8") as f:
             rows = [r for r in map(json.loads, f) if r.get("_type", "issue") == "issue"]
     except (OSError, ValueError):
         return None
-    if card:
-        return [r for r in rows if r.get("id") == card] or None
+    if args[0] == "show":
+        ids = [a for a in args[1:] if not a.startswith("-")]
+        return [r for r in rows if r.get("id") in ids] or None
+    if "--all" not in args:
+        rows = [r for r in rows if r.get("status") != "closed"]
+    parent, label, kind = opt("--parent"), opt("-l"), opt("-t")
     if parent:
-        return [r for r in rows if any(d.get("type") == "parent-child" and d.get("depends_on_id") == parent for d in r.get("dependencies") or [])]
-    return [r for r in rows if label in (r.get("labels") or []) and r.get("issue_type") == (opt("-t") or r.get("issue_type"))]
+        rows = [r for r in rows if any(d.get("type") == "parent-child" and d.get("depends_on_id") == parent for d in r.get("dependencies") or [])]
+    if label:
+        rows = [r for r in rows if label in (r.get("labels") or [])]
+    return [r for r in rows if r.get("issue_type") == (kind or r.get("issue_type"))]
 
 
 def first_sentence(line: str) -> str:
@@ -552,7 +562,9 @@ def refresh_boards(conf: Conf, st: dict, deadline: float, dry=False) -> list:
     budget = min(BOARD_BUDGET_S, max(0, deadline - started) / 2)
     deadline = started + budget - min(BOARD_SAVE_S, budget / 10)
     lines = []
-    reader = feature_board.BdReader(conf.board, conf.bd, deadline=deadline)
+    wait = budget / BOARD_BD_SHARE if os.path.exists(export_path(conf)) else budget  # 대신 읽을 파일이 없으면 bd 를 예산 끝까지 기다림
+    reader = feature_board.BdReader(conf.board, conf.bd, timeout=wait, deadline=deadline,
+                                    fallback=lambda args: exported_rows(conf, args), slow=conf.bd_left < BD_MIN_S)
     candidates = sorted(key for key, topic in st["topics"].items() if key.startswith("card:")
                         and not any(topic.get(k) for k in ("shared", "update_dead"))
                         and topic.get("board_next", 0) <= time.time())
