@@ -2,7 +2,7 @@
 # 보호 브랜치 직접 push 판정(git-guard 가 source). 값은 이 파일 한 곳에만 둠.
 # 게임 저장소의 PR 우회 방지: 사용자 11-16 "PR로 머지 올리면되잖아". git config 는 읽기만 함.
 # 사용자가 터미널에서 '!' 로 직접 실행하는 push 는 훅 밖이라 영향 없음. 게임 저장소 아닌 곳(claude-config 등)도 영향 없음.
-PP_PROTECTED_RE='^(main|master|dev|develop|release/.+|asset-patch/.+)$'
+PP_PROTECTED_RE='^(main|master|live|dev|develop|release/.+|asset-patch/.+)$'
 
 # 인자: push_targets JSON 한 줄(.dir·.flags·.remote·.refs). 출력: 없음=통과, "deny <브랜치>", "ask <사유>"
 pp_check() {

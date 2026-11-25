@@ -77,6 +77,34 @@ git -C "$R" checkout -q main
 exp "git-guard: 공유 브랜치 rebase 차단" $GG 'git rebase feat/x' "$R" deny
 exp "git-guard: git 아닌 명령 통과" $GG 'ls -la' "$R"
 
+# ---- git-guard 우회 형태 ----
+git -C "$R" checkout -q main; BP="$SB/bp"; mk "$BP" feat/bp
+for g in "git -C $R" "git -c a.b=c" "git --git-dir $R/.git" "/usr/bin/git" "git -C \"$R\"" "command git"; do
+  exp "우회: $g reset --hard 차단" $GG "$g reset --hard" "$BP" deny
+done
+for c in 'clean -fdx' 'stash clear' 'commit --amend' 'rebase feat/x' 'push --force' 'branch -D x'; do
+  exp "우회: -C $c 차단" $GG "git -C $R $c" "$BP" deny
+done
+exp "우회: cd 공유 브랜치 폴더 && commit 은 확인" $GG "cd $R && git commit -m x" "$BP" ask
+exp "우회: -C 공유 브랜치 commit 은 확인" $GG "git -C $R commit -m x" "$BP" ask
+exp "우회: 공유 cwd 에서 -C 작업 브랜치 commit 은 통과" $GG "git -C $BP commit -m x" "$R"
+exp "우회: 공유 cwd 에서 -C 작업 브랜치 amend 는 통과" $GG "git -C $BP commit --amend" "$R"
+exp "우회: 못 푸는 경로는 훅 cwd 로 판정" $GG 'cd "$X" && git commit -m x' "$R" ask
+exp "우회: +refspec 강제 push 차단" $GG 'git push origin +feat/x' "$BP" deny
+exp "우회: --force 와 lease 를 섞어도 차단" $GG 'git push --force --force-with-lease origin x' "$BP" deny
+exp "우회: lease=값 은 확인 유지" $GG 'git push --force-with-lease=x:abc origin x' "$BP" ask
+exp "우회: push -d 차단" $GG 'git push -d origin x' "$BP" deny
+for c in '--delete --force x' '-d -f x' '-f -d x' '-df x'; do exp "우회: branch $c 차단" $GG "git branch $c" "$BP" deny; done
+exp "우회: branch -d 는 통과" $GG 'git branch -d x' "$BP"
+for c in '-n -m x' '-nm x' '-an -m x'; do exp "우회: commit $c 는 확인" $GG "git commit $c" "$BP" ask; done
+exp "우회: commit -am 은 통과" $GG 'git commit -am "-n 설명"' "$BP"
+exp "우회: -C 읽기 명령은 통과" $GG "git -C $R log --oneline -3" "$BP"
+exp "우회: 경로 이름의 git 은 명령이 아님" $GG 'ls /opt/git /x/git-guard.sh' "$BP"
+git -C "$R" checkout -q -b live
+exp "live: 직접 커밋은 확인" $GG 'git commit -m x' "$R" ask
+exp "live: amend 차단" $GG 'git commit --amend' "$R" deny
+git -C "$R" checkout -q main
+
 # ---- search-guard ----
 SG=search-guard.sh; HM="$SB/home"; mkdir -p "$HM/orca/ws"
 exp "search-guard: find / 차단" $SG 'find / -name x' /tmp deny
@@ -253,6 +281,15 @@ exp "pr-draft: cd 변수 뒤 실제 create(--draft 없음)는 거부 유지" $PD
 exp "pr-draft: cd 변수 뒤 create --draft 는 저장소 모르면 ask" $PD 'cd "$W" && gh pr create --draft -t x' "$PR" ask
 exp "pr-draft: cd 변수 뒤 ready 는 저장소 모르면 ask 유지" $PD 'cd "$W" && gh pr ready 12' "$PR" ask
 exp "pr-draft: cd 변수 뒤 ready -R 는 승인 기록 기준으로 판정" $PD 'cd "$W" && gh pr ready 12 -R Org/RepoB' "$PR" deny
+# 우회 형태: 병합·실행기·별칭·붙여 쓴 옵션
+for c in 'gh pr merge 12' 'gh -R Org/RepoA pr merge 12 --squash' 'gh api -X PUT repos/Org/RepoA/pulls/12/merge' 'gh api -XPUT repos/{owner}/{repo}/pulls/12/merge' \
+  "gh api graphql -f query='mutation{mergePullRequest(input:{})}'" 'timeout 5 gh pr ready 13' 'timeout 5 bash -c "gh pr ready 13"' 'echo 13 | xargs -n 1 gh pr merge' 'gh pr new -t x' \
+  'gh api repos/Org/RepoA/pulls/13 -XPATCH --field=draft=false' 'gh api repos/Org/RepoA/pulls/13 -X PATCH -Fdraft=false'; do
+  exp "pr-우회: $c 거부" $PD "$c" "$PR" deny
+done
+exp "pr-우회: 병합 여부 조회(GET)는 통과" $PD 'gh api repos/Org/RepoA/pulls/12/merge' "$PR"
+exp "pr-우회: 문구 속 gh pr merge 는 통과" $PD "echo 'gh pr merge 12'; gh pr view 12" "$PR"
+exp "pr-우회: timeout gh pr view 는 통과" $PD 'timeout 5 gh pr view 12' "$PR"
 # 새 PR 생성 승인(사용자 11-16): D-PR + sha1("저장소:브랜치") 앞 8자
 PRID=$(printf 'Org/RepoA:feat/x' | shasum | cut -c1-8); PRID="D-PR$PRID"
 exp "pr-create: 승인 기록 없으면 --draft 여도 거부" $PD 'gh pr create --draft -t t' "$PR" deny
@@ -652,6 +689,8 @@ PD="$SB/pd"; mk "$PD" dev; git -C "$PD" config hooks.localGate on
 NG="$SB/ng"; mk "$NG" main   # 게임 아님
 exp "protected: origin dev 거부" $GG 'git push origin dev' "$PG" deny
 exp "protected: HEAD:release/v0.1.29 거부" $GG 'git push origin HEAD:release/v0.1.29' "$PG" deny
+exp "protected: HEAD:live 거부" $GG 'git push origin HEAD:live' "$PG" deny
+exp "protected: /usr/bin/git push dev 거부" $GG '/usr/bin/git push origin dev' "$PG" deny
 exp "protected: feat/x:main 거부" $GG 'git push origin feat/x:main' "$PG" deny
 exp "protected: +HEAD:refs/heads/dev 거부" $GG 'git push origin +HEAD:refs/heads/dev' "$PG" deny
 exp "protected: 현재 브랜치 dev 의 git push 거부" $GG 'git push' "$PD" deny

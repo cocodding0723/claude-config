@@ -1,4 +1,4 @@
-"""gh 명령 해석 + PR 규칙 판정(pr-draft-guard.sh 가 부름). 인자: 시작 cwd. stdin: 원본 명령.
+"""gh 명령 해석 + PR 규칙 판정(pr-draft-guard.sh 가 부름). PR 병합(gh pr merge·API)은 늘 거부. 인자: 시작 cwd. stdin: 원본 명령.
 규칙: 새 PR 은 draft 로만(11-13 D-PRDRAFT) + 생성 자체도 사용자 승인 뒤에만(11-16). 승인 = Orca 하위 작업 공간의 자기 브랜치(11-17, workspace_pr)
 ·D-PR<해시> 카드·계획 기록·계획 승인된 기능의 통합 브랜치(11-20, feature_plan)·터미널 승인·메인 대화의 사용자 직접 지시(11-17, 인자 2·3 = 훅 입력 transcript_path·session_id) /
 draft 해제(ready)는 그 PR 에 대한 사용자 승인 기록이 있을 때만.
@@ -22,11 +22,15 @@ import feature_plan as fp  # noqa: E402  기능의 계획 승인(작업판)
 
 HOME = os.path.expanduser("~")
 EV = {}  # 훅 입력의 세션 정보(transcript_path·session_id). main() 이 채움
+VALUE_WRAPPERS = {"timeout", "xargs", "nice"}  # 옵션·시간 값 뒤에 명령이 오는 실행기
 WRAPPERS = {"env", "command", "nohup", "time", "exec", "builtin"}
 KEYWORDS = {"do", "then", "else", "elif", "if", "while", "until", "!", "{"}
 SHELLS = {"bash", "sh", "zsh", "dash"}
 CREATE_REASON = "새 PR 은 draft 로만(사용자 11-13 D-PRDRAFT). --draft 를 붙여 다시 실행"
 READY_REASON = "이 PR 을 여는 건 사용자 승인 뒤에만 — 결정 카드(번호 D-RDY{num})로 승인 요청"
+MERGE_REASON = "PR 병합은 사용자 승인 뒤에만 — 세션에서 직접 병합하지 않음. 사용자에게 요청하거나 작업판 병합 절차(board-merge)를 씀"
+API_MERGE = re.compile(r"/pulls/[^/\s]+/merge/?$")
+GRAPHQL_MERGE = re.compile(r"\b(mergePullRequest|enablePullRequestAutoMerge)\b")
 BOOL_SHORT = re.compile(r"^-[fwed]*d[fwed]*$")  # -d 단독·불리언 짧은 옵션 묶음
 PR_URL = re.compile(r"^https?://[^/]+/([\w.\-]+/[\w.\-]+)/pull/(\d+)")
 API_PULL = re.compile(r"repos/([\w.\-]+/[\w.\-]+)/pulls(?:/(\d+))?/?$")
@@ -239,19 +243,30 @@ def api_checks(toks, here):
     body = " ".join(toks)
     if "markPullRequestReadyForReview" in body:
         raise Unknown("GraphQL markPullRequestReadyForReview 는 PR 번호를 알 수 없음 — 승인 기록 확인 필요")
+    if GRAPHQL_MERGE.search(body):
+        return "deny", MERGE_REASON
     if "createPullRequest" in body:
         return ("ask", API_CREATE_REASON) if re.search(r"draft\W{0,3}true", body) else ("deny", CREATE_REASON)
-    path = next((p for p in pos[1:] if "repos/" in p), "")
-    m = API_PULL.search(path.split("?")[0])
-    if not m:
-        return None
-    method = "GET"
+    method, kv = "GET", []
     for i, t in enumerate(toks):
         if t in ("-X", "--method") and i + 1 < len(toks):
             method = toks[i + 1].upper()
         elif t.startswith("--method="):
             method = t.split("=", 1)[1].upper()
-    kv = [toks[i + 1] for i, t in enumerate(toks[:-1]) if t in ("-f", "-F", "--field", "--raw-field")]
+        elif re.fullmatch(r"-X=?[A-Za-z]+", t):
+            method = t[2:].lstrip("=").upper()
+        elif t in ("-f", "-F", "--field", "--raw-field") and i + 1 < len(toks):
+            kv.append(toks[i + 1])
+        elif re.match(r"--(raw-)?field=", t):
+            kv.append(t.split("=", 1)[1])
+        elif re.match(r"-[fF]\w", t):
+            kv.append(t[2:])
+    path = next((t for t in toks[1:] if "repos/" in t), "").split("?")[0]
+    if API_MERGE.search(path) and method != "GET":
+        return "deny", MERGE_REASON
+    m = API_PULL.search(path)
+    if not m:
+        return None
     if not m.group(2):  # repos/o/r/pulls : 생성
         if method == "POST" or (method == "GET" and kv):
             return ("ask", API_CREATE_REASON) if "draft=true" in kv else ("deny", CREATE_REASON)
@@ -267,6 +282,9 @@ def check_segment(toks, here, depth=0):
         toks = toks[1:]
     if not toks:
         return None
+    if os.path.basename(toks[0]) in VALUE_WRAPPERS and depth < 3:  # 값 개수를 몰라도 뒤의 gh·셸을 찾음
+        k = next((i for i, t in enumerate(toks) if i and os.path.basename(t) in SHELLS | {"gh", "eval"}), None)
+        return check_segment(toks[k:], here, depth + 1) if k else None
     exe = os.path.basename(toks[0])
     if exe in SHELLS | {"eval"} and depth < 3:  # 문자열을 다시 실행하는 형태는 안을 해석
         inner = None
@@ -283,7 +301,9 @@ def check_segment(toks, here, depth=0):
     flags, pos, repo = parse_gh(rest)
     if pos[:1] == ["api"]:
         return api_checks(rest, here)
-    if pos[:2] == ["pr", "create"]:
+    if pos[:2] == ["pr", "merge"]:
+        return "deny", MERGE_REASON
+    if pos[:2] in (["pr", "create"], ["pr", "new"]):
         return check_create(rest, flags, repo, here)
     if pos[:2] == ["pr", "ready"]:
         if "--undo" in flags:

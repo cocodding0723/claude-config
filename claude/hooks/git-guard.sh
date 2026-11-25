@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PreToolUse(Bash) guard: block destructive git commands, escalate risky ones to "ask".
 # stdin: hook JSON. stdout: permission decision JSON (or nothing = no opinion).
-# 공유 브랜치(main/master/dev/develop/release/*) 이력 보호. 작업 브랜치 재작성은 허용.
+# 공유 브랜치(main/master/live/dev/develop/release/*) 이력 보호. 작업 브랜치 재작성은 허용.
 input=$(cat)
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
 # heredoc 본문·따옴표 안 문구(echo·python 문자열 등)는 명령이 아니므로 지우고 판정. 실패하면 원문 그대로
@@ -10,9 +10,11 @@ raw_cmd=$cmd
 stripped=$(printf '%s' "$cmd" | python3 -I "$GUARD_DIR/lib/strip_text.py" 2>/dev/null) && [ -n "$stripped" ] && cmd="$stripped"
 cwd=$(printf '%s' "$input" | jq -r '.cwd // ""')
 
-printf '%s' "$cmd" | grep -Eq '(^|[[:space:];&|("`'"'"'])git[[:space:]]' || exit 0   # git 명령 아니면 즉시 통과
-G='(^|[[:space:];&|("`'"'"'])git[[:space:]]+(-[^[:space:]]+[[:space:]]+)*'   # 따옴표·백틱 바로 뒤도 명령 위치(bash -c "git …"). 문구 속 git 은 strip_text.py 가 이미 지움
-SHARED_RE='^(main|master|dev|develop|release/.+)$'          # 공유 브랜치 이력 보호
+V='("[^"]*"|'"'[^']*'"'|[^[:space:]"'"'"'])+'   # 옵션 값 하나(따옴표 값은 strip 뒤 빈 따옴표로 남음)
+GIT='(^|[[:space:];&|("`'"'"'])([^[:space:];&|("`'"'"']*/)?git[[:space:]]+'   # 따옴표·백틱 바로 뒤도 명령 위치(bash -c "git …"), /usr/bin/git 포함. 문구 속 git 은 strip_text.py 가 이미 지움
+printf '%s' "$cmd" | grep -Eq "$GIT" || exit 0   # git 명령 아니면 즉시 통과
+G="${GIT}((-C|-c|--git-dir|--work-tree|--namespace|--config-env|--exec-path)[[:space:]]+${V}[[:space:]]+|-${V}[[:space:]]+)*"   # 값을 따로 받는 전역 옵션은 값까지 건너뜀
+SHARED_RE='^(main|master|live|dev|develop|release/.+)$'          # 공유 브랜치 이력 보호
 # 새 브랜치 이름 규칙. 기본 feat/ fix/ hotfix/ release/ + sprint-YYYYMMDD/. 저장소별 확장: git config hooks.branchPrefixes "chore/ docs/" (공백·쉼표 구분)
 EXTRA_PREFIX_RE=$(git -C "${cwd:-.}" config --get hooks.branchPrefixes 2>/dev/null | tr ',' ' ' | tr -s ' ' '\n' | sed 's/[][\.*^$(){}+?|]/\\&/g' | sed '/^$/d' | sed 's/$/[^[:space:]]+/' | paste -sd'|' -)
 PREFIX_RE="^((feat|feature|fix|hotfix|release)/[^[:space:]]+|sprint-[0-9]{8}/[^[:space:]]+${EXTRA_PREFIX_RE:+|$EXTRA_PREFIX_RE})\$"
@@ -22,20 +24,30 @@ SYNC_RE='^(origin|upstream)/(main|master|dev|develop)$'      # 받아오기 전�
 deny() { jq -cn --arg r "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"deny",permissionDecisionReason:$r}}'; exit 0; }
 ask()  { jq -cn --arg r "$1" '{hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"ask",permissionDecisionReason:$r}}'; exit 0; }
 cur_branch() { [ -n "$cwd" ] && git -C "$cwd" symbolic-ref --short -q HEAD 2>/dev/null; }
+# commit·rebase 가 실제로 도는 폴더의 브랜치들(cd·git -C 를 따라감). 못 푸는 조각이 있으면 훅 cwd 의 브랜치도 봄
+target_branches() {
+  local out line d n=0 miss=0
+  out=$(printf '%s' "$raw_cmd" | python3 -I "$GUARD_DIR/lib/push_targets.py" "$cwd" "$1" 2>/dev/null)
+  while IFS= read -r line; do
+    d=$(printf '%s' "$line" | jq -r '.dir // empty' 2>/dev/null)
+    if [ -n "$d" ]; then n=$((n + 1)); git -C "$d" symbolic-ref --short -q HEAD 2>/dev/null; else miss=1; fi
+  done <<< "$out"
+  if [ "$n" = 0 ] || [ "$miss" = 1 ]; then cur_branch; fi
+}
+shared_target() { local b; while IFS= read -r b; do is_shared "$b" && { printf '%s' "$b"; return 0; }; done < <(target_branches "$1"); return 1; }
 is_shared()  { printf '%s' "$1" | grep -Eq "$SHARED_RE"; }
 
 # ---- 하드 차단 (되돌릴 수 없는 작업) ----
-if printf '%s' "$cmd" | grep -Eq "${G}(push)[^|;&]*(--force\b|[[:space:]]-f\b|[[:space:]]-[a-zA-Z]*f[a-zA-Z]*\b)" \
-   && ! printf '%s' "$cmd" | grep -Eq -- '--force-with-lease'; then
+if printf '%s' "$cmd" | sed -E 's/--force-(with-lease|if-includes)(=[^[:space:]]*)?//g' | grep -Eq "${G}(push)[^|;&]*(--force\b|[[:space:]]-f\b|[[:space:]]-[a-zA-Z]*f[a-zA-Z]*\b)"; then
   deny "git push --force 차단됨. 필요하면 --force-with-lease 사용 (승인 필요)."
 fi
 printf '%s' "$cmd" | grep -Eq "${G}(reset)[^|;&]*--hard"        && deny "git reset --hard 차단됨. 작업 내용이 영구 삭제됩니다. git stash 또는 사용자에게 직접 요청."
 printf '%s' "$cmd" | grep -Eq "${G}(clean)[^|;&]*-[a-zA-Z]*[fd]" && deny "git clean -f/-d 차단됨. 추적되지 않은 파일이 영구 삭제됩니다."
 printf '%s' "$cmd" | grep -Eq "${G}(checkout|restore)[^|;&]*(--[[:space:]]+\.|[[:space:]]\.[[:space:]]*$)" && deny "작업 트리 전체 되돌리기(checkout/restore .) 차단됨. 파일 단위로 지정하거나 사용자에게 요청."
-printf '%s' "$cmd" | grep -Eq "${G}(branch)[^|;&]*[[:space:]]-D\b"  && deny "git branch -D 차단됨. 병합 안 된 브랜치가 사라집니다. -d 사용."
+printf '%s' "$cmd" | grep -Eq "${G}(branch)[^|;&]*[[:space:]](-D\b|(-d|--delete)[[:space:]]([^|;&]*[[:space:]])?(-f|--force)([[:space:]]|$)|(-f|--force)[[:space:]]([^|;&]*[[:space:]])?(-d|--delete)([[:space:]]|$)|-(df|fd)([[:space:]]|$))"  && deny "git branch -D 차단됨. 병합 안 된 브랜치가 사라집니다. -d 사용."
 printf '%s' "$cmd" | grep -Eq "${G}(stash)[^|;&]*(drop|clear)"    && deny "git stash drop/clear 차단됨."
 printf '%s' "$cmd" | grep -Eq "${G}(filter-branch|filter-repo)([[:space:]]|$)|${G}(update-ref)[^|;&]*[[:space:]]-d([[:space:]]|$)" && deny "히스토리 재작성 명령 차단됨."
-printf '%s' "$cmd" | grep -Eq "${G}(push)[^|;&]*(--delete|[[:space:]]:[a-zA-Z])" && deny "원격 브랜치 삭제 차단됨."
+printf '%s' "$cmd" | grep -Eq "${G}(push)[^|;&]*(--delete|[[:space:]]-d([[:space:]]|$)|[[:space:]]:[a-zA-Z])" && deny "원격 브랜치 삭제 차단됨."
 
 # ---- 로컬 게이트 우회 금지 (게임 저장소, 사용자 11-13 D-LOCALGATE) ----
 # push --no-verify(-n 은 dry-run 이라 제외)·-c core.hooksPath·GIT_CONFIG_KEY_n 환경 변수·hooksPath/hooks.localGate 설정 변경을 막음
@@ -46,6 +58,7 @@ if printf '%s' "$raw_cmd" | grep -Eq '(^|[^[:alnum:]_-])push([^[:alnum:]_-]|$)';
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     printf '%s' "$line" | jq -e 'has("err")' >/dev/null 2>&1 && ask "push 대상 확인 불가 — 보호 브랜치면 PR 로"
+    printf '%s' "$line" | jq -e '(.refs // []) | any(startswith("+"))' >/dev/null 2>&1 && deny "강제 push('+' 로 시작하는 대상) 차단됨. 필요하면 --force-with-lease 사용 (승인 필요)."
     d=$(printf '%s' "$line" | jq -r '.dir // empty' 2>/dev/null); [ -n "$d" ] && lg_applies "$d" || continue
     # 보호 브랜치 직접 push 금지(게임 저장소). 삭제 push 는 위 규칙이 이미 처리. 사용자의 ! 직접 실행은 훅 밖
     pp=$(pp_check "$line")
@@ -70,12 +83,10 @@ fi
 # ---- 공유 브랜치 히스토리 보호 (rebase / amend) ----
 # "서로 공유하는 브랜치의 커밋 그래프는 함부로 변경하지 않습니다"
 if printf '%s' "$cmd" | grep -Eq "${G}(rebase)\b" && ! printf '%s' "$cmd" | grep -Eq "${G}(rebase)[^|;&]*--(continue|abort|skip|quit)\b"; then
-  br=$(cur_branch)
-  is_shared "$br" && deny "공유 브랜치 '$br'에서 rebase 차단됨. rebase는 feat/·fix/ 같은 작업 브랜치에서만 합니다 (git checkout <작업브랜치> 후 git rebase develop)."
+  br=$(shared_target rebase) && deny "공유 브랜치 '$br'에서 rebase 차단됨. rebase는 feat/·fix/ 같은 작업 브랜치에서만 합니다 (git checkout <작업브랜치> 후 git rebase develop)."
 fi
 if printf '%s' "$cmd" | grep -Eq "${G}(commit)[^|;&]*--amend"; then
-  br=$(cur_branch)
-  is_shared "$br" && deny "공유 브랜치 '$br'에서 commit --amend 차단됨. 공유 브랜치 히스토리는 바꾸지 않습니다. 새 커밋으로 수정하세요."
+  br=$(shared_target commit) && deny "공유 브랜치 '$br'에서 commit --amend 차단됨. 공유 브랜치 히스토리는 바꾸지 않습니다. 새 커밋으로 수정하세요."
 fi
 
 # ---- merge: 작업 브랜치로 origin/dev·origin/main 받아오기는 확인 없이 허용, 그 밖의 병합은 확인 ----
@@ -132,16 +143,17 @@ fi
 # ---- ask 승격 ----
 printf '%s' "$cmd" | grep -Eq '(^|[[:space:];&|(`])git[[:space:]]([^|;&]*[[:space:]])?merge([[:space:]]|$)' && ask "git merge 확인 필요 (작업 브랜치로 origin/dev·origin/main·열린 기능 epic 통합 브랜치 받아오기만 확인 없이 허용됩니다)."
 printf '%s' "$cmd" | grep -Eq -- '--force-with-lease' && ask "force-with-lease push — 원격 히스토리가 바뀝니다. 확인 필요."
-printf '%s' "$cmd" | grep -Eq "${G}(commit)[^|;&]*--no-verify" && ask "--no-verify는 pre-commit 훅을 건너뜁니다. 확인 필요."
+printf '%s' "$cmd" | grep -Eq "${G}(commit)[^|;&]*(--no-verify|[[:space:]]-[aeqsv]*n[aeqsvm]*([[:space:]]|$))" && ask "--no-verify는 pre-commit 훅을 건너뜁니다. 확인 필요."
 printf '%s' "$cmd" | grep -Eq "${G}(pull)\b" && ! printf '%s' "$cmd" | grep -Eq "${G}(pull)[^|;&]*--rebase" \
   && [ "$(git -C "${cwd:-.}" config --get pull.rebase 2>/dev/null)" != true ] \
   && ask "git pull 은 --rebase 로 합니다 (선형 히스토리 유지). 이 저장소는 pull.rebase=true 설정이 없습니다. 그래도 진행할까요?"
 
 # 공유 개발 브랜치 직접 커밋은 별도 확인.
 if printf '%s' "$cmd" | grep -Eq "${G}(commit)\b" && [ -n "$cwd" ]; then
-  br=$(cur_branch)
-  case "$br" in main|master|dev|develop)
-    ask "현재 브랜치가 '$br' 입니다. 직접 커밋해도 될까요? (보통은 feat/ 또는 fix/ 브랜치를 먼저 만듭니다)";;
-  esac
+  while IFS= read -r br; do
+    case "$br" in main|master|live|dev|develop)
+      ask "현재 브랜치가 '$br' 입니다. 직접 커밋해도 될까요? (보통은 feat/ 또는 fix/ 브랜치를 먼저 만듭니다)";;
+    esac
+  done < <(target_branches commit)
 fi
 exit 0
