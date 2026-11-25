@@ -105,6 +105,13 @@ got=$(echo "$dry" | grep -cE '^\[dry-run\] (LINK|BACKUP\+LINK|MERGE|COPY|RENDER|
 "$INSTALL" >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && ok "설치 종료 코드 0" || ko "설치" "rc=$rc"
 check "점검 모드 통과" "$INSTALL" --check
+# Orca 프로필의 낡은 훅은 안내만 하고 점검은 통과. 같은 훅이면 안내 없음
+PF="$SB/Library/Application Support/orca/claude-profiles/abcd1234-x/home"; mkdir -p "$PF"
+cp "$SB/.claude/settings.json" "$PF/settings.json"; out=$("$INSTALL" --check 2>&1); rc=$?
+[ "$rc" = 0 ] && ! echo "$out" | grep -q PROFILE && ok "--check: 같은 훅 프로필은 안내 없음" || ko "--check 같은 프로필" "rc=$rc"
+jq 'del(.hooks.PreToolUse[0])' "$SB/.claude/settings.json" > "$PF/settings.json"; out=$("$INSTALL" --check 2>&1); rc=$?
+[ "$rc" = 0 ] && echo "$out" | grep -q 'PROFILE  abcd1234' && ok "--check: 낡은 프로필은 안내하고 통과" || ko "--check 낡은 프로필" "rc=$rc"
+rm -rf "${SB:?}/Library/Application Support/orca"; rmdir "$SB/Library/Application Support"
 # 복사 설치된 slack_socket.py 는 같은 폴더의 main_terminal.py 를 import 함. 공용 모듈이 설치되지 않으면 ModuleNotFoundError 로 즉시 종료
 SOCK_INST="$SB/.config/lrm-hubs/slack_socket.py"
 [ -f "$SOCK_INST" ] && [ ! -L "$SOCK_INST" ] && ok "slack_socket.py 는 복사 설치(링크 아님)" || ko "slack_socket 복사 설치" "링크이거나 없음"

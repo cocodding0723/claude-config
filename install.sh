@@ -406,6 +406,20 @@ next_steps() {
   log "  의존성 점검: ./install.sh --doctor"
 }
 
+# Orca 계정 프로필의 훅이 저장소 기본값보다 낡았는지 안내. 프로필 파일은 Orca 소유라 고치지 않고 실패로도 세지 않음
+profile_notice() {
+  local f id n
+  render_base "$REPO/claude/settings.base.json" > "$TMP/profile-base.json"
+  for f in "$HOME/Library/Application Support/orca/claude-profiles"/*/home/settings.json; do
+    [ -f "$f" ] || continue
+    id=$(basename "$(dirname "$(dirname "$f")")" | cut -c1-8)
+    n=$(jq -n --slurpfile b "$TMP/profile-base.json" --slurpfile p "$f" \
+      'def rows: [.hooks // {} | to_entries[] | .key as $e | .value[] | (.matcher // "") as $m | .hooks[] | [$e, $m, .command]];
+       ($b[0] | rows) - ($p[0] | rows) | length' 2>/dev/null) || { log "PROFILE  $id 설정 읽기 실패: $f"; continue; }
+    [ "$n" = 0 ] || log "PROFILE  $id 훅 ${n}개가 저장소와 다름(안내). 그 프로필을 쓸 때 /hooks 로 확인"
+  done
+}
+
 # 점검 전용. 문제 수를 종료 코드로 반환
 do_check() {
   validate
@@ -433,6 +447,7 @@ do_check() {
     cur=$(git config --global --get "$key" || true)
     [ "$cur" = "$val" ] || { log "DRIFT  git config $key (현재 '${cur:-없음}', 기대 '$val')"; bad=$((bad + 1)); }
   done < <(grep -v '^#' "$GITCFG" | grep -v '^[[:space:]]*$')
+  profile_notice
   if [ "$bad" = 0 ]; then log "점검 통과: 문제 없음"; else log "점검 실패: $bad 건"; return 1; fi
 }
 
