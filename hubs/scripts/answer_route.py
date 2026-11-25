@@ -10,7 +10,11 @@
 같은 결정 번호를 두 허브 이상이 올렸다면 어느 허브인지 알 수 없어 메인으로 보냄(허브 추측 금지).
 전달이 끝나면 결과를 answer_store 의 전달 기록(answer-delivery.jsonl)에 남김.
 결정→허브: hub-reports.jsonl(허브 보고 outbox)의 decision_id·hub 가 우선, 없으면 보낸 카드 기록의 tag (todo_facts.decision_hubs 규칙).
+
+메인으로 샌 답을 그 결정을 올린 세션에 다시 보내기: answer_route.py redeliver [--dry-run] <결정 번호…>
+한 줄에 한 답(탭 구분): 대상|보냄|제외|실패, 결정 번호, 카드 ts, 작업 카드, 사유·본문. 종료 코드: 0 성공(제외 포함), 1 전달 실패 있음, 2 인자 오류
 """
+import argparse
 import json
 import os
 import re
@@ -93,6 +97,41 @@ def session_sender(card: str, ws: str, ts: str, text: str, kind: str) -> str:
     return feedback_route.answer_to_ws(card, ws, ts, text, kind)
 
 
+LEAKED = ("main", "proxy", "lost")  # 세션에 닿지 않고 끝난 전달 상태. unknown 은 닿았을 수 있어 제외
+
+
+def inbox_refs(path: str) -> set:
+    """받은 편지함 파일에 적힌 ref 전부. 파일이 없으면 빈 집합, 다른 읽기 오류는 예외(모르는 채 다시 보내지 않게)"""
+    refs = set()
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for ln in f:
+                try:
+                    r = json.loads(ln)
+                except ValueError:
+                    continue
+                if isinstance(r, dict):
+                    refs.add(r.get("ref"))
+    except FileNotFoundError:
+        pass
+    return refs
+
+
+def session_block(card: str, ws: str, ts: str) -> str:
+    """작업 카드 세션에 이 답을 다시 보내면 안 되는 이유. 보내도 되면 ''"""
+    import feedback_route as fr
+    if not os.path.isdir(ws):
+        return "작업 공간 없음(끝난 허브)"
+    row = fr.card_row(card)
+    if not row or not (fr.feature_alive(row) if fr.is_feature(row) else fr.is_open(row)):
+        return "작업 카드 끝남"
+    path = main_inbox.inbox_path(box=fr.answer_box(card, ws))
+    # 상자에 쓴 뒤 카드 코멘트에서 실패한 답은 전달 기록이 main 이어도 세션에 닿은 것(11-25 b8bfba1 이전)
+    if f"{card} slack:{ts}" in inbox_refs(path) | inbox_refs(path + ".1"):
+        return "이미 세션 상자에 있음"
+    return ""
+
+
 class Router:
     """to_main: 메인 받은 편지함 기록 함수(text) -> 성공 여부. deliver: 허브 전송 함수(slug, text) -> (상태, 시도 수, 실패 코드, 후보 수)"""
 
@@ -101,6 +140,7 @@ class Router:
         self.store, self.to_main, self.deliver, self.redeliver = store, to_main, deliver, redeliver
         self.to_ws = to_ws or session_sender  # (카드, 작업 공간, ts, 본문, 종류) -> 상자 이름. 실패는 예외
         self.feature_of = feature_lookup      # 기능 코디네이터 허브 이름 -> (기능 카드, 작업 공간). 없으면 ('', '')
+        self.block_of = session_block         # (카드, 작업 공간, ts) -> 다시 보내면 안 되는 이유. 보내도 되면 ''
 
     def ws_of(self, did: str) -> tuple:
         """결정을 올린 보고에 적힌 (작업 카드, 작업 공간). 없으면 ('', ''). 같은 번호를 다시 올렸으면 최근 보고.
@@ -194,6 +234,53 @@ class Router:
             self.store.record_delivery(did, ts, out.via, out.ok)  # 즉시 끝난 결과는 호출자가 반환값으로 처리(on_done 은 재시도 끝에만)
         return out
 
+    def leaked_answers(self, did: str) -> list:
+        """결정 하나의 버튼 답마다 {did, ts, card, ws, source, body, skip}. skip 이 빈 것만 다시 보낼 대상"""
+        answers = [r for r in self.store.read_inbox() if r.get("decision_id") == did and r.get("type") == "button" and r.get("parent_ts")]
+        card, ws = self.ws_of(did)
+        rows = []
+        for r in answers:
+            ts = r["parent_ts"]
+            row = {"did": did, "ts": ts, "card": card, "ws": ws, "source": r.get("source") or answer_store.SLACK,
+                   "body": " ".join(said_text(did, r, str(r.get("option_text") or "")).split())}
+            row["skip"] = "같은 결정에 더 나중 답이 있음" if r is not answers[-1] else self.skip_reason(row)
+            rows.append(row)
+        # 같은 번호로 다시 올린 카드에 같은 답을 눌러 하나만 닿은 경우. 받는 세션에는 같은 문장이라 다시 보내면 중복
+        if rows and not rows[-1]["skip"] and any(x["body"] == rows[-1]["body"] and self.last_state(did, x["ts"]) in ("ws", "hub") for x in rows[:-1]):
+            rows[-1]["skip"] = "같은 답이 다른 카드로 이미 전달됨"
+        return rows
+
+    def last_state(self, did: str, ts: str) -> str:
+        return (self.store.deliveries(did, ts) or [{}])[-1].get("state") or ""
+
+    def skip_reason(self, row: dict) -> str:
+        last = self.last_state(row["did"], row["ts"])
+        if last not in LEAKED:
+            return f"샌 답 아님(마지막 전달 {last or '기록 없음'})"
+        if not row["card"]:
+            return "받을 세션 기록 없음"
+        try:
+            return self.block_of(row["card"], row["ws"], row["ts"])
+        except Exception as err:  # noqa: BLE001 — 세션 상태를 모르면 보내지 않음
+            return f"세션 상태 확인 실패({type(err).__name__})"
+
+    def resend(self, row: dict) -> Outcome:
+        """leaked_answers 가 고른 답 하나를 세션에 다시 전달. 실패해도 메인에는 다시 남기지 않음(처음 샐 때 이미 남음).
+        잠금 안에서 마지막 기록을 다시 보고 pending 을 남겨, 겹친 두 실행 중 하나만 보냄"""
+        did, ts, card = row["did"], row["ts"], row["card"]
+        with actions.flock(self.store.lock):
+            if self.last_state(did, ts) not in LEAKED:
+                return Outcome(False, "skip", card, "다른 실행이 이미 처리함")
+            self.store.mark(did, ts, answer_store.PENDING, None, retry=True)
+        line = HUB_LINE.format(body=row["body"], source=answer_store.SOURCE_NAME.get(row["source"], row["source"]))
+        try:
+            self.to_ws(card, row["ws"], ts, line, "answer")
+            out = Outcome(True, "ws", card)
+        except Exception as err:  # noqa: BLE001 — lost 로 남겨 다음 실행에서 다시 시도 가능
+            out = Outcome(False, "lost", card, f"작업 카드 {card} 세션 전달 실패({type(err).__name__})")
+        self.store.record_delivery(did, ts, out.via, out.ok)
+        return out
+
     def ask(self, did: str, ts: str, source: str, body: str) -> Outcome:
         """질문 한 건을 허브(없으면 메인)에 전달. 답이 아니므로 전달 기록(answer-delivery)을 남기지 않음 — 나중 답의 재전달 판정을 흐리지 않기 위함"""
         return self.send_to(did, ts, source, " ".join(body.split()), kind="question")
@@ -243,3 +330,30 @@ class Router:
 def main_line_sender(hub_dir: str | None = None) -> Callable[[str], bool]:
     """메인 받은 편지함(main.jsonl)에 한 줄 남기는 전송(문서 사이트용). 메인 터미널 입력창에는 쓰지 않음. 쓰기 실패는 False"""
     return main_inbox.sender("answer_route", "answer", hub=hub_dir)
+
+
+def main(argv: list) -> int:
+    ap = argparse.ArgumentParser(description="메인으로 샌 결정 답을 그 결정을 올린 세션에 다시 전달. 먼저 --dry-run 으로 대상 확인")
+    sub = ap.add_subparsers(dest="cmd", required=True).add_parser("redeliver")
+    sub.add_argument("--dry-run", action="store_true", help="보내지 않고 대상과 제외 사유만 출력")
+    sub.add_argument("dids", nargs="+", metavar="결정번호")
+    args = ap.parse_args(argv)
+    router, failed = Router(answer_store.AnswerStore(), lambda _text: False), False
+    for did in dict.fromkeys(args.dids):
+        rows = router.leaked_answers(did)
+        if not rows:
+            print("\t".join(("제외", did, "-", "-", "버튼 답 기록 없음")))
+        for row in rows:
+            mark, note = "제외", row["skip"]
+            if not note and args.dry_run:
+                mark, note = "대상", row["body"]
+            elif not note:
+                out = router.resend(row)
+                mark, note = "보냄" if out.ok else "제외" if out.via == "skip" else "실패", out.note or out.result()
+                failed = failed or mark == "실패"
+            print("\t".join((mark, did, row["ts"], row["card"] or "-", note)))
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

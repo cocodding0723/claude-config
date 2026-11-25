@@ -1,5 +1,7 @@
 """결정 답 전달 경로(answer_route) 시험. 허브 전송은 ①주입한 가짜 함수 ②실제 card_actions.deliver + 가짜 orca 두 가지로 시험함.
 임시 폴더만 쓰며 실제 ~/.config/lrm-hubs·Orca·터미널은 건드리지 않음."""
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -7,6 +9,7 @@ import sys
 import tempfile
 import unittest
 import warnings
+from unittest import mock
 
 warnings.simplefilter("ignore", ResourceWarning)
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -271,6 +274,122 @@ class UnitRoute(Base):
         os.makedirs(os.path.join(self.hub, "hub-reports.jsonl"))  # 파일 자리에 폴더: 읽기 오류
         out = self.router("sent").route("D-0001", "1.1", "slack", BODY)
         self.assertEqual((out.via, self.hub_calls), ("main", []))
+
+
+class Redeliver(Base):
+    """메인으로 샌 답의 재전달: 대상 판정과 중복 없음"""
+    router, ws_router, map_card_decision = UnitRoute.router, UnitRoute.ws_router, UnitRoute.map_card_decision
+
+    def leak(self, did="D-0001", ts="1.1", state="main", pick=2):
+        rec = {"type": "button", "kind": "decide", "decision_id": did, "parent_ts": ts, "action": "pick", "pick": pick,
+               "option_text": f"{pick}. B 안", "source": "slack"}
+        self.store.append(self.store.inbox, json.dumps(rec, ensure_ascii=False) + "\n")
+        self.store.mark(did, ts, "pending", None)
+        self.store.mark(did, ts, state, True)
+
+    def ready(self, skip="", fail=False):
+        r = self.ws_router(fail)
+        r.block_of = lambda card, ws, ts: skip
+        return r
+
+    def skips(self, router, did="D-0001"):
+        return [x["skip"] for x in router.leaked_answers(did)]
+
+    def test_leaked_answer_is_sent_once_with_the_original_text(self):
+        self.map_card_decision()
+        self.leak()
+        r = self.ready()
+        row = r.leaked_answers("D-0001")[0]
+        self.assertEqual(row["skip"], "")
+        self.assertTrue(r.resend(row).ok)
+        self.assertEqual(self.ws_calls, [("t-1", "/w/a", "1.1", f"사용자 원문: {BODY} (출처: Slack)", "answer")])
+        self.assertIn("샌 답 아님", self.skips(r)[0])
+        self.assertEqual(r.resend(row).via, "skip", "먼저 만든 대상 목록으로 다시 실행해도 안 보냄")
+        self.assertEqual((len(self.ws_calls), self.main_calls), (1, []))
+
+    def test_only_one_of_two_overlapping_runs_sends(self):
+        self.map_card_decision()
+        self.leak()
+        r = self.ready()
+        row, inner, send = r.leaked_answers("D-0001")[0], [], r.to_ws
+
+        def overlapped(*a):
+            inner.append(r.resend(row).via)
+            return send(*a)
+        r.to_ws = overlapped
+        self.assertTrue(r.resend(row).ok)
+        self.assertEqual((inner, len(self.ws_calls)), (["skip"], 1))
+
+    def test_failed_send_is_not_copied_to_main_and_can_be_tried_again(self):
+        self.map_card_decision()
+        self.leak()
+        r = self.ready(fail=True)
+        self.assertFalse(r.resend(r.leaked_answers("D-0001")[0]).ok)
+        self.assertEqual((self.main_calls, self.skips(r)), ([], [""]))
+
+    def test_delivered_or_unknown_answers_are_excluded(self):
+        self.map_card_decision()
+        for i, state in enumerate(("ws", "hub", "unknown", "action")):
+            self.leak(ts=f"{i}.1", state=state)
+            self.assertIn("샌 답 아님", self.skips(self.ready())[-1])
+
+    def test_only_the_latest_answer_of_a_decision_is_a_target(self):
+        self.map_card_decision()
+        self.leak(ts="1.1")
+        self.leak(ts="2.1", pick=1)
+        self.assertEqual(self.skips(self.ready()), ["같은 결정에 더 나중 답이 있음", ""])
+
+    def test_same_answer_already_delivered_by_another_card_is_excluded(self):
+        self.map_card_decision()
+        self.leak(ts="1.1", state="ws")
+        self.leak(ts="2.1")
+        self.assertEqual(self.skips(self.ready())[-1], "같은 답이 다른 카드로 이미 전달됨")
+        self.leak(ts="3.1", pick=1)
+        self.assertEqual(self.skips(self.ready())[-1], "", "답이 바뀌었으면 보냄")
+
+    def test_missing_session_and_unreadable_state_are_excluded(self):
+        self.leak()
+        self.assertEqual(self.skips(self.ready()), ["받을 세션 기록 없음"])
+        self.map_card_decision()
+        r = self.ready()
+
+        def broken(*_a):
+            raise OSError("bd")
+        r.block_of = broken
+        self.assertIn("확인 실패", self.skips(r)[0])
+
+    def test_session_block_reasons(self):
+        import feedback_route as fr
+        ws = os.path.join(self.tmp.name, "coord-feat-mail-hub")
+        os.makedirs(ws)
+        os.makedirs(os.path.join(self.hub, "hub-inbox"))
+        row = {"id": "t-1", "issue_type": "epic", "status": "open", "labels": ["feature:mail"]}
+        block = self.route_mod.session_block
+        with mock.patch.object(fr, "card_row", lambda _c: row):
+            self.assertEqual(block("t-1", ws, "1.1"), "")
+            self.assertIn("작업 공간 없음", block("t-1", ws + "-gone", "1.1"))
+            for name in ("feat-mail.jsonl", "feat-mail.jsonl.1"):
+                path = os.path.join("hub-inbox", name)
+                self.jsonl(path, [{"ref": "t-1 slack:1.1"}])
+                self.assertIn("이미 세션 상자", block("t-1", ws, "1.1"))
+                os.unlink(os.path.join(self.hub, path))
+            row["status"] = "closed"
+            self.assertEqual(block("t-1", ws, "1.1"), "작업 카드 끝남")
+            row["labels"].append("stage:review")
+            self.assertEqual(block("t-1", ws, "1.1"), "", "검수 단계는 코디네이터가 남아 있음")
+
+    def test_dry_run_sends_and_records_nothing(self):
+        self.map_card_decision()
+        self.leak()
+        before, out = self.store.deliveries("D-0001", "1.1"), io.StringIO()
+        with mock.patch.object(self.route_mod, "session_block", lambda *_a: ""), \
+                mock.patch.object(self.route_mod, "session_sender", side_effect=AssertionError("보내면 안 됨")) as send, \
+                contextlib.redirect_stdout(out):
+            self.assertEqual(self.route_mod.main(["redeliver", "--dry-run", "D-0001", "D-0009"]), 0)
+        send.assert_not_called()
+        self.assertIn(f"대상\tD-0001\t1.1\tt-1\t{BODY}", out.getvalue())
+        self.assertIn("제외\tD-0009", out.getvalue())
+        self.assertEqual(self.store.deliveries("D-0001", "1.1"), before)
 
 
 class FakeOrcaRoute(Base):
