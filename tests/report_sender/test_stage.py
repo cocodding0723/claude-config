@@ -12,6 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.join(HERE, "..", "..", "hubs", "scripts")
 sys.path.insert(0, SCRIPTS)
 import hub_report  # noqa: E402
+import report_derived  # noqa: E402
 import report_sender  # noqa: E402
 
 FAKE = os.path.join(HERE, "fake_notify.py")
@@ -90,6 +91,7 @@ class StageTest(unittest.TestCase):
         rep = self.add([html])
         self.lock(html)
         report_sender.run(self.conf)
+        report_derived.run(self.conf)
         names = [os.path.basename(u[-1]) for u in self.uploads()]
         self.assertEqual(names[0], "페이지 하나.html")
         self.assertTrue(names[1].endswith("-preview.png"))  # 원본을 못 읽어도 미리보기까지 감
