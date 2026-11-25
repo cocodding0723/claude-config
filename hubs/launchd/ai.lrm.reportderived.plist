@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.lrm.reportderived</string>
+  <!-- 보고에 첨부한 HTML 의 PDF·미리보기를 만들어 같은 스레드에 올림. 글 전송(slackpoll)과 분리해 서로 기다리지 않음. 잠금으로 중복 실행 방지 -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__PYTHON3__</string>
+    <string>-I</string>
+    <string>__HOME__/.config/lrm-hubs/report_derived.py</string>
+    <string>--once</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>StartInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>__HOME__/.config/lrm-hubs/report-derived.launchd.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.config/lrm-hubs/report-derived.launchd.log</string>
+</dict>
+</plist>
