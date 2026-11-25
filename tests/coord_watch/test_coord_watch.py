@@ -89,7 +89,7 @@ class CheckTest(unittest.TestCase):
             sends.append(text)
             return (result, 1, [], 1)
         with mock.patch.multiple(cw.card_actions, deliver_ws=deliver, ws_terminals=lambda ws, writable_only=False: [{"handle": str(i)} for i in range(terms)]), \
-                mock.patch.object(cw.work_remind, "board_cards_all", lambda: epics), mock.patch.object(cw, "busy_hubs", lambda n: workers), \
+                mock.patch.object(cw.board_cards, "bd_json", lambda *a: epics), mock.patch.object(cw, "busy_hubs", lambda n: workers), \
                 mock.patch.object(cw, "waiting_hubs", lambda n: set(waiting)), mock.patch.object(cw, "live_status", dict), \
                 mock.patch.object(cw, "seen_of", lambda ws, st: cw.Seen(NOW - 1800, 100, False)), \
                 mock.patch.object(cw, "warn", lambda e, ws, what: warns.append(what) or True):
@@ -97,8 +97,9 @@ class CheckTest(unittest.TestCase):
         return rc, res, sends, warns
 
     def setUp(self):
-        if os.path.exists(cw.STATE):
-            os.unlink(cw.STATE)
+        for p in (cw.STATE, cw.EPICS):
+            if os.path.exists(p):
+                os.unlink(p)
         self.ws = tempfile.mkdtemp(prefix="coord-", dir=TMP)
 
     def feature(self, i=0):
@@ -132,6 +133,29 @@ class CheckTest(unittest.TestCase):
     def test_unknown_workers_means_no_wake(self):
         rc, _, sends, _ = self.run_check([self.feature()], workers=None)
         self.assertEqual((rc, sends), (1, []))
+
+    def test_board_failure_is_reported_without_waking(self):
+        def broken(*a):
+            raise cw.board_cards.Fail(3, "bd 실패")
+        with mock.patch.object(cw.board_cards, "bd_json", broken):
+            self.assertEqual(cw.check(L, False, NOW)[0], 1)
+
+    def test_slow_board_uses_the_last_good_list_for_ten_minutes(self):
+        self.run_check([self.feature()], waiting={"t-0"})  # 성공한 조회를 남김
+        def broken(*a):
+            raise cw.board_cards.Fail(3, "시간 초과")
+        with mock.patch.object(cw.board_cards, "bd_json", broken):
+            self.assertEqual(len(cw.open_epics(L, NOW + 590, True)), 1)
+            with self.assertRaises(cw.board_cards.Fail):
+                cw.open_epics(L, NOW + 610, True)
+
+    def test_bd_is_found_outside_a_short_path(self):
+        # 11-25: 수신기(launchd)의 짧은 PATH 에서 bd 를 못 찾아 첫 회차가 실패함
+        with mock.patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}), mock.patch.object(cw.subprocess, "run") as run:
+            run.return_value = mock.Mock(returncode=0, stdout="[]", stderr="")
+            with mock.patch.object(cw, "busy_hubs", lambda n: set()), mock.patch.object(cw, "waiting_hubs", lambda n: set()):
+                self.assertEqual(cw.check(L, False, NOW)[0], 0)
+            self.assertEqual(run.call_args[0][0][0], cw.board_cards.find_bd())
 
     def test_quiet_hours_and_dry_run_send_nothing(self):
         hour = dt.datetime.fromtimestamp(NOW).hour

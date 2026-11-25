@@ -21,17 +21,19 @@ from dataclasses import dataclass
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import answer_store  # noqa: E402
+import board_cards  # noqa: E402  (bd 위치 찾기 재사용. 수신기의 짧은 PATH 에는 bd 가 없음)
 import card_actions  # noqa: E402
 import pending_judge  # noqa: E402
 import restart_watch as rw  # noqa: E402  (상태 파일 저장 재사용)
 import stall_watch as sw  # noqa: E402  (워커 목록·조용한 시간 재사용)
-import work_remind  # noqa: E402  (작업판 조회 재사용)
+import work_remind  # noqa: E402  (결정 대기 판정 재사용)
 
 flow = work_remind.flow_lib()
 import board_said  # noqa: E402  (flow_lib 가 작업판 lib 경로를 넣음)
 
 DIR = card_actions.DIR
 STATE, LOCK = os.path.join(DIR, "coord-watch.json"), os.path.join(DIR, ".coord-watch.lock")
+EPICS = os.path.join(DIR, "coord-watch-epics.json")  # 마지막으로 성공한 기능 카드 조회
 REPORT = os.environ.get("LRM_HUB_REPORT") or os.path.join(DIR, "hub_report.py")
 REPORT_TIMEOUT_S = 30
 OPEN_STAGES = ("understand", "design", "build", "verify")  # 접수(사용자 답 대기)와 검수·반영(카드가 닫힘)은 사용자 차례
@@ -178,6 +180,22 @@ def waiting_hubs(now: float) -> set:
     return {x for x in out if x}
 
 
+def open_epics(limits: Limits, now: float, save: bool) -> list:
+    """열린 기능 카드. 작업판이 느려 조회가 실패하면 마지막 성공 조회를 씀(부하가 높을 때 조회 1번이 30초를 넘김).
+    쓰는 나이는 멈춤 기준의 절반까지: 그 사이 단계를 옮긴 코디네이터는 방금 대화한 것이라 잘못 깨우지 않음"""
+    try:
+        rows = [c for c in board_cards.bd_json("list", "-t", "epic", "--limit", "0") or []
+                if isinstance(c, dict) and flow.FLOW_LABEL in (c.get("labels") or [])]
+    except board_cards.Fail:
+        old = rw.load_state_at(EPICS)
+        if now - old.get("at", 0) > limits.idle_min * 60 / 2:
+            raise
+        return old["rows"]
+    if save:
+        rw.save_state_at(EPICS, {"at": now, "rows": rows})
+    return rows
+
+
 def busy_hubs(now: float) -> "set | None":
     """살아 있는 작업자를 둔 허브 이름. 조회 실패는 None(모르면 깨우지 않음)"""
     rows = sw.list_workers("active", 5)
@@ -201,7 +219,7 @@ def busy_hubs(now: float) -> "set | None":
 
 # ── 실행 ──
 def warn(e: dict, ws: str, what: str) -> bool:
-    cmd = ["python3", REPORT, "add", "--hub", flow.feature_hub(e), "--task", "없음", "--kind", "warn", "--card", e["id"], "--ws", ws,
+    cmd = [sys.executable, REPORT, "add", "--hub", flow.feature_hub(e), "--task", "없음", "--kind", "warn", "--card", e["id"], "--ws", ws,
            "--text", WARN_TEXT.format(name=flow.feature_name(e), what=what)]
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=REPORT_TIMEOUT_S, stdin=subprocess.DEVNULL).returncode == 0
@@ -218,11 +236,10 @@ def _check(limits: Limits, dry: bool, now: float) -> tuple:
     if sw.is_quiet(limits.quiet, now) and not dry:
         return 0, {"status": "quiet", "rows": []}
     try:
-        epics = [c for c in work_remind.board_cards_all() if c.get("issue_type") == "epic" and c.get("status") != "closed"
-                 and flow.FLOW_LABEL in (c.get("labels") or [])]
+        epics = open_epics(limits, now, not dry)
         workers = busy_hubs(now)
-    except (RuntimeError, OSError, ValueError, subprocess.TimeoutExpired) as err:
-        return 1, {"status": f"unavailable {type(err).__name__}", "rows": []}
+    except (board_cards.Fail, OSError, ValueError) as err:
+        return 1, {"status": f"unavailable {str(err)[:80]}", "rows": []}
     if workers is None:
         return 1, {"status": "unavailable worker-list", "rows": []}
     waiting, status, st = waiting_hubs(now), live_status(), rw.load_state_at(STATE)
