@@ -49,6 +49,7 @@ CARD_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$")
 WAKE_SWITCH = ".thread-wake.on"
 WAKE_STATE = "thread-wake.json"
 WAKE_TEXT = "Slack 답 도착: bd show {card}"
+WAKE_BOX_TEXT = "Slack 답 도착(카드 기록은 늦음): main_inbox.py read --since-offset --box {box}"  # 카드 코멘트를 못 남겼을 때. 카드를 열어도 답이 없으므로 상자를 가리킴
 WAKE_PER_RUN = 3                # 회차당 입력창 전송 시도 상한
 WAKE_BUDGET_S = 60              # 회차당 입력창 전송에 쓰는 시간 상한. 넘으면 남은 알림은 다음 회차로
 WAKE_MAX_TRIES = actions.BLOCK_RETRIES  # 막힘 재시도 횟수 = 결정 답 전달 경로와 같은 값
@@ -57,6 +58,10 @@ WAKE_MAX_AGE_S = 3600           # 대기열 항목 나이 상한. 넘으면 세�
 ROUTE_FAIL_MAX = 3               # 한 답글의 전달(bd 쓰기)이 이 횟수만큼 실패하면 확인 카드로 넘기고 다음 답글로 진행
 ROUTE_FAILS = "feedback-route.fails.json"
 HANDOFF_TEXT = "작업 공간 카드 {card} 에 Slack 답 도착, 세션에 알리지 못함({why}). 답 첫 줄: {head}. 원문: bd show {card}"
+NOTES_DIR = "answer-notes"       # 작업판이 느려 못 남긴 답 코멘트. 파일 하나 = 코멘트 하나. 소켓·폴러가 동시에 써도 잠금 불필요
+NOTES_PER_RUN = 3                # 회차당 코멘트 재시도 상한
+NOTES_BUDGET_S = 20              # 넘으면 새 코멘트를 시작하지 않음. 같은 회차의 보고 전송 시간을 뺏지 않게
+COORD_WS_RE = re.compile(r"^coord-(" + re.escape(BOX_HEAD) + r"[a-z0-9-]+)-hub$")  # feature_open.sh 가 만드는 코디네이터 작업 공간 폴더 이름
 HEAD_MAX = 80                   # 넘기는 줄에 넣는 답 첫 줄 요약 길이 상한
 EMPTY_BODY = "(본문 없음)"        # 본문·첨부가 모두 빈 답글의 대체 본문(상자 쓰기가 본문 필요 오류를 내지 않게)
 HANDOFF_FAIL_MAX = ROUTE_FAIL_MAX  # 부모로 넘기기가 이 횟수 실패하면 포기(대기열에서 뺌)
@@ -352,19 +357,82 @@ def card_decision(rec):
 
 def answer_to_ws(card_id, ws, ts, text, kind="answer"):
     """결정 버튼 답(kind answer)이나 직접 입력 질문(question)을 그 결정을 올린 세션에 전달. 스레드 글 답과 같은 길: 세션 상자 한 줄 → 카드 코멘트 → 입력창 알림.
-    기능 카드(epic)로 올린 결정은 기능 코디네이터 상자, 그 밖은 작업 공간 카드 상자. 반환 = 상자 이름. 상자·코멘트 쓰기 실패는 예외(부르는 쪽이 메인으로 넘김).
-    입력창 알림은 실패해도 대기열에 남아 폴러 회차가 다시 시도하므로 전달 실패로 치지 않음"""
-    row = card_row(card_id)
-    box = BOX_HEAD + slug_of(row) if row and is_feature(row) else box_of(card_id)
+    기능 카드(epic)로 올린 결정은 기능 코디네이터 상자, 그 밖은 작업 공간 카드 상자. 반환 = 상자 이름. 상자 쓰기 실패만 예외(부르는 쪽이 메인으로 넘김).
+    작업판 조회·코멘트 실패는 전달 실패로 치지 않음(11-25 작업판이 느린 동안 승인이 코디네이터에 안 닿음): 상자는 작업 공간 이름으로 정하고 코멘트는 폴러 회차가 다시 남김.
+    입력창 알림은 실패해도 대기열에 남아 폴러 회차가 다시 시도함"""
+    box = answer_box(card_id, ws)
     main_inbox.append(kind, text, SOURCE, ref=f"{card_id} slack:{ts}", box=box)
-    cards.bd("comments", "add", card_id, f"Slack 결정 {'질문' if kind == 'question' else '답'}: {text}")
+
+    note, noted = f"Slack 결정 {'질문' if kind == 'question' else '답'}: {text}", True
+    try:
+        cards.bd("comments", "add", card_id, note)
+    except cards.Fail:
+        noted = False
+        keep_note(card_id, ts, note)
+
     if ws:
-        queue_wake(card_id, ws, ts, text)
+        queue_wake(card_id, ws, ts, text, box="" if noted else box)
         try:
             run_wakes()
         except (cards.Fail, OSError, ValueError):
             pass
     return box
+
+
+def answer_box(card_id, ws):
+    """답을 넣을 상자 이름. 작업판을 못 읽으면 작업 공간 폴더 이름으로 기능 코디네이터인지 판정"""
+    try:
+        row = card_row(card_id)
+    except cards.Fail:
+        m = COORD_WS_RE.match(os.path.basename(str(ws or "").rstrip("/")))
+        return m.group(1) if m else box_of(card_id)
+    return BOX_HEAD + slug_of(row) if row and is_feature(row) else box_of(card_id)
+
+
+def keep_note(card_id, ts, note):
+    """못 남긴 카드 코멘트 보관. 보관까지 실패해도 답은 상자에 있으므로 전달은 계속함"""
+    d = os.path.join(hub_dir(), NOTES_DIR)
+    try:
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        name = f"{time.time_ns()}-{os.getpid()}"
+        tmp = os.path.join(d, name + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"card": card_id, "ts": str(ts), "note": note}, f, ensure_ascii=False)
+        os.replace(tmp, os.path.join(d, name + ".json"))
+    except OSError:
+        pass
+
+
+def retry_notes():
+    """보관한 코멘트를 오래된 것부터 다시 남김. 실패하면 이번 회차는 멈춤(작업판이 아직 느림).
+    시간 초과 뒤 실제로는 남았을 수 있어 같은 글이 있으면 건너뜀. 반환 = 처리한 카드 목록"""
+    d, done = os.path.join(hub_dir(), NOTES_DIR), []
+    try:
+        names = sorted(n for n in os.listdir(d) if n.endswith(".json"))
+    except OSError:
+        return done
+    start = time.monotonic()
+    for n in names[:NOTES_PER_RUN]:
+        if time.monotonic() - start > NOTES_BUDGET_S:
+            break
+        path = os.path.join(d, n)
+        try:
+            with open(path, encoding="utf-8") as f:
+                it = json.load(f)
+            card, note = it["card"], it["note"]
+        except (OSError, ValueError, KeyError, TypeError):
+            os.replace(path, path + ".bad")  # 깨진 파일이 뒤 항목을 막지 않게 빼 두고 내용은 남김
+            continue
+        try:
+            have = cards.bd_json("comments", card) or []
+            if not any(isinstance(c, dict) and c.get("text") == note for c in have):
+                cards.bd("comments", "add", card, note)
+        except cards.Fail:
+            os.replace(path, os.path.join(d, f"{time.time_ns()}-{n.split('-', 1)[-1]}"))  # 뒤로 돌려 지워진 카드 하나가 나머지를 막지 않게
+            break
+        os.unlink(path)
+        done.append(card)
+    return done
 
 
 # ---- 세션 입력창 알림 ------------------------------------------------------------------------
@@ -389,7 +457,7 @@ def save_wake(items):
     os.replace(tmp, path)
 
 
-def queue_wake(card_id, ws, ts="", text="", now=None):
+def queue_wake(card_id, ws, ts="", text="", now=None, box=""):
     """입력창 알림 대기열에 추가. 같은 카드의 알림이 이미 대기 중이면 한 항목으로 합침(입력창 문구는 같고 카드 코멘트에 답이 다 있음).
     항목은 묶인 답글의 (ts, 첫 줄)을 모두 가져, 부모로 넘길 때 답마다 한 줄씩 냄"""
     items = load_wake()
@@ -397,9 +465,11 @@ def queue_wake(card_id, ws, ts="", text="", now=None):
     for x in items:
         if x["card"] == card_id:
             x.setdefault("replies", []).append(reply)
+            if box:
+                x["box"] = box
             save_wake(items)
             return False
-    items.append({"card": card_id, "ws": ws, "tries": 0, "next_at": 0, "at": int(time.time() if now is None else now), "replies": [reply]})
+    items.append({"card": card_id, "ws": ws, "tries": 0, "next_at": 0, "at": int(time.time() if now is None else now), "replies": [reply], **({"box": box} if box else {})})
     save_wake(items)
     return True
 
@@ -478,7 +548,7 @@ def run_wakes(now=None):
             keep.append(it)
             continue
         sent += 1
-        status, _tries, codes, _found = actions.deliver_ws(it["ws"], WAKE_TEXT.format(card=it["card"]))
+        status, _tries, codes, _found = actions.deliver_ws(it["ws"], WAKE_BOX_TEXT.format(box=it["box"]) if it.get("box") else WAKE_TEXT.format(card=it["card"]))
         row["wake"] = status
         if status in (actions.BLOCKED, actions.FAILED):
             it["tries"] = it.get("tries", 0) + 1
@@ -497,6 +567,24 @@ def run_wakes(now=None):
 
 # ---- 한 회차 ---------------------------------------------------------------------------------
 def once(dry_run=False):
+    """한 회차. 답글 전달이 작업판 실패로 멈춰도(위치를 저장하지 않아 다음 회차에 다시) 대기 중인 입력창 알림은 처리함"""
+    try:
+        res = route_new(dry_run)
+    except cards.Fail:
+        if not dry_run:
+            run_wakes()
+        raise
+    if not dry_run:
+        wakes = run_wakes()
+        if wakes:
+            res["wake"] = wakes
+        notes = retry_notes()
+        if notes:
+            res["notes"] = notes
+    return res
+
+
+def route_new(dry_run=False):
     inbox, opath, rpath = paths()
     res = {"routed": [], "note": ""}
     try:
@@ -535,10 +623,6 @@ def once(dry_run=False):
                     queue_wake(got["card"], ws_of(next(c for c in by_ts[got["parent_ts"]] if c["id"] == got["card"])), r.get("ts"), body(r))
         if not dry_run:
             main_inbox.save_offset(opath, st.st_ino, end)
-    if not dry_run:
-        wakes = run_wakes()
-        if wakes:
-            res["wake"] = wakes
     return res
 
 

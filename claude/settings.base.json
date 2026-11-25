@@ -105,6 +105,7 @@
     "OPENVIKING_RECALL_COMPRESS": "off"
   },
   "model": "opus",
+  "autoContinueAtUsageLimit": true,
   "hooks": {
     "PreToolUse": [
       {
@@ -156,6 +157,17 @@
             "command": "~/.claude/hooks/night-ask.sh ~/.claude/hooks/jira-approval-guard.sh",
             "timeout": 10,
             "statusMessage": "jira-approval-guard 검사 중"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__(atlassian|claude_ai_Atlassian_MCP)__(addOrEditJiraIssueComment|executeWrite)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I ~/.claude/hooks/lib/jira_evidence_guard.py",
+            "timeout": 10,
+            "statusMessage": "Jira 댓글 검사 중"
           }
         ]
       },
@@ -276,6 +288,18 @@
             "type": "command",
             "command": "~/.claude/hooks/session-start.sh",
             "timeout": 20
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "matcher": "rate_limit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/usage-limit.sh",
+            "timeout": 10
           }
         ]
       }

@@ -18,7 +18,7 @@ kind=decide 는 스레드 답글이 아니라 slack_notify.sh --kind decide --op
 복사본이 없는 옛 기록은 원본을 읽는데, launchd 에서는 macOS 개인정보 보호(TCC)가 ~/Documents 등 읽기를 막아 curl 이 종료 코드 26 으로 실패함.
 올리기 전에 직접 열어 보고 막히면 재시도 없이 'UNREADABLE' 한 줄만 스레드에 남김(다시 hub_report.py add 로 보고하면 접수 때 복사됨).
 없는 파일·폴더·크기 초과는 입력 문제라 재시도 없이 스레드에 '첨부 실패: 이유' 한 줄만 남기고 보고는 계속함. 네트워크 등 일시 실패는 보고 재시도 규칙(BACKOFF)을 따르고 올린 파일은 다시 올리지 않음.
-HTML 은 html_pdf.sh 로 PDF(Slack 에서 바로 열림), html_preview.sh 로 390폭 미리보기 PNG 를 만들어 같은 묶음에 넣음. 못 만든 것은 생략하고 계속함.
+HTML 이 있는 보고는 첨부를 여기서 올리지 않고 derived 표시만 남김. report_derived.py 가 따로 돌며 PDF(html_pdf.sh)·390폭 미리보기(html_preview.sh)를 만들어 전부 메시지 하나로 올림.
 본문에 로컬 경로만 있고 첨부가 없으면 로그에 경고(접수 경고와 같은 판정 hub_report.unattached_paths).
 
 환경: LRM_HUB_DIR 작업 폴더 · LRM_REPORT_OUTBOX outbox · LRM_REPORT_STATE 상태 파일 · LRM_REPORT_NOTIFY 전송 스크립트(기본 같은 폴더 slack_notify.sh) · LRM_REPORT_PREVIEW HTML 미리보기 스크립트(기본 같은 폴더 html_preview.sh) · LRM_REPORT_PDF HTML→PDF 스크립트(기본 같은 폴더 html_pdf.sh)
@@ -54,9 +54,8 @@ PERMANENT_RC = 2  # 알림 스크립트 종료 코드: 설정·인자·양식 �
 # 종료 코드 2 지만 사용자가 파일을 만들면 풀리는 환경 문제 = 일시. stderr 전체가 이 줄과 같을 때만 인정(입력값이 섞인 메시지를 부분 일치로 분류하지 않음)
 USER_FIX_LINES = ("slack-bot.env 없음 — 사용자 설정 필요",)
 NOTIFY_TIMEOUT_S = 30
+GROUP_TRIES = 2  # 묶음 업로드 시도 상한. 그 뒤는 하나씩 올림
 UPLOAD_TIMEOUT_S = 120  # 파일 업로드는 본문 전송보다 오래 걸릴 수 있음
-PREVIEW_TIMEOUT_S = 30
-GROUP_TRIES = 2  # 묶음 업로드 시도 상한. 그 뒤 회차는 하나씩 올림
 PREVIEW_SUFFIX = "#preview:"  # 미리보기 단계 키 = 원본 경로 + 이 접미사 + 원본 내용 해시(att_done). 임시 경로에 기대지 않아 회차가 바뀌어도 같은 키
 PDF_SUFFIX = "#pdf:"  # PDF 단계 키. 미리보기와 같은 규칙(원본 경로 + 접미사 + 내용 해시)
 HTML_EXTS = (".html", ".htm")
@@ -94,6 +93,9 @@ CARD_GAP_FIX = "카드 설명에 '무엇:'·'왜:' 줄 추가(bd update {card} -
 WHY_GAP_FIX = "카드 설명에 '왜:' 줄 추가(bd update {card} -d ...). 보고는 이미 '이유 미기재' 표시로 나갔고, 추가하면 스레드 첫 메시지가 고쳐짐"
 BD_FALLBACK = "/opt/homebrew/bin/bd"  # launchd 의 짧은 PATH 에서 bd 를 못 찾을 때
 BD_TIMEOUT_S = 10
+BD_ROUND_S = 12  # 회차당 전송 전 bd 조회 시간 합. 넘으면 내보내기 파일로 읽어 전송할 시간을 남김
+ATTACH_RESCUE_S = 300
+BD_MIN_S = 1  # 남은 시간이 이보다 짧으면 bd 를 부르지 않음
 UNREADABLE = "백그라운드에서 읽을 수 없는 폴더 — 다시 보고"
 WS_THREAD_MAX = 10  # 기능 하나가 동시에 여는 작업 공간 스레드 상한. 넘으면 새 작업 공간 보고는 기능 스레드 답글로 감(환경 LRM_WS_THREAD_MAX)
 
@@ -117,6 +119,7 @@ class Conf:
     hold_max_s: float = HOLD_MAX_S
     bd: str = ""
     board: str = ""
+    bd_left: float = BD_ROUND_S
     cards: dict = field(default_factory=dict)  # 한 Conf(회차) 안의 카드 조회 캐시
 
     def __post_init__(self) -> None:
@@ -330,13 +333,41 @@ def is_card_topic(rep: dict) -> bool:
 
 
 def bd_json(conf: Conf, *args: str) -> "list | None":
-    """작업판 bd 조회 → JSON 목록. 실패·시간 초과·JSON 아님은 None(stderr 경고 줄은 무시)"""
+    """작업판 bd 조회 → JSON 목록. 실패·JSON 아님은 None(stderr 경고 줄은 무시).
+    시간 초과·회차 조회 시간 소진은 bd 내보내기 파일로 대신 읽음(몇십 초 늦을 수 있음). 파일도 없으면 None"""
+    if conf.bd_left < BD_MIN_S:
+        return exported_rows(conf, args)
+    start = time.monotonic()
     try:
-        p = subprocess.run([conf.bd, "-C", conf.board, *args, "--json"], capture_output=True, text=True, timeout=BD_TIMEOUT_S)
+        p = subprocess.run([conf.bd, "-C", conf.board, *args, "--json"], capture_output=True, text=True, timeout=min(BD_TIMEOUT_S, conf.bd_left))
         d = json.loads(p.stdout) if p.returncode == 0 else None
-    except (OSError, subprocess.TimeoutExpired, ValueError):
+    except subprocess.TimeoutExpired:
+        conf.bd_left = 0  # 한 번 초과한 회차는 작업판이 느린 상태라 더 기다리지 않음
+        return exported_rows(conf, args)
+    except (OSError, ValueError):
         return None
+    finally:
+        conf.bd_left -= time.monotonic() - start
     return d if isinstance(d, list) else None
+
+
+def exported_rows(conf: Conf, args: tuple) -> "list | None":
+    """bd_json 이 쓰는 조회(show <id> · list --parent <id> · list -l <label>)를 내보내기 파일(.beads/issues.jsonl)로 흉내.
+    모르는 조회·파일 없음·깨진 줄은 None"""
+    opt = lambda name: args[args.index(name) + 1] if name in args else ""  # noqa: E731
+    card, parent, label = args[1] if args[0] == "show" else "", opt("--parent"), opt("-l")
+    if not (card or parent or label):
+        return None
+    try:
+        with open(os.path.join(conf.board, ".beads", "issues.jsonl"), encoding="utf-8") as f:
+            rows = [r for r in map(json.loads, f) if r.get("_type", "issue") == "issue"]
+    except (OSError, ValueError):
+        return None
+    if card:
+        return [r for r in rows if r.get("id") == card] or None
+    if parent:
+        return [r for r in rows if any(d.get("type") == "parent-child" and d.get("depends_on_id") == parent for d in r.get("dependencies") or [])]
+    return [r for r in rows if label in (r.get("labels") or []) and r.get("issue_type") == (opt("-t") or r.get("issue_type"))]
 
 
 def first_sentence(line: str) -> str:
@@ -734,41 +765,6 @@ def gc_staged(conf: Conf) -> None:
                 shutil.rmtree(d, ignore_errors=True)
 
 
-def make_preview(conf: Conf, path: str, digest: str, deadline: float) -> str:
-    """HTML → 390폭 미리보기 PNG 경로. 경로는 상태 폴더 아래 내용 해시로 고정(응답 유실 복구가 보낸 기록의 경로로 찾음).
-    스크립트·Chrome 이 없거나 실패하면 빈 문자열(첨부는 계속)"""
-    left = deadline - time.monotonic()
-    if not (os.access(conf.preview, os.X_OK) and left > 0):
-        return ""
-    out = os.path.join(os.path.dirname(os.path.abspath(conf.state)), "report-previews", f"{digest}-{os.path.splitext(os.path.basename(path))[0]}-preview.png")
-    with contextlib.suppress(OSError):
-        os.makedirs(os.path.dirname(out), exist_ok=True)
-    try:
-        p = subprocess.run([conf.preview, os.path.abspath(os.path.expanduser(path)), out], capture_output=True, text=True, timeout=min(PREVIEW_TIMEOUT_S, left))
-    except (subprocess.TimeoutExpired, OSError):
-        return ""
-    return out if p.returncode == 0 and os.path.isfile(out) else ""
-
-
-def make_pdf(conf: Conf, path: str, digest: str, deadline: float) -> str:
-    """HTML → PDF 경로. Slack 이 HTML 을 웹 페이지로 열지 않아 바로 열리는 PDF 를 함께 올림.
-    파일 이름이 Slack 에 그대로 보이므로 해시는 폴더 이름에만 둠. 스크립트·Chrome 이 없거나 실패하면 빈 문자열(첨부는 계속)"""
-    left = deadline - time.monotonic()
-    if not (os.access(conf.pdf, os.X_OK) and left > 0):
-        return ""
-    out = os.path.join(os.path.dirname(os.path.abspath(conf.state)), "report-previews", digest, os.path.splitext(os.path.basename(path))[0] + ".pdf")
-    with contextlib.suppress(OSError):
-        os.makedirs(os.path.dirname(out), exist_ok=True)
-    try:
-        p = subprocess.run([conf.pdf, os.path.abspath(os.path.expanduser(path)), out], capture_output=True, text=True, timeout=min(PREVIEW_TIMEOUT_S, left))
-    except (subprocess.TimeoutExpired, OSError):
-        return ""
-    return out if p.returncode == 0 and os.path.isfile(out) and os.path.getsize(out) > 0 else ""
-
-
-MAKERS = {PDF_SUFFIX: make_pdf, PREVIEW_SUFFIX: make_preview}
-
-
 def attach_failed(conf: Conf, rep: dict, target: str, name: str, why: str, deadline: float) -> None:
     """스레드에 '첨부 실패: 이유' 한 줄. 이 줄 전송이 실패해도 보고는 계속함(원인은 로그에 남음)"""
     line = f"첨부 실패: {name} — {why}"
@@ -795,63 +791,73 @@ def uploaded_id(conf: Conf, src: str, target: str, since: int) -> str:
     return ""
 
 
-def drop_made(path: str) -> None:
-    """올렸거나 포기한 딸린 파일 정리. PDF 의 해시 폴더는 비었을 때만 지워짐"""
-    with contextlib.suppress(OSError):
-        os.unlink(path)
-    if path.endswith(".pdf"):
-        with contextlib.suppress(OSError):
-            os.rmdir(os.path.dirname(path))
+def send_files(conf: Conf, rep: dict, rs: dict, st: dict, target: str, deadline: float) -> None:
+    """첨부 파일을 target 스레드에 메시지 하나로 묶어 올림. HTML 이 있으면 PDF·미리보기와 한 메시지가 되도록 전부 report_derived.py 에 넘김.
+    업로드 완료(file_id)를 att_done 에 저장해 재시도 때 건너뜀(응답 유실은 sent 기록으로 복구).
+    입력 문제(파일 없음·크기 초과·민감 파일)는 한 줄 알리고 나머지만 묶음. 일시 실패는 NotifyError 로 올려 보고 재시도 규칙을 탐"""
+    if (rs.get("derived") or {}).get("bundle"):
+        return
+    if not isinstance(rs.get("att_done"), dict):
+        rs["att_done"] = {}
+    done = rs["att_done"]
+    since = rs.setdefault("att_start", int(time.time()))
+    if any(is_html(p) and p not in done and not input_problem(source_of(rep, p)) for p in rep["files"]):
+        rs["derived"] = {"target": target, "bundle": True}
+        save_state(conf.state, st)
+        return
+    save_state(conf.state, st)  # 첫 시도 시각(att_start)을 업로드 전에 저장
+    items = []
+    for path in dict.fromkeys(rep["files"]):
+        if path in done:
+            continue
+        src, name = source_of(rep, path), os.path.basename(path) or path
+        if fid := uploaded_id(conf, src, target, since):
+            done[path] = fid
+        elif why := input_problem(src):
+            attach_failed(conf, rep, target, name, why, deadline)
+            done[path] = ""
+        else:
+            items.append((path, src, name))
+        save_state(conf.state, st)
+    upload_all(conf, rep, target, items, rs, done, lambda: save_state(conf.state, st), deadline)
+    if any(is_html(p) and done.get(p) for p in rep["files"]):
+        rs.setdefault("derived", {"target": target})  # 분리 전 방식으로 이미 올라간 HTML. PDF·미리보기만 report_derived.py 가 올림
+        save_state(conf.state, st)
 
 
-def prepare_files(conf: Conf, rep: dict, rs: dict, st: dict, deadline: float) -> list:
-    """아직 안 올린 첨부와 HTML 딸린 파일의 (단계 키, 올릴 경로, 표시 이름, 만든 파일인가) 목록.
-    만든 딸린 파일은 att_made 에 남겨 다음 회차가 다시 만들지 않음(만들다 시간이 다 되면 넘기고 이어서 만듦)"""
-    done, made_at = rs["att_done"], rs["att_made"]
-    items, seen = [], set()
-    for path in rep["files"]:
-        name, origin = os.path.basename(path) or path, source_of(rep, path)
-        digest = content_hash(origin) if path.lower().endswith(HTML_EXTS) else ""
-        jobs = [(path, "")] + ([(path + s + digest, s) for s in DERIVED] if digest else [])
-        for key, suffix in jobs:
-            if key in done or key in seen:
-                continue
-            seen.add(key)
-            src = made_at.get(key, "") if suffix else origin
-            if suffix and not os.path.isfile(src):
-                if deadline - time.monotonic() <= 0:
-                    raise NotifyError("회차 시간 예산 초과", counts=False)  # 시간이 없어 못 만든 것은 생략으로 굳히지 않고 다음 회차로
-                src = MAKERS[suffix](conf, origin, digest, deadline)
-                if not src and deadline - time.monotonic() <= 0:
-                    raise NotifyError("회차 시간 예산 초과", counts=False)
-                if not src:
-                    log(conf, f"{rep['id']} {DERIVED[suffix][1]} 생략: {name}")
-                    done[key] = ""
-                    save_state(conf.state, st)
-                    continue
-                made_at[key] = src
-                save_state(conf.state, st)
-            items.append((key, src, os.path.basename(src) if suffix else name, bool(suffix)))
-    return items
+def is_html(path: str) -> bool:
+    return path.lower().endswith(HTML_EXTS)
 
 
-def finish_file(conf: Conf, rs: dict, st: dict, item: tuple, fid: str) -> None:
-    key, src, _, made = item
-    rs["att_done"][key] = fid
-    rs["att_made"].pop(key, None)
-    if made:
-        drop_made(src)
-    save_state(conf.state, st)
+def input_problem(src: str) -> str:
+    return hub_report.file_problem(src) or read_problem(src)
 
 
-def upload_group(conf: Conf, rep: dict, rs: dict, st: dict, target: str, items: list, deadline: float) -> None:
-    """파일 여러 개를 메시지 하나로 올림. 영구 오류면 하나씩 다시 올려 문제 파일만 실패로 알림"""
+def upload_all(conf: Conf, rep: dict, target: str, items: list, rec: dict, done: dict, save, deadline: float) -> None:
+    """(단계 키, 경로, 표시 이름) 목록을 메시지 하나로 올림. 묶음 시도가 GROUP_TRIES 회를 넘으면 하나씩 올림:
+    합친 크기가 시간 예산을 넘거나 한 파일만 실패해도 나머지는 가게 함. 하나씩일 때의 일시 실패는 나머지를 올린 뒤 NotifyError"""
+    if not items:
+        return
+    if deadline - time.monotonic() <= 0:
+        raise NotifyError("회차 시간 예산 초과", counts=False)
+    solo = rec.get("att_tries", 0) >= GROUP_TRIES
+    if len(items) > 1 and not solo:
+        rec["att_tries"] = rec.get("att_tries", 0) + 1  # 호출 전에 저장. 중간에 죽은 시도도 셈
+        save()
+    failed = None
+    for group in ([[it] for it in items] if solo else [items]):
+        try:
+            upload_group(conf, rep, target, group, done, save, deadline)
+        except NotifyError as err:
+            failed = failed or err
+    if failed:
+        raise failed
+
+
+def upload_group(conf: Conf, rep: dict, target: str, items: list, done: dict, save, deadline: float) -> None:
+    """알림 스크립트 1회 호출. 영구 오류면 하나씩 다시 올려 문제 파일만 실패로 알림"""
     label = items[0][2] if len(items) == 1 else f"{len(items)}개"
     args = ["--tag", rep["hub"], "--thread", target] + attached_args(rep) + [f"첨부: {label}"] + [it[1] for it in items]
-    can_try = deadline - time.monotonic() > 0
-    if can_try and len(items) > 1:
-        rs["att_tries"] = rs.get("att_tries", 0) + 1  # 호출 전에 저장. 중간에 죽은 시도도 셈
-        save_state(conf.state, st)
     try:
         fids = run_notify(conf, args, deadline, upload=True).split(",")
     except NotifyError as err:
@@ -859,41 +865,15 @@ def upload_group(conf: Conf, rep: dict, rs: dict, st: dict, target: str, items: 
             raise NotifyError(f"첨부 실패: {label} — {err}", counts=err.counts)
         if len(items) > 1:
             for it in items:
-                upload_group(conf, rep, rs, st, target, [it], deadline)
+                upload_group(conf, rep, target, [it], done, save, deadline)
             return
         attach_failed(conf, rep, target, label, str(err), deadline)
-        finish_file(conf, rs, st, items[0], "")
-        return
-    fids += [""] * (len(items) - len(fids))
-    for it, fid in zip(items, fids):  # 묶음 전체를 올림으로 표시한 뒤 저장(일부만 남아 다시 올라가지 않게)
-        rs["att_done"][it[0]] = fid or "uploaded"
-    save_state(conf.state, st)
-    for it in items:
-        finish_file(conf, rs, st, it, rs["att_done"][it[0]])
-
-
-def send_files(conf: Conf, rep: dict, rs: dict, st: dict, target: str, deadline: float) -> None:
-    """첨부 파일을 target 스레드에 메시지 하나로 묶어 올림. 업로드 완료(file_id)를 att_done 에 저장해 재시도 때 건너뜀(응답 유실은 sent 기록으로 복구).
-    입력 문제(파일 없음·크기 초과·민감 파일)는 한 줄 알리고 나머지만 묶음. 일시 실패는 NotifyError 로 올려 보고 재시도 규칙을 탐.
-    묶음이 GROUP_TRIES 회 실패하면 하나씩 올림: 합친 크기가 회차 시간 예산을 넘거나 한 파일만 거부되는 경우에도 나머지는 가게 함"""
-    for name in ("att_done", "att_made"):
-        if not isinstance(rs.get(name), dict):
-            rs[name] = {}
-    since = rs.setdefault("att_start", int(time.time()))
-    save_state(conf.state, st)  # 첫 시도 시각(att_start)을 업로드 전에 저장
-    ready = []
-    for item in prepare_files(conf, rep, rs, st, deadline):
-        src, label = item[1], item[2]
-        if fid := uploaded_id(conf, src, target, since):
-            finish_file(conf, rs, st, item, fid)
-        elif why := hub_report.file_problem(src) or read_problem(src):
-            attach_failed(conf, rep, target, label, why, deadline)
-            finish_file(conf, rs, st, item, "")
-        else:
-            ready.append(item)
-    solo = rs.get("att_tries", 0) >= GROUP_TRIES
-    for group in ([[it] for it in ready] if solo else [ready] if ready else []):
-        upload_group(conf, rep, rs, st, target, group, deadline)
+        fids, done[items[0][0]] = [], ""
+    else:
+        fids += [""] * (len(items) - len(fids))
+    for it, fid in zip(items, fids):
+        done[it[0]] = fid or "uploaded"
+    save()
 
 
 def card_attach(conf: Conf, topic: dict) -> None:
@@ -937,14 +917,18 @@ def parent_of(card: str) -> str:
 FEATURE_HUB = "feat-"  # feature_open.sh 가 만드는 기능 코디네이터 허브 이름 머리
 
 
-def feature_thread(conf: Conf, rep: dict) -> "tuple[str, str]":
-    """기능 코디네이터 허브의 보고가 모일 기능 epic 과 그 스레드 ts. 기능 허브가 아니거나 스레드가 아직 없으면 ("", "")"""
+def feature_thread(conf: Conf, rep: dict, st: dict) -> "tuple[str, str]":
+    """기능 코디네이터 허브의 보고가 모일 기능 epic 과 그 스레드 ts. 기능 허브가 아니거나 스레드가 아직 없으면 ("", "").
+    카드에 아직 안 붙은 스레드는 전송기 상태(topics)에서 찾음"""
     hub = rep.get("hub") or ""
     if not hub.startswith(FEATURE_HUB):
         return "", ""
     rows = bd_json(conf, "list", "-t", "epic", "-l", f"feature:{hub[len(FEATURE_HUB):]}", "--all", "--limit", "0") or []
     for row in rows:
         ts = next((lb.split(":", 1)[1] for lb in row.get("labels") or [] if lb.startswith("slack-thread:")), "")
+        topic = st["topics"].get(f"card:{row.get('id')}", {})
+        if not ts and topic.get("attached") is False:
+            ts = topic.get("ts", "")
         if ts:
             return row.get("id") or "", ts
     return "", ""
@@ -969,7 +953,7 @@ def open_topic(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
     key = topic_key(rep)
     card = rep.get("card")
     # 기능 허브 보고는 카드·티켓·허브 주제를 새로 열지 않고 기능 스레드 하나로 모음(11-19 스레드 흩어짐 지적)
-    epic, ts = feature_thread(conf, rep)
+    epic, ts = feature_thread(conf, rep, st)
     if ts and key != f"card:{epic}":
         st["topics"][key] = {"ts": ts, "channel": st["topics"].get(f"card:{epic}", {}).get("channel", ""), "shared": epic}
         save_state(conf.state, st)
@@ -993,24 +977,45 @@ def open_topic(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
     if card:
         st["topics"][key].update(card=card, ws=rep.get("ws") or "", attached=False)
     save_state(conf.state, st)
-    if card:
+    if card and rep.get("ws"):  # 작업 공간 스레드 수 상한이 카드 라벨을 세므로 미루지 않음. 나머지 카드는 전송 뒤 retry_attach
         card_attach(conf, st["topics"][key])
         save_state(conf.state, st)
 
 
-def retry_attach(conf: Conf, st: dict) -> None:
-    """붙이기에 실패했던 카드 스레드를 회차마다 다시 시도(보고를 더 안 올려도 카드가 스레드를 갖게)"""
-    changed = False
-    for t in st["topics"].values():
-        if t.get("card") and t.get("attached") is False:
-            card_attach(conf, t)
-            changed = True
-    if changed:
+def retry_attach(conf: Conf, st: dict, deadline: float) -> None:
+    """안 붙은 카드 스레드를 전송 뒤에 붙임(bd 가 느려도 보고를 막지 않게).
+    예산이 끝났어도 ATTACH_RESCUE_S 마다 1건은 시도해 밀린 연결이 계속 굶지 않게 하고(bd 가 느리면 1건이 2분도 걸려 전송 잠금을 쥠), 시도한 것은 뒤로 돌려 한 카드의 실패가 나머지를 막지 않게 함"""
+    waiting = [t for t in st["topics"].values() if t.get("card") and t.get("attached") is False]
+    waiting.sort(key=lambda t: t.get("attach_at", 0))
+    for t in waiting:
+        if time.monotonic() >= deadline and time.time() - max(w.get("attach_at", 0) for w in waiting) < ATTACH_RESCUE_S:
+            break
+        t["attach_at"] = int(time.time())
+        card_attach(conf, t)
         save_state(conf.state, st)
 
 
-def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
-    """보고 1건 전송. 단계(topic·body·line)마다 상태를 저장하고, 끝나면 결과 요약을 돌려줌. 실패는 NotifyError"""
+def card_waiting(rep: dict, st: dict) -> bool:
+    """이번 회차에 올릴 수 있는데 아직 안 올린 결정 카드인가"""
+    rs = st["reports"].get(rep["id"], {})
+    return rep["kind"] == "decide" and "body_ts" not in rs and rs.get("next_at", 0) <= time.time()
+
+
+def decisions_first(todo: list, st: dict) -> list:
+    """안 올린 결정 카드가 있는 주제 → 카드는 올렸고 첨부가 남은 결정 → 나머지 순서(안정 정렬). 같은 주제의 앞 글은 결정과 함께 당겨 스레드 안 순서를 지킴"""
+    last = {topic_key(r): i for i, r in enumerate(todo) if card_waiting(r, st)}
+
+    def rank(i: int) -> int:
+        rep = todo[i]
+        if i <= last.get(topic_key(rep), -1):
+            return 0
+        return 1 if rep["kind"] == "decide" and "body_ts" in st["reports"].get(rep["id"], {}) else 2
+    return [todo[i] for i in sorted(range(len(todo)), key=rank)]
+
+
+def deliver(conf: Conf, rep: dict, st: dict, deadline: float, defer_files: bool = False) -> dict:
+    """보고 1건 전송. 단계(topic·body·line)마다 상태를 저장하고, 끝나면 결과 요약을 돌려줌. 실패는 NotifyError.
+    defer_files: 본문만 올리고 첨부는 다음 회차로(보고당 1번만)"""
     rs = st["reports"].setdefault(rep["id"], {})
     rs.setdefault("task", rep["task"])  # 진행 목록이 작업별 첨부 메시지를 찾는 데 씀
     decide = rep["kind"] == "decide"
@@ -1030,7 +1035,7 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
         save_state(conf.state, st)
         return {"topic_ts": rep["thread"], "body_ts": rs["body_ts"], "line_ts": "", "pinned": True}
     # 카드를 준 결정은 그 작업 스레드 안에. 기능 코디네이터의 결정은 카드 지정이 없어도 기능 스레드 안에(승인과 작업 이력을 한 스레드로). 그 밖의 결정은 맨 위 글
-    threaded = not decide or bool(rep.get("card")) or bool(feature_thread(conf, rep)[1])
+    threaded = not decide or bool(rep.get("card")) or bool(feature_thread(conf, rep, st)[1])
     if decide and rep.get("top"):
         threaded = False  # 사용자가 새 메시지로 올리라고 한 결정: 스레드를 열지도 찾지도 않음
     if threaded and key not in st["topics"]:
@@ -1051,6 +1056,10 @@ def deliver(conf: Conf, rep: dict, st: dict, deadline: float) -> dict:
             rs["body_ts"] = run_notify(conf, ["--tag", rep["hub"], "--kind", kind] + thread_args(topic["ts"]) + broadcast_args(rep) + attached_args(rep) + [body_text(rep, shared, asks)], deadline)
             close_asks(conf, topic["ts"], asks)
         save_state(conf.state, st)
+    if defer_files and rep["files"] and not rs.get("files_deferred"):
+        rs["files_deferred"] = True  # 한 번만 미룸. 뒤 카드가 오래 못 나가도 첨부가 계속 밀리지 않음
+        save_state(conf.state, st)
+        raise NotifyError("기다리는 결정 카드를 먼저 올림", counts=False)
     send_files(conf, rep, rs, st, topic["ts"] if threaded else rs["body_ts"], deadline)
     if "line_ts" not in rs:
         parent = read_json_file(conf.sync_state).get("ts", "")
@@ -1281,10 +1290,11 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float, boards=False) -> d
                 warn_pending(conf, r, st, deadline)
     if not dry:
         gc_staged(conf)
-        retry_attach(conf, st)
     todo = [r for r in reports if not st["reports"].get(r["id"], {}).get("sent") and r["id"] not in st["bad"]]
     out["pending"] = len(todo)
     if not todo:
+        if not dry:
+            retry_attach(conf, st, deadline)
         if boards:
             out["lines"].extend(refresh_boards(conf, st, deadline, dry))
         return out
@@ -1296,12 +1306,13 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float, boards=False) -> d
         return out
     blocked = set()  # 앞 보고가 실패한 주제는 순서가 바뀌지 않게 이번 회차에 건너뜀
     tried = 0
-    for rep in todo:
+    ordered = decisions_first(todo, st)
+    for pos, rep in enumerate(ordered):
         key = topic_key(rep)
         if key in blocked:
             continue  # 건너뛴 보고는 시도 건수에 세지 않음(막힌 주제가 다른 주제를 굶기지 않게)
-        if tried >= conf.max_per_run:
-            break
+        if tried >= conf.max_per_run or (tried and time.monotonic() >= deadline):
+            break  # 예산이 끝난 뒤에는 조회만 하고 못 보내므로 다음 보고를 시작하지 않음
         fails = st["reports"].setdefault(rep["id"], {})
         if fails.get("next_at", 0) > time.time():
             blocked.add(key)  # 대기 중. 같은 주제의 뒤 보고도 순서 유지를 위해 함께 대기
@@ -1328,8 +1339,10 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float, boards=False) -> d
             log(conf, line)
             continue
         try:
-            res = deliver(conf, rep, st, deadline)
-            drop_staged(conf, rep)
+            defer = rep["kind"] == "decide" and any(topic_key(r) != key and card_waiting(r, st) for r in ordered[pos + 1:])  # 첨부가 뒤 카드의 예산을 다 쓰지 않게
+            res = deliver(conf, rep, st, deadline, defer)
+            if "derived" not in fails:  # 딸린 파일을 만들 원본이 필요하면 그때까지 둠
+                drop_staged(conf, rep)
         except NotifyError as err:
             if not err.counts:
                 blocked.add(key)
@@ -1356,6 +1369,7 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float, boards=False) -> d
         out["lines"].append(line)
         log(conf, line)
     out["status"] = "partial" if out["failed"] else "done"
+    retry_attach(conf, st, deadline)
     if boards:
         out["lines"].extend(refresh_boards(conf, st, deadline))
     return out

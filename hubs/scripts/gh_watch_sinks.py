@@ -41,38 +41,107 @@ def cards_for(cards, branch):
     return [cid for cid in out if parent.get(cid) not in hit]
 
 
-def to_board(events, log):
-    evs = [e for e in events if (e["kind"], e.get("result")) in BOARD_KINDS and e.get("branch")]
-    if not evs:
+def already_noted(comments, ev):
+    """이 이벤트의 코멘트가 카드에 이미 있는지. 시간 초과로 끊긴 쓰기가 실제로는 들어갔을 수 있어 재시도 전에 확인함"""
+    if ev["kind"] == "pr_merged":
+        pat = re.compile(r"\[gh-watch\]\s+PR\s+#%s\s+병합됨" % ev["pr"])
+        return any(pat.search(str(c.get("text") or "")) for c in comments)
+    text = board_text(ev)
+    return any(str(c.get("text") or "") == text for c in comments)
+
+
+class Board:
+    """작업판(bd) 호출. 실패·시간 초과·JSON 오류는 None/False"""
+
+    def __init__(self, folder):
+        self.folder = folder
+
+    def _run(self, *args):
+        try:
+            p = subprocess.run([BD, *args], cwd=self.folder, env=dict(os.environ, BD_ACTOR="gh-watch"),
+                               capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        return p.stdout if p.returncode == 0 else None
+
+    def _json(self, *args):
+        out = self._run(*args)
+        try:
+            return None if out is None else json.loads(out or "[]")
+        except ValueError:
+            return None
+
+    def cards(self):
+        return self._json("list", "--all", "--json", "--limit", "0")
+
+    def comments(self, cid):
+        return self._json("comments", cid, "--json")
+
+    def comment(self, cid, text):
+        return self._run("comment", cid, text) is not None
+
+
+def note_event(board, cards, item):
+    """item 의 이벤트를 맞는 카드에 기록. 반환 (기록 수, 맞는 카드 수, 성공). 끝난 카드는 item['done'] 에 남겨 다시 쓰지 않음"""
+    ev, sent = item["ev"], 0
+    ids = cards_for(cards, ev["branch"])
+    for cid in ids:
+        if cid in item["done"]:
+            continue
+        if item["tries"]:
+            got = board.comments(cid)
+            if got is None:
+                return sent, len(ids), False
+            if already_noted(got, ev):
+                item["done"].append(cid)
+                continue
+        if not board.comment(cid, board_text(ev)):
+            return sent, len(ids), False
+        item["done"].append(cid)
+        sent += 1
+    return sent, len(ids), True
+
+
+def to_board(events, state, conf, log):
+    """카드 코멘트 기록. 실패한 이벤트는 state['board_pending'] 에 남겨 다음 회차에 다시 시도"""
+    now = time.time()
+    fresh = [{"ev": e, "tries": 0, "since": now, "next": 0, "done": []}
+             for e in events if (e["kind"], e.get("result")) in BOARD_KINDS and e.get("branch")]
+    queue = state.get("board_pending", []) + fresh
+    if not any(q["next"] <= now for q in queue):
         return
-    board = os.environ.get("BOARD_DIR") or os.path.expanduser("~/orca/board")
-    if not os.path.isdir(board):
+    folder = os.environ.get("BOARD_DIR") or os.path.expanduser("~/orca/board")
+    if not os.path.isdir(folder):
         log("board skip=no-board")
         return
-    env = dict(os.environ, BD_ACTOR="gh-watch")
-    try:
-        p = subprocess.run([BD, "list", "--all", "--json", "--limit", "0"], cwd=board, env=env,
-                           capture_output=True, text=True, timeout=30)
-        cards = json.loads(p.stdout) if p.returncode == 0 else None
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        cards = None
+    board = Board(folder)
+    cards = board.cards()
     if cards is None:
         log("board error=bd-list")
-        return
-    sent = skip = fail = 0
-    for ev in evs:
-        ids = cards_for(cards, ev["branch"])
-        if not ids:
-            skip += 1
-        for cid in ids:
-            try:
-                r = subprocess.run([BD, "comment", cid, board_text(ev)], cwd=board, env=env,
-                                   capture_output=True, text=True, timeout=30)
-                ok = r.returncode == 0
-            except (OSError, subprocess.TimeoutExpired):
-                ok = False
-            sent, fail = sent + ok, fail + (not ok)
-    log("board sent=%d skip=%d fail=%d" % (sent, skip, fail))
+    sent = skip = fail = drop = 0
+    keep = []
+    down = cards is None  # 한 번 실패하면 이번 회차는 그만둠(느린 작업판에 시간 초과를 겹쳐 쌓아 감시 루프를 막지 않게)
+    for q in queue:
+        if q["next"] > now:
+            keep.append(q)
+            continue
+        if not down:
+            n, matched, ok = note_event(board, cards, q)
+            sent += n
+            skip += matched == 0
+            if ok:
+                continue
+            down = True
+        fail += 1
+        q["tries"] += 1
+        if now - q["since"] > conf["GH_WATCH_BOARD_KEEP"]:
+            drop += 1
+            log("board drop id=%s tries=%d" % (q["ev"]["id"], q["tries"]))
+            continue
+        q["next"] = now + min(conf["GH_WATCH_BOARD_RETRY_MAX"], conf["GH_WATCH_BOARD_RETRY"] * 2 ** min(q["tries"] - 1, 10))
+        keep.append(q)
+    state["board_pending"] = keep
+    log("board sent=%d skip=%d fail=%d pending=%d" % (sent, skip, fail, len(keep)))
 
 
 def load_actions(path):
@@ -162,9 +231,7 @@ def notify(events, state, per_hour, log):
 
 
 def dispatch(events, state, conf, actions_path, log):
-    if not events:
-        return
-    for step in (lambda: to_board(events, log),
+    for step in (lambda: to_board(events, state, conf, log),
                  lambda: run_actions(events, actions_path, conf["GH_WATCH_ACTION_TIMEOUT"], log),
                  lambda: notify(events, state, conf["GH_WATCH_NOTIFY_PER_HOUR"], log)):
         try:

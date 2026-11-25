@@ -18,8 +18,11 @@ def save():
         json.dump(st, f, ensure_ascii=False)
 
 
+if os.environ.get("FAKE_BD_DOWN") == a[0]:
+    print("timeout(시험)", file=sys.stderr)
+    sys.exit(1)
 if a[:1] == ["list"]:
-    print(json.dumps([c for c in st["cards"] if c["status"] != "closed"], ensure_ascii=False))
+    print(json.dumps([c for c in st["cards"] if "--all" in a or c["status"] != "closed"], ensure_ascii=False))
 elif a[:1] == ["comments"]:
     print(json.dumps(st.get("comments", {}).get(a[1], []), ensure_ascii=False))
 elif a[:1] == ["comment"]:

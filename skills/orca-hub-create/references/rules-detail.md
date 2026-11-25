@@ -45,6 +45,7 @@
 - 메인 터미널 입력창에는 `orca terminal send` 로 보고하지 않는다. SendMessage(to: loverevolutionmaker-*) 또는 main_inbox.py 로 보낸다(훅이 막음, 11-16). 허브끼리·워커 전달은 그대로.
 
 ## PR 묶음·CI 처리 (11-11 사용자)
+- 큰 기능(커밋 3개 이상 또는 하루 이상)은 draft PR 을 일찍 열고 묶지 않는다(사용자 11-25, create-pr 「일찍 여는 draft PR」). 아래 묶음은 작은 작업에만 쓴다.
 - 작업은 draft PR(또는 로컬 브랜치)로 진행한다. 끝난 작업이 5개 모이면 묶음 PR 1개로 올린다: 브랜치 sprint-YYYYMMDD/bundle-<주제>, 제목에 포함 티켓 전부, 본문은 작업별 절. 5개 미만이라도 하루 끝·급한 수정은 그대로 묶어 올린다.
 - 묶음에 넣은 원래 draft PR 은 닫고 묶음 PR 링크를 댓글로 남긴다. 묶음 PR 을 ready 로 바꾸면 적대적 리뷰(Fable)가 1회 돈다. fixup 커밋으로는 다시 돌지 않는다.
 - 메인이 '[CI→메인] AI 리뷰 지적' 요약 파일을 배정하면 지적마다 고칠지 판단 → 고치면 수정 커밋 1개 + 일반 push, 해당 리뷰 코멘트에 답글(수정: 커밋 해시) → 고치지 않으면 근거를 답글로. 다 처리하면 메인에 '처리 N·반박 M·남음 K' 한 줄.
@@ -63,7 +64,7 @@
 ## 완료 기준·우선순위·동시 작업 (11-12 사용자 '1~3 적용')
 - 완료 보고에는 증거 경로가 반드시 있어야 한다: 실행 결과(EditMode xml 등) + 화면 변경이면 녹화·샷 경로 + UI 는 기획 이미지 대조표 경로. 증거 없는 "완료"는 코디네이터가 반려하고, 메인도 받지 않는다. 워커 보고를 코드·결과 파일 확인 없이 전달하지 않는다.
 - 우선순위 변경은 하루 2번(오전 시작·오후 3시 전후)에만 메인이 묶어서 내린다. 그 사이 급한 건은 '긴급' 표시 1건만 끼울 수 있고, 끼우면 진행 중 작업 하나를 명시적으로 멈춘다.
-- 허브당 동시에 진행하는 구현 워커 상한은 부하(pick_host.sh 와 같은 값, `sysctl -n vm.loadavg` 의 1분 평균)로 정한다: 12 이하면 4개, 12 초과 16 미만이면 2개, 16 이상이면 새 구현 워커를 띄우지 않는다. 현재 상한은 `pick_host.sh` 의 stderr 근거 줄에 `구현워커상한=N` 으로 나온다. 읽기 전용 조사 워커는 상한에서 제외, Unity 실행은 동시 2개(메모리 8GB×2 감시). Unity 검증은 unity_slot.sh 대기표 하나로, 메인이 정한 우선순위 순서로만 쓴다.
+- 허브당 동시에 진행하는 구현 워커 상한은 메모리 여유(`memory_pressure` 의 여유 비율)로 정한다: 20% 이상 25개, 10% 이상 20% 미만 12개, 10% 미만이면 새 구현 워커를 띄우지 않는다. CPU 부하 평균으로는 막지 않는다. 현재 상한은 `pick_host.sh` 의 stderr 근거 줄에 `구현워커상한=N` 으로 나온다. 읽기 전용 조사 워커는 상한에서 제외, Unity 실행은 동시 2개(메모리 8GB×2 감시). Unity 검증은 unity_slot.sh 대기표 하나로, 메인이 정한 우선순위 순서로만 쓴다.
 
 ## 코디네이터 병목 줄이기 (11-12 사용자 "빨리 진행해 지금 코디네이터 병목이 좀 심한것같은데 제대로 수정해봐", 앞의 상충 규칙보다 우선)
 - 허브→메인 메시지는 결정·막힘·완료(증거 경로 포함)만 보낸다. 3줄 이내. 진행 중 상황·착수 알림은 보내지 않는다.
@@ -83,8 +84,8 @@
 - 사용자에게 가는 문서·이미지·영상은 hub_report.py --file 로 Slack 첨부한다. 본문·참고에 .html·.png·.jpg·.gif·.mp4·.pdf 로컬 경로가 있는데 같은 파일이 첨부로 오지 않으면 접수(hub_report.py)·전송(알림 스크립트) 모두 거부(종료 코드 2). decide 보고는 문서를 --file 로 첨부해야 하고, 문서 없는 결정만 --no-doc 로 명시한다. 비밀 파일(.env·키·인증서·~/.ssh)은 첨부 거부. 결정 카드를 다른 글에서 언급할 때는 알림 스크립트 --link-to <ts> 로 그 카드 링크를 본문 끝에 넣는다.
 
 ## 승인 경계 (11-13 사용자 D-CFGAPPLY '1. 전부 적용', 앞의 상충 문장보다 우선)
-- 승인 경계(사용자 11-13 D-CFGAPPLY, 앞의 상충 문장보다 우선): 무승인 = 작업 브랜치 push(일반)·열린 PR 갱신(본문·커밋 추가)·추천안이 있는 결정·개발 Firebase(loverevolutionmaker-dev) 쓰기·승인된 계획의 시트 쓰기(행 전체 단위·백업 먼저)·push 전 작업 브랜치 리베이스. 사용자 승인 = 새 PR 생성(draft 포함, 결정 카드 `D-PR<해시>`)·Jira 이슈 생성(`D-JIRA<요약 해시>`)·Jira 상태 변경(`D-JST<이슈 키>`)(사용자 11-16, 훅이 기록 검사)·draft 해제(ready), 아래 PR draft 규칙. 사용자 직접 = dev/main 병합, 라이브 Firebase(읽기 포함), 강제 push(--force·--force-with-lease), CI 변수·시크릿 삭제. 그 밖 금지 유지: 서브모듈 수정, 다른 사람 PR·브랜치 수정, 이 Mac Unity(QA 촬영은 화면 잠금 해제 때만). 무승인 일은 할 때마다 decisions.tsv 기록.
-- PR draft 규칙(사용자 11-13 D-PRDRAFT): 새 PR 은 항상 `--draft` 로 게시한다(없으면 훅 `pr-draft-guard` 가 거부). draft 해제(`gh pr ready`·`gh api` 로 draft=false)는 그 PR 에 대한 사용자 승인(결정 카드 `D-RDY<PR번호>` 의 1번 답 또는 문서 사이트 병합 승인) 뒤에만 한다. 훅이 승인 기록을 읽어 검사하며 기록이 없으면 거부, 판정 불가는 확인을 띄운다. 새 PR 생성도 사용자 승인 뒤에만 한다(11-16, D-PRDRAFT2 폐지). 정확한 결정 번호는 훅 거부 메시지에 나온다.
+- 승인 경계(사용자 11-13 D-CFGAPPLY, 앞의 상충 문장보다 우선): 무승인 = 작업 브랜치 push(일반)·열린 PR 갱신(본문·커밋 추가)·추천안이 있는 결정·개발 Firebase(loverevolutionmaker-dev) 쓰기·승인된 계획의 시트 쓰기(행 전체 단위·백업 먼저)·push 전 작업 브랜치 리베이스. 사용자 승인 = 훅이 무승인으로 허용하지 않는 draft PR 생성(결정 카드 `D-PR<해시>`)·Jira 이슈 생성(`D-JIRA<요약 해시>`)·Jira 상태 변경(`D-JST<이슈 키>`)(사용자 11-16, 훅이 기록 검사)·draft 해제(ready), 아래 PR draft 규칙. 사용자 직접 = dev/main 병합, 라이브 Firebase(읽기 포함), 강제 push(--force·--force-with-lease), CI 변수·시크릿 삭제. 그 밖 금지 유지: 서브모듈 수정, 다른 사람 PR·브랜치 수정, 이 Mac Unity(QA 촬영은 화면 잠금 해제 때만). 무승인 일은 할 때마다 decisions.tsv 기록.
+- PR draft 규칙(사용자 11-13 D-PRDRAFT): 새 PR 은 항상 `--draft` 로 게시한다(없으면 훅 `pr-draft-guard` 가 거부). draft 해제(`gh pr ready`·`gh api` 로 draft=false)는 그 PR 에 대한 사용자 승인(결정 카드 `D-RDY<PR번호>` 의 1번 답 또는 문서 사이트 병합 승인) 뒤에만 한다. 훅이 승인 기록을 읽어 검사하며 기록이 없으면 거부, 판정 불가는 확인을 띄운다. 새 draft PR 생성은 Orca 하위 작업 공간의 자기 작업 브랜치와 계획 승인된 기능의 통합 브랜치면 무승인이다(11-17·11-20). 그 밖은 사용자 승인이 필요하고 정확한 결정 번호는 훅 거부 메시지에 나온다.
 - 사용자 승인이 필요한 것은 허브 창에 텍스트로 묻지 말고 `hub_report.py decide` Slack 카드로 올린다(허브 창의 질문은 사용자가 보지 못한다).
 - 문서 사이트 병합 승인 = 그 PR(기록된 헤드 커밋)에 대한 사용자 승인 기록이다. 병합을 누가 실행하는지는 기존 규칙 그대로다(사용자 직접 병합 대상은 계속 사용자가 한다). `사용자 원문: PR … 병합 승인(헤드 …) … (출처: 문서 사이트)` 줄은 이 승인 기록일 뿐 권한을 넓히지 않으며, PR 헤드가 바뀌면 승인은 무효라 다시 승인받는다. 문서 사이트는 병합·push 를 실행하지 않는다.
 - 로컬 게이트(사용자 11-13 D-LOCALGATE): 게임 저장소 push 는 `Tools/ci/local-gate.sh` 통과가 필수다. pre-push 훅이 강제하고 통과 기록(`~/.config/lrm-hubs/local-gate/<커밋>.<기준>.json`, 같은 커밋도 기준 브랜치가 다르면 다시 검사)을 남긴다. `--no-verify`·`core.hooksPath` 변경·`hooks.localGate=off` 는 우회라 금지(훅이 거부). 통과 기록은 `create-pr/scripts/gate-lines.sh` 로 PR 검증 절에 붙인다.
@@ -96,7 +97,7 @@
 - 계획 승인: 계획서 컨펌 1회가 그 계획서에 적힌 Jira 발급·상태 전환·draft PR 생성을 함께 승인한다. 컨펌 뒤 메인이 ~/.config/lrm-hubs/plan-approvals/<plan-id>.json 에 사용자 원문 인용(approver_quote)·그 답의 Slack ts(source.slack_ts)와 approved_at·tickets·prs·jira_transitions 를 기록. 인용이 slack-inbox.jsonl 의 그 답 본문에 없으면 무효. 계획서에 없는 항목은 추가 후 재컨펌. ready 전환·dev/main 병합·라이브는 따로 승인. 계획에 없는 단건은 기존 결정 카드(D-PR·D-JIRA·D-JST). 11-13 D-PRDRAFT2(draft PR 무승인)와 'Jira 선발급 묻지 않음'은 폐기.
 - 계획 승인 기록은 approved_at 부터 7일 지나면 무효(plan_approval.py). 기록 파일 쓰기는 메인(메인 체크아웃에서 시작한 세션, 또는 ORCA_ROLE=main)만, 다른 세션은 plan-approval-write-guard 훅이 거부. ORCA_ROLE 을 다른 값으로 주면 그 값이 우선.
 - 카드 병합·완료는 `board-merge <카드> <작업자>` 로만(범위 검사 → board-done 사전 검사 → 시험 병합·BOARD_MERGE_VERIFY → --no-ff 커밋 → board-done). git merge·bd close 직접 금지. 범위 검사 기준은 카드 base: → epic branch: label. dev 반영 전 `board-merge-check --epic <기능 epic> <통합 브랜치> --base origin/dev --repo <저장소>`(하위 카드 범위 합집합), 종료 4면 머지 금지. 증거 줄은 commit=<브랜치 끝 해시> 필수, 기능 묶음 epic 은 evidence:review(검수 모델≠구현 모델) 필수. epic 완료 시 feature_close.sh 자동 실행. 화면 촬영·녹화는 기능 묶음(--epic)당 1회. 시안 카드는 board/templates/card-mockup.md 대응표가 첫 단계.
-- Unity 실행은 `~/.config/lrm-hubs/unity-run --name "<허브>:<작업>" -- <명령>` 으로만, unity_slot.sh 직접 acquire/release 금지. 동시 1개(LRM_UNITY_SLOTS 기본 1), 부하 기준 코어 수×1.5, 오래 기다릴 작업은 --keep-waiting.
+- Unity 실행은 `~/.config/lrm-hubs/unity-run --name "<허브>:<작업>" -- <명령>` 으로만, unity_slot.sh 직접 acquire/release 금지. 동시 2개(LRM_UNITY_SLOTS 기본 2), 부하 기준 코어 수×3, 오래 기다릴 작업은 --keep-waiting.
 - 하네스 지표 재측정: `tools/metrics/measure.sh --since <YYYY-MM-DD> --until <YYYY-MM-DD>`(설정 저장소, 읽기 전용).
 - 완료는 별도 검수자 통과 뒤: 기계 검사(컴파일·테스트·픽셀 비교) 먼저, 구현자와 다른 모델(비주얼=astra, 기능·논리=Fable)이 시안·완료 기준 대비 판정, 통과분만 사용자 보고.
 - 11-17 개정(사용자 "jira 티켓 발급 그냥 자동화하자"): Jira 이슈 발급·이슈 링크·에픽·상위 지정은 게임 작업에 한해 승인 없이 통과한다. 위 83·93행의 `D-JIRA<요약 해시>` 승인·계획서 tickets 요구는 폐기. 개인 업무 Jira 발급 금지, 상태 변경 게이트(`D-JST<이슈 키>`·계획 jira_transitions), ready 전환·병합 승인은 유지.

@@ -19,6 +19,10 @@ grep -q "claude-fable-5-2" "$D/models.log" && ! grep -q opus "$D/models.log" && 
 grep -q "적대적 리뷰 지적 1건(high 1·medium 0) PR#700 · 담당 허브 VFX" "$D/hub-inbox/main.jsonl" && grep -q '"source":"adv_review"' "$D/hub-inbox/main.jsonl" && ! grep -q "^terminal send" "$D/orca.log" && grep -q -- "--kind warn" "$D/sent.log" && ok "메인 받은 편지함 기록(터미널 send 없음) + Slack warn" || ko "전달" "$(cat "$D/hub-inbox/main.jsonl")"
 ! grep -rq "gh pr comment\|issues/.*/comments" "$D/out" && ok "PR 에 직접 쓰지 않음" || ko "PR 쓰기"
 
+mkdir -p "$D/home/.local/bin" "$D/prof"; cp "$HERE/fake_claude.sh" "$D/home/.local/bin/claude"; echo "$D/prof" > "$D/selected-host"; : > "$D/models.log"; rm -f "$D/claude.config"
+PYB=$(command -v python3); env -u LRM_CLAUDE -u CLAUDE_CONFIG_DIR HOME="$D/home" PATH=/usr/bin:/bin LRM_ORCA_CLAUDE_POINTER="$D/selected-host" "$PYB" "$S/adv_review.py" --pr 700 --head 1234567890abcdef > "$D/out" 2>&1; RC=$?
+[ "$RC" = 0 ] && [ -s "$D/models.log" ] && [ "$(sort -u "$D/claude.config")" = "$D/prof" ] && ok "짧은 PATH 에서 claude 를 찾고 선택 프로필로 실행" || ko "짧은 PATH" "$(cat "$D/out")"
+
 : > "$D/models.log"; FAKE_FAIL_MODEL=claude-fable-5-2 adv
 grep -q "claude-opus-5-5" "$D/models.log" && [ "$RC" = 0 ] && ok "Fable 실패 → Opus 대체" || ko "대체" "$(cat "$D/models.log")"
 

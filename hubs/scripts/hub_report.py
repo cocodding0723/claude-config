@@ -24,6 +24,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 import unicodedata
@@ -652,6 +653,19 @@ def add(path: str, rep: dict, now: float, dry: bool, stage: bool = False) -> tup
     return rep, True
 
 
+POLLER_LABEL = "ai.lrm.slackpoll"
+
+
+def wake_poller(path: str) -> None:
+    """결정 카드 접수 직후 폴러를 깨움(회차 사이 2분 대기를 없앰). 이미 도는 중이면 launchd 가 무시하고, 실패해도 다음 회차가 올림.
+    기본 outbox 일 때만: 시험·복사 설치의 임시 outbox 가 실제 폴러를 깨우지 않게"""
+    if os.path.realpath(path) != os.path.realpath(os.path.expanduser(f"~/.config/lrm-hubs/{OUTBOX_NAME}")):
+        return
+    with contextlib.suppress(OSError):
+        subprocess.Popen(["/bin/launchctl", "kickstart", f"gui/{os.getuid()}/{POLLER_LABEL}"], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
 def send_now() -> None:
     """기록 직후 전송기 1회. 잠금을 못 잡으면(busy) 다음 폴러 회차가 올림. 전송 실패·예외는 기록을 되돌리지 않고 안내만 출력(종료 코드 0)"""
     import report_sender  # 지연 import: report_sender 가 이 모듈을 import 함
@@ -746,6 +760,8 @@ def main(argv=None) -> int:
                 print(("[dry-run] " if args.dry_run else "") + f"기록: {rep['id']} {rep['hub']} {rep['task']} {rep['kind']}")
             if args.now and not args.dry_run:
                 send_now()
+            elif args.kind == "decide" and fresh and not args.dry_run:
+                wake_poller(path)
         elif args.cmd == "bullet-body":
             sys.stdout.write(bullet_body(sys.stdin.read()))
         elif args.cmd == "check-decide":

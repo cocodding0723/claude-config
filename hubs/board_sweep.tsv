@@ -1,13 +1,13 @@
 # 작업판 주기 정리기(hubs/scripts/board_sweep.py) 규칙 표. 형식: 키<TAB>값<TAB>설명. 코드에 숫자·라벨 이름을 두지 않고 여기서만 바꿈
 # 목록 값은 쉼표 구분. 규칙을 끄려면 rules 에서 이름을 뺌
-rules	pr_done,slack_answered,expired,stale,duplicate,ws_gone,orphan,feature_merged	실행할 규칙(순서대로). pr_done=PR 끝난 카드 닫기, slack_answered=Slack 버튼으로 답한 결정 닫기,expired=만료 라벨 닫기, stale=오래된 결정 라벨, duplicate=같은 제목 닫기 후보, ws_gone=작업 공간이 사라진 카드 빼기, orphan=담당 없는 진행 중 되돌리기, feature_merged=병합 끝난 기능 마무리
+rules	merge_note,pr_done,slack_answered,expired,stale,duplicate,ws_gone,orphan,feature_merged	실행할 규칙(순서대로). merge_note=놓친 병합 기록 채우기, pr_done=PR 끝난 카드 닫기, slack_answered=Slack 버튼으로 답한 결정 닫기,expired=만료 라벨 닫기, stale=오래된 결정 라벨, duplicate=같은 제목 닫기 후보, ws_gone=작업 공간이 사라진 카드 빼기, orphan=담당 없는 진행 중 되돌리기, feature_merged=병합 끝난 기능 마무리
 kinds	decision,user-todo,approval	pr_done·expired 대상 kind:<값>. approval 은 11-17 폐지된 옛 종류(남은 카드 정리용)
 kind_prefix	kind:	종류 라벨 접두
 pr_repo	Basakansoft/LoveRevolutionMaker	PR 번호를 조회할 저장소
 pr_label_prefix	pr:	카드를 PR 에 묶는 라벨 접두(pr:825)
 pr_sources	label,title,body	PR 번호를 찾을 곳. title·body 는 #번호 표기
 pr_min_digits	3	#번호 최소 자릿수(#1·#12 같은 목록 번호 오인 방지)
-gh_calls_max	20	실행 1회의 gh 호출 상한. 넘으면 남은 PR 은 다음 회차로
+gh_calls_max	21	실행 1회의 gh 호출 상한(병합 목록 1회 포함). 넘으면 남은 PR 은 다음 회차로
 gh_timeout_sec	20	gh 호출 1회 제한 시간(초)
 expires_label_prefix	expires:	만료 라벨 접두(expires:2026-11-18 또는 expires:2026-11-18T10:00+09:00). 날짜만 쓰면 그날 끝(로컬 시각)
 slack_kinds	decision	slack_answered 대상 kind:<값>
@@ -26,7 +26,14 @@ branch_label_prefix	branch:	카드의 작업 브랜치 라벨 접두. 이 브랜
 ws_gone_hours	0.5	이 시간 안에 활동(갱신·댓글)한 카드는 ws_gone 에서 제외(막 만든 작업 공간 보호)
 skip_label	sweep:skip	이 라벨이 있는 카드는 모든 규칙에서 제외
 protect_ids		모든 규칙에서 제외할 카드 id(쉼표, 끝 * 는 접두 일치). 지금 돌고 있는 작업을 임시로 지킬 때
-bd_timeout_sec	30	bd 호출 1회 제한 시간(초)
+bd_timeout_sec	90	bd 호출 1회 제한 시간(초). 부하가 높을 때 30초를 넘겨 회차가 통째로 중단됐음(11-25)
+merge_note_hours	72	병합 기록을 대조할 기간(시간). gh-watch 재시도 보관 3일과 같은 값
+merge_note_min_hours	0.5	병합 뒤 이 시간이 지나야 채움(gh-watch 가 먼저 쓰게)
+merge_note_limit	100	병합 PR 조회 상한
+merge_note_state	~/orca/board/.merge-note.json	확인이 끝난 PR·카드 짝
+alert_after	2	이 횟수만큼 연속으로 실패하면 Slack 으로 1번 알림(30분 주기라 2회 = 약 1시간)
+alert_state	~/orca/board/.sweep-health.json	연속 실패 횟수 기록
+alert_hub	main	알림을 보내는 허브 이름
 log_path	~/orca/board/sweep.log	동작 기록(한 줄 한 건, 탭 구분)
 lock_path	~/orca/board/.board-sweep.lock	중복 실행 방지 잠금 파일
 feature_merged_hours	2	기능 마무리 전 마지막 활동 이후 대기 시간

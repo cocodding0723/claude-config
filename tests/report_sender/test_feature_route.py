@@ -48,11 +48,16 @@ class FeatureThreadTest(unittest.TestCase):
         self.assertEqual(set(self.st["topics"]), {"LRM-677", "card:lrm-1yd.1"})
 
     def test_non_feature_hub_is_not_routed(self):
-        self.assertEqual(report_sender.feature_thread(self.conf, {"hub": "ci-hub"}), ("", ""))
+        self.assertEqual(report_sender.feature_thread(self.conf, {"hub": "ci-hub"}, self.st), ("", ""))
 
     def test_feature_without_thread_yet_is_not_routed(self):
         with mock.patch.object(report_sender, "bd_json", return_value=[{"id": "lrm-1yd", "labels": ["feature:lrm-677"]}]):
-            self.assertEqual(report_sender.feature_thread(self.conf, {"hub": "feat-lrm-677"}), ("", ""))
+            self.assertEqual(report_sender.feature_thread(self.conf, {"hub": "feat-lrm-677"}, self.st), ("", ""))
+
+    def test_thread_not_attached_to_card_yet_is_found_in_state(self):
+        self.st["topics"]["card:lrm-1yd"] = {"ts": EPIC_TS, "card": "lrm-1yd", "attached": False}
+        self.route({"hub": "feat-lrm-677", "task": "LRM-677"}, [{"id": "lrm-1yd", "labels": ["feature:lrm-677"]}])
+        self.assertEqual(self.st["topics"]["LRM-677"]["ts"], EPIC_TS)
 
 
 class DecideThreadTest(unittest.TestCase):

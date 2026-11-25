@@ -369,6 +369,63 @@ ok(len(lines("bd-comments.log")) == n_bc and len(open(out_file).read().splitline
 os.unlink(os.path.join(e.hub, "gh-watch-actions.json"))
 e.close()
 
+
+# ── 작업판 기록 재시도 ──
+def merge_with(mode):
+    e = Env(GH_WATCH_BOARD_RETRY=1, GH_WATCH_BOARD_RETRY_MAX=1)
+    os.makedirs(os.path.join(e.d, "board"))
+    with open(os.path.join(e.fake, "cards.json"), "w") as f:
+        json.dump([{"id": "c-r", "labels": ["branch:feat/b21"]}], f)
+    e.pr(21, ME, created=30)
+    e.flush()
+    e.cli("once")
+    set_mode(e, mode)
+    e.pr(21, ME, state="closed", created=30, updated=0, merged=0, merged_by=ME)
+    e.flush()
+    e.cli("once")
+    return e
+
+
+def set_mode(e, mode):
+    with open(os.path.join(e.fake, "bd-mode"), "w") as f:
+        f.write(mode)
+
+
+def noted(e):
+    p = os.path.join(e.fake, "bd-comments.log")
+    return [x for x in open(p).read().splitlines() if "#21 병합됨" in x] if os.path.exists(p) else []
+
+
+def pending(e):
+    return json.load(open(os.path.join(e.hub, "gh-watch.state.json"))).get("board_pending", [])
+
+
+e = merge_with("down")
+ok(not noted(e) and len(pending(e)) == 1, "작업판 실패: 기록 대기에 남김", pending(e))
+set_mode(e, "")
+time.sleep(1.2)
+e.cli("once")
+ok(len(noted(e)) == 1 and not pending(e), "작업판 복구: 새 이벤트가 없어도 다음 회차에 기록", (noted(e), pending(e)))
+time.sleep(1.2)
+e.cli("once")
+ok(len(noted(e)) == 1, "기록이 끝난 이벤트는 다시 쓰지 않음")
+e.close()
+e = merge_with("late")
+ok(len(noted(e)) == 1 and len(pending(e)) == 1, "쓰고 나서 실패: 대기에 남음")
+set_mode(e, "")
+time.sleep(1.2)
+e.cli("once")
+ok(len(noted(e)) == 1 and not pending(e), "재시도 전 확인: 이미 들어간 코멘트는 중복하지 않음", noted(e))
+e.close()
+e = merge_with("down")
+st_path = os.path.join(e.hub, "gh-watch.state.json")
+st = json.load(open(st_path))
+st["board_pending"][0].update(since=0, next=0)
+json.dump(st, open(st_path, "w"))
+e.cli("once")
+ok(not pending(e) and "board drop id=merged:o/r#21" in open(os.path.join(e.hub, "gh-watch.log")).read(), "보관 기한이 지나면 로그를 남기고 버림")
+e.close()
+
 sys.path.insert(0, os.path.dirname(SCRIPT))
 import gh_watch_sinks as sinks
 fam = [{"id": "ep", "labels": ["branch:feat/x"]},

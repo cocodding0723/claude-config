@@ -1,0 +1,5 @@
+# Jira 댓글의 로컬 경로 검사 방식(판정은 claude/hooks/lib/jira_evidence_guard.py). 형식: 프로젝트 키<TAB>방식<TAB>설명
+# 방식: deny = 로컬 경로가 든 댓글 거부 · warn = 통과시키고 안내만 · off = 검사 안 함
+# 프로젝트 키 * = 행이 따로 없는 모든 프로젝트
+LRM	deny	팀이 읽는 티켓이라 못 여는 경로를 막음
+*	warn	공통. 새 프로젝트를 막으려면 위에 행 추가

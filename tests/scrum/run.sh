@@ -67,6 +67,15 @@ reset; echo noatl > "$D/plan-claude-fable-5-1"; post --date $WK; f=$(ls "$D"/dra
 grep -q "경고: Jira·Confluence 를 못 읽어" "$D/sent.log" && ! grep -q "atlassian-unavailable\|설명 문장" "$f" && ok "Atlassian 못 읽음 → Slack 경고 1줄, 표시·끝 설명 문장은 초안에서 제거" || ko "Atlassian 경고" "$(cat "$f")"
 reset; post --date $WK; ! grep -q "Jira·Confluence" "$D/sent.log" && ok "Atlassian 읽었으면 경고 없음" || ko "Atlassian 정상"
 
+# ---- Orca 선택 프로필 ----
+mkdir -p "$D/prof a" "$D/prof b"; PT="$D/selected-host"
+cfg() { reset; rm -f "$D/claude.config"; env -u CLAUDE_CONFIG_DIR "$@" LRM_ORCA_CLAUDE_POINTER="$PT" python3 "$S/scrum_post.py" --date $WK > "$D/out" 2> "$D/err"; cat "$D/claude.config"; }
+printf '%s\n' "$D/prof a" > "$PT"; [ "$(cfg)" = "$D/prof a" ] && ok "선택 프로필을 claude 에 전달(공백 경로)" || ko "선택 프로필" "$(cat "$D/claude.config")"
+printf '%s\n' "$D/prof b" > "$PT"; [ "$(cfg)" = "$D/prof b" ] && ok "계정 전환을 다음 실행이 따라감" || ko "계정 전환"
+[ "$(cfg CLAUDE_CONFIG_DIR="$D/mine")" = "$D/mine" ] && ok "명시한 CLAUDE_CONFIG_DIR 우선" || ko "명시 우선"
+echo "$D/gone" > "$PT"; [ "$(cfg)" = "<없음>" ] && ok "가리키는 폴더 없음 → 기본 설정" || ko "깨진 선택"
+rm -f "$PT"; [ "$(cfg)" = "<없음>" ] && ok "선택 파일 없음 → 기본 설정" || ko "선택 파일 없음"
+
 # ---- 초안 claude 도구 제한(리뷰 지적 1) ----
 reset; post --date $WK
 args=$(sed '/^---$/,$d' "$D/claude.args"); opt() { printf '%s\n' "$args" | grep -A1 -x -- "$1" | tail -1; }
@@ -192,6 +201,15 @@ assert any("민감" in w for w in why) and any("크기 초과" in w for w in why
 assert all("/" not in s["name"] for s in a["skipped"]), "경로가 skipped 에 담김"
 PY
 rm -rf "$M" "$H/hub-reports.jsonl"; mc; python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["attachments"]=={"files":[],"skipped":[]} and not d["errors"], d' "$D/mc.json" && ok "첨부 폴더·보고 기록이 없으면 빈 목록(오류 아님)" || ko "첨부 없음" "$(cat "$D/mc.json" | head -c 300)"
+
+python3 - "$S" <<'PY' && ok "첨부 티켓 번호: 파일 이름 우선, 없으면 바로 위 폴더, 다른 낱말·번호 없음은 빈 목록" || ko "첨부 티켓"
+import sys
+sys.path.insert(0, sys.argv[1]); import scrum_collect as c
+assert c.media_tickets("/a/20261125-LRM-716-요구/b.png") == ["LRM-716"]
+assert c.media_tickets("/a/LRM-1/lrm772-장면.mp4") == ["LRM-772"]
+assert c.media_tickets("/a/x/LRM-712_LRM-715.png") == ["LRM-712", "LRM-715"]
+assert c.media_tickets("/a/x/ALRM-3.png") == [] and c.media_tickets("/a/x/b.png") == []
+PY
 
 # ---- 이미지·영상 첨부(발송) ----
 export LRM_SCRUM_MEDIA=on

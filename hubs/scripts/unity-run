@@ -2,17 +2,17 @@
 # Unity 실행 래퍼. 슬롯은 실행 직전에만 받고 종료 시 반드시 반납(미리 잡기·반납 누수 방지)
 set -u
 SLOT_SH="${LRM_UNITY_SLOT_SH:-$(cd "$(dirname "$0")" && pwd)/unity_slot.sh}"
-# 부하 기준 기본값 = 코어 수 × 1.5(15코어 ≈ 22). 고정 12 는 병렬 작업 중 상시 초과라 슬롯을 못 받았음(11-16 실측 부하 23)
+# 부하 기준 기본값 = 코어 수 × 3(18코어 = 54). ×1.5 는 짧은 프로세스가 많아 CPU 유휴 35~49%(순간 8%)에서도 상시 초과였음(11-25 실측 부하 35~47)
 CORES=$(sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 8)
-NAME="unity"; LOAD_MAX="${LRM_LOAD_MAX:-$(awk -v c="$CORES" 'BEGIN{printf "%.1f", c*1.5}')}"; KEEP="${LRM_LOAD_KEEP_WAITING:-0}"; LOAD_TIMEOUT="${LRM_LOAD_TIMEOUT:-1800}"; LOAD_POLL="${LRM_LOAD_POLL:-15}"
+NAME="unity"; LOAD_MAX="${LRM_LOAD_MAX:-$(awk -v c="$CORES" 'BEGIN{printf "%.1f", c*3}')}"; KEEP="${LRM_LOAD_KEEP_WAITING:-0}"; LOAD_TIMEOUT="${LRM_LOAD_TIMEOUT:-1800}"; LOAD_POLL="${LRM_LOAD_POLL:-15}"
 
 usage() {
   cat <<'H'
 사용: unity-run [--name <허브:작업>] [--load-max N] [--load-timeout 초] [--keep-waiting] -- <Unity 실행 명령…>
-  부하(1분 평균)가 N(기본 코어 수×1.5) 이하가 될 때까지 기다린 뒤 슬롯을 받고 명령을 실행, 끝나면 반납.
+  부하(1분 평균)가 N(기본 코어 수×3) 이하가 될 때까지 기다린 뒤 슬롯을 받고 명령을 실행, 끝나면 반납.
   --keep-waiting: 대기 시간을 넘겨도 실패하지 않고 경고만 남기며 계속 기다림.
   LRM_SLOT_PRIORITY=1 이면 대기열 맨 앞. 슬롯 수는 LRM_UNITY_SLOTS(unity_slot.sh 기본값).
-환경: LRM_UNITY_SLOT_DIR(슬롯 상태 위치) LRM_LOAD_MAX(코어×1.5) LRM_LOAD_KEEP_WAITING(0) LRM_LOAD_TIMEOUT(1800) LRM_LOAD_POLL(15)
+환경: LRM_UNITY_SLOT_DIR(슬롯 상태 위치) LRM_LOAD_MAX(코어×3) LRM_LOAD_KEEP_WAITING(0) LRM_LOAD_TIMEOUT(1800) LRM_LOAD_POLL(15)
       LRM_LOADAVG_CMD(부하 조회 명령, 기본 sysctl -n vm.loadavg)
 종료: 명령의 종료 코드 그대로 / 2 사용법 오류 / 3 부하 대기 초과(--keep-waiting 없을 때)·슬롯 획득 실패
 예:

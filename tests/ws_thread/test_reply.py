@@ -144,6 +144,71 @@ class ButtonAnswerTest(ReplyBase):
         box = self.call(self.ws_card, WS, "사용자 원문: 결정 D-TH1 질문: 왜? (출처: Slack)", "question")
         self.assertEqual(self.box(box)[-1]["kind"], "question")
 
+    # ---- 작업판이 느리거나 막혔을 때 ----
+    def break_board(self, only=""):
+        """bd 를 실패시킴. only 를 주면 그 하위 명령만 실패하고 나머지는 진짜 bd"""
+        fake = os.path.join(self.bin, "bd-broken")
+        self.write(fake, f'#!/bin/bash\n[ -z "{only}" ] || [ "$1 $2" = "{only}" ] || exec "{shutil.which("bd")}" "$@"\necho locked >&2; exit 1\n')
+        os.chmod(fake, 0o755)
+        self.env["BOARD_BD"] = fake
+
+    def notes(self):
+        d = os.path.join(self.hub, "answer-notes")
+        return sorted(os.listdir(d)) if os.path.isdir(d) else []
+
+    def test_dead_board_still_reaches_the_coordinator(self):
+        ws = "/w/coord-feat-x-hub"
+        self.set_terminals([{"handle": TERM, "worktreePath": ws, "agentIdentity": "claude", "writable": True, "connected": True, "orphaned": False}])
+        self.wake_on()
+        self.break_board()
+        self.assertEqual(self.call(self.epic, ws), "feat-x")
+        self.assertIn("선택 2(나)", self.box("feat-x")[-1]["text"])
+        self.assertIn("--box feat-x", self.sends()[-1][1])  # 카드에는 답이 없으므로 상자를 가리킴
+        self.assertEqual(len(self.notes()), 1)
+
+    def test_dead_board_work_card_answer_goes_to_its_own_box(self):
+        self.break_board()
+        box = self.call(self.ws_card, WS)
+        self.assertTrue(box.startswith("ws-"))
+        self.assertIn("선택 2(나)", self.box(box)[-1]["text"])
+
+    def test_missing_comment_is_added_once_after_recovery(self):
+        self.break_board("comments add")
+        self.call(self.epic, "/w/hub")
+        self.assertEqual(self.comments(self.epic), [])
+        self.env.pop("BOARD_BD")
+        self.assertEqual(self.route()["notes"], [self.epic])
+        self.route()
+        self.assertEqual(sum("선택 2(나)" in c for c in self.comments(self.epic)), 1)
+        self.assertEqual(self.notes(), [])
+
+    def test_comment_that_landed_despite_timeout_is_not_duplicated(self):
+        self.break_board("comments add")
+        self.call(self.epic, "/w/hub")
+        self.env.pop("BOARD_BD")
+        self.bd("comments", "add", self.epic, "Slack 결정 답: 사용자 원문: 결정 D-TH1 = 선택 2(나) (버튼) (출처: Slack)")
+        self.route()
+        self.assertEqual(sum(c.startswith("Slack 결정 답") for c in self.comments(self.epic)), 1)
+        self.assertEqual(self.notes(), [])
+
+    def test_one_stuck_comment_does_not_block_the_rest(self):
+        self.break_board("comments add")
+        self.call("t-gone", "/w/hub")
+        self.call(self.epic, "/w/hub")
+        self.env.pop("BOARD_BD")
+        self.route()
+        self.route()
+        self.assertEqual(sum(c.startswith("Slack 결정 답") for c in self.comments(self.epic)), 1)
+
+    def test_waiting_wake_is_sent_even_if_routing_is_blocked(self):
+        self.write(os.path.join(self.hub, "thread-wake.json"), json.dumps({"items": [{"card": self.ws_card, "ws": WS, "tries": 0, "next_at": 0, "at": 9999999999, "replies": []}]}))
+        self.wake_on()
+        self.reply("1794383299.000001", PARENT_TS, "답")
+        self.break_board()
+        p = subprocess.run([sys.executable, "-I", SCRIPT, "--once", "--json"], capture_output=True, text=True, env=self.env)
+        self.assertEqual(p.returncode, 3)
+        self.assertEqual(len(self.sends()), 1)
+
 
 
 class FeatureSessionTest(ReplyBase):

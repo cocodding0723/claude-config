@@ -1,5 +1,5 @@
 # src	dst($HOME 기준)	mode
-# mode: link=링크, merge=설정 병합 복사, copy=__HOME__ 치환 복사, render=값 파일(values.env)로 자리표시를 채워 복사
+# mode: link=링크, merge=설정 병합 복사, codex=Codex 훅 병합(다른 도구 항목 유지), agents=CLAUDE.md 뒤에 원본을 붙여 생성, copy=__HOME__ 치환 복사, render=값 파일(values.env)로 자리표시를 채워 복사
 claude/CLAUDE.md	.claude/CLAUDE.md	link
 claude/keybindings.json	.claude/keybindings.json	link
 claude/settings.base.json	.claude/settings.json	merge
@@ -15,12 +15,17 @@ claude/hooks/notify.sh	.claude/hooks/notify.sh	link
 claude/hooks/ai-state.sh	.claude/hooks/ai-state.sh	link
 claude/hooks/post-edit.sh	.claude/hooks/post-edit.sh	link
 claude/hooks/night-ask.sh	.claude/hooks/night-ask.sh	link
+claude/hooks/usage-limit.sh	.claude/hooks/usage-limit.sh	link
+claude/bin/switch-account	.local/bin/switch-account	link
 claude/hooks/prompt-context.sh	.claude/hooks/prompt-context.sh	link
 claude/hooks/scoped-test.sh	.claude/hooks/scoped-test.sh	link
 claude/hooks/slack-format-guard.sh	.claude/hooks/slack-format-guard.sh	link
 claude/hooks/session-end.sh	.claude/hooks/session-end.sh	link
 claude/hooks/session-start.sh	.claude/hooks/session-start.sh	link
 claude/hooks/lib	.claude/hooks/lib	link
+codex/hooks/claude-compat.py	.codex/hooks/claude-compat.py	link
+codex/hooks.base.json	.codex/hooks.json	codex
+codex/AGENTS.tail.md	.codex/AGENTS.md	agents
 skills/blast-radius	.claude/skills/blast-radius	link
 skills/catch-up	.claude/skills/catch-up	link
 skills/cli-for-agents	.claude/skills/cli-for-agents	link
@@ -52,6 +57,8 @@ skills/web-tool-design	.claude/skills/web-tool-design	link
 skills/motion-design	.claude/skills/motion-design	link
 skills/frontend-design	.codex/skills/frontend-design	link
 skills/ux-flow-board	.codex/skills/ux-flow-board	link
+skills/doc-kit	.codex/skills/doc-kit	link
+skills/jira-issue	.codex/skills/jira-issue	link
 skills/web-tool-design	.codex/skills/web-tool-design	link
 skills/motion-design	.codex/skills/motion-design	link
 skills/work-brief	.claude/skills/work-brief	link
@@ -134,6 +141,7 @@ hubs/scripts/ci_watch.py	.config/lrm-hubs/ci_watch.py	link
 hubs/scripts/bot_alive.py	.config/lrm-hubs/bot_alive.py	link
 hubs/scripts/ci_review.py	.config/lrm-hubs/ci_review.py	link
 hubs/scripts/adv_review.py	.config/lrm-hubs/adv_review.py	link
+hubs/scripts/claude_env.py	.config/lrm-hubs/claude_env.py	link
 hubs/ci-review-hubs.tsv	.config/lrm-hubs/ci-review-hubs.tsv	link
 hubs/ci-ticket-owners.tsv	.config/lrm-hubs/ci-ticket-owners.tsv	link
 hubs/panel.env.example	.config/lrm-hubs/panel.env.example	link
@@ -188,6 +196,8 @@ hubs/scripts/intake.py	.config/lrm-hubs/intake.py	copy
 hubs/scripts/hub_report.py	.config/lrm-hubs/hub_report.py	copy
 hubs/scripts/decide_card.py	.config/lrm-hubs/decide_card.py	copy
 hubs/scripts/report_sender.py	.config/lrm-hubs/report_sender.py	copy
+hubs/scripts/report_derived.py	.config/lrm-hubs/report_derived.py	copy
+hubs/launchd/ai.lrm.reportderived.plist	Library/LaunchAgents/ai.lrm.reportderived.plist	copy
 hubs/scripts/feature_board.py	.config/lrm-hubs/feature_board.py	link
 hubs/scripts/report_audit.py	.config/lrm-hubs/report_audit.py	link
 hubs/scripts/board_mirror.py	.config/lrm-hubs/board_mirror.py	link
@@ -275,6 +285,7 @@ board/bin/board-said	orca/board/bin/board-said	link
 board/bin/board-skip	orca/board/bin/board-skip	link
 board/lib/board_evidence.py	orca/board/lib/board_evidence.py	link
 hubs/jira_free_transitions.tsv	.config/lrm-hubs/jira_free_transitions.tsv	link
+hubs/jira_evidence.tsv	.config/lrm-hubs/jira_evidence.tsv	link
 hubs/scripts/hook_stats.py	.config/lrm-hubs/hook_stats.py	link
 hubs/launchd/ai.lrm.hookstats.plist	Library/LaunchAgents/ai.lrm.hookstats.plist	copy
 hubs/feature_projects.tsv	.config/lrm-hubs/feature_projects.tsv	link

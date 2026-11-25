@@ -92,6 +92,7 @@ GitHub 의 새 PR·병합·내 PR CI 결과를 폴링으로 받아 이벤트 파
 `pr_opened`·`pr_merged`·`ci_done`(실패·취소) 이벤트의 브랜치가 카드와 맞으면 `bd comment` 로 한 줄 단다(작성자 `gh-watch`).
 
 - 맞는 카드: label `branch:<브랜치>`, 또는 설명·메모에 `branch: <브랜치>` / `브랜치: <브랜치>`(정확히 일치, `feat/x-2` 는 `feat/x` 와 다름).
+- 쓰기가 실패하면 상태 파일의 `board_pending` 에 남겨 60초부터 두 배씩(최대 600초) 간격으로 다시 시도한다. 재시도 전에 같은 코멘트가 있는지 확인해 중복을 막고, 3일이 지나면 `board drop` 로그를 남기고 버린다. 로그의 `pending=N` 이 남은 건수다.
 - 맞는 카드가 없으면 건너뛴다. 작업판 폴더는 `BOARD_DIR`(기본 `~/orca/board`).
 - 예: `[gh-watch] PR #883 병합됨(병합 <로그인>) · sprint-…/fix-x https://…`
 

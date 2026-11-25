@@ -18,7 +18,7 @@ while IFS= read -r line; do
     "")
       [ -n "$wt" ] && [ "$wt" != "$(git -C "$top" rev-parse --path-format=absolute --show-toplevel)" ] && [ -n "$br" ] && {
         reason=""
-        git -C "$top" merge-base --is-ancestor "$br" "$main" 2>/dev/null && reason="$main에 merge됨"
+        git -C "$top" merge-base --is-ancestor "$br" "$main" 2>/dev/null && reason="${main}에 merge됨"
         [ -z "$reason" ] && [ -n "$(find "$wt" -maxdepth 0 -mtime +7 2>/dev/null)" ] && reason="7일+ 미변경"
         [ -n "$reason" ] && {
           dirty=$(git -C "$wt" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
@@ -28,7 +28,8 @@ while IFS= read -r line; do
       }
       wt=""; br="" ;;
   esac
-done <<< "$(git -C "$top" worktree list --porcelain 2>/dev/null; echo)"
+# $() 가 끝 빈 줄을 지우므로 밖에서 붙임. 없으면 마지막 작업 공간이 빠짐
+done <<< "$(git -C "$top" worktree list --porcelain 2>/dev/null)"$'\n'
 
 # --- issue sync (detached, incremental, max every 6h) ---
 if [ "$src" != compact ] && [ -n "$(gh_slug "$top")" ]; then
@@ -39,7 +40,7 @@ if [ "$src" != compact ] && [ -n "$(gh_slug "$top")" ]; then
 fi
 
 [ -n "$report" ] || [ -n "$restore" ] || exit 0
-msg=""; [ -n "$report" ] && msg="stale worktree 발견 (총 $total개 중):$report
+msg=""; [ -n "$report" ] && msg="stale worktree 발견 (총 ${total}개 중):$report
 정리하려면 /worktree-gc"
 ctx="$msg"; [ -n "$restore" ] && ctx="${ctx:+$ctx
 }$restore"

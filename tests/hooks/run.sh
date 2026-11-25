@@ -501,6 +501,19 @@ wexp "plan-write: 메인이어도 slack-inbox.jsonl Write 거부" '{"tool_name":
 wexp "plan-write: slack-inbox.jsonl Bash 추가 쓰기 거부" '{"tool_name":"Bash","tool_input":{"command":"echo {} >> ~/.config/lrm-hubs/slack-inbox.jsonl"}}' deny main
 wexp "plan-write: slack-inbox.jsonl 읽기는 통과" '{"tool_name":"Bash","tool_input":{"command":"tail -5 ~/.config/lrm-hubs/slack-inbox.jsonl"}}'
 wexp "plan-write: 깨진 입력은 통과" '{깨진'
+# find -exec: 읽기 명령만 통과. 세션 기록 폴더의 상위(~/.claude)를 대상으로 함
+mkdir -p "$SB/home/.claude/projects/p"
+fexp() { wexp "$1" "$(jq -cn --arg c "$2" --arg d "$SB" '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}')" "${3:-pass}"; }
+fexp "plan-write: find -exec 읽기(test) 통과" 'find ~/.claude -type l ! -exec test -e {} \; -print | head "$X"'
+fexp "plan-write: find -exec 읽기(grep +) 통과" 'find ~/.claude/projects -name "*.jsonl" -exec grep -l a {} + ; echo "$X"'
+fexp "plan-write: find -exec rm 거부" 'find ~/.claude -exec rm {} \; ; echo "$X"' deny
+fexp "plan-write: 읽기 뒤 -delete 거부" 'find ~/.claude -exec cat {} \; -delete ; echo "$X"' deny
+fexp "plan-write: 읽기 뒤 두 번째 -exec rm 거부" 'find ~/.claude -exec cat {} \; -exec rm {} \; ; echo "$X"' deny
+fexp "plan-write: 따옴표 끝표시 뒤 -delete 거부" "find ~/.claude -exec cat {} ';' -delete ; echo \"\$X\"" deny
+fexp "plan-write: find -exec sh 거부" 'find ~/.claude -exec sh -c "x" {} \; ; echo "$X"' deny
+fexp "plan-write: 경로로 준 cat 은 읽기로 안 봄" 'find ~/.claude -exec /tmp/cat {} \; ; echo "$X"' deny
+fexp "plan-write: 긴 옵션은 읽기로 안 봄" 'find ~/.claude -exec grep --filter=x a {} \; ; echo "$X"' deny
+fexp "plan-write: eval 의 \; 뒤 명령도 검사" 'eval echo \; rm -rf ~/.claude/projects ; echo "$X"' deny
 # 메인 판별: ORCA_ROLE 없이도 메인 체크아웃에서 시작한 세션(세션 기록 폴더 이름)이면 메인
 MK=$(printf '%s' "$SB/mainrepo" | sed 's/[^A-Za-z0-9]/-/g')
 mw() { jq -cn --arg f "$WP" --arg t "$1" '{tool_name:"Write",tool_input:{file_path:$f},transcript_path:$t}'; }
@@ -943,6 +956,16 @@ ss() { # <source> <cwd> [환경...]
   local src=$1 cwd=$2; shift 2
   printf '%s' "$(jq -cn --arg s "$src" --arg d "$cwd" '{source:$s,cwd:$d}')" | env "$@" HOME="$SB/home" CLAUDE_HOOKS_STATE="$SB/cstate" PATH="$CB:$PATH" BOARD_BIN="$CB" BOARD_DIR="$SB/cboard" bash "$H/session-start.sh" 2>/dev/null | jq -r '.hookSpecificOutput.additionalContext // empty'
 }
+# bash 3.2 는 한글 환경에서 $변수 바로 뒤 한글을 변수 이름으로 읽어 값이 사라지고 글자가 깨짐
+for w in old1 old2; do git -C "$SB/cws/coord-other-hub" worktree add -q -b "feat/$w" "$SB/cws/$w" 2>/dev/null; done
+out=$(ss startup "$SB/cws/coord-other-hub" LANG=ko_KR.UTF-8 LC_ALL=ko_KR.UTF-8)
+echo "$out" | grep -q '총 3개 중' && echo "$out" | grep -q 'main에 merge됨' && ok "session-start: 한글 환경에서 개수·브랜치 표시" || ko "session-start 한글" "$out"
+echo "$out" | grep -q 'feat/old1' && echo "$out" | grep -q 'feat/old2' && ok "session-start: 목록의 마지막 작업 공간도 보고" || ko "session-start 마지막" "$out"
+for w in old1 old2; do git -C "$SB/cws/coord-other-hub" worktree remove "$SB/cws/$w"; done
+bad=$(LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^ -~[:space:]]' "$H"/*.sh "$H"/lib/*.sh | grep -v '^[^:]*:[0-9]*:[[:space:]]*#')
+[ -z "$bad" ] && ok "훅: \$변수 바로 뒤 한글 없음" || ko "훅 \$변수 뒤 한글" "$bad"
+out=$(jq -cn --arg s "pe" '{session_id:$s,tool_input:{file_path:"/x/a.py"}}' | HOME="$SB/home" CLAUDE_HOOKS_STATE="$SB/cstate" bash "$H/post-edit.sh" | jq -r '.hookSpecificOutput.additionalContext')
+echo "$out" | grep -q '커밋은 승인 없이' && ! echo "$out" | grep -q '승인 전 git commit 금지' && ok "post-edit: 커밋 안내가 현재 규칙과 일치" || ko "post-edit 안내" "$out"
 out=$(ss compact "$SB/cws/coord-feat-x-hub" X=1)
 echo "$out" | grep -q 'lrm-fake1' && echo "$out" | grep -q '단계: 3 구현' && [ "$(echo "$out" | wc -l)" -le 20 ] && ok "compact+기능 허브: 카드 id·단계, 20줄 이내" || ko "기능 허브 재주입" "$out"
 echo "$out" | grep -q '처리 안 된 지시: 없음' && ok "지시 없음 표시" || ko "지시 없음" "$out"

@@ -45,6 +45,9 @@ DEFAULTS = {
     "GH_WATCH_RECENT_MERGES": 10,
     "GH_WATCH_NOTIFY_PER_HOUR": 6,
     "GH_WATCH_ACTION_TIMEOUT": 60,
+    "GH_WATCH_BOARD_RETRY": 60,        # 작업판 기록 재시도 첫 간격 초(두 배씩 증가)
+    "GH_WATCH_BOARD_RETRY_MAX": 600,   # 작업판 기록 재시도 간격 상한 초
+    "GH_WATCH_BOARD_KEEP": 259200,     # 작업판 기록 대기 보관 초. 넘으면 drop 로 남기고 버림
     "GH_WATCH_SEEN_MAX": 3000,     # 처리한 이벤트 id 보관 수
     "GH_WATCH_LOG_MAX": 262144,    # 로그 돌림 크기(바이트)
     "GH_WATCH_EVENTS_MAX": 2097152,

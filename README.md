@@ -7,15 +7,17 @@
 ```
 claude-config/
 ├─ install.sh           링크·병합·복사 + git 설정 (--dry-run·--check·--doctor·--restore)
-├─ links.tsv            원본 → 대상($HOME 기준) → 방식(link|merge|copy|render)
+├─ links.tsv            원본 → 대상($HOME 기준) → 방식(link|merge|codex|agents|copy|render)
 ├─ gitconfig.tsv        git config --global 키 4개
-├─ merge/               설정 병합 식 (orca-keep.jq, merge.jq)
+├─ merge/               설정 병합 식 (orca-keep.jq, merge.jq, codex-hooks.jq)
 ├─ claude/              CLAUDE.md, keybindings.json, settings.base.json, hooks/(+lib), meat-proxy/
+├─ codex/               Codex 훅 변환기(hooks/claude-compat.py)와 훅 등록(hooks.base.json), 전역 규칙의 Codex 전용 부분(AGENTS.tail.md)
 ├─ skills/<이름>/       직접 작성한 스킬 35개 (synced·외부 링크 제외). `doc-kit` 은 문서 규칙 통합본
 ├─ git/hooks/           전역 git 훅 9개
 ├─ hubs/                scripts/ roles/ launchd/ mods/(옆 패널 lrm-board) docs/ slack-bot-manifest.yml slack-bot.env.example
 ├─ scripts/             저장소 도구: doctor.sh(의존성 점검), make_dist_zip.sh(배포 zip, 시크릿 검사 후 생성)
 ├─ values.env.example   로컬 값 양식(실명·채널 ID). 실제 값은 저장소 밖
+├─ tests/codex_hooks/   Codex 변환기 검증 (test_compat.py)
 ├─ tests/install/       샌드박스 검증 (run.sh)
 ├─ tests/dist/          배포 zip 검증 (run.sh, 임시 폴더에만 생성)
 ├─ tests/doc-kit/       doc-kit 검증 (run.sh·sample.sh·rename.sh, fixtures/, check_unique.sh)
@@ -27,6 +29,8 @@ claude-config/
 방식:
 - `link` 는 대상을 저장소 원본으로 가리키는 링크로 만든다. 스킬은 폴더째가 아니라 스킬마다 링크해 `skills/synced` 같은 외부 항목이 섞이지 않는다.
 - `merge` 는 `settings.base.json`(내 설정)에 현재 파일의 Orca 훅·상태줄을 얹어 새 파일로 쓴다. 훅 배열은 순서를 유지해 이어붙인다.
+- `codex` 는 `~/.codex/hooks.json` 에서 우리 항목(`claude-compat.py`)만 제자리에서 갈고 Orca·GitKraken 등 다른 도구 항목은 그대로 둔다. 변환기는 `claude/settings.base.json` 의 훅 목록을 읽어 실행하므로 Claude 훅을 바꾸면 Codex 에도 반영된다. `hooks.base.json` 이 바뀐 설치 뒤에는 Codex 에서 `/hooks` 로 신뢰해야 하고, 그 전에는 바뀐 훅이 건너뛰어진다. Codex 에 없는 사건(Notification·StopFailure)과 요약 지시를 못 받는 PreCompact 는 연결하지 않는다.
+- `agents` 는 `claude/CLAUDE.md` 뒤에 `codex/AGENTS.tail.md` 를 붙여 `~/.codex/AGENTS.md` 를 만든다. `CLAUDE.md` 를 고치면 설치를 다시 해야 Codex 에 반영되고, 그 전에는 `--check` 가 `DRIFT` 로 알린다.
 - `copy` 는 `__HOME__` 을 현재 HOME 으로, `__PYTHON3__` 를 설치하는 셸의 python3 절대 경로로 치환해 복사한다(launchd plist, Socket Mode 수신기, 옆 패널 mod). 같으면 건너뛴다. Socket Mode plist 는 `~/Library/LaunchAgents` 가 아닌 `~/.config/lrm-hubs` 에 두어 켜지 않는다.
 - `render` 는 `*.tmpl` 의 `__KEY__` 자리표시를 로컬 값 파일로 채워 실제 파일로 복사한다. 실명·DM 채널 ID 가 든 파일 4개(역할 3개, 스킬 파일 1개)가 이 방식이다. 스킬 `orca-hub-create` 는 폴더째가 아니라 파일마다 링크한다.
 

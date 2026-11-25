@@ -157,7 +157,7 @@ class Router:
             return Outcome(True, "ws", card)
         except Exception as err:  # noqa: BLE001 — 답을 잃지 않는 것이 먼저. 종류만 남기고 메인으로
             ok = self.to_main(MAIN_LINE.format(source=src, body=f"(작업 카드 {card} 세션에 전달하지 못해 대리 전달: {type(err).__name__}) " + line, ts=ts))
-            return Outcome(ok, "main" if ok else "lost", card, f"작업 카드 {card} 세션 전달 실패({type(err).__name__})" + ("" if ok else " · 메인 대리 전달도 실패"))
+            return Outcome(ok, "main" if ok else "lost", card, f"작업 카드 {card} 세션 전달 실패({type(err).__name__}: {str(err)[:120]})" + ("" if ok else " · 메인 대리 전달도 실패"))
 
     def hub_of(self, did: str) -> str:
         """결정을 올린 허브 slug. 기록을 못 읽거나 근거가 없으면 빈 문자열(= 메인으로)"""
