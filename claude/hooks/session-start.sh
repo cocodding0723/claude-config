@@ -28,7 +28,8 @@ while IFS= read -r line; do
       }
       wt=""; br="" ;;
   esac
-done <<< "$(git -C "$top" worktree list --porcelain 2>/dev/null; echo)"
+# $() 가 끝 빈 줄을 지우므로 밖에서 붙임. 없으면 마지막 작업 공간이 빠짐
+done <<< "$(git -C "$top" worktree list --porcelain 2>/dev/null)"$'\n'
 
 # --- issue sync (detached, incremental, max every 6h) ---
 if [ "$src" != compact ] && [ -n "$(gh_slug "$top")" ]; then

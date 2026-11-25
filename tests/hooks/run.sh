@@ -960,6 +960,7 @@ ss() { # <source> <cwd> [환경...]
 for w in old1 old2; do git -C "$SB/cws/coord-other-hub" worktree add -q -b "feat/$w" "$SB/cws/$w" 2>/dev/null; done
 out=$(ss startup "$SB/cws/coord-other-hub" LANG=ko_KR.UTF-8 LC_ALL=ko_KR.UTF-8)
 echo "$out" | grep -q '총 3개 중' && echo "$out" | grep -q 'main에 merge됨' && ok "session-start: 한글 환경에서 개수·브랜치 표시" || ko "session-start 한글" "$out"
+echo "$out" | grep -q 'feat/old1' && echo "$out" | grep -q 'feat/old2' && ok "session-start: 목록의 마지막 작업 공간도 보고" || ko "session-start 마지막" "$out"
 for w in old1 old2; do git -C "$SB/cws/coord-other-hub" worktree remove "$SB/cws/$w"; done
 bad=$(LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^ -~[:space:]]' "$H"/*.sh "$H"/lib/*.sh | grep -v '^[^:]*:[0-9]*:[[:space:]]*#')
 [ -z "$bad" ] && ok "훅: \$변수 바로 뒤 한글 없음" || ko "훅 \$변수 뒤 한글" "$bad"
