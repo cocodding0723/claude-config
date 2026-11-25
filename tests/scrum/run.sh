@@ -202,6 +202,15 @@ assert all("/" not in s["name"] for s in a["skipped"]), "경로가 skipped 에 �
 PY
 rm -rf "$M" "$H/hub-reports.jsonl"; mc; python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d["attachments"]=={"files":[],"skipped":[]} and not d["errors"], d' "$D/mc.json" && ok "첨부 폴더·보고 기록이 없으면 빈 목록(오류 아님)" || ko "첨부 없음" "$(cat "$D/mc.json" | head -c 300)"
 
+python3 - "$S" <<'PY' && ok "첨부 티켓 번호: 파일 이름 우선, 없으면 바로 위 폴더, 다른 낱말·번호 없음은 빈 목록" || ko "첨부 티켓"
+import sys
+sys.path.insert(0, sys.argv[1]); import scrum_collect as c
+assert c.media_tickets("/a/20261125-LRM-716-요구/b.png") == ["LRM-716"]
+assert c.media_tickets("/a/LRM-1/lrm772-장면.mp4") == ["LRM-772"]
+assert c.media_tickets("/a/x/LRM-712_LRM-715.png") == ["LRM-712", "LRM-715"]
+assert c.media_tickets("/a/x/ALRM-3.png") == [] and c.media_tickets("/a/x/b.png") == []
+PY
+
 # ---- 이미지·영상 첨부(발송) ----
 export LRM_SCRUM_MEDIA=on
 reset; echo media > "$D/plan-collect"; post --date $WK; rc=$?

@@ -141,6 +141,7 @@ hubs/scripts/ci_watch.py	.config/lrm-hubs/ci_watch.py	link
 hubs/scripts/bot_alive.py	.config/lrm-hubs/bot_alive.py	link
 hubs/scripts/ci_review.py	.config/lrm-hubs/ci_review.py	link
 hubs/scripts/adv_review.py	.config/lrm-hubs/adv_review.py	link
+hubs/scripts/claude_env.py	.config/lrm-hubs/claude_env.py	link
 hubs/ci-review-hubs.tsv	.config/lrm-hubs/ci-review-hubs.tsv	link
 hubs/ci-ticket-owners.tsv	.config/lrm-hubs/ci-ticket-owners.tsv	link
 hubs/panel.env.example	.config/lrm-hubs/panel.env.example	link
@@ -282,6 +283,7 @@ board/bin/board-said	orca/board/bin/board-said	link
 board/bin/board-skip	orca/board/bin/board-skip	link
 board/lib/board_evidence.py	orca/board/lib/board_evidence.py	link
 hubs/jira_free_transitions.tsv	.config/lrm-hubs/jira_free_transitions.tsv	link
+hubs/jira_evidence.tsv	.config/lrm-hubs/jira_evidence.tsv	link
 hubs/scripts/hook_stats.py	.config/lrm-hubs/hook_stats.py	link
 hubs/launchd/ai.lrm.hookstats.plist	Library/LaunchAgents/ai.lrm.hookstats.plist	copy
 hubs/feature_projects.tsv	.config/lrm-hubs/feature_projects.tsv	link

@@ -88,7 +88,7 @@ mk_current | add_extras > "$SB/.claude/settings.json"
 CUR_BYTES=$(shasum "$SB/.claude/settings.json" | cut -d' ' -f1)
 cp "$SB/.claude/settings.json" "$SB/settings.original"
 hooks_of() { jq '[.hooks[]?[]] | length' "$1"; }
-[ "$(hooks_of "$SB/.claude/settings.json")" = 34 ] && ok "준비: 현재 설정 훅 34개(기본 15+Orca 15+추가 3+중복 1)" || ko "준비" "훅 수 $(hooks_of "$SB/.claude/settings.json")"
+[ "$(hooks_of "$SB/.claude/settings.json")" = 35 ] && ok "준비: 현재 설정 훅 35개(기본 16+Orca 15+추가 3+중복 1)" || ko "준비" "훅 수 $(hooks_of "$SB/.claude/settings.json")"
 # Codex 훅: 다른 도구 항목 사이에 낡은 우리 항목이 끼어 있는 상태
 mkdir -p "$SB/.codex"
 jq -n '{hooks:{PreToolUse:[{matcher:"",hooks:[{type:"command",command:"gk a"}]},{matcher:"Bash",hooks:[{type:"command",command:"python3 /x/claude-compat.py",timeout:20}]},{hooks:[{type:"command",command:"orca b"}]}],Interrupt:[{hooks:[{type:"command",command:"orca c"}]}]}}' > "$SB/.codex/hooks.json"

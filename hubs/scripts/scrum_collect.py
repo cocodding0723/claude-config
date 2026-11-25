@@ -10,6 +10,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -40,6 +41,8 @@ MEDIA_DIR = Path(os.environ.get("LRM_SCRUM_MEDIA_DIR", Path.home() / "Documents/
 MEDIA_EXTS = {"image": ("png", "jpg", "jpeg", "gif", "webp"), "video": ("mp4", "mov", "webm", "mkv")}
 SOURCE_REPORT, SOURCE_FOLDER = "허브 보고", "정리 기록"
 MEDIA_DAYS = 2  # 오늘·어제
+TICKET_PROJECT = os.environ.get("LRM_SCRUM_TICKET_PROJECT", "LRM")
+TICKET_RE = re.compile(r"(?<![A-Za-z])%s[-_]?(\d+)" % re.escape(TICKET_PROJECT), re.I)
 MEDIA_MAX_FILES = 5  # 초안 스레드에 올릴 첨부 개수 상한(허브 보고 --file 상한과 같음)
 MEDIA_WALK_DEPTH = 3
 MEDIA_WALK_MAX = 20000  # 폴더 순회 파일 수 상한(큰 정리 폴더에서 오래 걸리지 않게)
@@ -223,6 +226,15 @@ def media_kind(path):
     return next((k for k, exts in MEDIA_EXTS.items() if ext in exts), "")
 
 
+def media_tickets(path):
+    """파일·바로 위 폴더 이름에 적힌 티켓 번호. 파일 이름에 있으면 그것만(폴더는 여러 티켓을 담을 수 있음)"""
+    p = Path(path)
+    for text in (p.name, p.parent.name):
+        if found := TICKET_RE.findall(text):
+            return sorted({"%s-%s" % (TICKET_PROJECT, n) for n in found})
+    return []
+
+
 def report_media(cutoff):
     """허브 보고 첨부(files) 중 cutoff 이후 보고의 이미지·영상. 원본이 없으면 접수 때 복사본(staged) 사용"""
     for r in jsonl(REPORTS):
@@ -269,6 +281,7 @@ def collect_attachments(date):
             continue
         st = os.stat(path)
         cands.append({"path": path, "name": os.path.basename(path), "size": st.st_size, "kind": media_kind(path),
+                      "tickets": media_tickets(path),
                       "source": source, "mtime": st.st_mtime})
     cands.sort(key=lambda c: (c["source"] != SOURCE_REPORT, -c["mtime"]))  # 허브 보고 첨부가 먼저(팀 일과 가까움), 그 안에서 최신순
     uniq, keys = [], set()

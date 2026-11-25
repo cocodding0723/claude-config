@@ -161,6 +161,17 @@
         ]
       },
       {
+        "matcher": "mcp__(atlassian|claude_ai_Atlassian_MCP)__(addOrEditJiraIssueComment|executeWrite)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I ~/.claude/hooks/lib/jira_evidence_guard.py",
+            "timeout": 10,
+            "statusMessage": "Jira 자료 검사 중"
+          }
+        ]
+      },
+      {
         "matcher": "Write|Edit|MultiEdit|NotebookEdit|Bash",
         "hooks": [
           {
