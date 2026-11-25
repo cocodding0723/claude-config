@@ -120,6 +120,45 @@ class BoardParentTests(unittest.TestCase):
             fb.BdReader(deadline=time.monotonic() - 1).query("show", "lrm-test")
         self.assertEqual([], self.calls())
 
+    def export(self):
+        rows = [self.epic | {"comments": self.comments},
+                *(k | {"dependencies": [{"type": "parent-child", "depends_on_id": "lrm-test"}]} for k in self.kids)]
+        (self.board / ".beads").mkdir(exist_ok=True)
+        (self.board / ".beads/issues.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+    def slow_bd(self):
+        Path(self.conf.bd).write_text(f"#!/bin/sh\necho x >> '{self.root}/queries'\nexec sleep 20\n")
+
+    def test_bd_timeout_reads_export_and_sends_same_text(self):
+        self.kids.append({"id": "lrm-test.2", "title": "끝난 작업", "status": "closed"})
+        self.comments.append({"text": "검증 완료", "created_at": "2026-11-25T01:00:00Z"})
+        self.kids[1]["parent"] = "lrm-test"
+        self.write_data()
+        self.refresh()
+        direct = self.calls()[-1][-1]
+        self.state["topics"]["card:lrm-test"] = {"ts": "123.456"}
+        (self.root / "queries").unlink()
+        self.export()
+        self.slow_bd()
+        sender.refresh_boards(self.conf, self.state, time.monotonic() + 6)
+        self.assertEqual(2, len(self.calls()))
+        self.assertIn("1/2 완료", direct)
+        self.assertEqual(direct, self.calls()[-1][-1])
+        self.assertEqual(1, len((self.root / "queries").read_text().splitlines()))
+
+    def test_round_already_slow_skips_bd(self):
+        self.export()
+        self.conf.bd_left = 0
+        self.refresh()
+        self.assertEqual(1, len(self.calls()))
+        self.assertFalse((self.root / "queries").exists())
+
+    def test_bd_timeout_without_export_warns(self):
+        self.slow_bd()
+        sender.refresh_boards(self.conf, self.state, time.monotonic() + 2)
+        self.assertEqual([], self.calls())
+        self.assertIn("현황판 변경 조회 실패", Path(self.conf.log).read_text())
+
     def test_closed_non_epic_and_shared_topics_are_skipped(self):
         for changes in ({"status": "closed"}, {"issue_type": "task"}, {"labels": []}):
             self.epic.update(status="open", issue_type="epic", labels=["flow:v1", "feature:test", "slack-thread:123.456"])
