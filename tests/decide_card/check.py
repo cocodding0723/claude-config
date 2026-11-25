@@ -85,6 +85,25 @@ class ReuseTest(unittest.TestCase):
             self.add("다른 질문")
         self.assertEqual(self.add("첫 질문")["decision_id"], "D-SPINE")
 
+    def test_ticket_in_title_matches_own_record_at_send(self):
+        title = "Jira LRM-485 상태 변경 승인"
+        rep = self.add(title)
+        self.put("hub-reports.jsonl", [rep])
+        self.hr.reuse_check("D-SPINE", dc.first_line(self.hr.bullet_body(rep["text"])))
+        self.assertEqual(self.add(title)["decision_id"], "D-SPINE")
+
+    def test_other_ticket_with_same_number_rejected_at_add(self):
+        self.put("hub-reports.jsonl", [self.add("Jira LRM-485 상태 변경 승인")])
+        with self.assertRaises(self.hr.ReportError) as cm:
+            self.add("Jira LRM-486 상태 변경 승인")
+        self.assertIn("Jira LRM-485", str(cm.exception))
+
+    def test_answer_line_rejected_at_add(self):
+        for line in ("👉 답: 1", "- :point_right: 답: 1"):
+            with self.assertRaises(self.hr.ReportError) as cm:
+                self.add(f"질문\n{line}")
+            self.assertIn("답 줄은 도구가 만듦", str(cm.exception))
+
     def test_new_number_and_no_record_pass(self):
         self.put("slack-sent.jsonl", [{"decision_id": "D-SPINE", "kind": "decide", "title": "옛 질문"}])
         self.assertEqual(self.add("다른 질문", "D-SPINE2")["decision_id"], "D-SPINE2")
