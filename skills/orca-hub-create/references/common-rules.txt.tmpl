@@ -14,7 +14,7 @@
 
 세부 참조(한 줄씩, 필요할 때 읽는다)
 - 전체 세부 규칙·이력: ~/.claude/skills/orca-hub-create/references/rules-detail.md
-- 워커 공간: create_worker_ws.sh / 원격 판단: pick_host.sh / Unity 실행: ~/.config/lrm-hubs/unity-run --name "<허브>:<작업>" -- <명령> 으로만(직접 acquire/release 금지, 동시 1개)
+- 워커 공간: create_worker_ws.sh / 원격 판단: pick_host.sh / Unity 실행: ~/.config/lrm-hubs/unity-run --name "<허브>:<작업>" -- <명령> 으로만(직접 acquire/release 금지, 동시 2개)
 - 보고·결정·첨부: ~/.config/lrm-hubs/hub_report.py (양식 hubs/docs/slack-format.md). 기능 허브의 보고 방식은 role-feature.txt를 따른다.
 - 허브 상태: hub_status.py write. 메인 입력창·받은 편지함은 사용자 전용. bd comments add <카드>로 기록, 카드가 없으면 ~/.config/lrm-hubs/board_notify.py post --kind other --source <허브> '<본문>'. 사용자는 패널·Slack으로 본다. 도식·캡처·결정은 Slack 봇(hub_report.py)으로 직접 보낸다.
 - 문서: doc-kit 스킬 + check.py / PR: create-pr / Jira: jira-issue / 결정 기록: decision-log

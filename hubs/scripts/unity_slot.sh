@@ -1,12 +1,12 @@
 #!/bin/bash
-# Unity 동시 실행 슬롯(기본 1개, LRM_UNITY_SLOTS 로 조정). 대기표 순서대로 배정. 11-16 하네스 1단계에서 1개로 환원(11-12 메모리 누적 맥 리셋 사고, Unity 1개 8GB 안팎). 호출은 unity-run 경유
+# Unity 동시 실행 슬롯(기본 2개, LRM_UNITY_SLOTS 로 조정). 대기표 순서대로 배정. 11-16 에 1개로 줄인 것은 예전 맥(48GB) 메모리 사고 때문. 11-25 새 맥(M5 Max 18코어·64GB)에서 스왑 0·CPU 유휴 35~49%(순간 8%)를 재고 2개로 올림. 호출은 unity-run 경유
 # 사용: unity_slot.sh acquire <작업이름>   → 슬롯 번호 출력(블록)
 #       LRM_SLOT_PRIORITY=1 이면 대기열 맨 앞에 선다(사용자 최우선 작업만). 실행 중 슬롯은 뺏지 않음
 #       unity_slot.sh release <슬롯번호>
 #       unity_slot.sh status
 set -u
 ROOT="${LRM_UNITY_SLOT_DIR:-/tmp/lrm-unity-slots}"
-MAX="${LRM_UNITY_SLOTS:-1}"
+MAX="${LRM_UNITY_SLOTS:-2}"
 mkdir -p "$ROOT/queue"
 
 alive() { [ -n "$1" ] && kill -0 "$1" 2>/dev/null; }

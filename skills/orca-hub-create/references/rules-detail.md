@@ -63,7 +63,7 @@
 ## 완료 기준·우선순위·동시 작업 (11-12 사용자 '1~3 적용')
 - 완료 보고에는 증거 경로가 반드시 있어야 한다: 실행 결과(EditMode xml 등) + 화면 변경이면 녹화·샷 경로 + UI 는 기획 이미지 대조표 경로. 증거 없는 "완료"는 코디네이터가 반려하고, 메인도 받지 않는다. 워커 보고를 코드·결과 파일 확인 없이 전달하지 않는다.
 - 우선순위 변경은 하루 2번(오전 시작·오후 3시 전후)에만 메인이 묶어서 내린다. 그 사이 급한 건은 '긴급' 표시 1건만 끼울 수 있고, 끼우면 진행 중 작업 하나를 명시적으로 멈춘다.
-- 허브당 동시에 진행하는 구현 워커 상한은 부하(pick_host.sh 와 같은 값, `sysctl -n vm.loadavg` 의 1분 평균)로 정한다: 12 이하면 4개, 12 초과 16 미만이면 2개, 16 이상이면 새 구현 워커를 띄우지 않는다. 현재 상한은 `pick_host.sh` 의 stderr 근거 줄에 `구현워커상한=N` 으로 나온다. 읽기 전용 조사 워커는 상한에서 제외, Unity 실행은 동시 2개(메모리 8GB×2 감시). Unity 검증은 unity_slot.sh 대기표 하나로, 메인이 정한 우선순위 순서로만 쓴다.
+- 허브당 동시에 진행하는 구현 워커 상한은 메모리 여유(`memory_pressure` 의 여유 비율)로 정한다: 20% 이상 25개, 10% 이상 20% 미만 12개, 10% 미만이면 새 구현 워커를 띄우지 않는다. CPU 부하 평균으로는 막지 않는다. 현재 상한은 `pick_host.sh` 의 stderr 근거 줄에 `구현워커상한=N` 으로 나온다. 읽기 전용 조사 워커는 상한에서 제외, Unity 실행은 동시 2개(메모리 8GB×2 감시). Unity 검증은 unity_slot.sh 대기표 하나로, 메인이 정한 우선순위 순서로만 쓴다.
 
 ## 코디네이터 병목 줄이기 (11-12 사용자 "빨리 진행해 지금 코디네이터 병목이 좀 심한것같은데 제대로 수정해봐", 앞의 상충 규칙보다 우선)
 - 허브→메인 메시지는 결정·막힘·완료(증거 경로 포함)만 보낸다. 3줄 이내. 진행 중 상황·착수 알림은 보내지 않는다.
@@ -96,7 +96,7 @@
 - 계획 승인: 계획서 컨펌 1회가 그 계획서에 적힌 Jira 발급·상태 전환·draft PR 생성을 함께 승인한다. 컨펌 뒤 메인이 ~/.config/lrm-hubs/plan-approvals/<plan-id>.json 에 사용자 원문 인용(approver_quote)·그 답의 Slack ts(source.slack_ts)와 approved_at·tickets·prs·jira_transitions 를 기록. 인용이 slack-inbox.jsonl 의 그 답 본문에 없으면 무효. 계획서에 없는 항목은 추가 후 재컨펌. ready 전환·dev/main 병합·라이브는 따로 승인. 계획에 없는 단건은 기존 결정 카드(D-PR·D-JIRA·D-JST). 11-13 D-PRDRAFT2(draft PR 무승인)와 'Jira 선발급 묻지 않음'은 폐기.
 - 계획 승인 기록은 approved_at 부터 7일 지나면 무효(plan_approval.py). 기록 파일 쓰기는 메인(메인 체크아웃에서 시작한 세션, 또는 ORCA_ROLE=main)만, 다른 세션은 plan-approval-write-guard 훅이 거부. ORCA_ROLE 을 다른 값으로 주면 그 값이 우선.
 - 카드 병합·완료는 `board-merge <카드> <작업자>` 로만(범위 검사 → board-done 사전 검사 → 시험 병합·BOARD_MERGE_VERIFY → --no-ff 커밋 → board-done). git merge·bd close 직접 금지. 범위 검사 기준은 카드 base: → epic branch: label. dev 반영 전 `board-merge-check --epic <기능 epic> <통합 브랜치> --base origin/dev --repo <저장소>`(하위 카드 범위 합집합), 종료 4면 머지 금지. 증거 줄은 commit=<브랜치 끝 해시> 필수, 기능 묶음 epic 은 evidence:review(검수 모델≠구현 모델) 필수. epic 완료 시 feature_close.sh 자동 실행. 화면 촬영·녹화는 기능 묶음(--epic)당 1회. 시안 카드는 board/templates/card-mockup.md 대응표가 첫 단계.
-- Unity 실행은 `~/.config/lrm-hubs/unity-run --name "<허브>:<작업>" -- <명령>` 으로만, unity_slot.sh 직접 acquire/release 금지. 동시 1개(LRM_UNITY_SLOTS 기본 1), 부하 기준 코어 수×1.5, 오래 기다릴 작업은 --keep-waiting.
+- Unity 실행은 `~/.config/lrm-hubs/unity-run --name "<허브>:<작업>" -- <명령>` 으로만, unity_slot.sh 직접 acquire/release 금지. 동시 2개(LRM_UNITY_SLOTS 기본 2), 부하 기준 코어 수×3, 오래 기다릴 작업은 --keep-waiting.
 - 하네스 지표 재측정: `tools/metrics/measure.sh --since <YYYY-MM-DD> --until <YYYY-MM-DD>`(설정 저장소, 읽기 전용).
 - 완료는 별도 검수자 통과 뒤: 기계 검사(컴파일·테스트·픽셀 비교) 먼저, 구현자와 다른 모델(비주얼=astra, 기능·논리=Fable)이 시안·완료 기준 대비 판정, 통과분만 사용자 보고.
 - 11-17 개정(사용자 "jira 티켓 발급 그냥 자동화하자"): Jira 이슈 발급·이슈 링크·에픽·상위 지정은 게임 작업에 한해 승인 없이 통과한다. 위 83·93행의 `D-JIRA<요약 해시>` 승인·계획서 tickets 요구는 폐기. 개인 업무 Jira 발급 금지, 상태 변경 게이트(`D-JST<이슈 키>`·계획 jira_transitions), ready 전환·병합 승인은 유지.
