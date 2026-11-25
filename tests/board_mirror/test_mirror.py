@@ -463,20 +463,20 @@ class MirrorTest(unittest.TestCase):
         self.assertEqual(1, p.returncode)
         self.assertIn("BudgetExpired", (self.home / "board-mirror.log").read_text())
 
-    def test_poller_recomputes_budget_after_mirror(self):
+    def test_poller_recomputes_mirror_budget_after_sender(self):
         script = (ROOT / "hubs/scripts/slack_poll.sh").read_text()
         tail = script[script.index('left=$((TOTAL', script.index('# 허브 보고 전송')):script.rindex('exit "$RC"')]
         clock = self.home / "clock"
-        budget = self.home / "sender-budget"
+        budget = self.home / "mirror-budget"
         py = self.home / "fake-python"
-        py.write_text('#!/bin/bash\ncase "$2" in *board_mirror.py) echo 8 > "$LRM_HUB_DIR/clock";; '
-                      '*) echo "$LRM_REPORT_BUDGET_S" > "$LRM_HUB_DIR/sender-budget";; esac\n')
+        py.write_text('#!/bin/bash\ncase "$2" in *report_sender.py) echo 5 > "$LRM_HUB_DIR/clock";; '
+                      '*) echo "$5" > "$LRM_HUB_DIR/mirror-budget";; esac\n')
         py.chmod(0o755)
         clock.write_text("0")
         setup = 'TOTAL=10; T0=0; DIR="$1"; PY="$2"; date() { cat "$DIR/clock"; };\n'
         p = subprocess.run(["bash", "-c", setup + tail, "test", str(self.home), str(py)], capture_output=True)
         self.assertEqual(0, p.returncode, p.stderr)
-        self.assertEqual("2", budget.read_text().strip())
+        self.assertEqual("3", budget.read_text().strip())
 
     def test_pending_baseline_sends_records_after_cutoff(self):
         self.add("과거 기록")
