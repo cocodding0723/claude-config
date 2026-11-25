@@ -264,6 +264,37 @@ def read_new(d=None, commit=True, box=MAIN):
         return recs + new, "; ".join(notes)
 
 
+def split_read(d=None, box=MAIN):
+    """(읽은 줄, 안 읽은 줄). 옛 파일(.1) 포함, 파일·읽은 위치를 바꾸지 않음. 읽은 위치를 모르면 전부 안 읽은 줄. 파일 없음 외 읽기 오류는 예외"""
+    path = inbox_path(d, box)
+    ino, off = load_offset(offset_path(d, box))
+    files = []  # (inode, 내용) 새 파일부터
+    for p in (path, path + ".1"):
+        try:
+            with open(p, "rb") as f:
+                files.append((os.fstat(f.fileno()).st_ino, f.read()))
+        except FileNotFoundError:
+            files.append((None, b""))
+    (cur, _), (old, _) = files
+    read, unread = [], []
+    for at, data in files:
+        if ino is None or ino not in (cur, old):
+            end = 0
+        elif at == ino:
+            end = off if off <= len(data) else 0  # 잘림: read_new 가 처음부터 다시 읽음
+        else:
+            end = len(data) if at == old else 0  # 새 파일을 읽는 중이면 옛 파일은 다 읽은 뒤
+        for part, out in ((data[:end], read), (data[end:], unread)):
+            for ln in part.splitlines():
+                try:
+                    r = json.loads(ln)
+                except ValueError:
+                    continue
+                if isinstance(r, dict):
+                    out.append(r)
+    return read, unread
+
+
 def format_row(r):
     text = " ".join(str(r.get("text", "")).split())
     ref = f" [{r['ref']}]" if r.get("ref") else ""

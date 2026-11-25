@@ -100,21 +100,16 @@ def session_sender(card: str, ws: str, ts: str, text: str, kind: str) -> str:
 LEAKED = ("main", "proxy", "lost")  # 세션에 닿지 않고 끝난 전달 상태. unknown 은 닿았을 수 있어 제외
 
 
-def inbox_refs(path: str) -> set:
-    """받은 편지함 파일에 적힌 ref 전부. 파일이 없으면 빈 집합, 다른 읽기 오류는 예외(모르는 채 다시 보내지 않게)"""
-    refs = set()
-    try:
-        with open(path, encoding="utf-8", errors="replace") as f:
-            for ln in f:
-                try:
-                    r = json.loads(ln)
-                except ValueError:
-                    continue
-                if isinstance(r, dict):
-                    refs.add(r.get("ref"))
-    except FileNotFoundError:
-        pass
-    return refs
+READ, UNREAD = "read", "unread"
+UNREAD_NOTE = "상자에 있으나 읽음 미확인"
+
+
+def box_state(card: str, ws: str, ts: str) -> str:
+    """이 답의 줄이 세션 상자에서 READ·UNREAD 중 어느 쪽인지, 없으면 ''. 직접 입력 질문도 같은 ref 를 쓰므로 답(kind answer)만 셈"""
+    import feedback_route as fr
+    has = lambda rows: any(r.get("kind") == "answer" and r.get("ref") == f"{card} slack:{ts}" for r in rows)  # noqa: E731
+    read, unread = main_inbox.split_read(box=fr.answer_box(card, ws))
+    return READ if has(read) else UNREAD if has(unread) else ""
 
 
 def session_block(card: str, ws: str, ts: str) -> str:
@@ -125,11 +120,8 @@ def session_block(card: str, ws: str, ts: str) -> str:
     row = fr.card_row(card)
     if not row or not (fr.feature_alive(row) if fr.is_feature(row) else fr.is_open(row)):
         return "작업 카드 끝남"
-    path = main_inbox.inbox_path(box=fr.answer_box(card, ws))
-    # 상자에 쓴 뒤 카드 코멘트에서 실패한 답은 전달 기록이 main 이어도 세션에 닿은 것(11-25 b8bfba1 이전)
-    if f"{card} slack:{ts}" in inbox_refs(path) | inbox_refs(path + ".1"):
-        return "이미 세션 상자에 있음"
-    return ""
+    # 상자에 쓴 뒤 카드 코멘트에서 실패한 답(11-25 b8bfba1 이전)은 입력창 알림이 안 가 세션이 못 읽었을 수 있음. 읽은 줄만 닿은 것으로 봄
+    return "이미 세션 상자에서 읽음" if box_state(card, ws, ts) == READ else ""
 
 
 class Router:
@@ -141,6 +133,7 @@ class Router:
         self.to_ws = to_ws or session_sender  # (카드, 작업 공간, ts, 본문, 종류) -> 상자 이름. 실패는 예외
         self.feature_of = feature_lookup      # 기능 코디네이터 허브 이름 -> (기능 카드, 작업 공간). 없으면 ('', '')
         self.block_of = session_block         # (카드, 작업 공간, ts) -> 다시 보내면 안 되는 이유. 보내도 되면 ''
+        self.box_of = box_state               # (카드, 작업 공간, ts) -> READ | UNREAD | ''
 
     def ws_of(self, did: str) -> tuple:
         """결정을 올린 보고에 적힌 (작업 카드, 작업 공간). 없으면 ('', ''). 같은 번호를 다시 올렸으면 최근 보고.
@@ -235,7 +228,7 @@ class Router:
         return out
 
     def leaked_answers(self, did: str) -> list:
-        """결정 하나의 버튼 답마다 {did, ts, card, ws, source, body, skip}. skip 이 빈 것만 다시 보낼 대상"""
+        """결정 하나의 버튼 답마다 {did, ts, card, ws, source, body, skip, unread}. unread 는 상자에 있으나 읽음 미확인. skip 이 빈 것만 다시 보낼 대상"""
         answers = [r for r in self.store.read_inbox() if r.get("decision_id") == did and r.get("type") == "button" and r.get("parent_ts")]
         card, ws = self.ws_of(did)
         rows = []
@@ -248,6 +241,11 @@ class Router:
         # 같은 번호로 다시 올린 카드에 같은 답을 눌러 하나만 닿은 경우. 받는 세션에는 같은 문장이라 다시 보내면 중복
         if rows and not rows[-1]["skip"] and any(x["body"] == rows[-1]["body"] and self.last_state(did, x["ts"]) in ("ws", "hub") for x in rows[:-1]):
             rows[-1]["skip"] = "같은 답이 다른 카드로 이미 전달됨"
+        for row in rows:
+            try:
+                row["unread"] = not row["skip"] and self.box_of(row["card"], row["ws"], row["ts"]) == UNREAD
+            except Exception as err:  # noqa: BLE001 — 세션 상태를 모르면 보내지 않음
+                row["unread"], row["skip"] = False, f"세션 상태 확인 실패({type(err).__name__})"
         return rows
 
     def last_state(self, did: str, ts: str) -> str:
@@ -346,7 +344,7 @@ def main(argv: list) -> int:
         for row in rows:
             mark, note = "제외", row["skip"]
             if not note and args.dry_run:
-                mark, note = "대상", row["body"]
+                mark, note = "대상", row["body"] + (f" ({UNREAD_NOTE})" if row["unread"] else "")
             elif not note:
                 out = router.resend(row)
                 mark, note = "보냄" if out.ok else "제외" if out.via == "skip" else "실패", out.note or out.result()
