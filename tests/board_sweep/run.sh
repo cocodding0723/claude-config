@@ -15,6 +15,8 @@ export FAKE_BD_STATE="$SB/state.json" FAKE_BD_LOG="$SB/bd.log" FAKE_GH_PRS="$SB/
 export BOARD_SWEEP_NOW="2026-11-17T12:00:00+09:00" LRM_HUB_DIR="$SB/hub"
 mkdir -p "$LRM_HUB_DIR"
 mkdir -p "$BOARD_DIR"
+export LRM_HUB_REPORT="$SB/fake_report.py" FAKE_REPORT_LOG="$SB/report.log"
+printf '%s\n' 'import os, sys' 'open(os.environ["FAKE_REPORT_LOG"], "a").write(" ".join(sys.argv[1:]).replace("\n", " / ") + "\n")' 'sys.exit(int(os.environ.get("FAKE_REPORT_RC", "0")))' > "$LRM_HUB_REPORT"
 
 # 시각 기준: 지금 = 11-17 03:00Z. 카드는 11-16 00:00Z(27시간 전) 또는 11-17 02:00Z(1시간 전)에 만듦
 OLD="2026-11-16T00:00:00Z" NEW="2026-11-17T02:00:00Z"
@@ -23,8 +25,8 @@ reset() {  # reset <카드 JSON 배열> [PR 표 JSON] [로컬 덮어쓰기 표 �
   [ -n "$cm" ] || cm='{}'; [ -n "$prs" ] || prs='{}'
   printf '{"cards": %s, "comments": %s}' "$1" "$cm" > "$FAKE_BD_STATE"
   printf '%s' "$prs" > "$FAKE_GH_PRS"
-  printf 'log_path\t%s\nlock_path\t%s\nmerge_note_state\t%s\n%s' "$SB/sweep.log" "$SB/sweep.lock" "$SB/note.json" "${3:-}" > "$LRM_BOARD_SWEEP_LOCAL"
-  rm -f "$SB/note.json"; : > "$FAKE_BD_LOG"; : > "$FAKE_GH_LOG"; : > "$SB/sweep.log"
+  printf 'log_path\t%s\nlock_path\t%s\nmerge_note_state\t%s\nalert_state\t%s\n%s' "$SB/sweep.log" "$SB/sweep.lock" "$SB/note.json" "$SB/health.json" "${3:-}" > "$LRM_BOARD_SWEEP_LOCAL"
+  rm -f "$SB/note.json" "$SB/health.json"; : > "$FAKE_BD_LOG"; : > "$FAKE_GH_LOG"; : > "$SB/sweep.log"
 }
 card() {  # card <id> <status> <labels 쉼표> <created> [title] [description] [assignee] [comment_count] [issue_type]
   python3 -c 'import json,sys; a=sys.argv[1:]; print(json.dumps({"id":a[0],"status":a[1],"labels":[l for l in a[2].split(",") if l],
@@ -65,6 +67,25 @@ FAKE_BD_DOWN=comments sweep
 check "merge_note: 코멘트 조회 실패면 남겨 둠" '[ "$(noted m1 201)" = 0 ]'
 sweep
 check "merge_note: 다음 회차에 다시 채움" '[ "$(noted m1 201)" = 1 ]'
+
+# ── 연속 실패 알림 ──
+alerts() { [ -f "$FAKE_REPORT_LOG" ] && wc -l < "$FAKE_REPORT_LOG" | tr -d ' ' || echo 0; }
+reset "[]"; rm -f "$FAKE_REPORT_LOG"
+FAKE_BD_DOWN=list sweep
+check "알림: 1회 실패는 알리지 않음" '[ "$(alerts)" = 0 ] && [ "$(rc)" = 3 ]'
+FAKE_BD_DOWN=list sweep --dry-run
+check "알림: dry-run 은 세지 않음" '[ "$(alerts)" = 0 ]'
+FAKE_BD_DOWN=list FAKE_REPORT_RC=1 sweep
+check "알림: 보고 예약에 실패하면 기록" 'grep -q alert-failed "$SB/sweep.log"'
+rm -f "$FAKE_REPORT_LOG"; FAKE_BD_DOWN=list sweep
+check "알림: 다음 회차에 다시 시도" '[ "$(alerts)" = 1 ] && grep -q -- "--kind warn" "$FAKE_REPORT_LOG"'
+FAKE_BD_DOWN=list sweep
+check "알림: 같은 구간에서는 한 번만" '[ "$(alerts)" = 1 ]'
+sweep
+FAKE_GH_LIST_FAIL=1 sweep
+check "알림: 성공하면 횟수를 되돌림" '[ "$(alerts)" = 1 ]'
+FAKE_GH_LIST_FAIL=1 sweep
+check "알림: GitHub 로그인 오류도 연속 2회면 알림" '[ "$(alerts)" = 2 ]'
 
 # ── pr_done ──
 reset "[$(card a open kind:decision,pr:101 $OLD),$(card b open kind:user-todo $OLD 'PR #102 확인'),$(card c open kind:decision $OLD 'PR #101·#103 병합 승인'),

@@ -48,7 +48,8 @@ REQUIRED = ("rules", "kinds", "kind_prefix", "pr_repo", "pr_label_prefix", "pr_s
             "log_path", "lock_path", "feature_merged_hours", "feature_close_script", "merged_into",
             "feature_label_prefix", "feature_merged_stages", "feature_merged_marker", "feature_hub_name",
             "feature_merged_retry_hours", "feature_merged_max_tries", "feature_worktree_limit", "feature_terminal_limit", "feature_hub_reopen_grace_min",
-            "merge_note_hours", "merge_note_min_hours", "merge_note_limit", "merge_note_state")
+            "merge_note_hours", "merge_note_min_hours", "merge_note_limit", "merge_note_state",
+            "alert_after", "alert_state", "alert_hub")
 
 EPILOG = """예:
   board_sweep.sh --dry-run        바뀔 동작만 기록(mode=dry)
@@ -93,7 +94,7 @@ def load_config():
     missing = [k for k in REQUIRED if k not in cfg]
     if missing:
         raise ConfigError(f"규칙 표에 없는 키: {', '.join(missing)}. 조치: hubs/board_sweep.tsv 와 맞춤")
-    for k in ("pr_min_digits", "gh_calls_max", "gh_timeout_sec", "bd_timeout_sec", "feature_merged_max_tries", "feature_worktree_limit", "feature_terminal_limit", "merge_note_limit"):
+    for k in ("pr_min_digits", "gh_calls_max", "gh_timeout_sec", "bd_timeout_sec", "feature_merged_max_tries", "feature_worktree_limit", "feature_terminal_limit", "merge_note_limit", "alert_after"):
         if not cfg[k].isdigit():
             raise ConfigError(f"규칙 표 {k} 가 정수가 아님: '{cfg[k]}'")
     for k in ("stale_hours", "orphan_hours", "ws_gone_hours", "feature_merged_hours", "feature_merged_retry_hours", "feature_hub_reopen_grace_min", "merge_note_hours", "merge_note_min_hours"):
@@ -148,6 +149,7 @@ class Sweeper:
         self.gh_bin = os.environ.get("BOARD_GH", "gh")
         self.gh_calls = 0
         self.gh_capped = False
+        self.failures = []  # 이번 회차가 제 일을 못 한 원인(연속 실패 알림용)
         self.pr_cache = {}
         self.handled = set()  # 이번 실행에서 닫았거나 되돌린 카드. 뒤 규칙이 다시 건드리지 않음
         self.counts = {"close": 0, "label": 0, "candidate": 0, "reopen": 0, "blocked": 0, "error": 0}
@@ -281,6 +283,7 @@ class Sweeper:
             rows = None
         if not isinstance(rows, list):
             self.count("error")
+            self.failures.append("GitHub 병합 목록 조회 실패")
             self.log("merge_note", "-", "gh-error", (err or out).strip().replace("\n", " ")[:160] or f"종료 {rc}")
             return None
         return rows
@@ -324,6 +327,7 @@ class Sweeper:
             comments = None
         if comments is None:
             self.count("error")
+            self.failures.append("작업판 병합 기록 실패")
             self.log("merge_note", cid, "bd-error", f"PR #{ev['pr']} 코멘트 조회 실패 {err.strip()[:100]}")
             return False
         if sinks.already_noted(comments, ev):
@@ -331,6 +335,7 @@ class Sweeper:
         rc, _, err = self.comment(cid, sinks.board_text(ev))
         if rc != 0:
             self.count("error")
+            self.failures.append("작업판 병합 기록 실패")
             self.log("merge_note", cid, "bd-error", f"PR #{ev['pr']} 코멘트 실패 {err.strip()[:100]}")
             return False
         self.log("merge_note", cid, "note", f"PR #{ev['pr']} 병합 기록을 채움")
@@ -795,6 +800,47 @@ class Sweeper:
         return summary
 
 
+class Health:
+    """연속 실패 횟수를 파일에 남기고, 기준에 닿으면 Slack 보고 1건을 예약. 같은 연속 구간에서는 한 번만 알림"""
+
+    def __init__(self, cfg):
+        self.path = os.path.expanduser(cfg["alert_state"])
+        self.after = int(cfg["alert_after"])
+        self.hub = cfg["alert_hub"]
+        self.script = os.environ.get("LRM_HUB_REPORT") or os.path.join(os.path.dirname(os.path.realpath(__file__)), "hub_report.py")
+
+    def record(self, failures, log):
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                st = json.load(f)
+            streak, alerted = int(st["streak"]), bool(st["alerted"])
+        except (OSError, ValueError, KeyError, TypeError):
+            streak, alerted = 0, False
+        streak, alerted = (streak + 1, alerted) if failures else (0, False)
+        if streak >= self.after and not alerted:
+            alerted = self.send(streak, failures[0], log)  # 예약에 실패하면 다음 회차에 다시 시도
+        try:
+            os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
+            with open(self.path + ".tmp", "w", encoding="utf-8") as f:
+                json.dump({"streak": streak, "alerted": alerted}, f)
+            os.replace(self.path + ".tmp", self.path)
+        except OSError as e:
+            log("health", "-", "state-failed", f"{e.strerror}: {self.path}")
+
+    def send(self, streak, cause, log):
+        text = (f"작업판 정리가 연속 {streak}번 실패했다\n"
+                f"배경: {cause}. 머지 기록과 카드 정리가 밀리고 있다.\n"
+                "할 일: GitHub 로그인과 컴퓨터 부하를 확인한다. 복구되면 빠진 기록은 자동으로 채워진다.")
+        try:
+            p = subprocess.run([sys.executable, self.script, "add", "--hub", self.hub, "--task", "없음", "--kind", "warn", "--auto", "--text", text],
+                               capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+            ok, why = p.returncode == 0, (p.stderr or p.stdout).strip()
+        except (OSError, subprocess.SubprocessError) as e:
+            ok, why = False, type(e).__name__
+        log("health", "-", "alert" if ok else "alert-failed", f"연속 실패 {streak}회: {cause}" if ok else why[:160])
+        return ok
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="board_sweep", description="작업판(bd) 주기 정리기. 규칙은 board_sweep.tsv.",
                                  epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -819,12 +865,17 @@ def main(argv=None):
         print(f"다른 정리기 실행이 잠금 보유 — 건너뜀: {lock_path}", file=sys.stderr)
         return EXIT_LOCKED
     sweeper = Sweeper(cfg, args.dry_run)
+    health = Health(cfg)
     try:
         summary = sweeper.sweep()
     except RuntimeError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sweeper.log("-", "-", "bd-error", str(e)[:200])
+        if not args.dry_run:
+            health.record(["작업판 목록 조회 실패"], sweeper.log)
         return EXIT_BD
+    if not args.dry_run:
+        health.record(sweeper.failures, sweeper.log)
     if args.json:
         print(json.dumps(summary, ensure_ascii=False))
     else:

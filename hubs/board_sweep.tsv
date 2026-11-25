@@ -31,6 +31,9 @@ merge_note_hours	72	병합 기록을 대조할 기간(시간). gh-watch 재시�
 merge_note_min_hours	0.5	병합 뒤 이 시간이 지나야 채움(gh-watch 가 먼저 쓰게)
 merge_note_limit	100	병합 PR 조회 상한
 merge_note_state	~/orca/board/.merge-note.json	확인이 끝난 PR·카드 짝
+alert_after	2	이 횟수만큼 연속으로 실패하면 Slack 으로 1번 알림(30분 주기라 2회 = 약 1시간)
+alert_state	~/orca/board/.sweep-health.json	연속 실패 횟수 기록
+alert_hub	main	알림을 보내는 허브 이름
 log_path	~/orca/board/sweep.log	동작 기록(한 줄 한 건, 탭 구분)
 lock_path	~/orca/board/.board-sweep.lock	중복 실행 방지 잠금 파일
 feature_merged_hours	2	기능 마무리 전 마지막 활동 이후 대기 시간
