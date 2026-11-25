@@ -1,4 +1,4 @@
-"""명령 문자열에서 git push 대상(작업 디렉터리·원격·refspec)을 해석해 JSON 한 줄씩 출력.
+"""명령 문자열에서 git push(인자 2 로 다른 하위 명령 지정 가능) 대상(작업 디렉터리·원격·refspec)을 해석해 JSON 한 줄씩 출력.
 cfg = git -c·--config-env 로 준 설정('키=값'), env = 앞서 지정한 환경 변수('이름=값'). 따옴표를 푼 값이라 우회 검사에 씀.
 인자: 시작 cwd. stdin: 원본 명령. 따옴표 안 문구·heredoc 본문의 push 글자는 무시.
 cd <dir>·git -C <dir> 로 바뀐 디렉터리를 따라감. 같은 명령 안 'W=리터럴' 대입은 $W·${W} 로 풀어 씀.
@@ -124,6 +124,7 @@ def emit(obj):
 
 
 SHELLS = {"bash", "sh", "zsh"}
+WRAPPERS = {"export", "env", "command", "exec", "nohup", "time"}
 
 
 def shell_payload(toks):
@@ -134,11 +135,11 @@ def shell_payload(toks):
     return None
 
 
-def scan(cmd, here, envs, svars):
+def scan(cmd, here, envs, svars, sub="push"):
     """cmd 한 덩어리를 훑어 push 대상 출력. 해석 불가면 err 출력 후 False. bash -c '…' 는 하위 셸이라 cd 가 밖으로 안 번짐"""
     for toks in segments(drop_heredoc(cmd)):
         assigns = []
-        while toks and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[0]) or toks[0] in ("export", "env")):
+        while toks and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[0]) or toks[0] in WRAPPERS):
             if "=" in toks[0]:
                 envs.append(toks[0])
                 assigns.append(toks[0])
@@ -161,10 +162,10 @@ def scan(cmd, here, envs, svars):
             continue
         if toks[0] in SHELLS:
             inner = shell_payload(toks)
-            if inner is not None and not scan(inner, here, envs, dict(svars)):
+            if inner is not None and not scan(inner, here, envs, dict(svars), sub):
                 return False
             continue
-        if toks[0] != "git":
+        if os.path.basename(toks[0]) != "git":
             continue
         d, k, cfg = here, 1, []
         while k < len(toks) and toks[k].startswith("-"):
@@ -178,11 +179,11 @@ def scan(cmd, here, envs, svars):
                 cfg.append(toks[k + 1]); k += 2
             elif t.startswith("--config-env=") or (t.startswith("-c") and not t.startswith("--") and len(t) > 2):
                 cfg.append(t.split("=", 1)[1] if t.startswith("--") else t[2:]); k += 1
-            elif t in ("--exec-path", "--namespace") and k + 1 < len(toks):
+            elif t in ("--exec-path", "--namespace", "--git-dir", "--work-tree") and k + 1 < len(toks):
                 k += 2
             else:
                 k += 1
-        if k >= len(toks) or toks[k] != "push":
+        if k >= len(toks) or toks[k] != sub:
             continue
         flags, pos, k = [], [], k + 1
         while k < len(toks):
@@ -202,7 +203,7 @@ def scan(cmd, here, envs, svars):
 
 def main():
     cwd = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] else os.getcwd()
-    scan(sys.stdin.read(), cwd, [], {})
+    scan(sys.stdin.read(), cwd, [], {}, sys.argv[2] if len(sys.argv) > 2 else "push")
 
 
 if __name__ == "__main__":

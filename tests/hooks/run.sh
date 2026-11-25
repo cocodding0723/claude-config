@@ -77,6 +77,34 @@ git -C "$R" checkout -q main
 exp "git-guard: 공유 브랜치 rebase 차단" $GG 'git rebase feat/x' "$R" deny
 exp "git-guard: git 아닌 명령 통과" $GG 'ls -la' "$R"
 
+# ---- git-guard 우회 형태 ----
+git -C "$R" checkout -q main; BP="$SB/bp"; mk "$BP" feat/bp
+for g in "git -C $R" "git -c a.b=c" "git --git-dir $R/.git" "/usr/bin/git" "git -C \"$R\"" "command git"; do
+  exp "우회: $g reset --hard 차단" $GG "$g reset --hard" "$BP" deny
+done
+for c in 'clean -fdx' 'stash clear' 'commit --amend' 'rebase feat/x' 'push --force' 'branch -D x'; do
+  exp "우회: -C $c 차단" $GG "git -C $R $c" "$BP" deny
+done
+exp "우회: cd 공유 브랜치 폴더 && commit 은 확인" $GG "cd $R && git commit -m x" "$BP" ask
+exp "우회: -C 공유 브랜치 commit 은 확인" $GG "git -C $R commit -m x" "$BP" ask
+exp "우회: 공유 cwd 에서 -C 작업 브랜치 commit 은 통과" $GG "git -C $BP commit -m x" "$R"
+exp "우회: 공유 cwd 에서 -C 작업 브랜치 amend 는 통과" $GG "git -C $BP commit --amend" "$R"
+exp "우회: 못 푸는 경로는 훅 cwd 로 판정" $GG 'cd "$X" && git commit -m x' "$R" ask
+exp "우회: +refspec 강제 push 차단" $GG 'git push origin +feat/x' "$BP" deny
+exp "우회: --force 와 lease 를 섞어도 차단" $GG 'git push --force --force-with-lease origin x' "$BP" deny
+exp "우회: lease=값 은 확인 유지" $GG 'git push --force-with-lease=x:abc origin x' "$BP" ask
+exp "우회: push -d 차단" $GG 'git push -d origin x' "$BP" deny
+for c in '--delete --force x' '-d -f x' '-f -d x' '-df x'; do exp "우회: branch $c 차단" $GG "git branch $c" "$BP" deny; done
+exp "우회: branch -d 는 통과" $GG 'git branch -d x' "$BP"
+for c in '-n -m x' '-nm x' '-an -m x'; do exp "우회: commit $c 는 확인" $GG "git commit $c" "$BP" ask; done
+exp "우회: commit -am 은 통과" $GG 'git commit -am "-n 설명"' "$BP"
+exp "우회: -C 읽기 명령은 통과" $GG "git -C $R log --oneline -3" "$BP"
+exp "우회: 경로 이름의 git 은 명령이 아님" $GG 'ls /opt/git /x/git-guard.sh' "$BP"
+git -C "$R" checkout -q -b live
+exp "live: 직접 커밋은 확인" $GG 'git commit -m x' "$R" ask
+exp "live: amend 차단" $GG 'git commit --amend' "$R" deny
+git -C "$R" checkout -q main
+
 # ---- search-guard ----
 SG=search-guard.sh; HM="$SB/home"; mkdir -p "$HM/orca/ws"
 exp "search-guard: find / 차단" $SG 'find / -name x' /tmp deny
@@ -652,6 +680,8 @@ PD="$SB/pd"; mk "$PD" dev; git -C "$PD" config hooks.localGate on
 NG="$SB/ng"; mk "$NG" main   # 게임 아님
 exp "protected: origin dev 거부" $GG 'git push origin dev' "$PG" deny
 exp "protected: HEAD:release/v0.1.29 거부" $GG 'git push origin HEAD:release/v0.1.29' "$PG" deny
+exp "protected: HEAD:live 거부" $GG 'git push origin HEAD:live' "$PG" deny
+exp "protected: /usr/bin/git push dev 거부" $GG '/usr/bin/git push origin dev' "$PG" deny
 exp "protected: feat/x:main 거부" $GG 'git push origin feat/x:main' "$PG" deny
 exp "protected: +HEAD:refs/heads/dev 거부" $GG 'git push origin +HEAD:refs/heads/dev' "$PG" deny
 exp "protected: 현재 브랜치 dev 의 git push 거부" $GG 'git push' "$PD" deny
