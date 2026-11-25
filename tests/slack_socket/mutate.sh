@@ -53,6 +53,12 @@ case_run W19 "runner 정리를 스레드 없이 직접 호출" 's/    worker\.st
 case_run W20 "시간 초과 로그 삭제" 's/        log\(f"정리 \{step\} 시간 초과 \{limit_s:g\}초"\)/        pass/'
 case_run W21 "정리 상한 환경 변수 무시" 's/RETIRE_TIMEOUT_S = env_secs\("LRM_SOCKET_RETIRE_TIMEOUT_S", 5\.0\)/RETIRE_TIMEOUT_S = 5.0/'
 case_run R7 "정리 상한 기본값 5→500" 's/"LRM_SOCKET_RETIRE_TIMEOUT_S", 5\.0/"LRM_SOCKET_RETIRE_TIMEOUT_S", 500.0/'
+# 잠금 재시도
+case_run L1 "잠금 응답 재시도 삭제" 's/        if is_locked\(out\.stdout\):\n            self\._retry\(reason, attempt\)/        pass/'
+case_run L2 "재시도 상한 무시" 's/if attempt >= self\._retry_max:/if False:/'
+case_run L3 "새 이벤트가 예약한 뒤에도 재시도 예약(타이머 중복)" 's/if self\._timer is None:  # 새 이벤트/if True:  # 새 이벤트/'
+case_run L4 "파싱 실패도 재시도" 's/    except ValueError:\n        return False/    except ValueError:\n        return True/'
+
 echo
 [ "$MISSED" = 0 ] && echo "변이 전부 검출" || echo "미검출·정의 오류 ${MISSED}건"
 [ "$MISSED" = 0 ]
