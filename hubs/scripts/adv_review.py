@@ -20,12 +20,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ci_review as review  # noqa: E402
+import claude_env  # noqa: E402
 import main_terminal as mt  # noqa: E402
 
 DIR = Path(os.environ.get("LRM_HUB_DIR", Path.home() / ".config/lrm-hubs"))
 REPO = os.environ.get("LRM_CI_REPO", "Basakansoft/LoveRevolutionMaker")
 GH = os.environ.get("LRM_GH", "gh")
-CLAUDE = os.environ.get("LRM_CLAUDE", "claude")
+CLAUDE = claude_env.find_claude()  # launchd 짧은 PATH 대응
 NOTIFY = os.environ.get("LRM_NOTIFY", str(DIR / "slack_notify.sh"))
 ORCA = mt.find_orca()  # launchd 짧은 PATH 대응
 STATE = DIR / "adv-review.state.json"
@@ -87,7 +88,7 @@ def ask(cfg, prompt, body):
         try:
             p = subprocess.run([CLAUDE, "-p", "--model", model, "--output-format", "text", "--allowedTools", "Read,Grep,Glob",
                                 "--disallowedTools", "Bash,Edit,Write,NotebookEdit"], input=prompt + "\n\n" + body,
-                               capture_output=True, text=True, timeout=int(cfg["ADV_TIMEOUT"]))
+                               capture_output=True, text=True, timeout=int(cfg["ADV_TIMEOUT"]), env=claude_env.claude_env())
         except subprocess.TimeoutExpired:
             err = f"{model} 시간 초과"
             continue

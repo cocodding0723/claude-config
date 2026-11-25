@@ -2,6 +2,7 @@
 # 가짜 claude. --model 값을 FAKE_DIR/claude.log 에 기록하고 FAKE_DIR/plan-<모델> 내용(fail|bad|empty|extra|ok)대로 동작
 # 호출 인자는 FAKE_DIR/claude.args 에 인자당 한 줄로 기록(빈 인자는 '<빈값>')
 for a in "$@"; do printf '%s\n' "${a:-<빈값>}" >> "${FAKE_DIR:?}/claude.args"; done; echo "---" >> "$FAKE_DIR/claude.args"
+echo "${CLAUDE_CONFIG_DIR:-<없음>}" >> "$FAKE_DIR/claude.config"
 m=""; while [ $# -gt 0 ]; do [ "$1" = --model ] && m="$2"; shift; done
 cat > "${FAKE_DIR:?}/claude.stdin"  # 받은 프롬프트(재료 포함)를 시험이 검사
 echo "$m" >> "${FAKE_DIR:?}/claude.log"

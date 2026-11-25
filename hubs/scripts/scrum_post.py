@@ -26,6 +26,7 @@ import tempfile
 import time
 from pathlib import Path
 
+import claude_env
 import scrum_collect as collect
 
 # 설정: 값은 이 블록 한 곳, LRM_SCRUM_* 환경 변수로 덮어씀
@@ -68,7 +69,7 @@ def media_enabled():
 
 NAME = load_name()
 MODELS = [m for m in os.environ.get("LRM_SCRUM_MODELS", "claude-fable-5-1,claude-fable-5-2,claude-opus-5-5").split(",") if m]
-CLAUDE = os.environ.get("LRM_CLAUDE", "claude")
+CLAUDE = claude_env.find_claude()
 NOTIFY = os.environ.get("LRM_NOTIFY", str(DIR / "slack_notify.sh"))
 OSA = os.environ.get("LRM_SCRUM_OSA", "osascript")
 COLLECT = os.environ.get("LRM_SCRUM_COLLECT", str(HERE / "scrum_collect.py"))
@@ -241,7 +242,7 @@ def ask_claude(model, prompt):
            "--disallowedTools", ",".join(DENY_TOOLS)]
     try:
         out = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=CLAUDE_TIMEOUT,
-                             cwd=tempfile.gettempdir())
+                             cwd=tempfile.gettempdir(), env=claude_env.claude_env())
     except subprocess.TimeoutExpired:
         return None, "timeout"
     except OSError as e:
@@ -460,10 +461,10 @@ def failure_message(date, fails):
                       "참고: 로그 %s" % LOG])
 
 
-def probe(cmd, ok_re=None):
+def probe(cmd, ok_re=None, env=None):
     """점검용 하위 명령. (성공 여부, 사유 코드). 출력 원문은 버림: 토큰·계정 정보가 화면·로그에 안 남게"""
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, timeout=PREFLIGHT_TIMEOUT, stdin=subprocess.DEVNULL)
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=PREFLIGHT_TIMEOUT, stdin=subprocess.DEVNULL, env=env)
     except subprocess.TimeoutExpired:
         return False, "timeout"
     except OSError:
@@ -478,12 +479,13 @@ def probe(cmd, ok_re=None):
 def preflight():
     """발송 없이 첫 자동 실행 전제만 점검. 종료 코드: 0 전부 통과, 1 하나 이상 실패"""
     notify = Path(NOTIFY)
+    env = claude_env.claude_env()
     checks = [
         ("본인 칸 제목", (True, "") if NAME else (False, "SCRUM_NAME 없음"),
          "%s 에 SCRUM_NAME 을 쓰거나 LRM_SCRUM_NAME 지정" % ENV_FILE),
         ("gh 인증", probe([collect.GH, "auth", "status"]), "gh auth login"),
-        ("claude 로그인", probe([CLAUDE, "auth", "status"], r'"loggedIn":\s*true'), "claude auth login"),
-        ("Atlassian MCP 연결", probe([CLAUDE, "mcp", "get", "atlassian"], r"Status:.*Connected"),
+        ("claude 로그인", probe([CLAUDE, "auth", "status"], r'"loggedIn":\s*true', env), "Orca 에서 선택한 claude 계정 로그인"),
+        ("Atlassian MCP 연결", probe([CLAUDE, "mcp", "get", "atlassian"], r"Status:.*Connected", env),
          "대화형 claude 에서 /mcp → atlassian 인증"),
         ("Slack 봇 스크립트", (notify.is_file() and os.access(notify, os.X_OK), "없음·실행 권한 없음"),
          "%s 확인(install.sh 재실행)" % notify),
