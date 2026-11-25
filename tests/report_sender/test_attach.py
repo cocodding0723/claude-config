@@ -85,8 +85,9 @@ class AttachTest(unittest.TestCase):
         for u in ups:
             self.assertEqual(u[u.index("--thread") + 1], TOPIC_TS)  # 본문과 같은 주제 스레드
         self.assertEqual(calls.index(ups[0]), 2)
-        self.assertIn("--quote", calls[-1])  # 마지막은 진행 줄(원본 링크는 알림 스크립트가 정식 주소로)
-        self.assertNotIn("slack.com/archives", " ".join(calls[-1]))
+        self.assertIn("--quote", calls[4])  # 원본 파일 다음이 진행 줄, 딸린 파일은 그 뒤(원본 링크는 알림 스크립트가 정식 주소로)
+        self.assertNotIn("slack.com/archives", " ".join(calls[4]))
+        self.assertEqual(calls[5:], ups[2:])
         done = self.state()["reports"][rep["id"]]["att_done"]
         digest = report_sender.content_hash(self.html)
         self.assertEqual(set(done) - {self.png, self.html}, {self.html + "#pdf:" + digest, self.html + "#preview:" + digest})  # 딸린 파일 키 = 원본 경로 + 내용 해시
@@ -182,14 +183,81 @@ class AttachTest(unittest.TestCase):
         self.assertIn("PDF 생략", self.log_text())
         self.assertEqual(self.state()["reports"][rep["id"]]["att_done"][self.html + "#pdf:" + report_sender.content_hash(self.html)], "")
 
+    def use_script(self, name, body):
+        path = self.make(name, body)
+        os.chmod(path, 0o755)
+        return path
+
+    def retry_now(self, rid):
+        st = self.state()
+        st["reports"][rid]["derived"]["next_at"] = 0
+        report_sender.save_state(self.conf.state, st)
+
+    def patch(self, name, value):
+        self.addCleanup(setattr, report_sender, name, getattr(report_sender, name))
+        setattr(report_sender, name, value)
+
     def test_out_of_budget_defers_derived_files_instead_of_skipping(self):
-        """회차 시간이 다 돼 PDF·미리보기를 못 만든 것은 '생략'으로 기록하지 않고 다음 회차로 넘김"""
-        rep = {"id": "r1", "hub": "ui-layer", "files": [self.html]}
-        rs, st = {"att_done": {self.html: "F1"}}, {"reports": {}}
-        with self.assertRaises(report_sender.NotifyError) as ctx:
-            report_sender.send_files(self.conf, rep, rs, st, TOPIC_TS, time.monotonic() - 1)
-        self.assertFalse(ctx.exception.counts)  # 실패 횟수에 세지 않음
-        self.assertEqual(set(rs["att_done"]), {self.html})
+        """회차에 시간이 모자라면 PDF·미리보기를 시작하지 않고 시도 횟수도 세지 않음"""
+        rep = self.report(files=[self.html])
+        self.conf.budget_s = report_sender.DERIVED_MIN_LEFT_S - 1
+        self.assertEqual(report_sender.run(self.conf)["sent"], 1)
+        rs = self.state()["reports"][rep["id"]]
+        self.assertEqual((set(rs["att_done"]), rs["derived"]["tries"]), ({self.html}, 0))
+        self.conf.budget_s = 40
+        self.assertEqual(report_sender.run(self.conf)["pending"], 0)
+        self.assertEqual(len(self.uploads()), 3)
+        self.assertNotIn("derived", self.state()["reports"][rep["id"]])
+
+    def test_stuck_chrome_does_not_delay_texts_and_is_killed(self):
+        """변환이 멈춰도 뒤 보고의 글이 먼저 나가고, 멈춘 자식 프로세스까지 끝남. 풀리면 다음 시도에 올라감"""
+        self.patch("PREVIEW_TIMEOUT_S", 1)
+        self.conf.pdf = self.use_script("stuck.sh", '#!/bin/bash\nsleep 60 &\necho $! > "%s"\nwait\n' % self.p("child.pid"))
+        rep = self.report(files=[self.html])
+        self.report(text="뒤 보고")
+        self.assertEqual(report_sender.run(self.conf)["sent"], 2)
+        self.assertEqual([os.path.basename(u[-1]) for u in self.uploads()], ["b.html"])
+        pid = int(pathlib.Path(self.p("child.pid")).read_text())
+        for _ in range(50):  # 강제 종료된 손자가 정리될 때까지
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            self.fail("멈춘 자식 프로세스가 남음")
+        self.assertIn("PDF 보류 1회째", self.log_text())
+        self.conf.pdf = PDF
+        report_sender.run(self.conf)
+        self.assertEqual(len(self.uploads()), 1)  # 대기 시간 전에는 다시 안 함
+        self.retry_now(rep["id"])
+        report_sender.run(self.conf)
+        names = [os.path.basename(u[-1]) for u in self.uploads()]
+        self.assertEqual((names[:2], len(names)), (["b.html", "b.pdf"], 3))
+
+    def test_derived_gives_up_after_tries(self):
+        self.patch("PREVIEW_TIMEOUT_S", 0.2)
+        self.patch("DERIVED_TRIES", 2)
+        self.conf.pdf = self.use_script("stuck.sh", "#!/bin/bash\nsleep 60\n")
+        rep = self.report(files=[self.html])
+        report_sender.run(self.conf)
+        self.retry_now(rep["id"])
+        report_sender.run(self.conf)
+        self.assertNotIn("derived", self.state()["reports"][rep["id"]])
+        self.assertIn("PDF 생략", self.log_text())
+
+    def test_staged_copy_kept_until_derived_done(self):
+        """원본이 바뀌거나 사라져도 접수 때 복사본으로 만들도록, 복사본은 딸린 파일이 끝난 뒤 지움"""
+        rep = hub_report.add(self.conf.outbox, hub_report.make_report("ui-layer", "C0012", "done", "수정 완료", [self.html]), 1.0, False, stage=True)[0]
+        copy = rep["staged"][self.html]
+        self.conf.budget_s = report_sender.DERIVED_MIN_LEFT_S - 1
+        report_sender.run(self.conf)
+        self.assertTrue(os.path.isfile(copy))
+        os.unlink(self.html)
+        self.conf.budget_s = 40
+        report_sender.run(self.conf)
+        self.assertEqual(len(self.uploads()), 3)
+        self.assertFalse(os.path.exists(copy))
 
     def test_missing_pdf_script_is_skipped(self):
         self.conf.pdf = self.p("no-such.sh")
@@ -199,7 +267,7 @@ class AttachTest(unittest.TestCase):
 
     def test_pdf_retry_does_not_reupload_and_cleans_up(self):
         """PDF 업로드가 한 번 끊겨도 다음 회차에 HTML·PDF 를 한 번씩만 올리고, 만든 PDF 파일은 남기지 않음"""
-        self.report(files=[self.html])
+        rep = self.report(files=[self.html])
         calls = {"n": 0}
         orig = report_sender.run_notify
 
@@ -211,8 +279,10 @@ class AttachTest(unittest.TestCase):
 
         report_sender.run_notify = flaky
         self.addCleanup(setattr, report_sender, "run_notify", orig)
-        self.assertEqual(report_sender.run(self.conf)["failed"], 1)
-        self.assertEqual(report_sender.run(self.conf)["sent"], 1)
+        res = report_sender.run(self.conf)
+        self.assertEqual((res["sent"], res["failed"]), (1, 0))  # 글은 이미 나갔으므로 보고 실패로 세지 않음
+        self.retry_now(rep["id"])
+        report_sender.run(self.conf)
         names = [os.path.basename(u[-1]) for u in self.uploads()]
         self.assertEqual((names.count("b.html"), names.count("b.pdf")), (1, 1))
         left = [f for _, _, fs in os.walk(self.p("report-previews")) for f in fs]
@@ -290,7 +360,7 @@ class AttachTest(unittest.TestCase):
 
     def test_preview_retry_does_not_reupload_original_or_preview(self):
         """미리보기 임시 경로가 회차마다 바뀌어도 키는 원본 경로+내용 해시라 이미 올린 파일을 다시 올리지 않음"""
-        self.report(files=[self.html])
+        rep = self.report(files=[self.html])
         calls = {"n": 0}
         orig = report_sender.run_notify
 
@@ -302,8 +372,10 @@ class AttachTest(unittest.TestCase):
 
         report_sender.run_notify = flaky
         self.addCleanup(setattr, report_sender, "run_notify", orig)
-        self.assertEqual(report_sender.run(self.conf)["failed"], 1)
-        self.assertEqual(report_sender.run(self.conf)["sent"], 1)
+        res = report_sender.run(self.conf)
+        self.assertEqual((res["sent"], res["failed"]), (1, 0))  # 글은 이미 나갔으므로 보고 실패로 세지 않음
+        self.retry_now(rep["id"])
+        report_sender.run(self.conf)
         names = [os.path.basename(u[-1]) for u in self.uploads()]
         self.assertEqual(names.count("b.html"), 1)
         self.assertEqual(sum(n.endswith("-preview.png") for n in names), 1)

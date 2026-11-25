@@ -18,7 +18,9 @@ kind=decide 는 스레드 답글이 아니라 slack_notify.sh --kind decide --op
 복사본이 없는 옛 기록은 원본을 읽는데, launchd 에서는 macOS 개인정보 보호(TCC)가 ~/Documents 등 읽기를 막아 curl 이 종료 코드 26 으로 실패함.
 올리기 전에 직접 열어 보고 막히면 재시도 없이 'UNREADABLE' 한 줄만 스레드에 남김(다시 hub_report.py add 로 보고하면 접수 때 복사됨).
 없는 파일·폴더·크기 초과는 입력 문제라 재시도 없이 스레드에 '첨부 실패: 이유' 한 줄만 남기고 보고는 계속함. 네트워크 등 일시 실패는 보고 재시도 규칙(BACKOFF)을 따르고 올린 파일은 다시 올리지 않음.
-HTML 은 html_pdf.sh 로 PDF(Slack 에서 바로 열림), html_preview.sh 로 390폭 미리보기 PNG 를 만들어 이어서 올림. 못 만든 것은 생략하고 계속함.
+HTML 은 html_pdf.sh 로 PDF(Slack 에서 바로 열림), html_preview.sh 로 390폭 미리보기 PNG 를 만들어 같은 스레드에 올림.
+딸린 파일(PDF·미리보기)은 모든 글·카드·현황판을 처리한 뒤 회차 끝에 남은 시간으로만 만듦: Chrome 이 멈춰도 글과 버튼 카드가 밀리지 않음(11-25 23분 지연).
+시간 초과·업로드 일시 실패는 간격을 늘려 DERIVED_TRIES 회까지 다시 시도하고, 그 밖에 못 만든 것은 생략함.
 본문에 로컬 경로만 있고 첨부가 없으면 로그에 경고(접수 경고와 같은 판정 hub_report.unattached_paths).
 
 환경: LRM_HUB_DIR 작업 폴더 · LRM_REPORT_OUTBOX outbox · LRM_REPORT_STATE 상태 파일 · LRM_REPORT_NOTIFY 전송 스크립트(기본 같은 폴더 slack_notify.sh) · LRM_REPORT_PREVIEW HTML 미리보기 스크립트(기본 같은 폴더 html_preview.sh) · LRM_REPORT_PDF HTML→PDF 스크립트(기본 같은 폴더 html_pdf.sh)
@@ -33,6 +35,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -55,7 +58,10 @@ PERMANENT_RC = 2  # 알림 스크립트 종료 코드: 설정·인자·양식 �
 USER_FIX_LINES = ("slack-bot.env 없음 — 사용자 설정 필요",)
 NOTIFY_TIMEOUT_S = 30
 UPLOAD_TIMEOUT_S = 120  # 파일 업로드는 본문 전송보다 오래 걸릴 수 있음
-PREVIEW_TIMEOUT_S = 30
+PREVIEW_TIMEOUT_S = 15  # 평소 1~2초. 이보다 오래면 Chrome 이 멈춘 것으로 보고 끝냄
+DERIVED_MIN_LEFT_S = 8  # 회차에 이만큼 안 남았으면 딸린 파일을 시작하지 않음(시간이 모자라 실패한 것을 멈춤으로 세지 않게)
+DERIVED_TRIES, DERIVED_BACKOFF_S = 5, 120  # 120·240·480·960초 간격. 30분쯤 멈춰도 풀린 뒤 올라감
+KILL_GRACE_S = 2  # 정상 종료 요청 뒤 강제 종료까지. 변환 스크립트가 임시 폴더를 지울 시간
 PREVIEW_SUFFIX = "#preview:"  # 미리보기 단계 키 = 원본 경로 + 이 접미사 + 원본 내용 해시(att_done). 임시 경로에 기대지 않아 회차가 바뀌어도 같은 키
 PDF_SUFFIX = "#pdf:"  # PDF 단계 키. 미리보기와 같은 규칙(원본 경로 + 접미사 + 내용 해시)
 HTML_EXTS = (".html", ".htm")
@@ -733,6 +739,34 @@ def gc_staged(conf: Conf) -> None:
                 shutil.rmtree(d, ignore_errors=True)
 
 
+class MakerTimeout(Exception):
+    """딸린 파일 변환이 시간 안에 안 끝남(Chrome 멈춤). 실패와 달리 나중에 다시 시도할 값어치가 있음"""
+
+
+def run_maker(cmd: list, out: str, timeout: float) -> int:
+    """변환 스크립트를 새 프로세스 그룹으로 실행 → 종료 코드(실행 못 하면 1). 시간 초과면 그룹째 끝내고 MakerTimeout.
+    스크립트만 죽이면 그 아래 Chrome 이 남아 쌓이고, 뒤늦게 결과 파일을 써서 지울 사람 없는 파일이 남음"""
+    try:
+        p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        return 1
+    try:
+        return p.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise MakerTimeout()
+    finally:
+        if p.returncode is None:
+            with contextlib.suppress(OSError):
+                os.killpg(p.pid, signal.SIGTERM)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                p.wait(timeout=KILL_GRACE_S)
+            with contextlib.suppress(OSError):  # 스크립트가 끝났어도 Chrome 이 남았을 수 있어 그룹에 한 번 더
+                os.killpg(p.pid, signal.SIGKILL)
+            p.wait()
+            with contextlib.suppress(OSError):
+                os.unlink(out)
+
+
 def make_preview(conf: Conf, path: str, digest: str, deadline: float) -> str:
     """HTML → 390폭 미리보기 PNG 경로. 경로는 상태 폴더 아래 내용 해시로 고정(응답 유실 복구가 보낸 기록의 경로로 찾음).
     스크립트·Chrome 이 없거나 실패하면 빈 문자열(첨부는 계속)"""
@@ -742,11 +776,8 @@ def make_preview(conf: Conf, path: str, digest: str, deadline: float) -> str:
     out = os.path.join(os.path.dirname(os.path.abspath(conf.state)), "report-previews", f"{digest}-{os.path.splitext(os.path.basename(path))[0]}-preview.png")
     with contextlib.suppress(OSError):
         os.makedirs(os.path.dirname(out), exist_ok=True)
-    try:
-        p = subprocess.run([conf.preview, os.path.abspath(os.path.expanduser(path)), out], capture_output=True, text=True, timeout=min(PREVIEW_TIMEOUT_S, left))
-    except (subprocess.TimeoutExpired, OSError):
-        return ""
-    return out if p.returncode == 0 and os.path.isfile(out) else ""
+    rc = run_maker([conf.preview, os.path.abspath(os.path.expanduser(path)), out], out, min(PREVIEW_TIMEOUT_S, left))
+    return out if rc == 0 and os.path.isfile(out) else ""
 
 
 def make_pdf(conf: Conf, path: str, digest: str, deadline: float) -> str:
@@ -758,11 +789,8 @@ def make_pdf(conf: Conf, path: str, digest: str, deadline: float) -> str:
     out = os.path.join(os.path.dirname(os.path.abspath(conf.state)), "report-previews", digest, os.path.splitext(os.path.basename(path))[0] + ".pdf")
     with contextlib.suppress(OSError):
         os.makedirs(os.path.dirname(out), exist_ok=True)
-    try:
-        p = subprocess.run([conf.pdf, os.path.abspath(os.path.expanduser(path)), out], capture_output=True, text=True, timeout=min(PREVIEW_TIMEOUT_S, left))
-    except (subprocess.TimeoutExpired, OSError):
-        return ""
-    return out if p.returncode == 0 and os.path.isfile(out) and os.path.getsize(out) > 0 else ""
+    rc = run_maker([conf.pdf, os.path.abspath(os.path.expanduser(path)), out], out, min(PREVIEW_TIMEOUT_S, left))
+    return out if rc == 0 and os.path.isfile(out) and os.path.getsize(out) > 0 else ""
 
 
 MAKERS = {PDF_SUFFIX: make_pdf, PREVIEW_SUFFIX: make_preview}
@@ -802,49 +830,112 @@ def send_files(conf: Conf, rep: dict, rs: dict, st: dict, target: str, deadline:
     done = rs["att_done"]
     since = rs.setdefault("att_start", int(time.time()))
     for path in rep["files"]:
+        if path in done:
+            continue
         name = os.path.basename(path) or path
-        jobs = [(path, name)]
-        origin = source_of(rep, path)
-        digest = content_hash(origin) if path.lower().endswith(HTML_EXTS) else ""
-        if digest:
-            jobs += [(path + suffix + digest, "") for suffix in DERIVED]
-        for key, label in jobs:
-            if key in done:
-                continue
-            src = origin
-            made = next((s for s in DERIVED if key == path + s + digest), "") if digest else ""
-            if made:  # 딸린 파일은 업로드 직전에 만듦. 못 만들면 생략으로 기록
-                src = "" if deadline - time.monotonic() <= 0 else MAKERS[made](conf, origin, digest, deadline)
-                label = os.path.basename(src)
-                if not src and deadline - time.monotonic() <= 0:
-                    raise NotifyError("회차 시간 예산 초과", counts=False)  # 시간이 없어 못 만든 것은 생략으로 굳히지 않고 다음 회차로
-                if not src:
-                    log(conf, f"{rep['id']} {DERIVED[made][1]} 생략: {name}")
-                    done[key] = ""
-                    save_state(conf.state, st)
-                    continue
-            if fid := uploaded_id(conf, src, target, since):
-                done[key] = fid
-                save_state(conf.state, st)
-                continue
-            save_state(conf.state, st)  # 첫 시도 시각(att_start)을 업로드 전에 저장
-            why = hub_report.file_problem(src) or read_problem(src)
-            try:
-                if why:
-                    raise NotifyError(why, permanent=True)
-                done[key] = run_notify(conf, ["--tag", rep["hub"], "--thread", target] + attached_args(rep) + [f"첨부: {label}", src], deadline, upload=True) or "uploaded"
-            except NotifyError as err:
-                if not err.permanent:
-                    raise NotifyError(f"첨부 실패: {label} — {err}", counts=err.counts)
-                attach_failed(conf, rep, target, label, str(err), deadline)
-                done[key] = ""
-            if made:
-                with contextlib.suppress(OSError):
-                    os.unlink(src)  # 올렸거나 포기한 딸린 파일 정리
-                if made == PDF_SUFFIX:
-                    with contextlib.suppress(OSError):
-                        os.rmdir(os.path.dirname(src))  # 해시 폴더는 비었을 때만 지워짐
+        src = source_of(rep, path)
+        if fid := uploaded_id(conf, src, target, since):
+            done[path] = fid
             save_state(conf.state, st)
+            continue
+        save_state(conf.state, st)  # 첫 시도 시각(att_start)을 업로드 전에 저장
+        why = hub_report.file_problem(src) or read_problem(src)
+        try:
+            if why:
+                raise NotifyError(why, permanent=True)
+            done[path] = upload_file(conf, rep, src, name, target, deadline)
+        except NotifyError as err:
+            if not err.permanent:
+                raise NotifyError(f"첨부 실패: {name} — {err}", counts=err.counts)
+            attach_failed(conf, rep, target, name, str(err), deadline)
+            done[path] = ""
+        save_state(conf.state, st)
+    if derived_jobs(rep, rs):
+        rs.setdefault("derived", {"target": target, "tries": 0, "next_at": 0})
+
+
+def upload_file(conf: Conf, rep: dict, src: str, label: str, target: str, deadline: float) -> str:
+    return run_notify(conf, ["--tag", rep["hub"], "--thread", target] + attached_args(rep) + [f"첨부: {label}", src], deadline, upload=True) or "uploaded"
+
+
+def derived_jobs(rep: dict, rs: dict) -> list:
+    """아직 안 올린 딸린 파일 (키, 종류, 원본 복사본 경로, 내용 해시, 첨부 이름). 원본 업로드가 실패한 HTML 은 제외"""
+    done, jobs = rs.get("att_done") or {}, []
+    for path in rep["files"]:
+        if not path.lower().endswith(HTML_EXTS) or not done.get(path):
+            continue
+        origin = source_of(rep, path)
+        if digest := content_hash(origin):
+            jobs += [(path + s + digest, s, origin, digest, os.path.basename(path)) for s in DERIVED if path + s + digest not in done]
+    return jobs
+
+
+def finish_derived(conf: Conf, rep: dict, rs: dict, st: dict) -> None:
+    rs.pop("derived", None)
+    save_state(conf.state, st)
+    drop_staged(conf, rep)
+
+
+def send_derived(conf: Conf, reports: list, st: dict, deadline: float) -> None:
+    """회차 끝: 전송이 끝난 보고의 PDF·미리보기를 남은 시간 안에서 만들어 올림. 일시 실패가 나면 이번 회차는 멈춤(다른 보고도 같은 이유로 막힘)"""
+    for rep in reports:
+        rs = st["reports"].get(rep["id"], {})
+        wait = rs.get("derived")
+        if not isinstance(wait, dict) or not rs.get("sent") or wait.get("next_at", 0) > time.time():
+            continue
+        for job in derived_jobs(rep, rs):
+            if deadline - time.monotonic() < DERIVED_MIN_LEFT_S:
+                return
+            why = send_one_derived(conf, rep, rs, st, job, deadline)
+            if not why:
+                continue
+            wait["tries"] = wait.get("tries", 0) + 1
+            wait["next_at"] = int(time.time() + DERIVED_BACKOFF_S * 2 ** (wait["tries"] - 1))
+            log(conf, f"{rep['id']} {DERIVED[job[1]][1]} 보류 {wait['tries']}회째: {job[4]} — {why}")
+            if wait["tries"] >= DERIVED_TRIES:
+                for left in derived_jobs(rep, rs):
+                    rs["att_done"][left[0]] = ""
+                    log(conf, f"{rep['id']} {DERIVED[left[1]][1]} 생략: {left[4]}")
+                finish_derived(conf, rep, rs, st)
+            else:
+                save_state(conf.state, st)
+            return
+        finish_derived(conf, rep, rs, st)
+
+
+def send_one_derived(conf: Conf, rep: dict, rs: dict, st: dict, job: tuple, deadline: float) -> str:
+    """딸린 파일 1개. 올렸거나 생략으로 굳혔으면 빈 문자열, 나중에 다시 할 일시 실패면 사유"""
+    key, suffix, origin, digest, name = job
+    target, done = rs["derived"]["target"], rs["att_done"]
+    try:
+        src = MAKERS[suffix](conf, origin, digest, deadline)
+    except MakerTimeout:
+        return "변환 시간 초과"
+    why = ""
+    if not src:
+        log(conf, f"{rep['id']} {DERIVED[suffix][1]} 생략: {name}")
+        done[key] = ""
+    elif fid := uploaded_id(conf, src, target, rs.get("att_start", 0)):
+        done[key] = fid
+    else:
+        try:
+            if bad := hub_report.file_problem(src) or read_problem(src):
+                raise NotifyError(bad, permanent=True)
+            done[key] = upload_file(conf, rep, src, os.path.basename(src), target, deadline)
+        except NotifyError as err:
+            if err.permanent:
+                attach_failed(conf, rep, target, os.path.basename(src), str(err), deadline)
+                done[key] = ""
+            else:
+                why = str(err)
+    if src:
+        with contextlib.suppress(OSError):
+            os.unlink(src)
+        if suffix == PDF_SUFFIX:
+            with contextlib.suppress(OSError):
+                os.rmdir(os.path.dirname(src))  # 해시 폴더는 비었을 때만 지워짐
+    save_state(conf.state, st)
+    return why
 
 
 def card_attach(conf: Conf, topic: dict) -> None:
@@ -1263,6 +1354,8 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float, boards=False) -> d
             retry_attach(conf, st, deadline)
         if boards:
             out["lines"].extend(refresh_boards(conf, st, deadline, dry))
+        if not dry:
+            send_derived(conf, reports, st, deadline)
         return out
     if dry:
         out["status"] = "dry-run"
@@ -1305,9 +1398,10 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float, boards=False) -> d
             log(conf, line)
             continue
         try:
-            defer = rep["kind"] == "decide" and any(topic_key(r) != key and card_waiting(r, st) for r in ordered[pos + 1:])  # 첨부(PDF·미리보기)가 뒤 카드의 예산을 다 쓰지 않게
+            defer = rep["kind"] == "decide" and any(topic_key(r) != key and card_waiting(r, st) for r in ordered[pos + 1:])  # 첨부가 뒤 카드의 예산을 다 쓰지 않게
             res = deliver(conf, rep, st, deadline, defer)
-            drop_staged(conf, rep)
+            if "derived" not in fails:  # 딸린 파일을 만들 원본이 필요하면 그때까지 둠
+                drop_staged(conf, rep)
         except NotifyError as err:
             if not err.counts:
                 blocked.add(key)
@@ -1337,6 +1431,7 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float, boards=False) -> d
     retry_attach(conf, st, deadline)
     if boards:
         out["lines"].extend(refresh_boards(conf, st, deadline))
+    send_derived(conf, reports, st, deadline)
     return out
 
 
