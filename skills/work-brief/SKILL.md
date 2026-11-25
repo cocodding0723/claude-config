@@ -26,7 +26,8 @@ description: 내 Jira 티켓(LRM)과 로컬 워크트리·PR 상태를 한 번�
 - 출력 필드: `tickets`(브랜치·폴더명의 LRM-n), `idleDays`, `modified`(추적 파일 변경),
   `untracked`(.meta·폰트 아틀라스 제외 새 파일), `ahead`/`behind`(origin/dev 대비),
   `prs`(같은 브랜치 PR), `detached`, `orphanDirs`(git 이 모르는 폴더),
-  `prsByTicket`(PR 제목·브랜치의 LRM-n 별 PR. 워크트리 없는 티켓의 PR 은 여기서 찾는다)
+  `prsByTicket`(PR 제목·브랜치의 LRM-n 별 PR. 워크트리 없는 티켓의 PR 은 여기서 찾는다),
+  `staleDrafts`(7일 이상 갱신 없는 내 draft PR. `null` 은 조회 실패이므로 '없음'으로 적지 않는다)
 
 ## 2. 대조 규칙 → "어긋남" 절
 
@@ -40,6 +41,7 @@ description: 내 Jira 티켓(LRM)과 로컬 워크트리·PR 상태를 한 번�
 | 크게 뒤처짐 | behind ≥ 300 + ahead > 0 | 리베이스 전 충돌 주의 |
 | 미커밋 방치 | modified > 0 + idleDays ≥ 7 | 커밋 또는 폐기 결정 |
 | 티켓 없음 | tickets 비어 있음 | 티켓 연결 또는 정리 |
+| 방치 draft | staleDrafts 에 있음 | 계속할지 닫을지 사용자에게 묻기(스스로 닫지 않음) |
 | 고아·detached | orphanDirs, detached=true | 폴더 확인 |
 | 우선순위 | High 가 `해야 할 일` | 표시만 |
 
