@@ -13,6 +13,11 @@ git -C "$REPO" fetch -q origin "${BASE#origin/}" 2>/dev/null || true
 PRS=$(cd "$REPO" && gh pr list --state all --limit 200 \
   --json number,state,headRefName,isDraft,title 2>/dev/null || echo '[]')
 
+# 열린 draft 는 따로 조회(전체 목록 200건 밖의 오래된 PR 도 잡음). 조회 실패는 null 로 남겨 '없음'과 구분
+DRAFTS=$(cd "$REPO" && gh pr list --state open --draft --author @me --limit 200 \
+  --json number,title,headRefName,updatedAt,url 2>/dev/null) || DRAFTS=null
+STALE_DRAFT_DAYS=7
+
 # 미커밋 수에서 뺄 소음: 순수 C# .meta, PlayMode 부산물 폰트 아틀라스
 NOISE='\.cs\.meta$|_Dynamic\.asset$|^TestResults/'
 
@@ -67,8 +72,11 @@ if [ -d "$WS_ROOT" ]; then
 fi
 
 printf '%s\n' "${rows[@]}" | jq -s --arg base "$BASE" --argjson orphans "$orphans" \
-  --argjson prs "$PRS" '
+  --argjson prs "$PRS" --argjson drafts "${DRAFTS:-null}" --argjson now "$NOW" --argjson staleDays "$STALE_DRAFT_DAYS" '
   { base: $base, worktrees: ., orphanDirs: $orphans,
+    staleDrafts: (if $drafts == null then null else
+      [ $drafts[] | . + {idleDays: ((($now - (.updatedAt | fromdateiso8601)) / 86400) | floor)}
+        | select(.idleDays >= $staleDays) ] end),
     # 워크트리 없이 PR 만 남은 티켓도 잡도록 제목·브랜치의 LRM-n 으로 묶음
     prsByTicket: ( [ $prs[] | . as $p
         | ((.title + " " + .headRefName) | [scan("LRM-[0-9]+")] | unique[])
