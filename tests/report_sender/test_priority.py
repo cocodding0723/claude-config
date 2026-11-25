@@ -24,6 +24,11 @@ class DecisionsFirstTest(unittest.TestCase):
         got = self.order(rep("i1"), rep("b1", card="lrm-b"), rep("i2"), rep("b2", "decide", "lrm-b"), rep("b3", card="lrm-b"))
         self.assertEqual(got, ["b1", "b2", "i1", "i2", "b3"])
 
+    def test_posted_decision_with_files_left_comes_before_plain_reports(self):
+        todo = [rep("i1"), rep("d1", "decide", "lrm-b"), rep("d2", "decide", "lrm-c")]
+        st = {"reports": {"d1": {"body_ts": "1700000000.000001"}}}
+        self.assertEqual([r["id"] for r in report_sender.decisions_first(todo, st)], ["d2", "d1", "i1"])
+
     def test_without_decision_order_is_unchanged(self):
         self.assertEqual(self.order(rep("1"), rep("2", card="lrm-b"), rep("3")), ["1", "2", "3"])
 
@@ -77,10 +82,27 @@ class AttachLaterTest(unittest.TestCase):
             report_sender.run(self.conf)
         self.assertEqual(seen, [False, False])
 
-    def test_spent_budget_tries_one_and_rotates(self):
+    def test_round_stops_starting_reports_after_budget(self):
+        seen = []
+
+        def slow(conf, r, st, dl, defer=False):
+            seen.append(r["id"])
+            time.sleep(0.3)
+            raise report_sender.NotifyError("회차 시간 예산 초과", counts=False)
+        self.conf.budget_s = 0.2
+        with mock.patch.object(report_sender, "deliver", slow), mock.patch.object(report_sender, "check_consistency"), \
+                mock.patch.object(report_sender.hub_report, "read_outbox", return_value=[dict(rep(i, card="lrm-" + i), files=[], text="t") for i in "abc"]), \
+                mock.patch.object(report_sender, "input_error", return_value=""), mock.patch.object(report_sender, "bd_json", return_value=None):
+            report_sender.run(self.conf)
+        self.assertEqual(seen, ["a"])
+
+    def test_spent_budget_tries_one_per_rescue_interval_and_rotates(self):
         st = {"topics": {k: {"ts": "1700000000.000001", "channel": "", "card": k, "attached": False} for k in ("a", "b")}, "reports": {}, "warned": {}, "bad": {}}
         with mock.patch.object(report_sender, "card_attach", self.attach):
             report_sender.retry_attach(self.conf, st, time.monotonic() - 1)
+            report_sender.retry_attach(self.conf, st, time.monotonic() - 1)
+            self.assertEqual(self.events, ["attach:a"])
+            st["topics"]["a"]["attach_at"] -= report_sender.ATTACH_RESCUE_S
             report_sender.retry_attach(self.conf, st, time.monotonic() - 1)
         self.assertEqual(self.events, ["attach:a", "attach:b"])
 

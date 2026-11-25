@@ -99,6 +99,9 @@ CARD_GAP_FIX = "카드 설명에 '무엇:'·'왜:' 줄 추가(bd update {card} -
 WHY_GAP_FIX = "카드 설명에 '왜:' 줄 추가(bd update {card} -d ...). 보고는 이미 '이유 미기재' 표시로 나갔고, 추가하면 스레드 첫 메시지가 고쳐짐"
 BD_FALLBACK = "/opt/homebrew/bin/bd"  # launchd 의 짧은 PATH 에서 bd 를 못 찾을 때
 BD_TIMEOUT_S = 10
+BD_ROUND_S = 12  # 회차당 전송 전 bd 조회 시간 합. 넘으면 내보내기 파일로 읽어 전송할 시간을 남김
+ATTACH_RESCUE_S = 300
+BD_MIN_S = 1  # 남은 시간이 이보다 짧으면 bd 를 부르지 않음
 UNREADABLE = "백그라운드에서 읽을 수 없는 폴더 — 다시 보고"
 WS_THREAD_MAX = 10  # 기능 하나가 동시에 여는 작업 공간 스레드 상한. 넘으면 새 작업 공간 보고는 기능 스레드 답글로 감(환경 LRM_WS_THREAD_MAX)
 
@@ -122,6 +125,7 @@ class Conf:
     hold_max_s: float = HOLD_MAX_S
     bd: str = ""
     board: str = ""
+    bd_left: float = BD_ROUND_S
     cards: dict = field(default_factory=dict)  # 한 Conf(회차) 안의 카드 조회 캐시
 
     def __post_init__(self) -> None:
@@ -335,13 +339,41 @@ def is_card_topic(rep: dict) -> bool:
 
 
 def bd_json(conf: Conf, *args: str) -> "list | None":
-    """작업판 bd 조회 → JSON 목록. 실패·시간 초과·JSON 아님은 None(stderr 경고 줄은 무시)"""
+    """작업판 bd 조회 → JSON 목록. 실패·JSON 아님은 None(stderr 경고 줄은 무시).
+    시간 초과·회차 조회 시간 소진은 bd 내보내기 파일로 대신 읽음(몇십 초 늦을 수 있음). 파일도 없으면 None"""
+    if conf.bd_left < BD_MIN_S:
+        return exported_rows(conf, args)
+    start = time.monotonic()
     try:
-        p = subprocess.run([conf.bd, "-C", conf.board, *args, "--json"], capture_output=True, text=True, timeout=BD_TIMEOUT_S)
+        p = subprocess.run([conf.bd, "-C", conf.board, *args, "--json"], capture_output=True, text=True, timeout=min(BD_TIMEOUT_S, conf.bd_left))
         d = json.loads(p.stdout) if p.returncode == 0 else None
-    except (OSError, subprocess.TimeoutExpired, ValueError):
+    except subprocess.TimeoutExpired:
+        conf.bd_left = 0  # 한 번 초과한 회차는 작업판이 느린 상태라 더 기다리지 않음
+        return exported_rows(conf, args)
+    except (OSError, ValueError):
         return None
+    finally:
+        conf.bd_left -= time.monotonic() - start
     return d if isinstance(d, list) else None
+
+
+def exported_rows(conf: Conf, args: tuple) -> "list | None":
+    """bd_json 이 쓰는 조회(show <id> · list --parent <id> · list -l <label>)를 내보내기 파일(.beads/issues.jsonl)로 흉내.
+    모르는 조회·파일 없음·깨진 줄은 None"""
+    opt = lambda name: args[args.index(name) + 1] if name in args else ""  # noqa: E731
+    card, parent, label = args[1] if args[0] == "show" else "", opt("--parent"), opt("-l")
+    if not (card or parent or label):
+        return None
+    try:
+        with open(os.path.join(conf.board, ".beads", "issues.jsonl"), encoding="utf-8") as f:
+            rows = [r for r in map(json.loads, f) if r.get("_type", "issue") == "issue"]
+    except (OSError, ValueError):
+        return None
+    if card:
+        return [r for r in rows if r.get("id") == card] or None
+    if parent:
+        return [r for r in rows if any(d.get("type") == "parent-child" and d.get("depends_on_id") == parent for d in r.get("dependencies") or [])]
+    return [r for r in rows if label in (r.get("labels") or []) and r.get("issue_type") == (opt("-t") or r.get("issue_type"))]
 
 
 def first_sentence(line: str) -> str:
@@ -1046,11 +1078,11 @@ def open_topic(conf: Conf, rep: dict, st: dict, deadline: float) -> None:
 
 def retry_attach(conf: Conf, st: dict, deadline: float) -> None:
     """안 붙은 카드 스레드를 전송 뒤에 붙임(bd 가 느려도 보고를 막지 않게).
-    예산이 끝났어도 1건은 시도해 밀린 연결이 계속 굶지 않게 하고, 시도한 것은 뒤로 돌려 한 카드의 실패가 나머지를 막지 않게 함"""
+    예산이 끝났어도 ATTACH_RESCUE_S 마다 1건은 시도해 밀린 연결이 계속 굶지 않게 하고(bd 가 느리면 1건이 2분도 걸려 전송 잠금을 쥠), 시도한 것은 뒤로 돌려 한 카드의 실패가 나머지를 막지 않게 함"""
     waiting = [t for t in st["topics"].values() if t.get("card") and t.get("attached") is False]
     waiting.sort(key=lambda t: t.get("attach_at", 0))
-    for i, t in enumerate(waiting):
-        if i and time.monotonic() >= deadline:
+    for t in waiting:
+        if time.monotonic() >= deadline and time.time() - max(w.get("attach_at", 0) for w in waiting) < ATTACH_RESCUE_S:
             break
         t["attach_at"] = int(time.time())
         card_attach(conf, t)
@@ -1064,10 +1096,15 @@ def card_waiting(rep: dict, st: dict) -> bool:
 
 
 def decisions_first(todo: list, st: dict) -> list:
-    """안 올린 결정 카드가 있는 주제의 보고를 앞으로(안정 정렬). 같은 주제의 앞 글은 결정과 함께 당겨 스레드 안 순서를 지킴"""
+    """안 올린 결정 카드가 있는 주제 → 카드는 올렸고 첨부가 남은 결정 → 나머지 순서(안정 정렬). 같은 주제의 앞 글은 결정과 함께 당겨 스레드 안 순서를 지킴"""
     last = {topic_key(r): i for i, r in enumerate(todo) if card_waiting(r, st)}
-    order = sorted(range(len(todo)), key=lambda i: i > last.get(topic_key(todo[i]), -1))
-    return [todo[i] for i in order]
+
+    def rank(i: int) -> int:
+        rep = todo[i]
+        if i <= last.get(topic_key(rep), -1):
+            return 0
+        return 1 if rep["kind"] == "decide" and "body_ts" in st["reports"].get(rep["id"], {}) else 2
+    return [todo[i] for i in sorted(range(len(todo)), key=rank)]
 
 
 def deliver(conf: Conf, rep: dict, st: dict, deadline: float, defer_files: bool = False) -> dict:
@@ -1370,8 +1407,8 @@ def _round(conf: Conf, out: dict, dry: bool, deadline: float, boards=False) -> d
         key = topic_key(rep)
         if key in blocked:
             continue  # 건너뛴 보고는 시도 건수에 세지 않음(막힌 주제가 다른 주제를 굶기지 않게)
-        if tried >= conf.max_per_run:
-            break
+        if tried >= conf.max_per_run or (tried and time.monotonic() >= deadline):
+            break  # 예산이 끝난 뒤에는 조회만 하고 못 보내므로 다음 보고를 시작하지 않음
         fails = st["reports"].setdefault(rep["id"], {})
         if fails.get("next_at", 0) > time.time():
             blocked.add(key)  # 대기 중. 같은 주제의 뒤 보고도 순서 유지를 위해 함께 대기
