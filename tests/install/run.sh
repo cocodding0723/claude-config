@@ -41,7 +41,7 @@ grep -q '^shopt -u patsub_replacement' "$REPO/install.sh" && ok "install.sh pats
 # git/repo-hooks/commit-msg 는 links.tsv 가 아니라 install.sh(install_repo_hook)가 설치하므로 제외
 # 역방향: 링크 대상 폴더의 모든 추적 파일이 links.tsv 에 직접 또는 상위 폴더로 있어야 함(파일 추가 시 누락 방지)
 srcs=$(echo "$entries" | cut -f1)
-uncovered=$(cd "$REPO" && git ls-files skills claude hubs git | grep -v -x -F 'hubs/slack-bot.env.example' | grep -v -x -F 'git/repo-hooks/commit-msg' | while read -r f; do
+uncovered=$(cd "$REPO" && git ls-files skills claude codex hubs git | grep -v -x -F 'hubs/slack-bot.env.example' | grep -v -x -F 'git/repo-hooks/commit-msg' | while read -r f; do
   d=$f; hit=0
   while [ "$d" != "." ] && [ "$d" != "/" ]; do if echo "$srcs" | grep -qx -F "$d"; then hit=1; break; fi; d=$(dirname "$d"); done
   [ "$hit" = 1 ] || echo "$f"
@@ -89,6 +89,10 @@ CUR_BYTES=$(shasum "$SB/.claude/settings.json" | cut -d' ' -f1)
 cp "$SB/.claude/settings.json" "$SB/settings.original"
 hooks_of() { jq '[.hooks[]?[]] | length' "$1"; }
 [ "$(hooks_of "$SB/.claude/settings.json")" = 34 ] && ok "준비: 현재 설정 훅 34개(기본 15+Orca 15+추가 3+중복 1)" || ko "준비" "훅 수 $(hooks_of "$SB/.claude/settings.json")"
+# Codex 훅: 다른 도구 항목 사이에 낡은 우리 항목이 끼어 있는 상태
+mkdir -p "$SB/.codex"
+jq -n '{hooks:{PreToolUse:[{matcher:"",hooks:[{type:"command",command:"gk a"}]},{matcher:"Bash",hooks:[{type:"command",command:"python3 /x/claude-compat.py",timeout:20}]},{hooks:[{type:"command",command:"orca b"}]}],Interrupt:[{hooks:[{type:"command",command:"orca c"}]}]}}' > "$SB/.codex/hooks.json"
+chmod 600 "$SB/.codex/hooks.json"
 SKILLS_BEFORE=$(ls "$SB/.claude/skills" | wc -l | tr -d ' ')
 
 # ---- 1. dry-run: 아무것도 바뀌지 않음 --------------------------------------
@@ -105,6 +109,18 @@ got=$(echo "$dry" | grep -cE '^\[dry-run\] (LINK|BACKUP\+LINK|MERGE|COPY|RENDER|
 "$INSTALL" >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && ok "설치 종료 코드 0" || ko "설치" "rc=$rc"
 check "점검 모드 통과" "$INSTALL" --check
+CX="$SB/.codex/hooks.json"
+[ "$(jq -c '[.hooks.PreToolUse[].hooks[0].command | sub(".*/";"")]' "$CX")" = '["gk a","claude-compat.py","orca b"]' ] && [ "$(jq -c '.hooks.PreToolUse[1] | [.matcher, .hooks[0].timeout]' "$CX")" = '[null,35]' ] && ok "Codex 훅: 우리 항목만 제자리에서 갈림" || ko "Codex 훅 제자리" "$(jq -c .hooks.PreToolUse "$CX")"
+[ "$(jq -c '.hooks.Interrupt[0].hooks[0].command' "$CX")" = '"orca c"' ] && [ "$(jq '.hooks.Stop | length' "$CX")" = 1 ] && ok "Codex 훅: 다른 도구 사건 유지·없던 사건 추가" || ko "Codex 훅 사건" ""
+[ "$(stat -f '%Lp' "$CX")" = 600 ] && ok "Codex 훅 파일 권한 600" || ko "Codex 훅 권한" "$(stat -f '%Lp' "$CX")"
+grep -q __HOME__ "$CX" && ko "Codex 훅 경로" "__HOME__ 남음" || ok "Codex 훅 경로 치환"
+[ "$(readlink "$SB/.codex/hooks/claude-compat.py")" = "$REPO/codex/hooks/claude-compat.py" ] && ok "Codex 변환기 링크" || ko "Codex 변환기 링크" ""
+cp -p "$CX" "$SB/cx.orig"
+jq -c 'to_entries | reverse | from_entries' "$CX" > "$CX.n" && cat "$CX.n" > "$CX" && rm "$CX.n"
+"$INSTALL" --check >/dev/null 2>&1 && ok "Codex 훅: 들여쓰기만 다르면 점검 통과" || ko "Codex 훅 점검" ""
+jq '.hooks.PreToolUse |= map(select(.hooks[0].command | contains("claude-compat") | not))' "$CX" > "$CX.n" && mv "$CX.n" "$CX"
+out=$("$INSTALL" --check 2>&1); rc=$?; [ "$rc" = 1 ] && echo "$out" | grep -q 'DRIFT  .codex/hooks.json' && ok "Codex 훅: 우리 항목이 빠지면 점검 실패" || ko "Codex 훅 빠짐" "rc=$rc"
+mv "$SB/cx.orig" "$CX"
 # Orca 프로필의 낡은 훅은 안내만 하고 점검은 통과. 같은 훅이면 안내 없음
 PF="$SB/Library/Application Support/orca/claude-profiles/abcd1234-x/home"; mkdir -p "$PF"
 cp "$SB/.claude/settings.json" "$PF/settings.json"; out=$("$INSTALL" --check 2>&1); rc=$?
