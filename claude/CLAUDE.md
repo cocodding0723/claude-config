@@ -94,7 +94,7 @@ Unity의 GUID·임포트 설정 동작: [Asset metadata](https://docs.unity.com/
 
 ## 환경 메모
 - macOS Apple Silicon 48GB. Unity 6, Flutter, Android SDK/에뮬레이터(`Pixel_8_API_36`), Xcode 설치됨.
-- OpenViking(:1933) + Qdrant(:6333) + Ollama(:11434)가 LaunchAgent/Colima로 상시 구동. 추가로 무거운 로컬 모델을 띄우지 않는다.
+- OpenViking·Ollama(LaunchAgent)와 Qdrant(Colima)는 2026-11-25 중지했다. 데이터는 `~/.openviking` 에 남아 있다. 다시 켜거나 무거운 로컬 모델을 띄우지 않는다.
 - MCP: `unity-editor-mcp`(Unity 에디터가 열려 있어야 대부분의 툴이 동작), `dart`(Flutter/Dart 공식 — analyze/hot reload/pub 등은 이 MCP를 우선 사용).
 - Figma/Firebase/Supabase 플러그인은 전역에서 꺼져 있음. 필요한 프로젝트의 `.claude/settings.json`에서 `enabledPlugins`로 켠다.
 

@@ -19,7 +19,6 @@ if [ "$mode" = doctor ]; then   # --doctor: verify the harness can actually run
   chk "perl"          'command -v perl'                       "macOS 기본 포함"
   chk "git ≥2.31"     'git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || git version | awk "{split(\$3,v,\".\"); exit !(v[1]>2 || (v[1]==2 && v[2]>=31))}"' "git 업데이트"
   chk "gh 로그인"     'gh auth status'                        "gh auth login (이슈 sync만 영향)"
-  chk "OpenViking"    "curl -s -m 2 $OV_URL/health | grep -q healthy" "OV 서버 확인 (이슈 검색만 영향)"
   chk "core.hooksPath → pre-commit" '[ -x "$(git config --global core.hooksPath | sed "s#^~#$HOME#")/pre-commit" ]' "git config --global core.hooksPath ~/.config/git/hooks"
   chk "pre-commit → scoped-test 경로" 'grep -q scoped-test.sh "$(git config --global core.hooksPath | sed "s#^~#$HOME#")/pre-commit"' "pre-commit 안 경로 수정"
   for h in git-guard post-edit prompt-context scoped-test session-start session-end notify; do
