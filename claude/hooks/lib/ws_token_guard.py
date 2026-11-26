@@ -33,7 +33,10 @@ INTERPRETERS = {"python", "python3", "node", "ruby", "perl", "php"}
 CONTENT_SAFE = {"ls", "stat", "test", "[", "[[", "file", "echo", "printf", "git", "bd", "gh", "orca", "wc", "touch", "mkdir", "rm", "chmod", "chown", "basename", "dirname", "realpath", "readlink", "open"}
 COPIERS = {"cp", "mv", "install", "rsync", "scp", "ditto"}  # 마지막 인자는 목적지라 이름이어도 통과, 원본 인자만 검사
 PATTERN_FIRST = {"grep", "egrep", "fgrep", "rg", "ag", "sed", "awk", "gawk"}  # 첫 위치 인자는 검색 패턴·프로그램
-VALUE_OPTS = {"-A", "-B", "-C", "-m", "-g", "-t", "-T", "-d", "-D", "-j", "--glob", "--type", "--max-count", "--include", "--exclude", "--exclude-dir", "--context"}
+SEARCHERS = {"grep", "egrep", "fgrep", "rg"}
+# 값 없는 grep 짧은 옵션 묶음 중 l(이름만)·L(안 맞는 이름만)을 포함한 것. 값을 받는 옵션(-e·-f·-m·-A 등)이 섞이면 판정하지 않음
+GREP_NAME_FLAGS = re.compile(r"-[rRiIhHnsqwxvcEFoaz]*[lL][rRiIhHnsqwxvcEFoazlL]*")
+VALUE_OPTS ={"-A", "-B", "-C", "-m", "-g", "-t", "-T", "-d", "-D", "-j", "--glob", "--type", "--max-count", "--include", "--exclude", "--exclude-dir", "--context"}
 SAFE_NOTIFY_ARGS = {"--help", "-h", "--dry-run"}
 DURATION_RE = re.compile(r"^\d+(\.\d+)?[smhd]?$")
 WT_ADD_WORDS = ("worktree", "add")
@@ -170,9 +173,42 @@ def reads_token(seg, i):
             else:
                 files.append(a)
             k += 1
-    if cmd in PATTERN_FIRST and any(is_hub_dir(a) for a in files):
+    # 이름만 내거나 토큰 파일을 빼는 검색은 폴더·와일드카드 대상이어도 통과. 토큰 파일을 이름으로 직접 주면 그대로 거부
+    safe = cmd in SEARCHERS and (names_only(cmd, args) or skips_token(cmd, args))
+    if cmd in PATTERN_FIRST and not safe and any(is_hub_dir(a) for a in files):
         return True  # 설정 폴더 통째 검색
-    return any(names_token(a) for a in files)
+    return any(TOKEN_RE.search(a) or (not safe and names_token(a)) for a in files)
+
+
+def names_only(cmd, args):
+    """파일 이름만 출력하는 검색인지(내용이 나오지 않음). rg 의 -L 은 링크 따라가기라 제외"""
+    if any(a in ("--files-with-matches", "--files-without-match") for a in args):
+        return True
+    if cmd == "rg":
+        return "-l" in args
+    return any(GREP_NAME_FLAGS.fullmatch(a) for a in args)
+
+
+def search_globs(cmd, args):
+    """(제외 glob, 포함 glob) 목록. grep 은 --exclude·--include, rg 는 -g/--glob(! 로 시작하면 제외)"""
+    excl, incl = [], []
+    for k, a in enumerate(args):
+        name, _, val = a.partition("=")
+        if not val and k + 1 < len(args):
+            val = args[k + 1]
+        if cmd == "rg" and name in ("-g", "--glob"):
+            (excl if val.startswith("!") else incl).append(val.lstrip("!"))
+        elif cmd != "rg" and name == "--exclude":
+            excl.append(val)
+        elif cmd != "rg" and name == "--include":
+            incl.append(val)
+    return excl, incl
+
+
+def skips_token(cmd, args):
+    """제외 glob 이 토큰 파일을 빼거나, 포함 glob 이 토큰 파일을 고르지 않는지"""
+    excl, incl = search_globs(cmd, args)
+    return any(fnmatch.fnmatch(TOKEN_NAME, g) for g in excl) or (bool(incl) and not any(fnmatch.fnmatch(TOKEN_NAME, g) for g in incl))
 
 
 def judge_bash(ev, cmd):

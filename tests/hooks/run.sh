@@ -546,6 +546,8 @@ wexp "plan-write: Bash 리다이렉트 쓰기 거부" '{"tool_name":"Bash","tool
 wexp "plan-write: Bash cp 거부" '{"tool_name":"Bash","tool_input":{"command":"cp a.json ~/.config/lrm-hubs/plan-approvals/"}}' deny
 wexp "plan-write: Bash sed -i 거부" '{"tool_name":"Bash","tool_input":{"command":"sed -i \"\" s/a/b/ ~/.config/lrm-hubs/plan-approvals/x.json"}}' deny
 wexp "plan-write: Bash 읽기는 통과" '{"tool_name":"Bash","tool_input":{"command":"cat ~/.config/lrm-hubs/plan-approvals/x.json 2>/dev/null | jq ."}}'
+wexp "plan-write: 승인 도구 --help 통과" '{"tool_name":"Bash","tool_input":{"command":"~/orca/board/bin/board-approve --help"}}'
+wexp "plan-write: 승인 도구 실행은 --help 가 섞여도 거부" '{"tool_name":"Bash","tool_input":{"command":"~/orca/board/bin/board-approve o/r b x --help"}}' deny
 wexp "plan-write: ORCA_ROLE=main 이면 Bash 쓰기 통과" '{"tool_name":"Bash","tool_input":{"command":"echo {} > ~/.config/lrm-hubs/plan-approvals/x.json"}}' pass main
 wexp "plan-write: 다른 경로 Write 는 통과" '{"tool_name":"Write","tool_input":{"file_path":"/tmp/plan-approvals-note.txt"}}'
 wexp "plan-write: 메인이어도 slack-inbox.jsonl Write 거부" '{"tool_name":"Write","tool_input":{"file_path":"/h/.config/lrm-hubs/slack-inbox.jsonl"}}' deny main
@@ -803,6 +805,14 @@ texp "ws-guard: sudo env 래퍼 worktree add 거부" "$(bj 'env A=1 git worktree
 texp "ws-guard: 와일드카드 cat slack-bot.e* 거부" "$(bj "cat $HD/slack-bot.e*" "$TM")" deny
 texp "ws-guard: 설정 폴더 *.env 와일드카드 거부" "$(bj "cat $HD/*.env" "$TM")" deny
 texp "ws-guard: 설정 폴더 재귀 grep 거부" "$(bj "grep -r xoxb $HD/" "$TM")" deny
+texp "ws-guard: 설정 폴더 grep -rl(이름만) 통과" "$(bj "grep -rl foo $HD" "$TM")"
+texp "ws-guard: 설정 폴더 grep --exclude=*.env 통과" "$(bj "grep -rn --exclude='*.env' foo $HD" "$TM")"
+texp "ws-guard: 설정 폴더 grep --include=*.py 통과" "$(bj "grep -rn --include='*.py' foo $HD" "$TM")"
+texp "ws-guard: 설정 폴더 rg -g !*.env 통과" "$(bj "rg -n -g '!*.env' foo $HD" "$TM")"
+texp "ws-guard: 설정 폴더 와일드카드 grep -l 통과" "$(bj "grep -l foo $HD/*" "$TM")"
+texp "ws-guard: --include=*.env 는 거부" "$(bj "grep -rn --include='*.env' foo $HD" "$TM")" deny
+texp "ws-guard: rg -L(링크 따라가기)은 이름만이 아니라 거부" "$(bj "rg -L foo $HD" "$TM")" deny
+texp "ws-guard: 토큰 이름을 직접 주면 -l 이어도 거부" "$(bj "grep -l TOKEN $HD/slack-bot.env" "$TM")" deny
 texp "ws-guard: head <이름> 거부" "$(bj "head -1 $HD/slack-bot.env" "$TM")" deny
 texp "ws-guard: grep 패턴 뒤 파일 인자가 토큰이면 거부" "$(bj "grep TOKEN $HD/slack-bot.env" "$TM")" deny
 texp "ws-guard: 리디렉션 입력 jq . < <이름> 거부" "$(bj "jq . < $HD/slack-bot.env" "$TM")" deny
@@ -868,6 +878,8 @@ eexp "epic-scope: create --parent 자기 하위 카드 통과" "$B create t --pa
 eexp "epic-scope: create --parent 남의 에픽 거부" "$B create t --parent $EB" "$HA" deny
 eexp "epic-scope: create --parent 없음 거부" "$B create t -l a:b" "$HA" deny
 eexp "epic-scope: create --dry-run 통과" "$B create t --dry-run" "$HA"
+eexp "epic-scope: create --help 통과" "$B create --help" "$HA"
+eexp "epic-scope: 남의 카드 update -h 통과" "$B update $EB1 -h" "$HA"
 eexp "epic-scope: create 거부 뒤에도 && 로 이어진 읽기 통과" "$B show $EA1 && $B list" "$HA"
 eexp "epic-scope: feature:<slug> 표식으로 자기 에픽 판별(허브 coord-feat-zz-hub)" "$B update $EZ -p 1" "$SB/coord-feat-zz-hub"
 eexp "epic-scope: feature 허브의 남의 에픽 거부" "$B update $EA1 -p 1" "$SB/coord-feat-zz-hub" deny

@@ -78,7 +78,10 @@ if printf '%s' "$raw_cmd" | grep -Eq '(^|[^[:alnum:]_-])push([^[:alnum:]_-]|$)';
   done < <(printf '%s' "$raw_cmd" | python3 -I "$GUARD_DIR/lib/push_targets.py" "$cwd" 2>/dev/null)
 fi
 if [ -n "$cwd" ] && lg_applies "$cwd" && printf '%s' "$cmd" | grep -Eq "(^|[[:space:];&|(])git[[:space:]]([^|;&]*[[:space:]])?config[[:space:]]"; then
-  printf '%s' "$cmd" | grep -Eiq 'core\.hookspath' && ! printf '%s' "$cmd" | grep -Eq -- '--(get|get-all|list|show-origin)\b|[[:space:]]-l\b' && deny "$LG_DENY (core.hooksPath 설정)"
+  # 값을 주거나(core.hooksPath <값>) 지우기·추가·편집 옵션이 있을 때만 변경. 'git config core.hooksPath' 처럼 값 없는 조회는 통과
+  printf '%s' "$cmd" | grep -Eiq 'core\.hookspath' && ! printf '%s' "$cmd" | grep -Eq -- '--(get|get-all|list|show-origin)\b|[[:space:]]-l\b' \
+    && printf '%s' "$cmd" | grep -Eiq -- 'core\.hookspath[[:space:]]+([^[:space:]|;&<>0-9]|[0-9]+[^>0-9[:space:]])|--(unset|unset-all|add|replace-all|edit)\b|[[:space:]]-e\b' \
+    && deny "$LG_DENY (core.hooksPath 설정)"
   printf '%s' "$cmd" | grep -Eiq 'hooks\.localgate([[:space:]]+(off|false|0|no)|.*--unset)|--unset[^|;&]*hooks\.localgate' && deny "$LG_DENY (hooks.localGate 끄기)"
 fi
 
