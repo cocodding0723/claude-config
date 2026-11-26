@@ -43,7 +43,9 @@ if printf '%s' "$cmd" | sed -E 's/--force-(with-lease|if-includes)(=[^[:space:]]
 fi
 printf '%s' "$cmd" | grep -Eq "${G}(reset)[^|;&]*--hard"        && deny "git reset --hard 차단됨. 작업 내용이 영구 삭제됩니다. git stash 또는 사용자에게 직접 요청."
 printf '%s' "$cmd" | grep -Eq "${G}(clean)[^|;&]*-[a-zA-Z]*[fd]" && deny "git clean -f/-d 차단됨. 추적되지 않은 파일이 영구 삭제됩니다."
-printf '%s' "$cmd" | grep -Eq "${G}(checkout|restore)[^|;&]*(--[[:space:]]+\.|[[:space:]]\.[[:space:]]*$)" && deny "작업 트리 전체 되돌리기(checkout/restore .) 차단됨. 파일 단위로 지정하거나 사용자에게 요청."
+printf '%s\n%s' "$cmd" "$raw_cmd" | grep -Eq "${G}(checkout|restore)[^|;&]*[[:space:]]['\"]?(\./?|:/|:\(top\)[^[:space:]]*)['\"]?([[:space:]]|$)" && deny "작업 트리 전체 되돌리기(checkout/restore . 또는 :/) 차단됨. 파일 단위로 지정하거나 사용자에게 요청."
+printf '%s' "$cmd" | grep -Eq "${G}(checkout|switch)[^|;&]*[[:space:]](-f|--force|--discard-changes)([[:space:]]|$)" && deny "checkout/switch 강제 전환 차단됨. 미커밋 변경이 사라집니다. 커밋 후 전환하거나 사용자에게 요청."
+printf '%s' "$cmd" | grep -Eq "${G}reflog[[:space:]]+(expire|delete)([[:space:]]|$)" && deny "git reflog expire/delete 차단됨. 복구 기록이 사라집니다."
 printf '%s' "$cmd" | grep -Eq "${G}(branch)[^|;&]*[[:space:]](-D\b|(-d|--delete)[[:space:]]([^|;&]*[[:space:]])?(-f|--force)([[:space:]]|$)|(-f|--force)[[:space:]]([^|;&]*[[:space:]])?(-d|--delete)([[:space:]]|$)|-(df|fd)([[:space:]]|$))"  && deny "git branch -D 차단됨. 병합 안 된 브랜치가 사라집니다. -d 사용."
 printf '%s' "$cmd" | grep -Eq "${G}(stash)[^|;&]*(drop|clear)"    && deny "git stash drop/clear 차단됨."
 printf '%s' "$cmd" | grep -Eq "${G}(filter-branch|filter-repo)([[:space:]]|$)|${G}(update-ref)[^|;&]*[[:space:]]-d([[:space:]]|$)" && deny "히스토리 재작성 명령 차단됨."
