@@ -45,6 +45,7 @@ VALUE_FLAGS = {
     "--mol-type", "--await-id", "--blocks", "--graph",
 }
 MAIN_LABEL = "hub:main"  # 사용자가 모아 보는 결정·알림·확인 카드
+HELP_FLAGS = {"--help", "-h"}
 SKIP_CREATE = {"--dry-run", "--graph", "--file", "-f"}  # 카드를 하나만 만들지 않거나 만들지 않는 형태
 REPLY_TO = "~/.config/lrm-hubs/board_notify.py post --kind other --source <허브> '<본문>'"
 
@@ -207,6 +208,8 @@ def judge(ev):
                 continue  # 작업판이 아닌 폴더(변수 경로 포함)는 보지 않음
         elif not cd_board:
             continue
+        if HELP_FLAGS & set(flags):
+            continue  # 도움말은 카드를 건드리지 않음
         ids, is_create = targets(pos, flags)
         if is_create and any(f in flags for f in SKIP_CREATE):
             continue

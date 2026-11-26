@@ -256,6 +256,8 @@ def segment(seg, ctx, bodies, depth):
     if expand_word(words[0], ctx) is None:
         ctx.opaque.append(f"명령 {words[0]}")
     if prog == APPROVE_CMD:
+        if args and all(a in ("--help", "-h") for a in args):
+            return  # argparse 도움말은 기록 전에 끝남
         ctx.hits.append(("approve", APPROVE_CMD))
         return
     if prog == "export":

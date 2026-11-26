@@ -177,6 +177,9 @@ gx "우회: push -n(dry-run)은 통과" 'git push -n origin feat/a' "$G" pass
 gx "우회: -c core.hooksPath 거부" 'git -c core.hooksPath=/dev/null push origin feat/a' "$G" deny
 gx "우회: config core.hooksPath 거부" 'git config core.hooksPath /dev/null' "$G" deny
 gx "우회: config --get core.hooksPath 통과" 'git config --get core.hooksPath' "$G" pass
+gx "우회: 값 없는 config core.hooksPath 조회 통과" 'git config core.hooksPath; git config core.hooksPath 2>/dev/null' "$G" pass
+gx "우회: config --unset core.hooksPath 거부" 'git config --unset core.hooksPath' "$G" deny
+gx "우회: config core.hooksPath 값 뒤 리다이렉트도 거부" 'git config core.hooksPath /dev/null 2>/dev/null' "$G" deny
 gx "우회: hooks.localGate off 거부" 'git config hooks.localGate off' "$G" deny
 gx "우회: hooks.localGate on 은 통과" 'git config hooks.localGate on' "$G" pass
 gx "우회: 문구 속 --no-verify 는 통과" 'echo "git push --no-verify"' "$G" pass
