@@ -227,6 +227,20 @@ exp "git-guard: 실제 git push --force 는 계속 차단" $GG 'git push --force
 exp "git-guard: heredoc 뒤의 실제 reset --hard 도 차단" $GG $'cat <<\'E\'\n문구\nE\ngit reset --hard' "$R" deny
 exp "git-guard: bash -c 안의 실제 push --force 는 차단" $GG 'bash -c "git push --force origin x"' "$R" deny
 exp "git-guard: 따옴표 안 \$( ) 로 실행되는 push --force 는 차단" $GG 'echo "$(git push --force origin x)"' "$R" deny
+exp "git-guard: checkout -f 차단" $GG 'git checkout -f main' "$R" deny
+exp "git-guard: checkout --force 차단" $GG 'git -C /x checkout --force feat/a' "$R" deny
+exp "git-guard: switch --discard-changes 차단" $GG 'git switch --discard-changes feat/a' "$R" deny
+exp "git-guard: switch -f 차단" $GG 'git switch -f feat/a' "$R" deny
+exp "git-guard: restore :/ 차단" $GG 'git restore :/' "$R" deny
+exp "git-guard: checkout -- :/ 차단" $GG 'git checkout -- :/' "$R" deny
+exp "git-guard: restore ./ 차단" $GG 'git restore ./ && ls' "$R" deny
+exp "git-guard: restore :(top) 차단" $GG "git restore ':(top)'" "$R" deny
+exp "git-guard: reflog expire 차단" $GG 'git reflog expire --expire=now --all' "$R" deny
+exp "git-guard: reflog delete 차단" $GG 'git reflog delete HEAD@{1}' "$R" deny
+exp "git-guard: 파일 단위 restore 통과" $GG 'git restore src/a.cs' "$R"
+exp "git-guard: checkout 파일 통과" $GG 'git checkout -- src/f.cs' "$R"
+exp "git-guard: reflog 조회 통과" $GG 'git reflog -n 5' "$R"
+exp "git-guard: checkout -b feat 통과(f 오탐 없음)" $GG 'git checkout -b fix/foo' "$R"
 
 # ---- pr-draft-guard: 새 PR 은 draft, ready 는 그 PR 승인 기록 뒤에만 ----
 export LRM_ORCA_BIN="$SB/no-orca"  # 실제 Orca 조회 차단. 하위 작업 공간 시험만 스텁으로 바꿈
