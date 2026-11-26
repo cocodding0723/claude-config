@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.lrm.boardgc</string>
+  <!-- 작업판 DB 정리. 판정·되돌리기는 board_gc.sh --help. Slack 은 실패할 때만 -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__HOME__/.config/lrm-hubs/board_gc.sh</string>
+  </array>
+  <!-- 매일 04:30. 사용이 가장 적은 시각. 잠자던 Mac 은 깨어난 뒤 한 번 실행됨 -->
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>30</integer></dict>
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+  <key>Nice</key><integer>10</integer>
+  <key>StandardOutPath</key><string>__HOME__/.config/lrm-hubs/board-gc.launchd.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.config/lrm-hubs/board-gc.launchd.log</string>
+</dict>
+</plist>
