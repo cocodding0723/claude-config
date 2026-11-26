@@ -237,6 +237,7 @@ hubs/launchd/ai.lrm.nightdraft.plist	.config/lrm-hubs/ai.lrm.nightdraft.plist	co
 hubs/launchd/ai.lrm.nightdispatch.plist	.config/lrm-hubs/ai.lrm.nightdispatch.plist	copy
 hubs/scripts/board_sweep.py	.config/lrm-hubs/board_sweep.py	link
 hubs/scripts/board_sweep.sh	.config/lrm-hubs/board_sweep.sh	link
+hubs/scripts/board_gc.sh	.config/lrm-hubs/board_gc.sh	link
 hubs/board_sweep.tsv	.config/lrm-hubs/board_sweep.tsv	link
 hubs/pending_rules.tsv	.config/lrm-hubs/pending_rules.tsv	link
 hubs/launchd/ai.lrm.boardsweep.plist	Library/LaunchAgents/ai.lrm.boardsweep.plist	copy
@@ -298,3 +299,4 @@ hubs/scripts/pr_index.py	.config/lrm-hubs/pr_index.py	link
 hubs/scripts/review_batch_run.sh	.config/lrm-hubs/review_batch_run.sh	link
 hubs/scripts/night_inbox_report.py	.config/lrm-hubs/night_inbox_report.py	link
 hubs/launchd/ai.lrm.nightinbox.plist	Library/LaunchAgents/ai.lrm.nightinbox.plist	copy
+hubs/launchd/ai.lrm.boardgc.plist	Library/LaunchAgents/ai.lrm.boardgc.plist	copy
