@@ -174,9 +174,13 @@ class Mirror:
 
     def fit(self, head, line, ref):
         """상한을 넘으면 기록 줄 끝을 잘라 맞춤. 기록 1건만 남아도 넘치는 카드가 매 회차 건너뛰어져 Slack 에 영영 안 감(11-27)"""
+        def size(text):
+            # 보고 검사와 같은 기준. 쉬운 말 필터가 백틱을 더해 글자 수가 늘어남(11-27 402자 거절)
+            return len("\n".join(report.plain_filter([ln.strip() for ln in text.splitlines() if ln.strip()], False)[0]))
+
         body = self.wrap_paths("\n".join([head, line, ref]))
-        while len(body) > report.MAX_CHARS and len(line) > 3:
-            line = line[:max(3, len(line) - (len(body) - report.MAX_CHARS) - 1)].rstrip() + "…"
+        while size(body) > report.MAX_CHARS and len(line) > 3:
+            line = line[:max(3, len(line) - (size(body) - report.MAX_CHARS) - 1)].rstrip() + "…"
             if line.count("`") % 2:
                 line = line[:-1] + "`…"
             body = self.wrap_paths("\n".join([head, line, ref]))
