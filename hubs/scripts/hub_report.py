@@ -74,6 +74,8 @@ SECRET_NAME_RE = re.compile(
 SECRET_DIRS = frozenset({".ssh", ".aws", ".gnupg", ".kube", ".docker"})
 NO_DOC_ERR = "decide 는 문서 첨부(--file) 필요 — 결정 근거 문서를 --file 로 첨부하거나, 문서 없는 결정이면 --no-doc 를 명시"
 REVERSIBLE = ("쉬움", "보통", "어려움")
+ANSWER_LINE_RE = re.compile(r"^(?:[-•]\s*)?(?:👉|:point_right:)\s*답\s*:")
+ANSWER_LINE_ERR = "decide 본문에 '👉 답:' 줄이 있음 — 답 줄은 도구가 만듦. 본문에는 제목과 배경만 씀"
 OPTION_MAX = 80
 OPTION_FAKE = re.compile(r"(?<!\w):[\w+\-]{1,40}:(?!\w)|👉|✅|❌|[0-9#*]️?⃣")
 OPTION_BAD_CATS = ("Cc", "Cs", "Co", "Cn", "Zl", "Zp")
@@ -95,9 +97,13 @@ def outbox_path() -> str:
 
 def reuse_check(did: str, title: str) -> None:
     """이미 다른 질문에 쓰인 결정 번호면 ReportError. 판정은 decide_card.reuse_problem 한 곳(접수와 slack_notify.sh 가 같이 씀).
-    원천: 이 outbox(허브 보고)·보낸 카드 기록(slack-sent.jsonl). 기록을 못 읽으면 경고만"""
+    원천: 이 outbox(허브 보고)·보낸 카드 기록(slack-sent.jsonl). 기록을 못 읽으면 경고만.
+    전송 때는 제목의 티켓·커밋 번호가 참고 줄로 빠져 있어, outbox 제목은 번호를 뺀 모양도 같은 질문으로 봄(자기 기록과 어긋나 거부되지 않게)"""
+    def asked(shape):
+        return lambda r: decide_card.first_line(shape(str(r.get("text") or ""))) if r.get("kind") == "decide" else ""
     why, warn = decide_card.reuse_problem(did, title, [
-        (outbox_path(), lambda r: decide_card.first_line(r.get("text")) if r.get("kind") == "decide" else ""),
+        (outbox_path(), asked(bullet_body)),
+        (outbox_path(), asked(str)),  # 거부 안내에는 번호가 든 원래 제목이 보이게 뒤에 둠
         (os.path.join(HUB_DIR, "slack-sent.jsonl"), lambda r: r.get("title"))])
     if warn:
         print(warn, file=sys.stderr)
@@ -460,6 +466,8 @@ def make_report(hub, task, kind, text, files, options=None, recommend=None, deci
             raise ReportError("decide 는 --options '1=문구,2=문구' --recommend N --decision-id D-xxxx 필요 — 버튼 결정 카드 양식")
         if len(lines[0]) > MAX_TITLE:
             raise ReportError(f"decide 첫 줄(결정 제목)이 {len(lines[0])}자 — {MAX_TITLE}자 이내로, 배경은 둘째 줄부터")
+        if any(ANSWER_LINE_RE.match(ln) for ln in lines):
+            raise ReportError(ANSWER_LINE_ERR)
         check_decision_id(decision_id)
         if why := decide_card.problem("\n".join(lines), options, decision_id, files):
             raise ReportError(why)

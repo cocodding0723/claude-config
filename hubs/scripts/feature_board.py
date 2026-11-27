@@ -222,16 +222,25 @@ class BudgetExpired(RuntimeError):
 
 
 class BdReader:
-    def __init__(self, board=None, bd=None, timeout=Format.timeout, deadline=None):
+    def __init__(self, board=None, bd=None, timeout=Format.timeout, deadline=None, fallback=None, slow=False):
+        """fallback(args) → 행 목록 또는 None. 시간 초과·예산 소진 때 대신 읽고, 한 번 초과하면 이후 조회는 bd 를 기다리지 않음"""
         self.board = Path(board or os.environ.get("BOARD_DIR") or "~/orca/board").expanduser()
         self.bd = bd or os.environ.get("BOARD_BD") or shutil.which("bd") or "/opt/homebrew/bin/bd"
         self.timeout = timeout
         self.deadline = deadline
+        self.fallback = fallback
+        self.slow = slow
 
     def query(self, *args):
+        rows = self.fallback(args) if self.fallback and self.slow else None
+        if rows is not None:
+            return rows
         try:
             timeout = self.timeout if self.deadline is None else min(self.timeout, self.deadline - time.monotonic())
             if timeout <= 0:
+                rows = self.fallback(args) if self.fallback else None
+                if rows is not None:
+                    return rows
                 raise BudgetExpired("현황판 조회 예산 초과")
             result = subprocess.run([self.bd, "-C", str(self.board), *args, "--json"],
                                     capture_output=True, text=True, timeout=timeout,
@@ -248,6 +257,10 @@ class BdReader:
                 source = source[end:].lstrip()
             return rows
         except subprocess.TimeoutExpired as exc:
+            self.slow = True
+            rows = self.fallback(args) if self.fallback else None
+            if rows is not None:
+                return rows
             if self.deadline is not None and time.monotonic() >= self.deadline:
                 raise BudgetExpired("현황판 조회 예산 초과") from exc
             raise RuntimeError("작업판 조회 시간 초과 — bd 응답 확인") from exc

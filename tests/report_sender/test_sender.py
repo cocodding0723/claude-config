@@ -5,7 +5,9 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
+from unittest.mock import patch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = os.path.join(HERE, "..", "..", "hubs", "scripts")
@@ -156,6 +158,52 @@ class SenderTest(unittest.TestCase):
         self.assertEqual((res["pending"], res["failed"], len(self.calls())), (0, 0, before))  # 재시도 대상 아님
         self.assertEqual(len(self.warns()), 1)
         self.assertIn(rep["id"], self.state()["reports"])
+
+    def stop_once(self, rc, limit=6):
+        rep = self.report()
+        self.set_fake("fail.n", 1)
+        self.set_fake("fail.rc", rc)
+        self.conf.fail_limit = limit
+        return rep
+
+    def test_permanent_reject_tells_hub_once(self):
+        rep, told = self.stop_once(2), []
+        self.conf.tell = lambda hub, text: told.append((hub, text)) or "sent"
+        report_sender.run(self.conf)
+        report_sender.run(self.conf)
+        self.assertEqual([h for h, _ in told], ["ui-layer"])
+        self.assertIn(rep["id"], told[0][1])
+        self.assertIn("fake: slack 전송 실패", told[0][1])
+        self.assertNotIn("\n", told[0][1])
+
+    def test_blocked_tell_retries_to_limit_and_unknown_does_not(self):
+        for status, want in (("blocked", 3), ("unknown", 1)):
+            told = []
+            self.stop_once(2, 3) if status == "blocked" else self.report(text="다른 보고")
+            self.set_fake("fail.n", 1)
+            self.conf.tell = lambda hub, text: told.append(hub) or status
+            for _ in range(5):
+                report_sender.run(self.conf)
+            self.assertEqual(len(told), want, status)
+
+    def test_slow_tell_is_cut_and_tried_twice_at_most(self):
+        self.stop_once(2)
+        gate, told = threading.Event(), []
+        self.addCleanup(gate.set)
+        self.conf.tell = lambda hub, text: told.append(hub) or gate.wait(30) or "sent"
+        with patch.object(report_sender, "TELL_S", 0.1):
+            started = time.monotonic()
+            report_sender.run(self.conf)
+            self.assertLess(time.monotonic() - started, 10)
+            for _ in range(4):
+                report_sender.run(self.conf)
+        self.assertEqual(len(told), 2)
+
+    def test_temporary_stop_is_not_told_as_reject(self):
+        self.stop_once(1, 1)
+        self.conf.tell = lambda hub, text: self.fail("통보하면 안 됨")
+        report_sender.run(self.conf)
+        self.assertEqual(len(self.state()["bad"]), 1)
 
     def test_exit_code_2_is_permanent_one_attempt_one_warning(self):
         rep = self.report()
