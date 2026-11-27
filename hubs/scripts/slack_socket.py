@@ -315,6 +315,15 @@ def env_secs(name: str, default: float, allow_zero: bool = False) -> float:
     return value if value > 0 or (allow_zero and value == 0) else default
 
 
+def env_count(name: str, default: int) -> int:
+    """환경 변수 횟수. 0 은 허용(기능 끔), 정수가 아니거나 음수면 기본값(inf·0.5 포함)"""
+    try:
+        value = int(os.environ.get(name, "").strip())
+    except ValueError:
+        return default
+    return value if value >= 0 else default
+
+
 # 옛 클라이언트 runner 종료 대기 상한. SDK IntervalRunner.shutdown() 의 join 은 상한이 없어, 수신 스레드가 새 세션에
 # 들어가는 순간과 겹치면 영구 대기하고 감시 루프가 멈춤(프로세스는 살아 있어 launchd 도 재시작 안 함)
 RETIRE_TIMEOUT_S = env_secs("LRM_SOCKET_RETIRE_TIMEOUT_S", 5.0)
@@ -328,6 +337,8 @@ class Timing:
     refresh_s: float  # 정기 재연결 주기. 0 이면 끔
     alive_s: float  # 생존 기록 주기
     debounce_s: float  # 연속 이벤트(메시지+반응)를 한 번의 수집으로 묶음
+    retry_s: float  # 수집 잠금 중일 때 재시도 간격. 잠금 예산이 최대 270초라 짧게 재확인해야 댓글이 바로 들어감
+    retry_max: int  # 재시도 상한. 0 이면 끔. 간격×횟수가 잠금 예산(270초)+여유 이상이어야 잠금이 오래 잡혀도(운영 관찰 87~126초) 끝까지 재확인. 초과분은 launchd 주기 수집에 맡김
 
     @classmethod
     def from_env(cls) -> "Timing":
@@ -337,6 +348,8 @@ class Timing:
             refresh_s=env_secs("LRM_SOCKET_REFRESH_S", 6 * 3600.0, allow_zero=True),
             alive_s=env_secs("LRM_SOCKET_ALIVE_S", 600.0),
             debounce_s=env_secs("LRM_SOCKET_DEBOUNCE_S", 2.0),
+            retry_s=env_secs("LRM_SOCKET_RETRY_S", 3.0),
+            retry_max=env_count("LRM_SOCKET_RETRY_MAX", 100),
         )
 
 
@@ -380,21 +393,40 @@ def log(msg: str) -> None:
     print(f"{time.strftime('%m-%d %H:%M:%S')} [socket] {msg}", flush=True)
 
 
+def is_locked(stdout: str) -> bool:
+    """수집 결과 JSON 이 skipped=locked 인지. 파싱 실패는 잠금이 아님(재시도 안 함)"""
+    lines = stdout.strip().splitlines()
+    try:
+        result = json.loads(lines[-1]) if lines else None
+    except ValueError:
+        return False
+    return isinstance(result, dict) and result.get("skipped") == "locked"
+
+
 class Trigger:
-    def __init__(self, debounce_s: float) -> None:
+    def __init__(self, debounce_s: float, retry_s: float, retry_max: int) -> None:
         self._debounce_s = debounce_s
+        self._retry_s = retry_s
+        self._retry_max = retry_max
         self._lock = threading.Lock()
         self._timer: threading.Timer | None = None
 
     def fire(self, reason: str) -> None:
         with self._lock:
-            if self._timer is not None:
-                self._timer.cancel()
-            self._timer = threading.Timer(self._debounce_s, self._run, args=(reason,))
-            self._timer.daemon = True
-            self._timer.start()
+            self._start(reason, 0, self._debounce_s)
 
-    def _run(self, reason: str) -> None:
+    def _start(self, reason: str, attempt: int, delay_s: float) -> None:
+        """대기 타이머는 항상 1개. 호출자가 self._lock 을 쥔 상태"""
+        if self._timer is not None:
+            self._timer.cancel()
+        self._timer = threading.Timer(delay_s, self._run, args=(reason, attempt))
+        self._timer.daemon = True
+        self._timer.start()
+
+    def _run(self, reason: str, attempt: int = 0) -> None:
+        with self._lock:
+            if self._timer is threading.current_thread():  # 만료 직후 끼어든 새 이벤트의 타이머를 지우지 않음
+                self._timer = None  # 실행 중 새 이벤트가 대기 타이머를 만들었는지 재시도 때 구분
         try:
             out = subprocess.run(
                 ["/bin/bash", POLL, "--once", "--json"],
@@ -403,6 +435,18 @@ class Trigger:
             log(f"{reason} → 수집 rc={out.returncode} {out.stdout.strip()[:120]}")
         except Exception as err:  # 수집 실패는 다음 이벤트·launchd 주기 수집이 메움
             log(f"{reason} → 수집 실패 {type(err).__name__}")
+            return
+        if is_locked(out.stdout):
+            self._retry(reason, attempt)
+
+    def _retry(self, reason: str, attempt: int) -> None:
+        # 다른 수집이 잠금을 쥔 동안 이벤트가 버려지면 댓글이 launchd 주기(120초)까지 안 보임
+        if attempt >= self._retry_max:
+            log(f"{reason} → 잠금 재시도 {self._retry_max}회 초과, 주기 수집에 맡김")
+            return
+        with self._lock:
+            if self._timer is None:  # 새 이벤트가 이미 수집을 예약했으면 그쪽이 대신 수집
+                self._start(reason, attempt + 1, self._retry_s)
 
 
 class LedgerTick:
@@ -658,7 +702,7 @@ def main() -> int:
         return 2
 
     timing = Timing.from_env()
-    trigger = Trigger(timing.debounce_s)
+    trigger = Trigger(timing.debounce_s, timing.retry_s, timing.retry_max)
     pulse = Pulse()
     web = WebClient(token=bot_token)
     decide = Decide(web, me)

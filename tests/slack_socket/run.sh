@@ -36,7 +36,7 @@ start() {
   printf '%s' "$scen" > "$d/scen.json"
   : > "$d/calls"
   env LRM_HUB_DIR="$d/hub" FAKE_SCENARIO="$d/scen.json" FAKE_CALLS="$d/calls" \
-    LRM_SOCKET_CHECK_S=0.1 LRM_SOCKET_DOWN_S=0.6 LRM_SOCKET_REFRESH_S=0 LRM_SOCKET_ALIVE_S=600 LRM_SOCKET_DEBOUNCE_S=0.1 \
+    LRM_SOCKET_CHECK_S=0.1 LRM_SOCKET_DOWN_S=0.6 LRM_SOCKET_REFRESH_S=0 LRM_SOCKET_ALIVE_S=600 LRM_SOCKET_DEBOUNCE_S=0.1 LRM_SOCKET_RETRY_S=0.2 \
     "$@" python3 -I "$HERE/driver.py" "$SOCK" > "$d/out" 2>&1 &
   echo $! > "$d/pid"
 }
@@ -166,6 +166,51 @@ waitfor s17 out '재연결 → 수집 rc=0' 3 && waitfor s17 out '생존 연결=
 [ "$(count s17 out '정리 runner 시간 초과 0\.5초$')" = 1 ] && grep -Eq "${LOGRE}정리 runner 시간 초과 0\.5초\$" "$SB/s17/out" && ok "시간 초과 로그 한 줄('정리 runner 시간 초과 0.5초')" || ko "시간 초과 로그" "$(grep -c '시간 초과' "$SB/s17/out")건 $(grep '시간 초과' "$SB/s17/out" | head -1)"
 stop s17
 
+# ---- 7b. 수집 잠금 중이면 짧게 재시도 -----------------------------------------------------------
+# 시작 수집이 잠금(skipped=locked)을 2회 받아도 재시도로 3번째에 끝남. 재시도 간격은 0.2초로 줄여 시험
+start sl1 '{}' FAKE_POLL_LOCKED_N=2
+waitfor sl1 out '시작 → 수집 rc=0 \{"ok":1\}' 4
+[ "$(wc -l < "$SB/sl1/hub/poll.calls" | tr -d ' ')" = 3 ] && [ "$(count sl1 out '시작 → 수집 rc=0 .*locked')" = 2 ] && ok "잠금 2회 → 재시도로 3번째 수집 완료(이벤트 유실 없음)" || ko "잠금 재시도" "수집 $(wc -l < "$SB/sl1/hub/poll.calls" 2>/dev/null | tr -d ' ')회 $(grep -c locked "$SB/sl1/out")"
+sleep 0.6
+[ "$(wc -l < "$SB/sl1/hub/poll.calls" | tr -d ' ')" = 3 ] && ok "성공 뒤 재시도 중단" || ko "성공 뒤 재시도" "수집 $(wc -l < "$SB/sl1/hub/poll.calls" | tr -d ' ')회"
+stop sl1
+# 항상 잠금: 상한(2회)까지만 재시도하고 포기 로그. 총 수집 3회
+start sl2 '{}' FAKE_POLL_LOCKED_N=99 LRM_SOCKET_RETRY_MAX=2
+waitfor sl2 out '잠금 재시도 2회 초과, 주기 수집에 맡김' 4
+sleep 0.6
+[ "$(wc -l < "$SB/sl2/hub/poll.calls" | tr -d ' ')" = 3 ] && [ "$(count sl2 out '잠금 재시도 2회 초과')" = 1 ] && ok "상한 초과 → 포기·로그 1줄, 더는 재시도 안 함(수집 3회)" || ko "재시도 상한" "수집 $(wc -l < "$SB/sl2/hub/poll.calls" 2>/dev/null | tr -d ' ')회"
+stop sl2
+# 재시도 대기 중 새 이벤트: 기존 대기를 대체해 수집이 누적되지 않음. 시작 수집(잠금) 0.1초 뒤 0.5초에 DM → 이후 잠금 풀림
+start sl3 "{\"events\":[$(ev 0.5 e1 message $ME im)]}" FAKE_POLL_LOCKED_N=3 LRM_SOCKET_RETRY_S=0.6
+waitfor sl3 out 'DM → 수집 rc=0 \{"ok":1\}' 6
+sleep 1.5
+[ "$(wc -l < "$SB/sl3/hub/poll.calls" | tr -d ' ')" -le 5 ] && [ "$(count sl3 out '수집 rc=0 \{"ok":1\}')" = 1 ] && ok "재시도 대기 중 새 이벤트는 대기를 대체(타이머 1개, 성공 1회)" || ko "재시도·이벤트 합침" "수집 $(wc -l < "$SB/sl3/hub/poll.calls" | tr -d ' ')회 $(grep -c '수집' "$SB/sl3/out")줄"
+stop sl3
+# JSON 파싱 실패(잠금 아님)는 재시도하지 않음
+start sl4 '{}' FAKE_POLL_RAW='not json locked'
+waitfor sl4 out '시작 → 수집 rc=0 not json' 3
+sleep 0.8
+[ "$(wc -l < "$SB/sl4/hub/poll.calls" | tr -d ' ')" = 1 ] && ok "stdout 이 JSON 이 아니면 재시도 안 함" || ko "파싱 실패 재시도" "수집 $(wc -l < "$SB/sl4/hub/poll.calls" | tr -d ' ')회"
+stop sl4
+
+# 수집 실행 중 새 이벤트가 이미 수집을 예약했으면 잠금 응답 뒤 재시도를 예약하지 않음(예약하면 이벤트 수집이 재시도 간격만큼 밀림).
+# 묶음 1초·수집 0.8초·재시도 간격 3초: 시작 수집(1.0~1.8초) 중 1.3초에 DM → 이벤트 수집은 2.3초. 재시도가 대체하면 'DM' 수집이 4.8초 이후라 시간 초과
+start sl5 "{\"events\":[$(ev 1.3 e1 message $ME im)]}" FAKE_POLL_LOCKED_N=1 FAKE_POLL_SLEEP=0.8 LRM_SOCKET_DEBOUNCE_S=1.0 LRM_SOCKET_RETRY_S=3.0
+waitfor sl5 out 'DM → 수집 rc=0 \{"ok":1\}' 4 && [ "$(wc -l < "$SB/sl5/hub/poll.calls" | tr -d ' ')" = 2 ] && ok "수집 실행 중 새 이벤트가 있으면 재시도 예약 안 함(이벤트 수집이 간격에 안 밀림)" || ko "실행 중 이벤트·재시도" "수집 $(wc -l < "$SB/sl5/hub/poll.calls" 2>/dev/null | tr -d ' ')회 $(grep -c '수집' "$SB/sl5/out")줄"
+stop sl5
+# 재시도 0 = 끔: 잠금이어도 재시도 없이 포기
+start sl6 '{}' FAKE_POLL_LOCKED_N=99 LRM_SOCKET_RETRY_MAX=0
+waitfor sl6 out '잠금 재시도 0회 초과, 주기 수집에 맡김' 3
+sleep 0.6
+[ "$(wc -l < "$SB/sl6/hub/poll.calls" | tr -d ' ')" = 1 ] && ok "LRM_SOCKET_RETRY_MAX=0 → 재시도 끔(수집 1회)" || ko "재시도 끔" "수집 $(wc -l < "$SB/sl6/hub/poll.calls" 2>/dev/null | tr -d ' ')회"
+stop sl6
+# LRM_SOCKET_RETRY_MAX 파싱: 정수만 허용, 0 은 끔, 음수·소수·inf·문자열은 기본값(100)
+for v in 0 7 -1 0.5 inf nan abc ""; do
+  case $v in 0) w=0 ;; 7) w=7 ;; *) w=100 ;; esac
+  got=$(env -i PATH="$PATH" LRM_SOCKET_RETRY_MAX="$v" python3 -I "$HERE/driver.py" --defaults "$SOCK" 2>&1 | grep -o 'retry_max=[0-9]*')
+  [ "$got" = "retry_max=$w" ] && ok "LRM_SOCKET_RETRY_MAX='$v' → $w" || ko "RETRY_MAX 파싱 '$v'" "$got"
+done
+
 # ---- 8. 설정 오류·첫 연결 실패(기존 종료 코드 2) ---------------------------------------------------
 APP_OVERRIDE="notoken" start s9 '{}'
 waitexit s9 4
@@ -178,10 +223,10 @@ waitexit s12 4
 [ "${RC:-}" = 2 ] && grep -q '연결 실패 ConnectionError — SLACK_APP_TOKEN·네트워크 확인' "$SB/s12/out" && ! grep -Eq "${LOGRE}연결됨\$" "$SB/s12/out" && [ ! -e "$SB/s12/hub/poll.calls" ] && ok "첫 연결이 예외 없이 안 붙음 → 종료 코드 2·'연결됨'·수집 없음" || ko "첫 연결 silent" "rc=${RC:-} $(head -c 160 "$SB/s12/out")"
 [ "$(count s12 calls ' runner_shutdown 1$')" = 1 ] && ok "첫 연결 실패 때도 클라이언트 정리" || ko "첫 연결 실패 정리" "$(tr '\n' ' ' < "$SB/s12/calls" | cut -c1-200)"
 
-# 기본 주기(환경 변수 없음): 감시 30초·끊김 60초·정기 재연결 6시간·생존 10분·묶음 2초·runner 정리 상한 5초
-want='Timing(check_s=30.0, down_s=60.0, refresh_s=21600.0, alive_s=600.0, debounce_s=2.0) retire_timeout_s=5.0'
+# 기본 주기(환경 변수 없음): 감시 30초·끊김 60초·정기 재연결 6시간·생존 10분·묶음 2초·잠금 재시도 3초×100회·runner 정리 상한 5초
+want='Timing(check_s=30.0, down_s=60.0, refresh_s=21600.0, alive_s=600.0, debounce_s=2.0, retry_s=3.0, retry_max=100) retire_timeout_s=5.0'
 got=$(env -i PATH="$PATH" python3 -I "$HERE/driver.py" --defaults "$SOCK" 2>&1)
-[ "$got" = "$want" ] && ok "Timing.from_env 기본값 30·60·21600·600·2초·정리 상한 5초" || ko "기본값" "$got"
+[ "$got" = "$want" ] && ok "Timing.from_env 기본값 30·60·21600·600·2초·재시도 3초×100회·정리 상한 5초" || ko "기본값" "$got"
 
 # ---- 10. 결정 카드 버튼(interactive) -----------------------------------------------------------
 # 가짜 orca: 받은 인자를 orca.calls 에 남김. 메인 터미널 핸들은 main.env 에서 읽음
