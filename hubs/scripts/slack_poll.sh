@@ -965,6 +965,7 @@ fi
 # 카드 기록 미러는 전송 뒤. 작업판이 느리면 남은 예산을 다 써서 승인 카드가 늦음. 미러가 쌓은 글은 다음 회차에 나감
 left=$((TOTAL - ($(date +%s) - T0)))
 if [ "$left" -gt 2 ]; then
-  LRM_HUB_DIR="$DIR" "$PY" -I "$(dirname "$0")/board_mirror.py" --once --budget-seconds "$((left - 2))" >/dev/null 2>&1 || true
+  # 미러 자체 예산이 안 먹혀도 회차를 붙잡지 않게 바깥에서 끊음. 11-26 잠금을 쥔 채 16시간 멈춰 주기 전송 전체가 정지
+  /usr/bin/timeout -k 5 "$((left + 10))" env LRM_HUB_DIR="$DIR" "$PY" -I "$(dirname "$0")/board_mirror.py" --once --budget-seconds "$((left - 2))" >/dev/null 2>&1 || true
 fi
 exit "$RC"

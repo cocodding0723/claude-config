@@ -2,6 +2,7 @@
 """카드 기록 → 허브 보고 대기열. 기능 첫 관찰은 기준선, dry-run은 쓰기 없음."""
 import argparse
 import datetime as dt
+import faulthandler
 import hashlib
 import json
 import os
@@ -165,6 +166,22 @@ class Mirror:
             doing=" " + self.cfg["status_doing"].format(count=len(doing), titles=titles) if doing else "",
             todo=todo.get(stage, self.cfg["status_none"]))
 
+    @staticmethod
+    def wrap_paths(text):
+        # 기존 인라인 코드를 보존. 경로를 다시 감싸면 첨부 검사에서 코드 경계가 깨짐
+        return "".join(part if i % 2 else report.LOCAL_PATH_RE.sub(lambda m: "`" + m[0] + "`", part)
+                       for i, part in enumerate(re.split(r"(`[^`\n]*`)", text)))
+
+    def fit(self, head, line, ref):
+        """상한을 넘으면 기록 줄 끝을 잘라 맞춤. 기록 1건만 남아도 넘치는 카드가 매 회차 건너뛰어져 Slack 에 영영 안 감(11-27)"""
+        body = self.wrap_paths("\n".join([head, line, ref]))
+        while len(body) > report.MAX_CHARS and len(line) > 3:
+            line = line[:max(3, len(line) - (len(body) - report.MAX_CHARS) - 1)].rstrip() + "…"
+            if line.count("`") % 2:
+                line = line[:-1] + "`…"
+            body = self.wrap_paths("\n".join([head, line, ref]))
+        return body
+
     def enqueue(self, root, card, rows, validate=False, noise=0):
         texts, refs = [], [card["id"]]
         for row in rows:
@@ -189,8 +206,7 @@ class Mirror:
                 break
             shown = shown[1:]
         # 기존 인라인 코드를 보존. 경로를 다시 감싸면 첨부 검사에서 코드 경계가 깨짐
-        body = "".join(part if i % 2 else report.LOCAL_PATH_RE.sub(lambda m: "`" + m[0] + "`", part)
-                       for i, part in enumerate(re.split(r"(`[^`\n]*`)", body)))
+        body = self.fit(head, line, ref)
         files = []
         ids = [str(r["id"]) for r in rows]
         if report.has_secret(body):
@@ -351,6 +367,9 @@ def main():
         if args.budget_seconds is not None:
             mirror.deadline = min(mirror.deadline, time.monotonic() + max(0, args.budget_seconds))
         signal.signal(signal.SIGALRM, expired)
+        # 폴러가 시간 초과로 SIGTERM 을 보내면 멈춘 위치를 남기고 종료. 11-26 16시간 멈춤은 위치 기록이 없어 원인 미확정
+        hang = open(mirror.home / "board-mirror.hang.log", "a") if not args.dry_run else sys.stderr
+        faulthandler.register(signal.SIGTERM, file=hang, all_threads=True, chain=True)
         # flock 대기도 실행 예산에 포함. 루프 검사만으로는 잠금 대기를 끊지 못함
         signal.setitimer(signal.ITIMER_REAL, mirror.remaining())
         if args.dry_run:
